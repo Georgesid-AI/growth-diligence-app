@@ -1916,7 +1916,7 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
     candidates = [c for c in candidates if _claim_key(c) not in known]
     await db[decks.TEXT_COLLECTION].insert_one({
         "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "format": deck["format"],
-        "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"],
+        "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"], "layout": deck.get("layout") or [],
         "structures": deck["structures"], "ai_status": "reading", "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "figure_pages": figure_pages})
     for order, c in enumerate(candidates):

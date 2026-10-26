@@ -60,7 +60,8 @@ def test_the_year_under_a_bar_is_applied_when_the_model_dated_the_bar_otherwise(
     assert (entry["state"], entry["field"], entry["original"], entry["corrected"]) == ("applied", "period", "2023", "2022")
     assert entry["undo"]["target_date"] == "2023" and entry["undo"]["period_start"] == "2023-01-01"
     line, = deck["diagnostics"]
-    assert line == {"page": 1, "kind": "corrected", "field": "period", "reason": checker.BAR_YEAR, "original": "2023", "corrected": "2022"}
+    assert line == {"page": 1, "kind": "corrected", "field": "period", "reason": checker.BAR_YEAR, "original": "2023", "corrected": "2022",
+                    "cells": [], "marker": None}
 
 
 def test_a_period_rebuilt_from_another_cell_is_applied_and_logged():

@@ -21,7 +21,7 @@ from app import decks  # noqa: E402
 from app.llm import gateway  # noqa: E402
 
 PAGE = [(50, 560, 20, "Plan"), (50, 520, 12, "Revenue 2025 $150,000"), (50, 500, 12, "Customers Q3 800"), (50, 480, 12, "Users H2 900"),
-        (50, 460, 12, "Margin April 40%"), (50, 440, 12, "ARR FY2025 $2M"), (50, 420, 12, "Revenue FY2025/26 $3M to $4M"),
+        (50, 460, 12, "Margin April 40%"), (50, 440, 12, "ARR FY2025 $2M"), (50, 420, 12, "Revenue FY2025/26 $3M - $4M"),
         (50, 400, 12, "Launch of Aurora in 2025-Q4")]
 PERIODS = ["2025", "2025-Q3", "2025-H2", "2025-04", "FY2025", "FY2025/26"]
 
@@ -31,9 +31,11 @@ def full(cell, value, period, metric="revenue", **more):
             "scenario": "realistic", "value_cell": cell, "label_cell": None, "period_cell": None, **more}
 
 
+# Every value stands on its line of the page: a value on no cell of a page the reader read completely is dropped (source association, 2026-10-26).
+VALUES = [150000, 800, 900, 40, 2_000_000]
 REPLY = {"type": "page_claims", "claims": [
-    *[full(f"p1r{i + 2}c1", 150000 + i, p) for i, p in enumerate(PERIODS)],
-    full("p1r6c1", 3, "FY2025/26", value_high=4),
+    *[full(f"p1r{i + 2}c1", v, p) for i, (v, p) in enumerate(zip(VALUES, PERIODS))],
+    full("p1r7c1", 3_000_000, "FY2025/26", value_high=4_000_000),
     full("p1r8c1", None, "2025-Q4", metric="product", unit=None),            # a date claim: no value, a period, metric product
 ]}
 

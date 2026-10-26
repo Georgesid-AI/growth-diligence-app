@@ -624,3 +624,15 @@ already approved or edited stays. (3) A bar takes its axis year also when the pa
 if that is less than half a label spacing away and no other figure is nearer to the same label; equal counts keep the left-to-right rule of issue #148, which replaces its "any other count: only a label the bar overlaps". Why the live bar took no year in #149: that rule
 needed as many figures as labels, and the page had one figure over three labels. Ten-deck pin: 212 candidates before and after; four rows lose a period they took from a sentence (02-moz p2 sales 500,000
 "By 2007, it was all paid off ..."; p3 customers 10,000 and a 1.2M figure "April of 2011, we ..."; p3 gross margin 83 "2011 will be our first ..."); no other row moves.
+
+## Amended 2026-10-26 (George, section 4 of docs/design/claim-review-simplified-design.md; docs/specs/source-association.md)
+The reader keeps layout evidence besides the text, for Python's source association only (never sent, rule 16):
+- **Turned text** (a pdf character that is not upright and turned a quarter; a pptx shape rotated a quarter or with a vertical text direction) is one line in reading order with
+  `rot` (clockwise turn, 90 or 270) on its block. It was read as one line per character before. Text at another angle is unchanged. A turned line is never the page title and never
+  stacked into a box with upright lines.
+- **`layout`** (returned by `parse_deck`, stored with the deck): per slide or page its filled rectangles (`at`, `fill`, `scope`) and its `gaps`, the closed words of what the
+  reader could not read (`picture` over 5% of the page, `chart`, `graphic`, `glyphs`, `shapes`, `format` for .docx). A page with no gap is measured and complete. A line in a pptx
+  group keeps `lbbox` (its place on the slide through the group's transform); its `bbox` stays none, so every rule that reads `bbox` is unchanged.
+- The page grid (`decks/pages.page_grids(blocks, layout)`) gives each cell `at` and `rot` and the grid `layout`; a grid without the layout is "not measured".
+On the 8 pptx and pdf test decks (measured, no network; the two .docx files are `format`): 163 pages, 48 measured and complete (115 have a picture over 5% of the page: the full-page
+backgrounds of most decks), 4 turned lines (zero2hero p14, p15), 205 filled rectangles, 7 legend swatches (zero2hero p22, tea p4); 212 candidates before and after (`detect_candidates`), no candidate moves.

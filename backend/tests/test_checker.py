@@ -252,7 +252,7 @@ def test_an_axis_tick_and_a_funds_raised_line_are_flagged_not_dropped():
 
 
 def test_every_flag_is_a_closed_string_and_a_cell_the_page_does_not_have_is_still_dropped():
-    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 23 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
+    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 27 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
     assert set(PAGE_BASES) == {"actual", "projection", "scenario"} and set(PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     parsed = deck([TITLE, *LINES])
     out = checker.check(grid_of(parsed), page_check.by_page([claim("p1r9c9", 1)])[1], 12)

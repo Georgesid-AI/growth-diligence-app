@@ -33,6 +33,12 @@ the like (claims._NOT_PLAN_LINE) is dropped and counted, as the rules read drops
 2026-10-22) calls with drop=False and flags such a claim instead, since a failed check never deletes a claim. A claim with no value
 is a milestone: never matched, dated from its source.
 
+Source association (docs/specs/source-association.md, 2026-10-26): when the grid carries the deck's layout, a value's label and unit may also
+come from its chart (the legend label of its bar's colour, the rotated axis title), a local period beats a broader heading it disagrees with,
+a date printed as a marker annotation in a chart's plot area is no period of another figure, a value found only in another cell does not carry
+the period or the label cited for the cell it was not in. The
+findings are in each item's `association` (closed words and cell ids) and become the checker's review flags (association.FLAGS).
+
 Adjacency, headers, scales, figures and periods are the verifier's own rules (verify.py, items.py) run on two views of the
 grid: the page's text lines as one KPI-panel-like structure (box, next_to) and each table as a table structure (header rows).
 """
@@ -41,7 +47,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from ..decks import claims
-from . import items, redact, verify
+from . import association, items, redact, verify
 
 MATCHED, UNMATCHED = "matched", "unmatched"
 MATCHED_LABEL = "Matched to page"
@@ -120,9 +126,10 @@ def _is_date_source(text: str) -> bool:
     return verify.is_date_line(text) or verify.period_header(text)
 
 
-def date_sources(structure: Dict, cell: Dict) -> List[Dict]:
-    """The adjacent cells a period may come from."""
-    return [c for c in adjacent(structure, cell) if _is_date_source(c["text"]) and not verify.figures(c["text"])]
+def date_sources(structure: Dict, cell: Dict, lay: Optional[association.Layout] = None) -> List[Dict]:
+    """The adjacent cells a period may come from; a marker annotation (a date inside a chart's plot area, association.Layout) is none."""
+    return [c for c in adjacent(structure, cell) if _is_date_source(c["text"]) and not verify.figures(c["text"])
+            and not (lay is not None and lay.annotation_for(c, cell))]
 
 
 def _from_source(structure: Dict, source: Dict, fiscal_year_end: int):
@@ -148,49 +155,102 @@ def _bar_cell(structure: Dict, cell: Dict, cited: Dict) -> bool:
     return bool(cell.get("bar_year")) and cited["text"].strip() == str(cell["bar_year"]).strip()
 
 
-def holds_period(structure: Dict, cell: Dict, fiscal_year_end: int) -> bool:
+def holds_period(structure: Dict, cell: Dict, fiscal_year_end: int, lay: Optional[association.Layout] = None) -> bool:
     """Whether any date source of the cell gives a period: its own text, an adjacent date source or its bar's year label."""
     if verify.own_period(cell) and claims.period_range(verify.own_period(cell), fiscal_year_end):
         return True
     if cell.get("bar_year") and claims.period_range((claims.period_cell(cell["bar_year"]) or {}).get("label"), fiscal_year_end):
         return True
-    return any(_from_source(structure, s, fiscal_year_end) for s in date_sources(structure, cell))
+    return any(_from_source(structure, s, fiscal_year_end) for s in date_sources(structure, cell, lay))
 
 
-def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optional[Dict], fiscal_year_end: int):
-    """(period label, period cells, ok, corrected, heading): the period Python rebuilds from the cited cell when it is a date source
+def local_periods(structure: Dict, cell: Dict, fiscal_year_end: int, lay: Optional[association.Layout] = None) -> List[Dict]:
+    """The periods the figure's own sources state, nearest first: its own text, an adjacent date label or header. [{"period", "span",
+    "cells", "source"}]; a broader heading never counts here. The year under a bar is not listed: the checker's BAR_YEAR already
+    compares it with the period and corrects it."""
+    out = []
+    own = verify.own_period(cell)
+    span = claims.period_range(own, fiscal_year_end) if own else None
+    if span:
+        out.append({"period": own, "span": span, "cells": [_id(cell)], "source": association.OWN})
+    for source in date_sources(structure, cell, lay):
+        found = _from_source(structure, source, fiscal_year_end)
+        if found:
+            out.append({"period": found[0], "span": found[1], "cells": found[2], "source": association.HEADER})
+    return out
+
+
+def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optional[Dict], fiscal_year_end: int,
+                 lay: Optional[association.Layout] = None, rehomed: bool = False):
+    """(period label, period cells, ok, corrected, heading, note): the period Python rebuilds from the cited cell when it is a date source
     of the value cell (its own text, an adjacent date label or header, its bar's year label), or the page's heading (a title cell
     of the page, `heading` True: the period stands on no line or block of the figure); a null period with nothing cited stands
     only when no source holds a period. The period never gates the match (George, 2026-10-23): ok only decides the flags. `heading` is "heading" (title cell or top 20% of the page), "other" (any other cell
-    outside the figure's block that states the period) or False."""
+    outside the figure's block that states the period) or False.
+
+    `note` is the source association of the period (docs/specs/source-association.md): {"source": a closed word of association.SOURCES or
+    None, "flags": [association flags], "options": [{"period", "period_cells", "source"}]}. A period cited from a heading or another cell
+    while the figure's own sources state another one is Python's own source, with the review flag SOURCES_DISAGREE and both as options; own
+    sources that state several periods, with a broader one cited, are SOURCE_AMBIGUOUS and select nothing; a marker annotation of the
+    chart, or (for a value found only in another cell, `rehomed`) any cell the new cell has no association with, is SOURCE_NOT_ASSOCIATED
+    and sets no period."""
+    note = {"source": None, "flags": [], "options": []}
     wanted = claims.period_range(model, fiscal_year_end) if model else None
     if cited is None and model is None:
-        return None, [], not holds_period(structure, cell, fiscal_year_end), False, False
+        return None, [], not holds_period(structure, cell, fiscal_year_end, lay), False, False, note
     if cited is None:
         bar = (claims.period_cell(cell["bar_year"]) or {}).get("label") if cell.get("bar_year") else None
         span = claims.period_range(bar, fiscal_year_end) if bar else None
         if span and span == wanted:             # the bar's year by place: Python's, with no cell of its own (issue #148)
-            return bar, [], True, False, False
-        return model, [], False, False, False
+            note["source"] = association.AXIS
+            return bar, [], True, False, False, note
+        return model, [], False, False, False, note
+    if lay is not None and lay.annotation_for(cited, cell):
+        note.update(source=association.ANNOTATION, flags=[association.SOURCE_NOT_ASSOCIATED])
+        return model, [], False, False, "annotation", note
     heading = False
+    local = date_sources(structure, cell, lay)
     if _id(cited) == _id(cell):
         label = verify.own_period(cell)
         span = claims.period_range(label, fiscal_year_end) if label else None
         found = (label, span, [_id(cell)]) if span else None
-    elif any(_id(cited) == _id(s) for s in date_sources(structure, cell)) or _bar_cell(structure, cell, cited):
+        note["source"] = association.OWN
+    elif any(_id(cited) == _id(s) for s in local) or _bar_cell(structure, cell, cited):
         found = _from_source(structure, cited, fiscal_year_end)
+        note["source"] = association.AXIS if _bar_cell(structure, cell, cited) else association.HEADER
     elif cited.get("title") or cited.get("top_band"):
         found = _from_source(structure, cited, fiscal_year_end)         # the page heading (title cell or top 20% of the page)
         heading = "heading" if found is not None else False
+        note["source"] = association.HEADING
     elif any(_id(cited) == _id(s) for s in _same_box(structure, cell)):
         found = None                            # a sentence in the figure's own block is no source (#154)
+    elif rehomed:
+        found = None                            # the value was found in this cell only: a cell it has no association with states no period for it
+        if _from_source(structure, cited, fiscal_year_end):
+            note.update(source=association.OTHER, flags=[association.SOURCE_NOT_ASSOCIATED])
+            return model, [], False, False, "unassociated", note
     else:
         found = _from_source(structure, cited, fiscal_year_end)         # any other cell of the page that states the period
         heading = "other" if found is not None else False
+        note["source"] = association.OTHER
     if found is None:
-        return model, [], False, False, False
+        note["source"] = None
+        return model, [], False, False, False, note
     label, span, cells = found
-    return label, cells, True, wanted != span, heading
+    if heading:                                 # a broader source: the figure's own sources come first (the local association takes precedence)
+        near = local_periods(structure, cell, fiscal_year_end, lay)
+        spans = {n["span"] for n in near}
+        if len(spans) > 1:
+            note.update(source=None, flags=[association.SOURCE_AMBIGUOUS],
+                        options=[{"period": n["period"], "period_cells": n["cells"], "source": n["source"]} for n in near])
+            return model, [], False, False, "ambiguous", note
+        if near and near[0]["span"] != span:
+            chosen = near[0]
+            note.update(source=chosen["source"], flags=[association.SOURCES_DISAGREE], options=[
+                {"period": chosen["period"], "period_cells": chosen["cells"], "source": chosen["source"]},
+                {"period": label, "period_cells": cells, "source": note["source"]}])
+            return chosen["period"], chosen["cells"], True, wanted != chosen["span"], "disagree", note
+    return label, cells, True, wanted != span, heading, note
 
 
 # ---------------------------------------------------------------------------
@@ -279,17 +339,18 @@ def _marks(structure: Dict, cell: Dict) -> List[str]:
 
 
 def unit_check(structure: Dict, cell: Dict, item: Optional[Dict], unit: Optional[str], unit_other: Optional[str],
-               comma: bool = False) -> bool:
+               comma: bool = False, extra=()) -> bool:
     """Whether the unit is where the model says it is (rule 2 above): when the figure's own text states one (a currency symbol or
     code, "%", "x", a time word, a counted noun) the claim's unit must be that one; otherwise its mark must stand in the value cell
-    or one directly next to it. A null unit passes only when the figure carries no currency, "%", "x" or time word."""
+    or one directly next to it, or in `extra`, the texts of its chart (axis titles, its legend label). A null unit passes only when the figure
+    carries no currency, "%", "x" or time word."""
     figure = own_figure(cell, item["position"], comma) if item is not None else None
     stated = _unit_agrees(figure, unit, unit_other)
     if unit is None:
         return figure is None or (figure.get("currency") is None and (figure.get("unit") is None or bool(figure.get("count"))))
     if stated is not None:
         return stated
-    texts = _marks(structure, cell)
+    texts = _marks(structure, cell) + list(extra)
     joined = " ".join(texts)
     if unit == "%":
         return bool(_PERCENT.search(joined))
@@ -358,9 +419,11 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
     default reading first), value_high (Python's range), value_cell and position, the period Python rebuilt and its period
     cells, the label cell when adjacent, "status" (matched or unmatched) and "checks" ({"value", "unit", "period", "label",
     "period_corrected"}: booleans; "dot_reading" and "bracket_reading": the default reading's closed word, or None). A
-    corrected period keeps the model's as "model_period".
+    corrected period keeps the model's as "model_period". A grid with the deck's layout adds "association" (see the module docstring):
+    {"label", "period", "unit": a closed word of association.SOURCES or None, "flags": [association flags], "options": [period options]}.
     """
     by_id = {_id(c): c for c in grid["cells"]}
+    lay = association.Layout(grid)
     grid_views = views(grid)
     listed = {id(s): items.list_items(s, titles=True) for s in [grid_views["boxes"], *grid_views["tables"].values()]}
     checked, dropped, corrected_count = [], 0, 0
@@ -384,11 +447,37 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
                 comma = verify.decimal_comma(structure["cells"])
         unit_ok = unit_check(structure, cell, item, claim.get("unit"), claim.get("unit_other"), comma) \
             if claim.get("value") is not None else claim.get("unit") is None
+        notes = {"label": None, "period": None, "unit": None, "flags": [], "options": []}
+        if claim.get("value") is not None and not unit_ok and value_ok and lay.measured:
+            for source, marks in ((association.AXIS, lay.axis_titles(cell)), (association.LEGEND, lay.segment_label(cell))):
+                texts = [by_id[i]["text"] for i in marks["cells"] if i in by_id]
+                if texts and not marks["ambiguous"] and unit_check(structure, cell, item, claim.get("unit"), claim.get("unit_other"), comma, texts):
+                    unit_ok, notes["unit"] = True, source
+                    break
         cited = by_id.get(claim["period_cell"]) if claim.get("period_cell") else None
-        period, period_cells, period_ok, corrected, heading = period_check(structure, cell, claim.get("period"), cited, fiscal_year_end)
+        period, period_cells, period_ok, corrected, heading, period_note = period_check(
+            structure, cell, claim.get("period"), cited, fiscal_year_end, lay, rehomed=model_cell is not None)
         corrected_count += int(corrected)
+        notes.update(period=period_note["source"], options=period_note["options"], flags=list(period_note["flags"]))
         label = by_id.get(claim["label_cell"]) if claim.get("label_cell") else None
-        label_ok = label is None or any(_id(label) == _id(c) for c in label_cells(structure, cell))
+        local = lay.local_label(cell)
+        label_ok = label is None or any(_id(label) == _id(c) for c in label_cells(structure, cell)) or _id(label) in local["cells"]
+        if local["ambiguous"]:
+            label, label_ok = None, True        # several candidate labels (a reused colour, two axis titles): none is chosen
+            notes["flags"].append(association.SOURCE_AMBIGUOUS)
+        elif local["cells"]:
+            chosen = by_id[local["cells"][0]]   # the explicit local association takes precedence over a broader heading
+            beside = label is not None and not label.get("title") and any(_id(label) == _id(c) for c in label_cells(structure, cell))
+            if label is not None and _id(label) != _id(chosen) and _id(label) in {s["label"] for s in lay.swatches}:
+                notes["flags"].append(association.SOURCES_DISAGREE)         # the claim cites another series' legend entry
+            if label is None or not beside or _id(label) in {s["label"] for s in lay.swatches}:
+                label, label_ok, notes["label"] = chosen, True, local["source"]
+            else:                           # the label beside the figure is as local as the legend: it stays
+                notes["label"] = association.OWN if _id(label) == _id(cell) else association.HEADER
+        elif label is not None and label_ok:
+            notes["label"] = association.OWN if _id(label) == _id(cell) else association.HEADING if label.get("title") else association.HEADER
+        if model_cell is not None and claim.get("label_cell") and (not label_ok or label is None):
+            notes["flags"].append(association.SOURCE_NOT_ASSOCIATED)        # a number elsewhere does not carry the label cited for another cell
         span = item.get("range") if item else None
         ok = value_ok and claim.get("value") is not None          # the figure is in the cited cell; unit and period only flag
         # A date claim (metric product, no value, a period) is matched when its period is stated by the cited period cell (George, 2026-10-23).
@@ -408,6 +497,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
             out["model_period"] = claim.get("period")
         if model_cell is not None:
             out["cell_corrected"], out["model_cell"] = True, _id(model_cell)
+        if lay.measured or notes["flags"]:
+            out["association"] = {**notes, "flags": list(dict.fromkeys(notes["flags"]))}
         checked.append(out)
     matched = sum(1 for c in checked if c["status"] == MATCHED)
     return {"items": checked, "matched": matched, "unmatched": len(checked) - matched, "dropped": dropped,

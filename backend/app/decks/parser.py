@@ -17,6 +17,13 @@ A merged table cell keeps its span: "col_span" and "row_span" are set when they 
 Text only. Pictures, charts saved as pictures and scanned pages hold pixels, not text, so
 they are not read; a file with no readable text is refused, never guessed.
 
+Layout evidence (docs/specs/source-association.md, section 4 of docs/design/claim-review-simplified-design.md): a text line that is
+turned a quarter keeps "rot" (clockwise degrees, 90 or 270) and is read as one line in reading order, not as single characters;
+parse_deck also returns "layout", one entry per slide or page, {"slide"|"page": n, "rects": [...], "gaps": [...]}: the filled
+rectangles of the page (bars, legend swatches: "at" as fractions of the page, "fill" a colour key, "scope" the group or cluster a
+rectangle belongs to) and the closed words of what the reader could not read ("picture", "chart", "graphic", "glyphs", "format").
+Python only: none of it goes to the model.
+
 parse_deck also lists the deck's structures (spec section 7, see detect_structures): tables,
 charts read from the chart XML (pptx), KPI panels and roadmaps or timelines, each with its type,
 its source reference and every cell with its row and column, so a value read from it can be cited.
@@ -31,6 +38,11 @@ MAX_BYTES = 50 * 1024 * 1024
 MAX_PAGES = 200
 MAX_UNPACKED_BYTES = 250 * 1024 * 1024      # pptx and docx are zip files
 MAX_PARTS = 5000
+PICTURE_SHARE = 0.05        # a picture, or a drawing the reader cannot read, over this share of the page makes the page's extraction incomplete
+MAX_RECTS = 400             # filled rectangles kept per page; more is a gap ("shapes")
+BACKGROUND_SHARE = 0.35     # a filled rectangle over this share of the page is a background, not a bar or a swatch
+GAP_PICTURE, GAP_CHART, GAP_GRAPHIC, GAP_GLYPHS, GAP_FORMAT, GAP_SHAPES = "picture", "chart", "graphic", "glyphs", "format", "shapes"
+GAPS = (GAP_PICTURE, GAP_CHART, GAP_GRAPHIC, GAP_GLYPHS, GAP_FORMAT, GAP_SHAPES)
 
 NO_TEXT = ("No readable text found in this file. It may be scanned or made of images. "
            "Please upload a text-based version.")
@@ -76,12 +88,15 @@ def parse_deck(content: bytes, filename: str) -> Dict:
     if fmt in ("pptx", "docx"):
         _check_unpacked(content, fmt)
     reader = {"pptx": _pptx_blocks, "pdf": _pdf_blocks, "docx": _docx_blocks}[fmt]
-    charts = []
+    charts, layout = [], []
     try:
         if fmt == "pptx":
-            pages, blocks, charts = reader(content)
+            pages, blocks, charts, layout = reader(content)
+        elif fmt == "pdf":
+            pages, blocks, layout = reader(content)
         else:
             pages, blocks = reader(content)
+            layout = [{"page": n, "rects": [], "gaps": [GAP_FORMAT]} for n in range(1, pages + 1)]
     except DeckError:
         raise
     except Exception:
@@ -93,7 +108,7 @@ def parse_deck(content: bytes, filename: str) -> Dict:
     if not any(re.search(r"\w", b["text"]) for b in blocks) and not charts:     # chart XML is text too
         raise DeckError(NO_TEXT)
     return {"file": filename, "format": fmt, "page_unit": unit, "pages": pages, "blocks": blocks,
-            "structures": detect_structures(blocks, charts)}
+            "structures": detect_structures(blocks, charts), "layout": layout}
 
 
 def _check_unpacked(content: bytes, fmt: str) -> None:
@@ -121,6 +136,61 @@ def _lines(text: str) -> List[str]:
 # ---------------------------------------------------------------------------
 # pptx: text boxes (including grouped shapes and placeholders), tables, speaker notes
 # ---------------------------------------------------------------------------
+def _color_key(fill) -> str:
+    """A solid fill as the key two shapes of one colour share: the RGB hex, or the theme colour and its brightness. "" for any other fill."""
+    from pptx.enum.dml import MSO_COLOR_TYPE, MSO_FILL
+    try:
+        if fill.type != MSO_FILL.SOLID:
+            return ""
+        color = fill.fore_color
+        if color.type == MSO_COLOR_TYPE.RGB:
+            return str(color.rgb)
+        return f"theme:{color.theme_color.name}:{round(color.brightness or 0, 2)}"
+    except Exception:
+        return ""
+
+
+def _quarter_turn(shape) -> int:
+    """0, 90 or 270: the clockwise quarter turn of a shape's text, from the shape's rotation and its text direction (bodyPr vert)."""
+    turn = 0
+    try:
+        turn += int(round(shape.rotation or 0))
+        vert = shape.text_frame._txBody.bodyPr.get("vert") if shape.has_text_frame else None
+        turn += {"vert": 90, "eaVert": 90, "wordArtVert": 90, "vert270": 270}.get(vert, 0)
+    except Exception:
+        return 0
+    turn %= 360
+    return turn if turn in (90, 270) else 0
+
+
+def _pptx_walk(container, transform=(0.0, 0.0, 1.0, 1.0), scope=0, scopes=None):
+    """(shape, (left, top, width, height) in slide EMU, scope, grouped) for every shape of a container, groups opened. A group's children
+    are in the group's own coordinates (chOff, chExt); `transform` = (x offset, y offset, x scale, y scale) takes them to the slide. The scope is
+    the number of the outermost group a shape is in, 0 outside any group."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    scopes = scopes if scopes is not None else [0]
+    ox, oy, sx, sy = transform
+    for shape in container:
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            inner = scope
+            if scope == 0:
+                scopes[0] += 1
+                inner = scopes[0]
+            xfrm = shape._element.grpSpPr.xfrm
+            try:
+                gw, gh, cw, ch = xfrm.ext.cx, xfrm.ext.cy, xfrm.chExt.cx or 1, xfrm.chExt.cy or 1
+                kx, ky = gw / cw, gh / ch
+                child = (ox + sx * (xfrm.off.x - xfrm.chOff.x * kx), oy + sy * (xfrm.off.y - xfrm.chOff.y * ky), sx * kx, sy * ky)
+            except Exception:
+                child = transform
+            yield from _pptx_walk(shape.shapes, child, inner, scopes)
+            continue
+        geo = None
+        if None not in (shape.left, shape.top, shape.width, shape.height):
+            geo = (ox + shape.left * sx, oy + shape.top * sy, shape.width * sx, shape.height * sy)
+        yield shape, geo, scope, scope != 0
+
+
 def _pptx_blocks(content: bytes):
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
@@ -128,33 +198,40 @@ def _pptx_blocks(content: bytes):
     prs = Presentation(io.BytesIO(content))
     slides = list(prs.slides)
     if len(slides) > MAX_PAGES:
-        return len(slides), [], []
+        return len(slides), [], [], []
     width, height = prs.slide_width or 1, prs.slide_height or 1
     titles = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
     boxes = itertools.count(1)
 
-    def shapes(container, grouped=False):
-        for shape in container:
-            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-                yield from shapes(shape.shapes, True)
-            else:
-                yield shape, grouped
-
     def frac(x0, y0, x1, y1):
         return [round(x0 / width, 4), round(y0 / height, 4), round(x1 / width, 4), round(y1 / height, 4)]
 
-    blocks, charts = [], []
+    blocks, charts, layout = [], [], []
     for n, slide in enumerate(slides, 1):
         tables = 0
-        for shape, grouped in shapes(slide.shapes):
+        rects, gaps = [], set()
+        for shape, absolute, scope, grouped in _pptx_walk(slide.shapes):
             if getattr(shape, "has_chart", False) and shape.has_chart:
                 chart = _pptx_chart(shape.chart)
                 if chart:
                     charts.append({"slide": n, **chart})
-            # A grouped shape's position is in its group's own coordinates, so it has none here.
+                gaps.add(GAP_CHART)             # the chart's numbers are not text lines of the page
+            elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE and absolute and absolute[2] * absolute[3] >= PICTURE_SHARE * width * height:
+                gaps.add(GAP_PICTURE)
+            elif shape.shape_type in (MSO_SHAPE_TYPE.EMBEDDED_OLE_OBJECT, MSO_SHAPE_TYPE.LINKED_OLE_OBJECT) or \
+                    (type(shape).__name__ == "GraphicFrame" and not shape.has_table):
+                gaps.add(GAP_GRAPHIC)
+            # A grouped shape's position in the group's own coordinates is not on the slide: "bbox" is none for it, as before; "lbbox" is its place
+            # on the slide, worked out through the group's transform, for the layout evidence only.
             geo = None if grouped else (shape.left, shape.top, shape.width, shape.height)
             if geo and None in geo:
                 geo = None
+            turn = _quarter_turn(shape) if shape.has_text_frame else 0
+            if absolute is not None and shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE and not turn:
+                color = _color_key(shape.fill) if hasattr(shape, "fill") else ""
+                if color and color != "FFFFFF" and absolute[2] * absolute[3] < BACKGROUND_SHARE * width * height:
+                    left, top, w, h = absolute
+                    rects.append({"at": frac(left, top, left + w, top + h), "fill": color, "scope": scope})
             if shape.has_text_frame:
                 box = next(boxes)
                 title = shape.is_placeholder and shape.placeholder_format.type in titles
@@ -162,9 +239,20 @@ def _pptx_blocks(content: bytes):
                 for i, para in enumerate(paras):
                     for line in _lines(para.text):
                         block = {"slide": n, "kind": "text", "text": line, "box": box}
-                        if geo:
-                            left, top, w, h = geo
-                            block["bbox"] = frac(left, top + h * i / len(paras), left + w, top + h * (i + 1) / len(paras))
+                        place = geo or absolute
+                        if place:
+                            left, top, w, h = place
+                            key = "bbox" if geo else "lbbox"
+                            if turn:
+                                # Text turned a quarter: its lines are one run along the frame, shown as the frame as it looks on the slide
+                                # (a frame rotated a quarter has its width and height swapped around its centre).
+                                if abs(shape.rotation or 0) % 180:
+                                    left, top, w, h = left + w / 2 - h / 2, top + h / 2 - w / 2, h, w
+                                block[key] = frac(left, top, left + w, top + h)
+                            else:
+                                block[key] = frac(left, top + h * i / len(paras), left + w, top + h * (i + 1) / len(paras))
+                        if turn:
+                            block["rot"] = turn
                         if title:
                             block["title"] = True
                         blocks.append(block)
@@ -190,7 +278,10 @@ def _pptx_blocks(content: bytes):
             box = next(boxes)
             for para in slide.notes_slide.notes_text_frame.paragraphs:
                 blocks += [{"slide": n, "kind": "notes", "text": line, "box": box} for line in _lines(para.text)]
-    return len(slides), blocks, charts
+        if len(rects) > MAX_RECTS:
+            rects, gaps = rects[:MAX_RECTS], gaps | {GAP_SHAPES}
+        layout.append({"slide": n, "rects": rects, "gaps": [g for g in GAPS if g in gaps]})
+    return len(slides), blocks, charts, layout
 
 
 def _spans(rows: int, cols: int) -> Dict:
@@ -269,6 +360,54 @@ def _stack(blocks: List[Dict], boxes) -> None:
             open_boxes.append([block["box"], block["bbox"]])
 
 
+def _pdf_color(color) -> str:
+    """A fill colour of a pdf rectangle as a key: the hex of its RGB (a grey or a CMYK is converted); "" for none."""
+    try:
+        parts = [float(v) for v in color]
+    except (TypeError, ValueError):
+        return ""
+    if len(parts) == 1:
+        parts = parts * 3
+    elif len(parts) == 4:
+        c, m, y, k = parts
+        parts = [(1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k)]
+    if len(parts) != 3:
+        return ""
+    return "".join(f"{max(0, min(255, round(v * 255))):02X}" for v in parts)
+
+
+def _quarter_runs(chars) -> List[Dict]:
+    """The text turned a quarter on a pdf page, read as lines: [{"text", "x0", "top", "x1", "bottom", "rot"}]. Characters are taken in the
+    order the file writes them; a run is the characters of one turn that share a column and step along it without a wide gap. A y-axis title
+    reads upward (270 clockwise), a label turned the other way downward (90). Text at any other angle is not read as a line."""
+    runs: List[Dict] = []
+    for c in chars:
+        if c.get("upright", True):
+            continue
+        m = c.get("matrix") or (1, 0, 0, 1, 0, 0)
+        rot = 270 if m[1] > 0.5 and m[2] < -0.5 else 90 if m[1] < -0.5 and m[2] > 0.5 else 0
+        if not rot:
+            continue
+        last = runs[-1] if runs else None
+        height = c["bottom"] - c["top"]
+        along = (c["top"] - last["bottom"]) if last and rot == 90 else (last["top"] - c["bottom"]) if last else 0
+        if last and last["rot"] == rot and abs(c["x0"] - last["x0"]) < 1.0 and -0.5 * height <= along <= 1.5 * height:
+            last["text"] += c["text"]
+            last["top"], last["bottom"] = min(last["top"], c["top"]), max(last["bottom"], c["bottom"])
+            last["x1"] = max(last["x1"], c["x1"])
+        else:
+            runs.append({"text": c["text"], "x0": c["x0"], "x1": c["x1"], "top": c["top"], "bottom": c["bottom"], "rot": rot})
+    return runs
+
+
+def _is_quarter(obj) -> bool:
+    """Whether a pdfplumber character is one of a run turned a quarter (read by _quarter_runs)."""
+    if obj.get("object_type") != "char" or obj.get("upright", True):
+        return False
+    m = obj.get("matrix") or (1, 0, 0, 1, 0, 0)
+    return (m[1] > 0.5 and m[2] < -0.5) or (m[1] < -0.5 and m[2] > 0.5)
+
+
 def _pdf_blocks(content: bytes):
     """Text is read in segments: words on one line with no wide gap between them. A wide gap
     starts a new segment, so side-by-side columns stay apart (a label and its value, two
@@ -277,12 +416,12 @@ def _pdf_blocks(content: bytes):
     (axis labels 500, 600 ... were read as single digits when sorted by position alone)."""
     import pdfplumber
 
-    blocks = []
+    blocks, layout = [], []
     boxes = itertools.count(1)
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         pages = len(pdf.pages)
         if pages > MAX_PAGES:
-            return pages, []
+            return pages, [], []
         for n, page in enumerate(pdf.pages, 1):
             x0, top, x1, bottom = page.bbox
             width, height = (x1 - x0) or 1, (bottom - top) or 1
@@ -300,7 +439,9 @@ def _pdf_blocks(content: bytes):
             rest = page
             for bbox, _, _ in grids:
                 rest = rest.outside_bbox(bbox)
-            words = rest.extract_words(keep_blank_chars=True, x_tolerance_ratio=0.5, y_tolerance=3, use_text_flow=True)
+            turned = [c for c in rest.chars if _is_quarter(c)]
+            words = (rest.filter(lambda o: not _is_quarter(o)) if turned else rest).extract_words(
+                keep_blank_chars=True, x_tolerance_ratio=0.5, y_tolerance=3, use_text_flow=True)
             lines = [{"page": n, "kind": "text", "text": _clean(w["text"]),
                       "bbox": frac(w["x0"], w["top"], w["x1"], w["bottom"])}
                      for w in words if _clean(w["text"])]
@@ -311,6 +452,12 @@ def _pdf_blocks(content: bytes):
                     for line in lines:
                         if line["box"] == first["box"]:
                             line["title"] = True
+            # A run of text turned a quarter is one line of its own box (never stacked with upright lines, never the title).
+            for run in _quarter_runs(turned):
+                if _clean(run["text"]):
+                    lines.append({"page": n, "kind": "text", "text": _clean(run["text"]), "box": next(boxes), "rot": run["rot"],
+                                  "bbox": frac(run["x0"], run["top"], run["x1"], run["bottom"])})
+            layout.append(_pdf_layout(page, n, frac, [g[0] for g in grids], width * height))
             blocks += lines
             for t, (_, rows, table) in enumerate(grids, 1):
                 for r, row in enumerate(rows, 1):
@@ -324,7 +471,29 @@ def _pdf_blocks(content: bytes):
                             if c - 1 < len(cells) and cells[c - 1]:
                                 block["bbox"] = frac(*cells[c - 1])
                             blocks.append(block)
-    return pages, blocks
+    return pages, blocks, layout
+
+
+def _pdf_layout(page, number: int, frac, tables, area: float) -> Dict:
+    """{"page", "rects", "gaps"} of one pdf page: its filled rectangles outside the tables (white and page-sized ones left out) and the
+    closed words of what the reader could not read: a picture over PICTURE_SHARE of the page, characters it cannot decode."""
+    rects, gaps = [], set()
+    for r in page.rects:
+        color = _pdf_color(r.get("non_stroking_color")) if r.get("fill") else ""
+        w, h = r["x1"] - r["x0"], r["bottom"] - r["top"]
+        centre = ((r["x0"] + r["x1"]) / 2, (r["top"] + r["bottom"]) / 2)
+        if not color or color == "FFFFFF" or w * h >= BACKGROUND_SHARE * area or w <= 0 or h <= 0:
+            continue
+        if any(t[0] <= centre[0] <= t[2] and t[1] <= centre[1] <= t[3] for t in tables):
+            continue                        # a shaded table cell is not a bar or a swatch
+        rects.append({"at": frac(r["x0"], r["top"], r["x1"], r["bottom"]), "fill": color, "scope": 0})
+    if len(rects) > MAX_RECTS:
+        rects, gaps = rects[:MAX_RECTS], gaps | {GAP_SHAPES}
+    if any((im["x1"] - im["x0"]) * (im["bottom"] - im["top"]) >= PICTURE_SHARE * area for im in page.images):
+        gaps.add(GAP_PICTURE)
+    if any(c["text"].startswith("(cid:") or c["text"] == "\ufffd" for c in page.chars):
+        gaps.add(GAP_GLYPHS)
+    return {"page": number, "rects": rects, "gaps": [g for g in GAPS if g in gaps]}
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +908,7 @@ def _axis_lines(lines: List[Dict], claims) -> set:
 TOP_BAND = 0.2         # the page heading band: a line whose top is in the top 20% of the page height (George, 2026-10-23)
 
 
-def _band_cells(boxes: List[List[Dict]], others=None, date_box=None, years=None, top_band: bool = False) -> List[Dict]:
+def _band_cells(boxes: List[List[Dict]], others=None, date_box=None, years=None, top_band: bool = False, place: bool = False) -> List[Dict]:
     """Text boxes as a grid: boxes that overlap in height form a band of rows, each box a column of
     its band in left-to-right order, each line a row. Every cell keeps its box; a title line is marked.
     With `others` (a KPI panel or a roadmap: the extents of every text box of its page and its title), a cell whose
@@ -774,7 +943,9 @@ def _band_cells(boxes: List[List[Dict]], others=None, date_box=None, years=None,
                        **({"top_band": True} if top_band and line.get("bbox") and line["bbox"][1] < TOP_BAND else {}),
                        **({"tick": True} if line.get("tick") else {}),
                        **({"furniture": True} if line.get("furniture") else {}),
-                       **({"bar_year": years[id(line)]} if years and id(line) in years else {})} for i, line in enumerate(box)]
+                       **({"bar_year": years[id(line)]} if years and id(line) in years else {}),
+                       **({"at": line.get("bbox") or line.get("lbbox")} if place and (line.get("bbox") or line.get("lbbox")) else {}),
+                       **({"rot": line["rot"]} if place and line.get("rot") else {})} for i, line in enumerate(box)]
             lines += [line.get("bbox") for line in box]
         row += max(len(box) for box in members)
     if others is not None:

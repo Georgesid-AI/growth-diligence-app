@@ -1345,3 +1345,12 @@ Decided (rule 19): the mark is a field of the audit, not a second contract versi
 as for any recompute (issue #155 point h now takes effect there).
 Tests: `test_space_thousands_and_period_flags.py`, `test_as_of_default_and_stale_setup.py`, `claimRegister.test.js`, `auditForm.test.js`, `AuditSetup.test.jsx`; flags added to
 `test_gateway_data_boundary.py` (rule 14).
+
+## 31. Source association: one rule for the label, period and unit of a printed value (2026-10-26, George)
+Section 4 of docs/design/claim-review-simplified-design.md, built as docs/specs/source-association.md. The checker (§28) gains: the legend label of a bar's colour and the
+chart's rotated axis title as sources of the label and the unit; the figure's own header or label before a broader heading, with the review flag `sources disagree`; the review flag
+`source ambiguous` when several candidates remain (two legend labels for one colour, two axis titles, own sources stating several periods under a cited heading, several page
+headings stating different periods); the review flag `source not associated` (a date printed as a marker annotation in a chart's plot area; a period or label cited for the cell a
+value was not found in); and, for a value on no cell, the drop kind `no printed source` on a page the reader read completely, the review flag `extraction incomplete` on a page it
+did not. The page text sent to the model, rule 16 and the DECK_PIPELINE switch are unchanged. Period corrections keep the token, the cell ids and the actual/forecast marker, never
+the heading's prose. Tests: `test_source_association.py`; flags and kinds added to `test_gateway_data_boundary.py` (rule 14).

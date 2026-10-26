@@ -3320,6 +3320,54 @@ def test_the_page_grid_layout_fields_are_kept_with_the_grid_and_never_sent():
     assert set(page_check.check(grid, [], 12)) == {"items", "matched", "unmatched", "dropped", "periods_corrected"}
 
 
+def test_the_layout_evidence_is_python_only_stored_without_text_and_never_sent_or_logged(caplog):
+    """Source association (docs/specs/source-association.md, 2026-10-26): rotation, places, rectangles, colours, scopes, gaps and the association
+    record are Python's. The page text is one `p<n>r<row>c<col>: <text>` line per cell (a turned line is an ordinary line); the deck's layout is stored
+    as numbers, colour hex and closed words; a dropped claim leaves a Diagnostics line of closed words and numbers; no log line holds a line of the page."""
+    pytest.importorskip("pdfplumber")
+    import logging
+    import test_checker as tc
+    from pdf_support import pdf_page
+    from app.decks.parser import GAPS, parse_deck
+    from app.structures import association, checker as page_checker
+    secret = "Northwind quarterly plan"
+    parsed = parse_deck(pdf_page([(50, 560, 20, secret), (120, 460, 12, "42"), (600, 70, 12, "Enterprise")],
+                                 fills=[(100, 100, 60, 340, (0.12, 0.47, 0.71)), (560, 68, 22, 18, (0.12, 0.47, 0.71))],
+                                 rotated=[(60, 150, 12, "Revenue (EUR M)", "up")], pictures=[(10, 10, 400, 300)]), "deck.pdf")
+    grid, = page_grids.page_grids(parsed["blocks"], parsed["layout"])
+    text = page_pipeline.batch_text(page_pipeline.batches([grid], "Target Co", {})[0])
+    assert all(re.fullmatch(r"p1r\d+c\d+(?: title)?: .*", line) for line in text.split("\n")), "one id and one text per line, nothing else"
+    assert [line.split(": ", 1)[1] for line in text.split("\n")] == [c["text"] for c in sorted(grid["cells"], key=lambda c: (c["row"], c["col"]))], \
+        "after the id, each line is the cell's text and nothing the layout adds"
+    assert "Revenue (EUR M)" in text and "1F78B5" not in text and "scope" not in text and "gaps" not in text
+    assert not {"at", "rot", "lbbox", "layout", "rects", "fill", "scope", "gaps", "association"} & decks.GATEWAY_READABLE_FIELDS
+    layout, = parsed["layout"]
+    assert set(layout) == {"page", "rects", "gaps"} and set(layout["gaps"]) <= set(GAPS)
+    for r in layout["rects"]:
+        assert set(r) == {"at", "fill", "scope"} and re.fullmatch(r"[0-9A-F]{6}", r["fill"]) and all(isinstance(x, float) for x in r["at"])
+    assert secret not in json.dumps(layout)
+    item, = page_checker.check(grid, [tc.claim("r2c1", 999_000)], 12)["items"]
+    assert item["drop"] is None and item["flags"][-1] == page_checker.EXTRACTION_INCOMPLETE, "the picture is a gap: kept for extraction review"
+    assert set(item["association"]) == {"label", "period", "unit", "flags", "options"}
+    assert {item["association"][k] for k in ("label", "period", "unit")} <= set(association.SOURCES) | {None}
+    assert set(item["association"]["flags"]) <= set(association.FLAGS)
+    stored = json.dumps(page_pipeline._without_text(item))
+    for needle in (secret, "Enterprise", "Revenue (EUR M)"):
+        assert needle not in stored, f"{needle!r} in a stored item"
+    complete = parse_deck(pdf_page([(50, 560, 20, secret), (50, 480, 12, "$150,000 annual revenue run rate")]), "deck.pdf")
+    done, = page_grids.page_grids(complete["blocks"], complete["layout"])
+    dropped, = page_checker.check(done, [tc.claim("r2c1", 999_000)], 12)["items"]
+    assert dropped["drop"] == page_checker.NO_PRINTED_SOURCE == "no printed source"
+    db = tc._page_db(complete)
+    db[decks.TEXT_COLLECTION].docs[0]["layout"] = complete["layout"]
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": "page_claims", "claims": [tc.claim("p1r2c1", 999_000, period="2025")]})])
+    with caplog.at_level(logging.DEBUG):
+        assert asyncio.run(structures.process_deck(db, tc.AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep)) == "read"
+    doc, = db[decks.TEXT_COLLECTION].docs
+    assert doc["diagnostics"] == [{"page": 1, "kind": "no printed source", "metric": "revenue", "value": 999_000, "period": "2025"}]
+    assert secret not in caplog.text and "annual revenue run rate" not in caplog.text and secret not in json.dumps(doc["diagnostics"])
+
+
 def test_the_compare_script_prints_counts_values_cells_and_statuses_and_no_line_of_a_deck(capsys):
     """Rule 17 for scripts/compare_pipelines.py: its table and its rows-only lists carry deck file names, counts, rates, values, cell
     ids, types and statuses, never the text of a line. --diagnostic prints the text and runs on the 10 public test decks only."""
@@ -3412,9 +3460,11 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
                              "turnover, not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line",
                              "matches analyst claim", "basis and scenario disagree", "basis conflicts with period",
                              "cell corrected", "sign not on page", "period from page heading", "period from another cell",
-                             "period is a range", "growth dated to start year", "label mismatch")
-    assert (checker.DERIVED_FIGURE, checker.LAUNCH_NO_PRODUCT) == ("derived figure, not a claim", "launch date without product name"), \
-        "the two Diagnostics kinds of a dropped claim are closed words (George, 2026-10-26)"
+                             "period is a range", "growth dated to start year", "label mismatch", "sources disagree", "source ambiguous",
+                             "source not associated", "extraction incomplete")
+    assert (checker.DERIVED_FIGURE, checker.LAUNCH_NO_PRODUCT, checker.NO_PRINTED_SOURCE) == \
+        ("derived figure, not a claim", "launch date without product name", "no printed source"), \
+        "the Diagnostics kinds of a dropped claim are closed words (George, 2026-10-26; no printed source, source association 2026-10-26)"
     assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"), \
         "the flags that leave a claim in the main list (George, 2026-10-23: the unit and the period only flag)"
     assert set(checker.REVIEW_FLAGS) == set(checker.FLAGS) - set(checker.INFORMATIONAL_FLAGS)
