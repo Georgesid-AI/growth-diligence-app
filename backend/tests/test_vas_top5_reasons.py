@@ -42,7 +42,7 @@ def test_an_approved_ai_claim_that_beats_the_data_is_a_verified_beat():
 @pytest.mark.parametrize("claim, expected, marked", [
     ({"claim_type": "arr", "snippet": "ARR", "value": 600_000, "target_date": "2024-02"}, 600_000, None),
     # a short period annualised says so, with its period and multiplier (claim-groups.md section 6)
-    ({"claim_type": "mrr", "snippet": "MRR", "value": 50_000, "target_date": "2024-02"}, 600_000, "run-rate: 2024-02 × 12"),
+    ({"claim_type": "mrr", "snippet": "MRR", "value": 50_000, "target_date": "2024-02"}, 600_000, None),   # MRR times 12 is the metric's definition, not a run-rate
     ({"claim_type": "arr", "snippet": "ARR", "value": 9_000_000, "target_date": "2024-02"}, 5_000_000, None),     # capped at Target ARR
     ({"claim_type": "revenue", "snippet": "Revenue", "value": 300_000, "target_date": "2024-Q1"}, 1_200_000, "run-rate: 2024-Q1 × 4"),
     ({"claim_type": "revenue", "snippet": "Revenue", "value": 1_200_000, "target_date": "2023"}, 1_200_000, None),

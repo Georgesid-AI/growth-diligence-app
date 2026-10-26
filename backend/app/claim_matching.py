@@ -1593,9 +1593,9 @@ def _value_at_stake(row: dict, results: dict, settings: dict) -> dict:
         if row.get("currency") and reporting and row["currency"] != reporting and row.get("claimed_converted") is None:
             row["vas_reason"] = VAS_NO_LINK.format(why=FX_NEEDED)
             return row
-        months = 12
+        months, level = 12, False
         if row.get("metric") == "MRR" or kind == "mrr":
-            months = 1
+            months, level = 1, True       # MRR times 12 is the metric's definition of ARR, not an annualised flow: no run-rate mark
         elif row.get("metric") != "ARR" and kind != "arr":
             start, end = _month_of(row.get("period_start")), _month_of(row.get("period_end"))
             if start is None or end is None:
@@ -1603,7 +1603,7 @@ def _value_at_stake(row: dict, results: dict, settings: dict) -> dict:
                 return row
             months = max(end - start + 1, 1)
         row["value_at_stake_arr"] = min(abs(amount) * 12 / months, float(settings["target_arr"]))
-        if months != 12:
+        if months != 12 and not level:
             row["vas_reason"] = VAS_RUN_RATE.format(period=row.get("period") or f"{months} month{'s' if months != 1 else ''}",
                                                     multiplier=f"{12 / months:g}")
     else:

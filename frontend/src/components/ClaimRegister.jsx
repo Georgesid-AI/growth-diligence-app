@@ -12,7 +12,7 @@ import {
   GROWTH_BASES, SET_GROWTH_BASIS,
 } from "@/lib/claimRegister";
 import { missingText } from "@/lib/periods";
-import { GROUP_DETAILS, countsOf, countsText, partsLabel, partsOf, visibleRows } from "@/lib/claimGroups";
+import { countsOf, countsText, detailsLabel, partsOf, visibleRows } from "@/lib/claimGroups";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
@@ -120,7 +120,8 @@ export function GrowthBasisCell({ row, onSet }) {
   );
 }
 
-/** The parts of a reconciled annual total, under its Details: every part keeps its own claim, period, label and reason
+/** The parts of a reconciled annual total, the parts of another set that reconciles too and the figures stated again, under the row's Details:
+ *  every one keeps its own claim, period, label and reason, and a contradicted one is counted on the collapsed line
  *  (docs/specs/claim-groups.md section 4). */
 function GroupParts({ row, rows, ccy }) {
   const [open, setOpen] = useState(false);
@@ -129,12 +130,14 @@ function GroupParts({ row, rows, ccy }) {
   return (
     <div data-testid="register-group">
       <button type="button" className="text-sky-700 underline underline-offset-2" aria-expanded={open} data-testid="register-group-toggle"
-        onClick={() => setOpen((o) => !o)}>{GROUP_DETAILS} · {partsLabel(parts.filter((p) => p.group_role === "part").length)}</button>
+        onClick={() => setOpen((o) => !o)}>{detailsLabel(parts)}</button>
       {open && (
         <ul className="mt-1 space-y-1 border-l-2 border-[#E5E7EB] pl-3" data-testid="register-group-parts">
           {parts.map((p) => (
             <li key={p.claim_id} data-testid="register-group-part">
-              <span className="font-mono text-slate-700">#{p.rank}</span> <span className="text-slate-900">{claimCellText(p, ccy)}</span>
+              <span className="font-mono text-slate-700">#{p.rank}</span> {p.group_role === "repeat" && <span className="text-slate-600">Also stated: </span>}
+              <span className="text-slate-900">{claimCellText(p, ccy)}</span>
+              {p.group_role === "repeat" && <span className="font-mono text-slate-500"> · {p.page_ref}</span>}
               <span className="font-mono text-slate-500"> · {p.period || NO_DATE}</span> · <EvidenceLabel row={p} testId="register-group-part-evidence" />
               <span className="text-slate-600"> · {p.reason}</span>
               {p.relationship && <span className="text-slate-500"> · {p.relationship}</span>}

@@ -123,13 +123,34 @@ def test_the_tolerance_is_two_percent_of_the_total_inclusive():
         assert len(related(rows)["groups"]) == expect, parts_sum
 
 
-def test_quarters_and_halves_together_are_never_summed_and_only_the_reconciling_set_groups():
+def test_quarters_and_halves_that_both_reconcile_group_under_the_finer_set_and_the_halves_go_under_details():
     rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([480_000, 520_000])]
+    found = related(rows)
+    assert found["reviews"] == [], "no card: the finer set is the default"
+    assert [g["partition"] for g in found["groups"]] == ["quarter"]
+    group = found["groups"][0]
+    assert group["parts"] == ["q10", "q11", "q12", "q13"] and group["other_parts"] == ["h20", "h21"] and group["other_partitions"] == ["half"]
+    assert roles(rows) == {"a1": "total", "q10": "part", "q11": "part", "q12": "part", "q13": "part", "h20": "also", "h21": "also"}
+    assert len({r["group_id"] for r in rows}) == 1
+    halves_ = [r for r in rows if r["claim_id"].startswith("h")]
+    assert all(r["relationship"] == "Halves also reconcile with this total; shown under its Details" for r in halves_)
+    assert all(r["value_at_stake_arr"] is None and r["vas_reason"] == cg.VAS_IN_TOTAL for r in halves_), "the halves add no second exposure"
+    assert all(cg.is_subordinate(r) and cg.is_ineligible(r) for r in halves_)
+    assert cg.counts(rows) == {"items": 1, "claims": 7, "groups": 1}
+
+
+def test_months_are_finer_than_quarters_and_quarters_finer_than_halves():
+    rows = [annual(1_000_000), *months([100_000] * 4 + [75_000] * 8), *quarters([400_000, 225_000, 225_000, 150_000])]
+    assert [g["partition"] for g in related(rows)["groups"]] == ["month"]
+    assert roles(rows)["q10"] == "also" and roles(rows)["m30"] == "part"
+
+
+def test_a_contradicted_half_that_also_reconciles_surfaces_on_the_group_item():
+    rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([480_000, 520_000])]
+    rows[5]["evidence_label"] = "Contradicted"
     related(rows)
-    # the quarters sum to 1,000,000 and the halves to 1,000,000: both reconcile, so nothing is chosen for the analyst
-    assert roles(rows) == {r["claim_id"]: None for r in rows}
-    assert all(r["value_at_stake_arr"] is not None for r in rows if r["claim_id"] != "a1" and r["claim_id"].startswith(("q", "h"))), \
-        "nothing is folded into a total, so no claim loses its exposure"
+    assert cg.effective_label(rows[0], cg.members(rows)) == "Contradicted"
+    assert [m["claim_id"] for m in cg.contradicted_members(rows[0], cg.members(rows))] == ["h20"]
 
 
 def test_when_only_the_halves_reconcile_they_are_the_group_and_the_quarters_stay_independent():
@@ -144,30 +165,6 @@ def test_a_set_that_mixes_granularities_is_no_partition():
     rows = [annual(1_000_000), row("q10", 240_000, "2024-Q1"), row("q11", 250_000, "2024-Q2"), row("h21", 510_000, "2024-H2")]
     found = related(rows)
     assert found["groups"] == [] and all(r["group_role"] is None for r in rows)
-
-
-def test_two_sets_that_both_reconcile_are_a_question_with_no_candidate_selected():
-    rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([490_000, 510_000])]
-    found = related(rows)
-    assert found["groups"] == []
-    assert len(found["reviews"]) == 1
-    review = found["reviews"][0]
-    assert review["kind"] == "partition" and review["state"] == "open"
-    assert sorted(c["partition"] for c in review["candidates"]) == ["half", "quarter"]
-    assert not any(c["chosen"] for c in review["candidates"]), "nothing is selected while several candidates remain"
-    assert all("sum to" in c["hint"] for c in review["candidates"]), "each candidate carries its reconciliation hint"
-    assert "choose one" in rows[0]["relationship"]
-
-
-def test_the_analysts_choice_of_a_set_of_parts_forms_the_group_and_nothing_else_changes():
-    rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([490_000, 510_000])]
-    review = related(rows)["reviews"][0]
-    choices = {review["id"]: {"kind": "partition", "chosen": "half", "context": review["context"]}}
-    rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([490_000, 510_000])]
-    found = related(rows, choices)
-    assert [g["partition"] for g in found["groups"]] == ["half"] and found["reviews"] == []
-    assert found["groups"][0]["chosen"] == [review["id"]], "the group says which choice it rests on, so it can be undone"
-    assert roles(rows)["q10"] is None, "the quarters stay claims of their own"
 
 
 # --- 2. negative and zero totals ------------------------------------------------------------------------------------------------
@@ -548,17 +545,6 @@ def test_a_choice_expires_when_a_candidate_is_added_removed_or_the_fiscal_calend
     assert related(conflict_rows()[:1] + conflict_rows()[2:], choices)["conflicts"] == [], "with one candidate left there is no conflict"
 
 
-def test_a_choice_for_a_set_of_parts_expires_after_a_part_is_edited():
-    rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([490_000, 510_000])]
-    review = related(rows)["reviews"][0]
-    choices = {review["id"]: {"kind": "partition", "chosen": "half", "context": review["context"]}}
-    rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([490_000, 510_000])]
-    assert related(rows, choices)["reviews"] == []
-    rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([490_000, 509_000])]
-    again = related(rows, choices)
-    assert [r["kind"] for r in again["reviews"]] == ["partition"] and again["groups"] == [], "an edited half expires the choice"
-
-
 def test_a_conflict_resolves_when_a_figure_is_corrected_scoped_or_excluded():
     for fix in ("corrected", "scoped", "excluded"):
         rows = conflict_rows()
@@ -573,13 +559,15 @@ def test_a_conflict_resolves_when_a_figure_is_corrected_scoped_or_excluded():
         assert [g["total"] for g in found["groups"]] == ["a1"], f"{fix}: the remaining figure reconciles with the quarters"
 
 
-def test_two_annual_figures_within_the_tolerance_are_the_same_figure_not_a_conflict_and_the_repeat_stays_a_claim():
-    rows = [annual(1_000_000, cid="a1"), annual(1_010_000, cid="a2", rank=2), *quarters([240_000, 250_000, 250_000, 260_000])]
+def test_two_annual_figures_within_the_tolerance_are_the_same_figure_not_a_conflict_and_the_repeat_folds_into_the_group():
+    rows = [annual(1_000_000, cid="a1"), annual(1_010_000, cid="a2", rank=2, page_ref="slide 8"), *quarters([240_000, 250_000, 250_000, 260_000])]
     found = related(rows)
     assert found["conflicts"] == [] and len(found["groups"]) == 1 and found["groups"][0]["total"] == "a1"
-    assert roles(rows)["a2"] is None, "the same figure stated again is not folded into the group"
-    assert rows[1]["relationship"] == "States the same figure as the total of its group again; kept as a claim of its own"
-    assert rows[1]["value_at_stake_arr"] == 4_040_000, "and it keeps its own exposure (the memo counts overlapping claims once)"
+    assert roles(rows)["a2"] == "repeat" and rows[1]["group_id"] == rows[0]["group_id"], "the repeat folds into its total's group"
+    assert rows[1]["relationship"] == "Same figure as #1 (slide 1); counted once"
+    assert rows[1]["value_at_stake_arr"] is None and rows[1]["vas_reason"] == cg.VAS_REPEAT, "and adds no exposure"
+    assert cg.counts(rows) == {"items": 1, "claims": 6, "groups": 1}
+    assert cg.is_subordinate(rows[1]) and cg.is_ineligible(rows[1])
 
 
 def test_a_conflict_between_parts_blocks_that_set_and_is_noted_on_the_total():
@@ -607,3 +595,160 @@ def test_the_groups_add_three_register_fields_and_no_engine_output_field():
     assert cm.FIELDS[-3:] == ("group_id", "group_role", "relationship")
     assert metrics.CONTRACT_VERSION == 9, "the engine output is unchanged: results stored under contract 9 need no re-run"
     assert not {"group_id", "group_role", "relationship"} & set(metrics.MetricsPayload.model_fields)
+
+
+# --- 12. the review of PR 187: gates, open questions, expiry, pending parts, repeats, labels --------------------------------------------
+
+def test_a_group_item_whose_part_is_contradicted_has_that_parts_gate_as_its_key_gate():
+    rows = register(copy.deepcopy(OFFSETTING))
+    by_id = {r["claim_id"]: r for r in rows}
+    assert by_id["c1"]["evidence_label"] == "Verified" and not by_id["c1"].get("gate_sentence")
+    assert by_id["c4"]["evidence_label"] == "Contradicted" and by_id["c4"]["gate_sentence"]
+    ver = verdict_mod.verdict(rows, engine_results(), None)
+    five = ver["top5"]["in_force"]
+    assert five == ["c1"]
+    key = verdict_mod.key_gates(rows, five)
+    assert [g["claim_id"] for g in key["gates"]] == ["c4"] and key["saved"] == 1
+    marked = {r["claim_id"]: r["key_gate"] for r in verdict_mod.mark_key_gates(rows, five)}
+    assert marked["c4"] is True and marked["c1"] is False
+    thesis = verdict_mod.default_thesis({}, ver, key, str)
+    assert "every selected claim is Verified" not in thesis["condition"] and thesis["condition"] == verdict_mod.gate_text(by_id["c4"])
+
+
+def test_a_group_item_whose_members_are_all_verified_has_no_key_gate_and_the_thesis_says_so():
+    rows = register([cand("c1", 187_700, "2023"), cand("c2", 44_845, "2023-Q1"), cand("c3", 46_204, "2023-Q2"),
+                     cand("c4", 47_604, "2023-Q3"), cand("c5", 49_047, "2023-Q4")])
+    ver = verdict_mod.verdict(rows, engine_results(), None)
+    key = verdict_mod.key_gates(rows, ver["top5"]["in_force"])
+    assert key["gates"] == [] and verdict_mod.default_thesis({}, ver, key, str)["condition"] == "No condition: every selected claim is Verified."
+
+
+@pytest.mark.parametrize("question", [{"definition_check": "ask"}, {"turnover_state": "ask"}, {"growth_basis": "unknown"},
+                                       {"evidence_label": "Unverified", "reason": "required field unknown: period"}])
+def test_a_row_with_an_open_question_is_not_grouped_until_it_is_answered(question):
+    answered = {"definition_check": "yes"} if "definition_check" in question else {"turnover_state": "answered"} if "turnover_state" in question \
+        else {"growth_basis": "yoy"} if "growth_basis" in question else {"reason": "within ±5% of the claim", "evidence_label": "Verified"}
+    for part in (0, 2):
+        rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000])]
+        rows[1 + part].update(question)
+        found = related(rows)
+        assert found["groups"] == [] and all(r["group_role"] is None for r in rows), f"{question}: its control stays on its own row"
+        rows[1 + part].update(answered)
+        assert [g["total"] for g in related(rows)["groups"]] == ["a1"], f"{question}: answered, it joins the group"
+    total = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000])]
+    total[0].update(question)
+    assert related(total)["groups"] == [], "an annual total with a question is not a total yet"
+
+
+def test_a_saved_total_choice_expires_when_the_parts_of_a_reconciling_set_are_edited():
+    rows = conflict_rows()
+    review = related(rows)["reviews"][0]
+    choices = {review["id"]: {"kind": "total", "chosen": review["candidates"][0]["identity"], "context": review["context"]}}
+    assert [c["state"] for c in related(conflict_rows(), choices)["conflicts"]] == ["chosen"]
+    edited = conflict_rows()
+    edited[5]["claimed_value"] = 510_000       # the quarters now sum to 1,250,000 and reconcile with the other figure, not the chosen one
+    found = related(edited, choices)
+    assert [c["state"] for c in found["conflicts"]] == ["open"], "the hint the analyst chose on has changed: it is a new question"
+    assert {c["claim_id"]: c["hint"] for c in found["reviews"][0]["candidates"]}["a2"].startswith("quarters sum to")
+
+
+def test_a_saved_total_choice_survives_an_edit_to_parts_outside_every_reconciling_set():
+    rows = conflict_rows() + quarters([5, 6, 7, 8], year="2022", start_at=70)
+    review = related(rows)["reviews"][0]
+    choices = {review["id"]: {"kind": "total", "chosen": review["candidates"][0]["identity"], "context": review["context"]}}
+    again = conflict_rows() + quarters([5, 6, 7, 9], year="2022", start_at=70)
+    assert [c["state"] for c in related(again, choices)["conflicts"]] == ["chosen"]
+
+
+CONFLICT_CLAIMS = [cand("c1", 187_700, "2023"), cand("c2", 250_000, "2023"), cand("c3", 44_845, "2023-Q1"), cand("c4", 46_204, "2023-Q2"),
+                   cand("c5", 47_604, "2023-Q3"), cand("c6", 49_047, "2023-Q4"), cand("c7", 90_000, "2023-Q1", claim_type="costs")]
+
+
+def test_while_an_annual_conflict_is_open_the_parts_of_its_reconciling_sets_take_no_top_five_slot_and_no_exposure():
+    rows = register(copy.deepcopy(CONFLICT_CLAIMS))
+    by_id = {r["claim_id"]: r for r in rows}
+    for cid in ("c3", "c4", "c5", "c6"):
+        assert by_id[cid]["group_role"] == "pending_part" and cg.is_ineligible(by_id[cid]) and not cg.is_subordinate(by_id[cid]), \
+            "waiting parts stay visible in the register"
+        assert by_id[cid]["value_at_stake_arr"] is None and by_id[cid]["vas_reason"] == cg.VAS_PENDING
+    assert verdict_mod.proposal(rows) == ["c7"], "the unrelated claim is the only one left to select"
+    assert by_id["c7"]["group_role"] is None
+
+
+def test_the_waiting_parts_return_to_independent_claims_when_the_figure_chosen_has_no_parts():
+    rows = register(copy.deepcopy(CONFLICT_CLAIMS))
+    review = cg.relate(rows, fiscal_year_end=12)["reviews"][0]
+    other = next(c for c in review["candidates"] if c["claim_id"] == "c2")["identity"]
+    rows = register(copy.deepcopy(CONFLICT_CLAIMS), group_choices={review["id"]: {"kind": "total", "chosen": other, "context": review["context"]}})
+    by_id = {r["claim_id"]: r for r in rows}
+    assert by_id["c3"]["group_role"] is None and by_id["c3"]["vas_reason"].startswith("run-rate: "), "the conflict is settled: no longer waiting"
+    assert by_id["c1"]["group_role"] == "alternative"
+
+
+def test_the_parts_of_the_chosen_figure_become_a_group_when_the_conflict_is_settled():
+    rows = register(copy.deepcopy(CONFLICT_CLAIMS))
+    review = cg.relate(rows, fiscal_year_end=12)["reviews"][0]
+    chosen = next(c for c in review["candidates"] if c["claim_id"] == "c1")["identity"]
+    rows = register(copy.deepcopy(CONFLICT_CLAIMS), group_choices={review["id"]: {"kind": "total", "chosen": chosen, "context": review["context"]}})
+    assert {r["claim_id"]: r["group_role"] for r in rows if r["claim_id"] in ("c1", "c3", "c6")} == {"c1": "total", "c3": "part", "c6": "part"}
+
+
+def test_the_same_annual_figure_stated_twice_folds_into_one_row_also_when_no_group_forms():
+    rows = [annual(1_000_000, cid="a1"), annual(1_005_000, cid="a2", rank=2, page_ref="slide 8")]
+    found = related(rows)
+    assert found["groups"] == [] and found["conflicts"] == []
+    assert roles(rows) == {"a1": None, "a2": "repeat"}
+    assert rows[0]["group_id"] and rows[0]["group_id"] == rows[1]["group_id"], "the lead and its repeat share an id, so the screen can show both sources"
+    assert rows[1]["relationship"] == "Same figure as #1 (slide 1); counted once"
+    assert rows[1]["value_at_stake_arr"] is None and rows[1]["vas_reason"] == cg.VAS_REPEAT
+    assert cg.counts(rows) == {"items": 1, "claims": 2, "groups": 0}
+    assert not cg.is_ineligible(rows[0]) and cg.is_ineligible(rows[1])
+
+
+def test_a_conflict_candidate_stated_twice_folds_and_the_question_still_lists_both_statements():
+    rows = [annual(1_000_000, cid="a1"), annual(1_004_000, cid="a3", rank=3, page_ref="slide 9"), annual(1_250_000, cid="a2", rank=2), *quarters([240_000, 250_000, 250_000, 260_000])]
+    found = related(rows)
+    assert roles(rows)["a3"] == "repeat" and roles(rows)["a1"] == "candidate" and roles(rows)["a2"] == "candidate"
+    assert rows[0]["group_id"] == rows[1]["group_id"] != rows[2]["group_id"], "each statement folds with its own lead, not with the other candidate"
+    review = found["reviews"][0]
+    assert [c["claim_ids"] for c in review["candidates"]] == [["a1", "a3"], ["a2"]]
+    assert cg.counts(rows) == {"items": 6, "claims": 7, "groups": 0}
+
+
+def test_a_part_stated_twice_folds_into_its_group_too():
+    rows = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), row("q99", 250_500, "2024-Q2", rank=99, page_ref="slide 12")]
+    found = related(rows)
+    assert [g["total"] for g in found["groups"]] == ["a1"]
+    repeat = rows[-1]
+    assert repeat["group_role"] == "repeat" and repeat["group_id"] == rows[0]["group_id"]
+    assert repeat["relationship"] == "Same figure as #11 (slide 11); counted once" and repeat["value_at_stake_arr"] is None
+    assert cg.counts(rows) == {"items": 1, "claims": 6, "groups": 1}
+
+
+def test_a_contradicted_figure_stated_twice_is_listed_once():
+    rows = [annual(1_000_000, cid="a1"), annual(1_005_000, cid="a2", rank=2)]
+    for r in rows:
+        r.update(evidence_label="Contradicted", gloss="€4,000 lower (miss)", observed_source={"file": "rev.xlsx"})
+    related(rows)
+    assert [o["claim_id"] for o in verdict_mod.other_contradictions(rows, [])] == ["a1"]
+
+
+def test_a_passed_over_contradicted_figure_is_not_listed_with_the_other_contradictions():
+    rows = conflict_rows()
+    review = related(rows)["reviews"][0]
+    choices = {review["id"]: {"kind": "total", "chosen": review["candidates"][0]["identity"], "context": review["context"]}}
+    rows = conflict_rows()
+    rows[1].update(evidence_label="Contradicted", gloss="€250,000 higher (beat)", observed_source={"file": "rev.xlsx"})
+    found = related(rows, choices)
+    assert rows[1]["group_role"] == "alternative"
+    assert verdict_mod.other_contradictions(rows, []) == [], "it is listed once, under Unresolved conflicts"
+    assert [c["state"] for c in found["conflicts"]] == ["chosen"]
+
+
+def test_grouping_keys_on_the_metric_not_on_the_claim_type():
+    total = annual(2_000_000, claim_type="revenue", metric="ARR")             # "ARR FY2024" typed as revenue
+    observation = row("d1", 2_010_000, "2024-12", claim_type="arr", metric="ARR")      # "Dec 2024 ARR" typed as arr
+    rows = [total, observation]
+    assert [g["total"] for g in related(rows)["groups"]] == ["a1"] and roles(rows) == {"a1": "total", "d1": "part"}
+    other = [annual(2_000_000, claim_type="revenue", metric=None), row("d1", 2_010_000, "2024-12", claim_type="costs", metric=None)]
+    assert related(other)["groups"] == [], "with no metric the claim type still tells revenue from costs"

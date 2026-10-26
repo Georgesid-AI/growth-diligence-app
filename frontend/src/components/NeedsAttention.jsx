@@ -7,7 +7,7 @@ import { CandidateRow } from "@/components/DeckPanel";
 import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
 import * as apiModule from "@/lib/api";
 import { answerCorrection, answerDefinitionCheck, answerTurnover, chooseGroup, decideColumns, getClaimRegister, getDatasets, getDecks, undoGroupChoice, updateCandidate } from "@/lib/api";
-import { CHOOSE_FIGURE, CHOOSE_SET, CHOSEN, EXCLUDE, EXCLUDE_REASON, KEPT_NOTE, UNDO_CHOICE, figureText, questionTitle, sourceText } from "@/lib/claimGroups";
+import { CHOOSE_FIGURE, CHOSEN, EXCLUDE, EXCLUDE_REASON, KEPT_NOTE, UNDO_CHOICE, figureText, questionTitle, sourceText } from "@/lib/claimGroups";
 import { EDIT_REASONS } from "@/lib/deckClaims";
 import { POPULATION_ANSWERS, POPULATION_QUESTION, asksPopulationOnly, claimPeriod, claimValue, flagsText, scenarioText, sourceRef, typeLabel, waitingCorrections } from "@/lib/deckClaims";
 import { definitionOf, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
@@ -66,7 +66,7 @@ function ClaimCard({ item, busy, act, auditId }) {
   );
 }
 
-/** A question the groups raise (docs/specs/claim-groups.md section 5): which annual figure, or which set of parts, with each candidate, its source
+/** A question the groups raise (docs/specs/claim-groups.md section 5): which annual figure, with each candidate, its source
  *  and the reconciliation hint. Nothing is selected for the analyst. A figure passed over stays a claim; it can be excluded here with a reason,
  *  or corrected or scoped in the claims list. A conflict that stays after a choice offers Undo. */
 function GroupCard({ item, busy, act, auditId }) {
@@ -79,18 +79,18 @@ function GroupCard({ item, busy, act, auditId }) {
       <div className="text-amber-800 mb-1" data-testid="attention-group-reason">{q.reason}</div>
       <ul className="space-y-1.5">
         {q.candidates.map((c) => (
-          <li key={c.identity || c.partition} className="flex flex-wrap items-start justify-between gap-2" data-testid="attention-group-candidate">
+          <li key={c.identity} className="flex flex-wrap items-start justify-between gap-2" data-testid="attention-group-candidate">
             <div>
-              <span className="font-mono text-slate-900">{q.kind === "partition" ? c.label : figureText(c)}</span>
-              {q.kind === "total" && <span className="font-mono text-slate-500"> · {sourceText(c)}</span>}
+              <span className="font-mono text-slate-900">{figureText(c)}</span>
+              <span className="font-mono text-slate-500"> · {sourceText(c)}</span>
               {c.hint && <div className="text-[11px] text-slate-600" data-testid="attention-group-hint">{c.hint}</div>}
             </div>
             <div className="whitespace-nowrap">
               {c.chosen ? <span className="text-[11px] font-mono text-slate-600 mr-1.5" data-testid="attention-group-chosen">{CHOSEN}</span> : (
                 <Button size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="attention-group-choose"
-                  onClick={() => act(q.id, () => chooseGroup(auditId, q.id, c.identity || c.partition))}>{q.kind === "partition" ? CHOOSE_SET : CHOOSE_FIGURE}</Button>
+                  onClick={() => act(q.id, () => chooseGroup(auditId, q.id, c.identity))}>{CHOOSE_FIGURE}</Button>
               )}
-              {q.kind === "total" && !c.chosen && (c.claim_ids || [c.claim_id]).every((id) => !String(id).includes("#")) && (
+              {!c.chosen && (c.claim_ids || [c.claim_id]).every((id) => !String(id).includes("#")) && (
                 <>
                   <select value={reason} onChange={(e) => setReason(e.target.value)} className="h-7 rounded-md border border-[#E5E7EB] bg-white px-1 text-xs mr-1.5" data-testid="attention-group-reason-select" aria-label={EXCLUDE_REASON}>
                     <option value="">{EXCLUDE_REASON}</option>
@@ -104,7 +104,7 @@ function GroupCard({ item, busy, act, auditId }) {
           </li>
         ))}
       </ul>
-      {q.kind === "total" && <p className="mt-1 text-[11px] text-slate-500" data-testid="attention-group-kept">{KEPT_NOTE}</p>}
+      <p className="mt-1 text-[11px] text-slate-500" data-testid="attention-group-kept">{KEPT_NOTE}</p>
       {chosen && (
         <Button size="sm" variant="ghost" className="h-7 mt-1" disabled={busy !== null} data-testid="attention-group-undo"
           onClick={() => act(q.id, () => undoGroupChoice(auditId, q.id))}>{UNDO_CHOICE}</Button>

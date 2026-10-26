@@ -1475,9 +1475,10 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "SMOOTHNESS_LIMIT_POINTS", "SMOOTHNESS_MONTHS",
                             # docs/specs/claim-groups.md: the relationships between claims, the saved choices and their texts
                             "group_id", "group_role", "relationship", "group_choices", "claim_groups", "choose_group", "undo_group_choice",
-                            "VAS_IN_TOTAL", "VAS_RUN_RATE", "NOTE_TOTAL", "NOTE_PART", "NOTE_REPEAT", "NOTE_DIFFERS", "NOTE_PARTIAL", "NOTE_AMBIGUOUS",
-                            "NOTE_TAKEN", "NOTE_CONFLICT", "NOTE_ALTERNATIVE", "NOTE_CHOOSE", "NOTE_SEVERAL", "REASON_TOTAL", "REASON_PARTITION",
-                            "context_hash", "annotate", "relate", "GroupChoice",
+                            "VAS_IN_TOTAL", "VAS_PENDING", "VAS_REPEAT", "VAS_RUN_RATE", "NOTE_TOTAL", "NOTE_PART", "NOTE_ALSO", "NOTE_REPEAT", "NOTE_PENDING",
+                            "NOTE_DIFFERS", "NOTE_PARTIAL", "NOTE_AMBIGUOUS", "NOTE_TAKEN", "NOTE_CONFLICT", "NOTE_ALTERNATIVE", "NOTE_CHOOSE",
+                            "REASON_TOTAL", "NO_EXPOSURE", "SUBORDINATE", "context_hash", "annotate", "relate", "GroupChoice",
+                            "has_open_question", "scope_period", "is_repeat_of_listed",
                             # docs/specs/crm-dedup-clustering.md: the won-deal counts, the repeated rows and the clustering bands
                             "won_deal_closes", "rows_list", "CLUSTERING_DAYS", "CLUSTERING_MIN_DEALS", "CLUSTERING_FEW",
                             "CLUSTERING_AMBER_PCT", "CLUSTERING_RED_PCT", "CLUSTERING_FINDING",
@@ -1626,6 +1627,27 @@ def test_the_gateway_reads_no_saved_group_choice_and_the_provider_payload_holds_
     for needle in ("group_choices", "feedfacecafe0001", "deadbeefdeadbeef", "0123456789abcdef", GATE_SENTINEL, "relationship"):
         assert needle not in sent, f"{needle!r} reached the provider"
     assert not {"group_id", "group_role", "relationship"} & decks.GATEWAY_READABLE_FIELDS
+
+
+def test_a_relationship_note_and_an_exposure_reason_name_a_rank_and_a_page_never_a_file_or_deck_text():
+    """The notes of a repeat, a part under another set, a part waiting for a conflict and a total (claim-groups.md sections 3 and 4) are built
+    from the rank and the page label of a row and closed words; the file name and the snippet of a deck never enter them."""
+    from test_claim_groups import annual, halves, quarters, related
+    secret = "client_secret_board.pptx"
+    rows = [annual(1_000_000, cid="a1"), annual(1_004_000, cid="a2", rank=2), annual(1_300_000, cid="a3", rank=3), *quarters([240_000, 250_000, 250_000, 260_000]),
+            *halves([480_000, 520_000])]
+    for r in rows:
+        r.update(deck_file=secret, snippet=f"{secret} Revenue FY2024 EUR secret-snippet")
+    related(rows)
+    texts = [r["relationship"] or "" for r in rows] + [r["vas_reason"] or "" for r in rows]
+    assert any("Same figure as" in t for t in texts) and any("waiting for the choice" in t for t in texts)
+    for text in texts:
+        assert secret not in text and "secret-snippet" not in text, text
+    done = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([480_000, 520_000])]
+    for r in done:
+        r.update(deck_file=secret)
+    related(done)
+    assert any("also reconcile" in (r["relationship"] or "") for r in done) and not any(secret in (r["relationship"] or "") for r in done)
 
 
 def test_the_register_log_lines_name_counts_per_label_and_the_run_only():

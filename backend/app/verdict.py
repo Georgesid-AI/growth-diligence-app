@@ -156,9 +156,19 @@ def flag_text(row: dict) -> str:
 
 def key_gates(rows: List[dict], five_ids: Iterable[str]) -> dict:
     """The key gates (simplified-flow.md section 3): the gates of the non-Verified rows of the five in force, never padded; a Verified row has
-    none and a gate outside the five is not promoted. Fewer than 3 prints W25; none, W12. `all_key` is true below 3."""
+    none and a gate outside the five is not promoted. A group's item has the gate of its total, or, when the total is Verified, the gate of
+    its worst Contradicted member: a verified annual total does not leave a contradicted quarter without a condition (claim-groups.md
+    section 4). Fewer than 3 prints W25; none, W12. `all_key` is true below 3."""
     five = set(five_ids)
-    gates = [r for r in rows if r["claim_id"] in five and r.get("gate_sentence")]
+    by_group = cg.members(rows)
+    gates = []
+    for r in rows:
+        if r["claim_id"] not in five:
+            continue
+        gate = r if r.get("gate_sentence") else next((m for m in sorted(cg.contradicted_members(r, by_group), key=lambda m: m["rank"])
+                                                        if m.get("gate_sentence")), None)
+        if gate is not None:
+            gates.append(gate)
     gates.sort(key=lambda r: r["rank"])
     if not gates:
         note = W12_NO_KEY_GATES
@@ -277,8 +287,10 @@ def other_contradictions(rows: List[dict], five_ids: Iterable[str]) -> List[dict
     five = set(five_ids)
     by_group = cg.members(rows)
     five |= {m["claim_id"] for r in rows if r["claim_id"] in five and r.get("group_role") == cg.TOTAL for m in by_group.get(r["group_id"], ())}
+    # A figure passed over for the preferred one is listed once, under Unresolved conflicts, and a repeat is listed with the figure it repeats.
     return [{"claim_id": r["claim_id"], "rank": r["rank"], "metric": claim_name(r), "gap": r.get("gloss"), "source": _source_text(r)}
-            for r in rows if r["evidence_label"] == "Contradicted" and r["claim_id"] not in five]
+            for r in rows if r["evidence_label"] == "Contradicted" and r["claim_id"] not in five and r.get("group_role") != cg.ALTERNATIVE
+            and not cg.is_repeat_of_listed(r, rows)]
 
 
 def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dict], open_questions: int = 0,

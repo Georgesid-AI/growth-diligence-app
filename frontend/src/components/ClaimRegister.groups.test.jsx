@@ -53,7 +53,7 @@ test("the total is shown once and its four parts are not rows of the list", asyn
 test("Details opens the parts, each with its own period, label and reason; a contradicted part is not hidden", async () => {
   const { host, done } = await mount(GROUPED);
   try {
-    expect(q(host, "register-group-toggle").textContent).toBe("Details · 4 parts");
+    expect(q(host, "register-group-toggle").textContent).toBe("Details · 4 parts · 1 contradicted");     // the collapsed line carries the part's contradiction
     await act(async () => { q(host, "register-group-toggle").click(); });
     const parts = [...host.querySelectorAll('[data-testid="register-group-part"]')];
     expect(parts.map((p) => p.textContent.includes("2024-Q"))).toEqual([true, true, true, true]);
@@ -71,5 +71,44 @@ test("with nothing grouped there is no count line and a row says why its parts w
     expect(q(host, "claim-register-counts")).toBeNull();
     expect(q(host, "register-relationship").textContent).toBe("Quarters: 3 of 4 stated; kept as independent claims");
     expect(q(host, "register-group-toggle")).toBeNull();
+  } finally { await done(); }
+});
+
+test("the collapsed line shows the contradiction of a part before Details is opened, and a total whose parts are all verified shows none", async () => {
+  const { host, done } = await mount(GROUPED);
+  try {
+    expect(q(host, "register-group-toggle").textContent).toContain("1 contradicted");
+    expect(q(host, "register-group-parts")).toBeNull();
+  } finally { await done(); }
+  const clean = GROUPED.map((r) => (r.claim_id === "q2" ? { ...r, evidence_label: "Verified", reason: "within ±5% of the claim" } : r));
+  const again = await mount(clean);
+  try { expect(q(again.host, "register-group-toggle").textContent).toBe("Details · 4 parts"); } finally { await again.done(); }
+});
+
+test("the parts of another set and the figures stated again sit under Details; a repeat names its page", async () => {
+  const rows = [...GROUPED,
+    row("h1", 7, "2024-H1", 500000, { group_id: "g1", group_role: "also", relationship: "Halves also reconcile with this total; shown under its Details" }),
+    row("a2", 8, "FY2024", 1004000, { group_id: "g1", group_role: "repeat", page_ref: "slide 8", relationship: "Same figure as #1 (slide 1); counted once" })];
+  const { host, done } = await mount(rows);
+  try {
+    expect(host.querySelectorAll('[data-testid="claim-register-row"]').length).toBe(2);
+    expect(q(host, "register-group-toggle").textContent).toBe("Details · 4 parts · 1 in another set · 1 repeat · 1 contradicted");
+    await act(async () => { q(host, "register-group-toggle").click(); });
+    const items = [...host.querySelectorAll('[data-testid="register-group-part"]')];
+    expect(items.length).toBe(6);
+    expect(items[5].textContent).toContain("Also stated:");
+    expect(items[5].textContent).toContain("slide 8");
+    expect(items[5].textContent).toContain("Same figure as #1 (slide 1); counted once");
+  } finally { await done(); }
+});
+
+test("a figure stated twice with no group is one row with Details holding the repeat", async () => {
+  const lead = row("a1", 1, "FY2024", 1000000, { group_id: "s1" });
+  const repeat = row("a2", 2, "FY2024", 1004000, { group_id: "s1", group_role: "repeat", page_ref: "slide 8", relationship: "Same figure as #1 (slide 1); counted once" });
+  const { host, done } = await mount([lead, repeat]);
+  try {
+    expect(host.querySelectorAll('[data-testid="claim-register-row"]').length).toBe(1);
+    expect(q(host, "register-group-toggle").textContent).toBe("Details · 1 repeat");
+    expect(q(host, "claim-register-counts")).toBeNull();
   } finally { await done(); }
 });

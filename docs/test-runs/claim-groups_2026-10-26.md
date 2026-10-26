@@ -25,3 +25,11 @@ Each violation is one change to the source, the new tests run, the file restored
 Ten tests that read the TestCo run A fixture changed their expectations, not their intent: the fixture states two FY2023 ARR figures (240,000 and 198,000), which now conflict, so neither can be in the five until one is chosen
 (`test_verdict.py`: the proposal, the contradicted count, the sets offered to `check_top5`, the candidate list; `test_ic_memo.py`: the conclusion line, the footnote ranks, the key gates). The VaS test of a short period now expects the run-rate mark.
 `test_access_links.py` names the new route parameter; the in-memory Mongo stub removes a dotted `$unset` path as the database does.
+
+## Review fixes of PR 187 (2026-10-26, second run)
+- Backend: 3806 passed, 26 skipped; `ruff check backend/` (0.16.8) clean. Frontend, `--no-cache`: 39 test files found, 39 loaded, 629 tests passed.
+- Without the source change (the new and rewritten tests against the earlier `backend/app` and `backend/server.py`): 21 of 140 tests in `test_claim_groups.py`, `test_claim_groups_api.py` and `test_vas_top5_reasons.py` fail
+  (key gate of a contradicted part and the thesis, open questions, expiry on edited parts, pending parts, the finer set by default, the fold of a repeat, a passed-over figure listed once, the metric as key, MRR × 12 unmarked,
+  Undo clearing `excluded_reason`). Frontend, without the three source files: 6 of 32 tests in `claimGroups.test.js`, `ClaimRegister.groups.test.jsx` and `NeedsAttention*.test.jsx` fail (the collapsed line, the also and repeat rows, a lead with only repeats).
+- Tests that pass with and without the change are controls: a turnover question (already excluded), a choice that survives an edit outside every reconciling set, an all-Verified group with no key gate, the parts returning to independent claims once a figure is chosen.
+- Tests removed with the set card: the two choice-of-parts tests and the partition card test; the API test now asserts no card and no set choice.

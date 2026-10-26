@@ -97,17 +97,3 @@ test("a conflict that stays after a choice is still a card, names the chosen fig
     expect(api.undoGroupChoice).toHaveBeenCalledWith("a1", "r1");
   } finally { await done(); }
 });
-
-test("the question about which parts belong to a total offers the sets and chooses one by its name", async () => {
-  api.chooseGroup.mockResolvedValue({});
-  const parts = { id: "r2", kind: "partition", state: "open", metric: "Revenue", period: "FY2024", reason: "More than one set of parts reconciles with this annual total.",
-    candidates: [{ partition: "quarter", label: "quarters", hint: "quarters sum to €1,000,000, within ±2%", chosen: false },
-      { partition: "half", label: "halves", hint: "halves sum to €1,000,000, within ±2%", chosen: false }] };
-  const { host, done } = await mount({ reviews: [parts] });
-  try {
-    expect(q(host, "attention-group-title").textContent).toBe("Which parts belong to this annual total? Revenue, FY2024");
-    expect(all(host, "attention-group-exclude").length).toBe(0);
-    await act(async () => { all(host, "attention-group-choose")[1].click(); });
-    expect(api.chooseGroup).toHaveBeenCalledWith("a1", "r2", "half");
-  } finally { await done(); }
-});

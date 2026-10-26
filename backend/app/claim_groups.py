@@ -27,12 +27,18 @@ PART_WORDS = {"month": "months", "quarter": "quarters", "half": "halves", YEAR_E
 BASES = ("actual", "projection", "scenario")
 
 TOTAL, PART = "total", "part"
+ALSO = "also"            # a part of a coarser set that reconciles with the total too: under the total's Details beside the finer set
+REPEAT = "repeat"        # the same figure stated again: folded into the row of its first statement, both sources under Details
+PENDING = "pending_part"    # a part of a candidate's reconciling set while the annual conflict is open: no top-five slot, no exposure of its own
 CANDIDATE, ALTERNATIVE = "candidate", "alternative"      # an annual figure in a conflict: none chosen yet, or passed over for the preferred one
-KIND_TOTAL, KIND_PARTITION = "total", "partition"           # what a review asks: which total, or which set of parts
+KIND_TOTAL = "total"           # what a review asks: which total
+SUBORDINATE = (PART, ALSO, REPEAT)      # shown under another row's Details, never an item of their own
 
 NOTE_TOTAL = "Annual total: {parts} reconcile with it ({sum} against {total}, within " + TOLERANCE_TEXT + ")"
 NOTE_PART = "Part of the annual total for {period}"
-NOTE_REPEAT = "States the same figure as the {role} of its group again; kept as a claim of its own"
+NOTE_REPEAT = "Same figure as #{rank} ({page}); counted once"
+NOTE_ALSO = "{parts} also reconcile with this total; shown under its Details"
+NOTE_PENDING = "Part of a set that reconciles with one of the annual figures still in conflict; no exposure of its own until one is chosen"
 NOTE_DIFFERS = "{parts} sum to {sum}, outside " + TOLERANCE_TEXT + " of {total}; kept as independent claims"
 NOTE_PARTIAL = "{parts}: {have} of {need} stated; kept as independent claims"
 NOTE_AMBIGUOUS = "{parts}: a period is stated with figures that differ; kept as independent claims"
@@ -40,10 +46,10 @@ NOTE_TAKEN = "Its parts belong to another annual total; kept as independent clai
 NOTE_CONFLICT = "Unresolved conflict: another annual figure for the same period differs ({values})"
 NOTE_ALTERNATIVE = "Unresolved conflict with the preferred annual figure for the same period ({values}); not a segment"
 NOTE_CHOOSE = "Several annual figures for the same period: choose the one to use (Needs your attention)"
-NOTE_SEVERAL = "Several sets of parts reconcile with it ({sets}): choose one (Needs your attention)"
 REASON_TOTAL = "Several annual figures are stated for the same period. Choose the one to use; the others stay as claims until corrected, scoped or excluded."
-REASON_PARTITION = "More than one set of parts reconciles with this annual total. Choose the set to show; the others stay as claims."
 VAS_IN_TOTAL = "counted in the annual total: its parts add no separate exposure"
+VAS_PENDING = "waiting for the choice of the annual figure: its parts add no separate exposure"
+VAS_REPEAT = "the same figure as another claim: counted once"
 
 
 class _Fig(NamedTuple):
@@ -89,19 +95,33 @@ def _kind(row: dict) -> Optional[str]:
     return FLOW if row.get("claim_type") in FLOW_TYPES else BALANCE if row.get("claim_type") in BALANCE_TYPES else None
 
 
+def has_open_question(row: dict) -> bool:
+    """A row the analyst still has to answer (Definition check, turnover, growth basis, a period or field the claim editor asks for). Such a row
+    is not related to others until it is answered: its control stays on its own row, never hidden under a total's Details."""
+    return row.get("definition_check") == cm.DEFINITION_ASK or row.get("turnover_state") == "ask" or row.get("growth_basis") == "unknown" \
+        or bool(row.get("required_unknown")) or cm.asks_analyst(row)
+
+
 def _scope(row: dict) -> Optional[tuple]:
     """The scope key a row groups under, or None when the row cannot be related: an unknown part of the scope is never assumed equal to
-    another row's. Metric definition (type, metric, population), segment, currency, unit, figure type, basis and case; the fiscal
-    calendar is the audit's own, applied when the period was resolved (dates-and-periods.md)."""
+    another row's, and a row with an open question waits for its answer. The metric decides what the figure is (the claim type only when the
+    row has no metric), then population, segment, currency, unit, figure type, basis and case; the fiscal calendar is the audit's own,
+    applied when the period was resolved (dates-and-periods.md)."""
     kind = _kind(row)
     if kind is None or cm.is_untested(row) or row.get("claimed_value") is None or row.get("claimed_high") is not None:
         return None
-    if row.get("required_unknown") or row.get("turnover_state") == "ask" or row.get("figure_type") not in ("actual", "target"):
+    if has_open_question(row) or row.get("figure_type") not in ("actual", "target"):
         return None
     if row.get("claim_type") in cm.MONEY_TYPES and not row.get("currency"):
         return None
-    return (kind, row["claim_type"], row.get("metric"), row.get("population"), row.get("segment"), row.get("currency") or "",
+    return (kind, row.get("metric") or row["claim_type"], row.get("population"), row.get("segment"), row.get("currency") or "",
             row.get("unit") or "", row["figure_type"], row.get("basis") or "", row.get("scenario") or "none")
+
+
+def scope_period(row: dict) -> Optional[tuple]:
+    """What two statements of one figure share: the scope and the period. None for a row that cannot be related."""
+    key = _scope(row)
+    return None if key is None else (key, row.get("period_start"), row.get("period_end"))
 
 
 def identity(row: dict) -> str:
@@ -210,12 +230,22 @@ def _saved(choices: dict, slot: str, context: str) -> Optional[str]:
     return got.get("chosen") if isinstance(got, dict) and got.get("context") == context else None
 
 
+def _fold(out: dict, cluster: List[_Fig], group_id: str) -> None:
+    """The same figure stated again folds into the row of its first statement (the lead): each repeat is a subordinate row of the lead's
+    group, with a note naming the lead, and adds no exposure. Both sources stay visible under the lead's Details."""
+    lead = cluster[0].row
+    for fig in cluster[1:]:
+        out["roles"][fig.row["claim_id"]] = (group_id, REPEAT)
+        out["notes"][fig.row["claim_id"]] = NOTE_REPEAT.format(rank=lead.get("rank"), page=lead.get("page_ref") or _source(lead))
+    out["folded"].add(lead["claim_id"])
+
+
 def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Optional[int] = None) -> dict:
     """The relationships between the register's rows.
 
-    Returns `groups` (a reconciled annual total with its parts), `reviews` (the questions that wait: which total, which set of parts; each
-    with its candidates, sources and reconciliation hint, none selected), `conflicts` (the unresolved material conflicts between annual
-    figures, open or with a preferred figure chosen), `roles` {claim_id: (group id, role)} and `notes` {claim_id: relationship text}."""
+    Returns `groups` (a reconciled annual total with its parts), `reviews` (the questions that wait: which annual figure; with its candidates,
+    sources and reconciliation hint, none selected), `conflicts` (the unresolved material conflicts between annual figures, open or with a
+    preferred figure chosen), `roles` {claim_id: (group id, role)} and `notes` {claim_id: relationship text}."""
     choices = choices or {}
     figs = _figures(rows)
     clusters: Dict[tuple, List[List[_Fig]]] = {}
@@ -224,18 +254,21 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
         by_slot.setdefault((fig.key, fig.start, fig.end), []).append(fig)
     for slot, members in by_slot.items():
         clusters[slot] = _clusters(members)
-    out = {"groups": [], "reviews": [], "conflicts": [], "roles": {}, "notes": {}}
+    out = {"groups": [], "reviews": [], "conflicts": [], "roles": {}, "notes": {}, "folded": set()}
     taken: set = set()
     annual = sorted((s for s in by_slot if s[2] - s[1] + 1 == ANNUAL), key=lambda s: min(f.index for f in by_slot[s]))
     for key, start, end in annual:
         found = clusters[(key, start, end)]
         total_id = _slot_id(KIND_TOTAL, key, start, end)
-        total_ctx = context_hash(KIND_TOTAL, key, start, end, [f.identity for c in found for f in c], fiscal_year_end)
         evaluations = [_evaluate(clusters, key, start, end, c[0].value) for c in found]
         preferred, used = None, []
         if len(found) == 1:
             preferred = found[0]
         else:
+            # the question is bound to the candidates and to the parts that reconcile with each: an edit to those parts is a new question
+            sets = [f"{c[0].identity}:{name}:{'.'.join(p[0].identity for p in e['parts'])}"
+                    for c, ev in zip(found, evaluations) for name, e in ev.items() if e["state"] == "reconciles"]
+            total_ctx = context_hash(KIND_TOTAL, key, start, end, [f.identity for c in found for f in c] + sets, fiscal_year_end)
             pick = _saved(choices, total_id, total_ctx)
             preferred = next((c for c in found if pick in {f.identity for f in c}), None) if pick else None
             used = [total_id] if preferred is not None else []
@@ -255,6 +288,13 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
                     if preferred is None or c is not preferred:        # a figure the analyst has not chosen is no item of the top five
                         out["roles"][fig.row["claim_id"]] = (total_id, CANDIDATE if preferred is None else ALTERNATIVE)
             if preferred is None:
+                for ev in evaluations:       # the parts of every candidate's reconciling set wait with the question: no slot, no exposure
+                    for e in ev.values():
+                        if e["state"] == "reconciles":
+                            for cluster in e["parts"]:
+                                for fig in cluster:
+                                    out["roles"][fig.row["claim_id"]] = (total_id, PENDING)
+                                    out["notes"][fig.row["claim_id"]] = NOTE_PENDING
                 continue
         evaluation = evaluations[found.index(preferred)]
         total = preferred[0]
@@ -264,29 +304,10 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
             if note:
                 out["notes"][total.row["claim_id"]] = note
             continue
-        part_ctx = None
-        if len(reconciling) == 1:
-            name = reconciling[0]
-        else:
-            part_id = _slot_id(KIND_PARTITION, key, start, end, total.identity)
-            sets = {n: [c[0].identity for c in evaluation[n]["parts"]] for n in reconciling}
-            part_ctx = context_hash(KIND_PARTITION, key, start, end, [total.identity] + [i for n in sorted(sets) for i in sets[n]],
-                                    fiscal_year_end)
-            pick = _saved(choices, part_id, part_ctx)
-            name = pick if pick in reconciling else None
-            if name is None:
-                review = {"id": part_id, "kind": KIND_PARTITION, "state": "open", "context": part_ctx, "reason": REASON_PARTITION,
-                          "metric": total.row.get("metric"), "period": total.row.get("period"), "segment": total.row.get("segment"),
-                          "candidates": [{"partition": n, "label": PART_WORDS[n], "claim_ids": [c[0].row["claim_id"] for c in evaluation[n]["parts"]],
-                                          "sum": float(evaluation[n]["sum"]), "currency": total.row.get("currency"), "unit": total.row.get("unit"),
-                                          "total": float(total.value), "hint": f"{PART_WORDS[n]} sum to {_amount(evaluation[n]['sum'], total.row)}, within {TOLERANCE_TEXT}",
-                                          "chosen": False} for n in reconciling]}
-                out["reviews"].append(review)
-                out["notes"][total.row["claim_id"]] = NOTE_SEVERAL.format(sets=", ".join(PART_WORDS[n] for n in reconciling))
-                continue
-            used.append(part_id)
-        part_clusters = [[f for f in c] for c in (clusters[(key, a, b)][0] for a, b in _spans(key[0], name, dict(PARTITIONS).get(name, 1), start, end))]
-        members = [c[0].row["claim_id"] for c in [preferred] + part_clusters]
+        name, others = reconciling[0], reconciling[1:]       # the finer set is the group (months, quarters, halves); the coarser ones go under Details
+        part_clusters = evaluation[name]["parts"]
+        also_clusters = [c for n in others for c in evaluation[n]["parts"]]
+        members = [c[0].row["claim_id"] for c in [preferred] + part_clusters + also_clusters]
         if taken & set(members):
             out["notes"][total.row["claim_id"]] = NOTE_TAKEN
             continue
@@ -296,7 +317,8 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
         period = total.row.get("period")
         out["groups"].append({
             "id": group_id, "kind": key[0], "partition": name, "total": total.row["claim_id"], "period": period,
-            "parts": [c[0].row["claim_id"] for c in part_clusters],
+            "parts": [c[0].row["claim_id"] for c in part_clusters], "other_partitions": others,
+            "other_parts": [c[0].row["claim_id"] for c in also_clusters],
             "total_value": float(total.value), "parts_value": float(e["sum"]), "difference": float(e["sum"] - total.value),
             "tolerance": float(TOLERANCE), "metric": total.row.get("metric"), "segment": total.row.get("segment"),
             "currency": total.row.get("currency"), "unit": total.row.get("unit"), "chosen": used})
@@ -306,9 +328,19 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
         for c in part_clusters:
             out["roles"][c[0].row["claim_id"]] = (group_id, PART)
             out["notes"][c[0].row["claim_id"]] = NOTE_PART.format(period=period or "the year")
-        for c in [preferred] + part_clusters:         # the same figure stated again is not folded in: it stays a claim of its own, with a note
-            for fig in c[1:]:
-                out["notes"][fig.row["claim_id"]] = NOTE_REPEAT.format(role="total" if c is preferred else "part")
+        for n in others:
+            for c in evaluation[n]["parts"]:
+                out["roles"][c[0].row["claim_id"]] = (group_id, ALSO)
+                out["notes"][c[0].row["claim_id"]] = NOTE_ALSO.format(parts=PART_WORDS[n].capitalize())
+        for c in [preferred] + part_clusters + also_clusters:
+            _fold(out, c, group_id)
+    for slot in annual:               # an annual figure stated twice folds also when no group forms and for the candidates of a conflict
+        for cluster in clusters[slot]:
+            if len(cluster) > 1 and cluster[0].row["claim_id"] not in out["folded"]:
+                same = _digest("same", *slot[0], slot[1], slot[2], cluster[0].identity)
+                lead = cluster[0].row["claim_id"]
+                out["roles"][lead] = (same, out["roles"].get(lead, (None, None))[1])
+                _fold(out, cluster, same)
     out["notes"] = {k: v for k, v in out["notes"].items() if v}
     return out
 
@@ -330,15 +362,18 @@ def _why_not(evaluation: Dict[str, dict], total: _Fig) -> Optional[str]:
     return None
 
 
+NO_EXPOSURE = {PART: VAS_IN_TOTAL, ALSO: VAS_IN_TOTAL, PENDING: VAS_PENDING, REPEAT: VAS_REPEAT}      # the roles that add no value at stake of their own
+
+
 def annotate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Optional[int] = None) -> dict:
     """Sets `group_id`, `group_role` and `relationship` on every row and takes the exposure of a group's parts out of the value at stake (the
-    annual headline keeps its own; a part adds none). Returns `relate`'s result for the callers that need the groups and the questions."""
+    annual headline keeps its own; a part, a repeat and a part waiting for a conflict's choice add none). Returns `relate`'s result for the callers that need the groups and the questions."""
     found = relate(rows, choices, fiscal_year_end)
     for row in rows:
         group_id, role = found["roles"].get(row["claim_id"], (None, None))
         row.update(group_id=group_id, group_role=role, relationship=found["notes"].get(row["claim_id"]))
-        if role == PART and row.get("value_at_stake_arr") is not None:
-            row.update(value_at_stake_arr=None, vas_reason=VAS_IN_TOTAL)
+        if role in NO_EXPOSURE and row.get("value_at_stake_arr") is not None:
+            row.update(value_at_stake_arr=None, vas_reason=NO_EXPOSURE[role])
     return found
 
 
@@ -354,14 +389,25 @@ def members(rows: List[dict]) -> Dict[str, List[dict]]:
 
 
 def is_subordinate(row: dict) -> bool:
-    """A part of a reconciled total: shown under the total's Details, never an item of the top five."""
-    return row.get("group_role") == PART
+    """A part of a reconciled total, a part of a coarser set that reconciles too, or a figure stated again: shown under another row's Details,
+    never an item of the top five or of the count."""
+    return row.get("group_role") in SUBORDINATE
 
 
 def is_ineligible(row: dict) -> bool:
-    """A row the top five does not take: a part of a group, and an annual figure in an unresolved conflict that is not the preferred
-    one. With no figure chosen, none of the candidates can enter the five; the conflict is reported beside the conclusion instead."""
-    return row.get("group_role") in (PART, CANDIDATE, ALTERNATIVE)
+    """A row the top five does not take: a subordinate row, a part waiting for a conflict's choice, and an annual figure in an unresolved
+    conflict that is not the preferred one. With no figure chosen, none of the candidates can enter the five; the conflict is reported beside
+    the conclusion instead."""
+    return row.get("group_role") in (*SUBORDINATE, PENDING, CANDIDATE, ALTERNATIVE)
+
+
+def is_repeat_of_listed(row: dict, rows: List[dict]) -> bool:
+    """A figure stated again whose first statement is Contradicted too: the conclusion and the banner list the figure once."""
+    if row.get("group_role") != REPEAT:
+        return False
+    key = scope_period(row)
+    return key is not None and any(r.get("evidence_label") == "Contradicted" and r.get("group_role") != REPEAT and scope_period(r) == key
+                                   for r in rows)
 
 
 def contradicted_members(row: dict, by_group: Dict[str, List[dict]]) -> List[dict]:

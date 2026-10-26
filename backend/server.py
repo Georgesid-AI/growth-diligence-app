@@ -2232,7 +2232,8 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         # Undo on a rejected row: the status, and whether Python entered it, as they were before the rejection (George, 2026-10-26).
         if current.get("status") != "rejected":
             raise _rejected("status", "only a rejected claim can be restored")
-        await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": {**(current.get("previous_state") or {"status": "pending"}), "previous_state": None}})
+        await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": {**(current.get("previous_state") or {"status": "pending"}),
+                                                                           "previous_state": None, "excluded_reason": None}})
         return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
     edits = {k: getattr(payload, k) for k in _EDITABLE + _CLAIM_FIELDS if k in sent}
     if not edits and "status" not in sent:
@@ -2882,7 +2883,7 @@ async def choose_group(audit_id: str, review_id: str, payload: GroupChoice):
     review = next((r for r in [*related["reviews"], *related["conflicts"]] if r["id"] == review_id), None)
     if review is None:
         raise HTTPException(404, "No such question")
-    offered = {c.get("identity") or c.get("partition") for c in review["candidates"]}
+    offered = {c.get("identity") for c in review["candidates"]}
     if payload.choice not in offered:
         raise HTTPException(400, "That choice is not one of the options offered")
     await db.audits.update_one({"id": audit_id}, {"$set": {f"group_choices.{review_id}": {
@@ -2994,7 +2995,7 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
         selected |= {m["claim_id"] for r in rows if r["claim_id"] in selected and r.get("group_role") == claim_groups.TOTAL
                      for m in by_group.get(r["group_id"], ())}
         for r in rows:
-            if r["claim_id"] in selected and r["evidence_label"] == "Contradicted":
+            if r["claim_id"] in selected and r["evidence_label"] == "Contradicted" and not claim_groups.is_repeat_of_listed(r, rows):
                 claimed = _figure(r["claimed_value"], r["unit"], r["currency"])
                 if r.get("claimed_high") is not None:
                     claimed = f"{claimed}–{_figure(r['claimed_high'], r['unit'], r['currency'])}"

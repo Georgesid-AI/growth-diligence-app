@@ -5,30 +5,43 @@
  */
 import { PLACEHOLDER, fmtCurrency } from "./format";
 
-export const PART_ROLES = ["part"];
+export const PART_ROLES = ["part", "also", "repeat"];     // shown under another row's Details: a part, a part of a coarser set, a figure stated again
 export const CONFLICTS_HEADING = "Unresolved conflicts";
 export const GROUP_DETAILS = "Details";
 export const GROUP_COLUMNS = ["Claim and period", "Result"];
 export const CHOOSE_FIGURE = "Use this figure";
-export const CHOOSE_SET = "Use these parts";
 export const CHOSEN = "Chosen by you";
 export const UNDO_CHOICE = "Undo choice";
 export const EXCLUDE = "Not a company claim";
 export const EXCLUDE_REASON = "Reason…";
 export const KEPT_NOTE = "The other figures stay as claims until they are corrected, scoped or excluded. Edit a claim in the claims list to correct it or set its scope.";
-export const QUESTION_HEADINGS = { total: "Which annual figure should the audit use?", partition: "Which parts belong to this annual total?" };
+export const QUESTION_HEADINGS = { total: "Which annual figure should the audit use?" };
 
 /** The rows the claims list shows as items: a part of a reconciled total is shown under its total. */
 export const visibleRows = (rows) => (rows || []).filter((r) => !PART_ROLES.includes(r.group_role));
 
-/** The parts of a total, in the order the server ranks them. */
-export const partsOf = (row, rows) => (row.group_role === "total"
+/** The rows shown under a row's Details, in the order the server ranks them: the parts of a total, the parts of a coarser set that reconcile
+ *  too, and the figures stated again (a repeat folds into the row of its first statement, also when nothing is grouped). */
+export const partsOf = (row, rows) => (row.group_id && !PART_ROLES.includes(row.group_role)
   ? (rows || []).filter((r) => r.group_id === row.group_id && r !== row && PART_ROLES.includes(r.group_role)) : []);
 
 /** Items shown against claims underneath, from the register rows (the server's `counts` says the same). */
 export const countsOf = (rows) => ({ items: visibleRows(rows).length, claims: (rows || []).length, groups: (rows || []).filter((r) => r.group_role === "total").length });
 
 export const partsLabel = (n) => `${n} ${n === 1 ? "part" : "parts"}`;
+
+/** The collapsed line of a row's Details: its parts, the ones of another set, the repeats, and the parts that are contradicted: a verified
+ *  annual total does not hide a contradicted quarter (design note section 1). */
+export function detailsLabel(parts) {
+  const n = (role) => parts.filter((p) => p.group_role === role).length;
+  const bits = [];
+  if (n("part")) bits.push(partsLabel(n("part")));
+  if (n("also")) bits.push(`${n("also")} in another set`);
+  if (n("repeat")) bits.push(`${n("repeat")} ${n("repeat") === 1 ? "repeat" : "repeats"}`);
+  const bad = parts.filter((p) => p.evidence_label === "Contradicted").length;
+  if (bad) bits.push(`${bad} contradicted`);
+  return `${GROUP_DETAILS} · ${bits.join(" · ")}`;
+}
 
 /** "6 items shown for 9 claims": only when something is grouped, so the counts differ for a reason. */
 export const countsText = (counts) => (counts && counts.groups > 0

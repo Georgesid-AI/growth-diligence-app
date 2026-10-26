@@ -123,6 +123,18 @@ def test_a_verified_total_with_a_contradicted_part_gives_not_supported_in_the_ve
     assert "Grouping: 1 items are shown for 5 claims" in summary
 
 
+def test_the_key_gates_and_the_thesis_of_a_verified_total_with_a_contradicted_part_carry_the_parts_gate(client_for):
+    client, _ = client_for(OFFSETTING)
+    body = get(client, "/verdict")
+    sentences = body["key_gates"]["sentences"]
+    assert [g["claim_id"] for g in sentences] == ["c4"] and "2023-Q3" in sentences[0]["sentence"]
+    assert "every selected claim is Verified" not in body["thesis_draft"]["condition"]
+    marked = {r["claim_id"]: r["key_gate"] for r in get(client, "/claims")["register"]}
+    assert marked["c4"] is True and marked["c1"] is False
+    memo = client.get(f"/api/audits/{AUDIT}/memo.md").text
+    assert "every selected claim is Verified" not in memo
+
+
 def test_the_memo_appendix_lists_every_claim_with_its_relationship(client_for):
     client, _ = client_for(BASE)
     memo = client.get(f"/api/audits/{AUDIT}/memo.md")
@@ -133,7 +145,7 @@ def test_the_memo_appendix_lists_every_claim_with_its_relationship(client_for):
 
 # --- conflict resolution --------------------------------------------------------------------------------------------------------------
 
-CONFLICT = [*BASE, ("c6", 250_000, "2023")]
+CONFLICT = [*BASE, ("c6", 250_000, "2023"), ("c7", 90_000, "2023-Q1", "costs")]    # the costs claim keeps a testable claim while the conflict is open
 
 
 def conflict_body(client):
@@ -235,6 +247,17 @@ def test_excluding_the_alternative_with_a_reason_resolves_the_conflict_and_undo_
     assert body["conflicts"] == [] and roles(body)["c1"] == "total" and get(client, "/verdict")["verdict"]["open_questions"] == 0
     edit(client, "c6", {"undo": True})
     assert [c["state"] for c in get(client, "/claims")["conflicts"]] == ["chosen"]
+    assert next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == "c6").get("excluded_reason") is None, "Undo clears the reason"
+
+
+def test_a_passed_over_contradicted_figure_is_listed_once_under_unresolved_conflicts(client_for):
+    client, _ = client_for(CONFLICT)
+    _, review = conflict_body(client)
+    choose(client, review, "c1")
+    ver = get(client, "/verdict")["verdict"]
+    assert next(r for r in get(client, "/claims")["register"] if r["claim_id"] == "c6")["evidence_label"] == "Contradicted"
+    assert [o["claim_id"] for o in ver["other_contradictions"]] == [], "not under Other contradictions as well"
+    assert "€250,000" in ver["conflicts"][0]["text"]
 
 
 def test_scoping_the_alternative_resolves_the_conflict_without_a_choice(client_for):
@@ -276,18 +299,14 @@ def test_a_choice_needs_computed_results(client_for):
     assert client.put(f"/api/audits/{AUDIT}/claim-groups/{review['id']}", json={"choice": review["candidates"][0]["identity"]}).status_code == 409
 
 
-def test_the_choice_of_a_set_of_parts_is_saved_and_undone_the_same_way(client_for):
+def test_two_sets_of_parts_that_reconcile_group_under_the_finer_set_with_no_card(client_for):
     client, _ = client_for([*BASE, ("c6", 93_000, "2023-H1"), ("c7", 94_700, "2023-H2")])
     body = get(client, "/claims")
-    review = body["reviews"][0]
-    assert review["kind"] == "partition" and body["groups"] == []
-    r = client.put(f"/api/audits/{AUDIT}/claim-groups/{review['id']}", json={"choice": "half"})
-    assert r.status_code == 200, r.text
-    assert [g["partition"] for g in r.json()["groups"]] == ["half"] and r.json()["reviews"] == []
-    assert r.json()["groups"][0]["chosen"] == [review["id"]]
-    assert client.put(f"/api/audits/{AUDIT}/claim-groups/{review['id']}", json={"choice": "decade"}).status_code in (400, 404)
-    undone = client.delete(f"/api/audits/{AUDIT}/claim-groups/{review['id']}")
-    assert undone.json()["groups"] == [] and len(undone.json()["reviews"]) == 1
+    assert body["reviews"] == [] and [g["partition"] for g in body["groups"]] == ["quarter"]
+    assert roles(body) == {"c1": "total", "c2": "part", "c3": "part", "c4": "part", "c5": "part", "c6": "also", "c7": "also"}
+    assert body["counts"] == {"items": 1, "claims": 7, "groups": 1}
+    assert get(client, "/verdict")["verdict"]["open_questions"] == 0
+    assert client.put(f"/api/audits/{AUDIT}/claim-groups/anything", json={"choice": "half"}).status_code == 404, "there is no set question to answer"
 
 
 # --- logs --------------------------------------------------------------------------------------------------------------------------
