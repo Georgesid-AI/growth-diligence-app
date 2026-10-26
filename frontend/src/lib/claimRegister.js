@@ -156,7 +156,9 @@ export const needsMetricName = (row) => row.metric == null || NO_APP_METRIC.incl
 /** W1: the value at stake as an amount, else the server's reason ("not yet computed: Target ARR empty", "no ARR link: ..."), else
  *  "not yet computed"; a row that missed adds " · shortfall 18.3%". */
 export function valueAtStakeText(row, ccy) {
-  const base = row.value_at_stake_arr != null ? fmtCurrency(row.value_at_stake_arr, ccy) : row.vas_reason || "not yet computed";
+  const base = row.value_at_stake_arr != null
+    ? `${fmtCurrency(row.value_at_stake_arr, ccy)}${row.vas_reason ? ` (${row.vas_reason})` : ""}`   // "run-rate: Q3 2024 × 4"
+    : row.vas_reason || "not yet computed";
   return row.shortfall == null ? base : `${base} · shortfall ${(row.shortfall * 100).toFixed(1)}%`;
 }
 

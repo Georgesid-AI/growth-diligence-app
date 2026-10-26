@@ -30,6 +30,7 @@ from app import disclosure as disclosure_mod
 from app import narrative_export
 from app import run_audit
 from app import claim_matching
+from app import claim_groups
 from app import access as access_mod
 from app import ic_memo
 from app import integrity as integrity_mod
@@ -2231,7 +2232,8 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         # Undo on a rejected row: the status, and whether Python entered it, as they were before the rejection (George, 2026-10-26).
         if current.get("status") != "rejected":
             raise _rejected("status", "only a rejected claim can be restored")
-        await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": {**(current.get("previous_state") or {"status": "pending"}), "previous_state": None}})
+        await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": {**(current.get("previous_state") or {"status": "pending"}),
+                                                                           "previous_state": None, "excluded_reason": None}})
         return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
     edits = {k: getattr(payload, k) for k in _EDITABLE + _CLAIM_FIELDS if k in sent}
     if not edits and "status" not in sent:
@@ -2297,6 +2299,8 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         changes = {"status": status, "auto_accepted": False, "auto_note": None}     # a status the analyst sets is the analyst's decision (PR 157)
         if status == "rejected" and current.get("status") != "rejected":
             changes["previous_state"] = {k: current.get(k) for k in ("status", "auto_accepted", "auto_note")}     # what Undo restores
+            if "reason" in sent:       # excluded with a reason, one of the closed words of an edit (claim-groups.md section 5)
+                changes["excluded_reason"] = payload.reason
     await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
@@ -2561,6 +2565,7 @@ def _register_settings(audit: dict, fx: dict, deck_take_rate: bool = False) -> d
     return {"fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
             "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx,
             "turnover_choices": audit.get("turnover_choices") or {}, "deck_take_rate": deck_take_rate,
+            "group_choices": audit.get("group_choices") or {},
             "target_arr": audit.get("target_arr") or None, "target_date": audit.get("target_date") or None,
             "first_quarterly_review": verdict_mod.with_review(audit, audit.get("ic_inputs")).get("first_quarterly_review")}
 
@@ -2604,10 +2609,19 @@ async def claim_register(audit_id: str):
     if not audit:
         raise HTTPException(404, "Audit not found")
     claims, rows = await _claim_rows(audit_id, audit)
+    related = _relations(audit, rows)
     # The budget dropdown sits beside the register, never in it: the CSV and the memo read rows.
     return sanitize({"claims": claims, "register": _marked(audit, rows),
                      "budget_decisions": verdict_mod.budget_decisions(rows),
+                     "groups": related["groups"], "reviews": related["reviews"], "conflicts": related["conflicts"],
+                     "counts": claim_groups.counts(rows),
                      "results_stale": run_audit.results_stale(audit)})      # no rows then: the figures are not shown as current
+
+
+def _relations(audit: dict, rows: list) -> dict:
+    """The groups, the questions and the unresolved conflicts of the register's rows (docs/specs/claim-groups.md), computed on read from the
+    rows and the analyst's saved choices: the same result the register, the conclusion, the banner and the memo read."""
+    return claim_groups.relate(rows, audit.get("group_choices"), _fiscal_year_end(audit))
 
 
 def _csv_cell(value) -> str:
@@ -2633,7 +2647,9 @@ async def _open_claim_questions(audit_id: str, audit: dict, rows: list) -> int:
     definitions = [r for r in rows if r.get("definition_check") == claim_matching.DEFINITION_ASK]
     asked = {str(r["claim_id"]).split("#")[0] for r in definitions}
     to_set = {str(r["claim_id"]).split("#")[0] for r in rows if claim_matching.asks_analyst(r)} - asked      # one card per claim
-    return waiting + len(definitions) + len(to_set)
+    related = _relations(audit, rows)
+    # a card for each question about a total or a set of parts, and for each conflict that stays unresolved after a figure was chosen
+    return waiting + len(definitions) + len(to_set) + len({q["id"] for q in [*related["reviews"], *related["conflicts"]]})
 
 
 async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict:
@@ -2649,13 +2665,13 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
             contract.validate_for_export(results)
         except contract.ContractError as exc:
             return {"rows": [], "results": results, "ic": ic, "state": verdict_mod.top5_state([], None), "gaps": [],
-                    "contract": exc.log_text, "stale": stale, "open_questions": 0}
+                    "contract": exc.log_text, "stale": stale, "open_questions": 0, "conflicts": []}
     _, rows = await _claim_rows(audit_id, audit)
     state = verdict_mod.top5_state(rows, ic.get("top5"))
     rows = verdict_mod.mark_key_gates(rows, state["in_force"])
     gaps = verdict_mod.data_gaps(results, rows, state["in_force"], ic.get("gap_target_dates"))
     return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None, "stale": stale,
-            "open_questions": await _open_claim_questions(audit_id, audit, rows)}
+            "open_questions": await _open_claim_questions(audit_id, audit, rows), "conflicts": _relations(audit, rows)["conflicts"]}
 
 
 async def _integrity(audit_id: str, results: Optional[dict], fiscal_year_end: int) -> dict:
@@ -2845,6 +2861,61 @@ async def answer_definition_check(audit_id: str, claim_id: str, payload: Definit
     return sanitize({"register": _marked(audit, rows)})
 
 
+class GroupChoice(BaseModel):
+    """The analyst's choice among the candidates of a question the groups raise (claim-groups.md section 5): the identity of the figure to
+    use as the annual total, or the name of the set of parts to show. The server re-checks it against the candidates it offers now."""
+    model_config = {"extra": "forbid"}
+    choice: str = Field(min_length=1, max_length=64)
+
+
+@api.put("/audits/{audit_id}/claim-groups/{review_id}")
+async def choose_group(audit_id: str, review_id: str, payload: GroupChoice):
+    """Save the analyst's choice for one question, on the audit under the question's id, bound to its whole context and the identity of every
+    candidate (a hash, no deck text), and give the register back. A choice selects nothing else: a figure passed over stays a claim and its
+    conflict stays listed until it is corrected, scoped or excluded (claim-review-simplified-design.md section 2)."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    if not audit.get("results"):
+        raise HTTPException(409, "Audit not computed yet")
+    _, rows = await _claim_rows(audit_id, audit)
+    related = _relations(audit, rows)
+    review = next((r for r in [*related["reviews"], *related["conflicts"]] if r["id"] == review_id), None)
+    if review is None:
+        raise HTTPException(404, "No such question")
+    offered = {c.get("identity") for c in review["candidates"]}
+    if payload.choice not in offered:
+        raise HTTPException(400, "That choice is not one of the options offered")
+    await db.audits.update_one({"id": audit_id}, {"$set": {f"group_choices.{review_id}": {
+        "kind": review["kind"], "chosen": payload.choice, "context": review["context"], "saved_at": usage_mod.now()}}})
+    kind = review["kind"]
+    logger.info("group choice saved: run_id=%s kind=%s", audit_id, kind)
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    _, rows = await _claim_rows(audit_id, audit)
+    related = _relations(audit, rows)
+    return sanitize({"register": _marked(audit, rows), "groups": related["groups"], "reviews": related["reviews"],
+                     "conflicts": related["conflicts"], "counts": claim_groups.counts(rows)})
+
+
+@api.delete("/audits/{audit_id}/claim-groups/{review_id}")
+async def undo_group_choice(audit_id: str, review_id: str):
+    """Undo a saved choice: the question is asked again. The claims were never changed, so nothing else moves."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    saved = (audit.get("group_choices") or {}).get(review_id)
+    if not saved:
+        raise HTTPException(404, "No saved choice")
+    await db.audits.update_one({"id": audit_id}, {"$unset": {f"group_choices.{review_id}": ""}})
+    kind = saved.get("kind")
+    logger.info("group choice undone: run_id=%s kind=%s", audit_id, kind)
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    _, rows = await _claim_rows(audit_id, audit)
+    related = _relations(audit, rows)
+    return sanitize({"register": _marked(audit, rows), "groups": related["groups"], "reviews": related["reviews"],
+                     "conflicts": related["conflicts"], "counts": claim_groups.counts(rows)})
+
+
 # ---------------------------------------------------------------------------
 # Blockers: three kinds, and nothing else, at the top of every audit view (CLAUDE.md rule 21)
 # ---------------------------------------------------------------------------
@@ -2919,8 +2990,12 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
     if audit.get("results"):
         _, rows = await _claim_rows(audit_id, audit)
         selected = set(verdict_mod.banner_ids(rows, (audit.get("ic_inputs") or {}).get("top5")))
+        # a Contradicted part of a selected group is a Top-5 claim contradicted: a verified annual total does not hide it (claim-groups.md section 4)
+        by_group = claim_groups.members(rows)
+        selected |= {m["claim_id"] for r in rows if r["claim_id"] in selected and r.get("group_role") == claim_groups.TOTAL
+                     for m in by_group.get(r["group_id"], ())}
         for r in rows:
-            if r["claim_id"] in selected and r["evidence_label"] == "Contradicted":
+            if r["claim_id"] in selected and r["evidence_label"] == "Contradicted" and not claim_groups.is_repeat_of_listed(r, rows):
                 claimed = _figure(r["claimed_value"], r["unit"], r["currency"])
                 if r.get("claimed_high") is not None:
                     claimed = f"{claimed}–{_figure(r['claimed_high'], r['unit'], r['currency'])}"
@@ -2955,7 +3030,7 @@ async def get_verdict(audit_id: str):
         raise HTTPException(404, "Audit not found")
     ctx = await _ic_context(audit_id, audit)
     rows, ic = ctx["rows"], ctx["ic"]
-    ver = verdict_mod.verdict(rows, ctx["results"], ic.get("top5"), ctx["open_questions"])
+    ver = verdict_mod.verdict(rows, ctx["results"], ic.get("top5"), ctx["open_questions"], ctx["conflicts"])
     if ctx["contract"]:
         ver = {**ver, "status": "no_verdict", "message": ic_memo.CONTRACT_NO_VERDICT.format(fields=ctx["contract"])}
     elif ctx["stale"]:
@@ -3080,7 +3155,7 @@ async def export_memo(audit_id: str):
         datasets = await db.datasets.find({"audit_id": audit_id}, {"dtype": 1, "file": 1, "sheet": 1, "_id": 0}).to_list(10)
         deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"file": 1, "_id": 0}).to_list(100)
         meta = {**audit, "results": results}
-        ver = verdict_mod.verdict(rows, results, ctx["ic"].get("top5"), ctx["open_questions"])
+        ver = verdict_mod.verdict(rows, results, ctx["ic"].get("top5"), ctx["open_questions"], ctx["conflicts"])
         try:
             tables = ic_memo.workbook_tables(build_export_workbook(meta, results))
         except (contract.ContractError, fmt.UnitError):

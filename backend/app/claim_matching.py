@@ -26,7 +26,7 @@ FIELDS = (
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
     "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "definition_check",
     "definition_question", "period_coverage", "months_missing", "growth_basis", "population", "figure_type", "required_unknown",
-    "auto_approval", "basis", "scenario",
+    "auto_approval", "basis", "scenario", "group_id", "group_role", "relationship",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
 FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
@@ -1557,6 +1557,7 @@ VAS_COUNT_TYPES = ("customers",)
 VAS_AMOUNT_TYPES = ("arr", "mrr", "revenue", "sales")
 VAS_EMPTY = "not yet computed: {fields} empty"
 VAS_NO_LINK = "no ARR link: {why}"
+VAS_RUN_RATE = "run-rate: {period} × {multiplier}"       # the amount of a short period annualised, with the period and the multiplier (design note section 1)
 
 
 def _value_at_stake(row: dict, results: dict, settings: dict) -> dict:
@@ -1592,9 +1593,9 @@ def _value_at_stake(row: dict, results: dict, settings: dict) -> dict:
         if row.get("currency") and reporting and row["currency"] != reporting and row.get("claimed_converted") is None:
             row["vas_reason"] = VAS_NO_LINK.format(why=FX_NEEDED)
             return row
-        months = 12
+        months, level = 12, False
         if row.get("metric") == "MRR" or kind == "mrr":
-            months = 1
+            months, level = 1, True       # MRR times 12 is the metric's definition of ARR, not an annualised flow: no run-rate mark
         elif row.get("metric") != "ARR" and kind != "arr":
             start, end = _month_of(row.get("period_start")), _month_of(row.get("period_end"))
             if start is None or end is None:
@@ -1602,6 +1603,9 @@ def _value_at_stake(row: dict, results: dict, settings: dict) -> dict:
                 return row
             months = max(end - start + 1, 1)
         row["value_at_stake_arr"] = min(abs(amount) * 12 / months, float(settings["target_arr"]))
+        if months != 12 and not level:
+            row["vas_reason"] = VAS_RUN_RATE.format(period=row.get("period") or f"{months} month{'s' if months != 1 else ''}",
+                                                    multiplier=f"{12 / months:g}")
     else:
         row["vas_reason"] = VAS_NO_LINK.format(why=f"{kind} has no ARR conversion")
     return row
@@ -1640,6 +1644,8 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
     others = _expand(peers) if peers is not None else claims
     rows = _rank([_value_at_stake(_mark_auto(_row(c, results, settings, others), c), results, settings) for c in claims])
     _overlaps(rows)
+    from . import claim_groups      # the relationships of docs/specs/claim-groups.md; a part adds no exposure of its own
+    claim_groups.annotate(rows, settings.get("group_choices"), settings.get("fiscal_year_end"))
     return rows
 
 

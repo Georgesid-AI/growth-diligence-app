@@ -1473,6 +1473,12 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "INSUFFICIENT", "INSUFFICIENT_NOTE", "COMPLETED_TEXT",
                             # docs/specs/smoothness.md: the deviation limit and the window
                             "SMOOTHNESS_LIMIT_POINTS", "SMOOTHNESS_MONTHS",
+                            # docs/specs/claim-groups.md: the relationships between claims, the saved choices and their texts
+                            "group_id", "group_role", "relationship", "group_choices", "claim_groups", "choose_group", "undo_group_choice",
+                            "VAS_IN_TOTAL", "VAS_PENDING", "VAS_REPEAT", "VAS_RUN_RATE", "NOTE_TOTAL", "NOTE_PART", "NOTE_ALSO", "NOTE_REPEAT", "NOTE_PENDING",
+                            "NOTE_DIFFERS", "NOTE_PARTIAL", "NOTE_AMBIGUOUS", "NOTE_TAKEN", "NOTE_CONFLICT", "NOTE_ALTERNATIVE", "NOTE_CHOOSE",
+                            "REASON_TOTAL", "NO_EXPOSURE", "SUBORDINATE", "context_hash", "annotate", "relate", "GroupChoice",
+                            "has_open_question", "scope_period", "is_repeat_of_listed",
                             # docs/specs/crm-dedup-clustering.md: the won-deal counts, the repeated rows and the clustering bands
                             "won_deal_closes", "rows_list", "CLUSTERING_DAYS", "CLUSTERING_MIN_DEALS", "CLUSTERING_FEW",
                             "CLUSTERING_AMBER_PCT", "CLUSTERING_RED_PCT", "CLUSTERING_FINDING",
@@ -1493,12 +1499,14 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
-                              "answer_definition_check"})
+                              "answer_definition_check", "choose_group", "undo_group_choice"})
 REGISTER_LOG_ARGS = frozenset({"audit_id", "counts", "len(rows)"})      # exactly these expressions, as format arguments
 # The turnover answer logs two closed words (Literal fields of the request), never a claim or a figure.
 TURNOVER_LOG_ARGS = frozenset({"audit_id", "payload.answer", "payload.reason"})
 # The Definition check answer (claim-matching.md section 4.1) logs the run and yes or no (a Literal of the request), nothing else.
 DEFINITION_LOG_ARGS = frozenset({"audit_id", "payload.answer"})
+# A saved or undone choice among the candidates of a group question (claim-groups.md section 5) logs the run and the kind of question, a closed word.
+GROUP_LOG_ARGS = frozenset({"audit_id", "kind"})
 
 
 def _results_with_the_series():
@@ -1546,15 +1554,16 @@ def test_the_two_monthly_series_never_reach_a_narrative_payload():
         "Mongo keeps the series for the matcher"
 
 
-def test_the_matching_module_imports_nothing_from_the_gateway_or_a_provider_and_no_gateway_module_imports_it():
-    path = BACKEND / "app" / "claim_matching.py"
+@pytest.mark.parametrize("source", ["claim_matching", "claim_groups"])
+def test_the_matching_module_imports_nothing_from_the_gateway_or_a_provider_and_no_gateway_module_imports_it(source):
+    path = BACKEND / "app" / f"{source}.py"
     offenders = []
     for module, name in _imports(ast.parse(path.read_text(encoding="utf-8"))):
         parts = set(re.split(r"[.\s\"'()]+", module)) | {name}
         if parts & {"llm", "gateway", "anthropic", "structures", "<dynamic>", "server"}:
             offenders.append(f"{module} -> {name}")
     assert not offenders, "the matching module reaches for the gateway:\n  " + "\n  ".join(offenders)
-    code = ("import sys, app.claim_matching; "
+    code = (f"import sys, app.{source}; "
             "print(sorted(m for m in sys.modules if m.startswith('app.llm') or m.split('.')[0] == 'anthropic'))")
     out = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]", out.stdout
@@ -1600,6 +1609,47 @@ def test_the_gateway_reads_no_analyst_input_register_row_or_series():
         assert needle not in json.dumps([doc for name, _, doc in reads if name == decks.CANDIDATES_COLLECTION], default=str)
 
 
+def test_the_gateway_reads_no_saved_group_choice_and_the_provider_payload_holds_none():
+    """A saved choice among the candidates of a group question (claim-groups.md section 5) sits on the audit under hashes: no gateway path reads
+    it, and nothing it sends holds its key, its context or the relationship text of a claim."""
+    db, reads = _recording_db()
+    db["audits"].docs[0]["group_choices"] = {"feedfacecafe0001": {"kind": "total", "chosen": "deadbeefdeadbeef", "context": "0123456789abcdef",
+                                                                  "saved_at": "2026-10-26T10:00:00+00:00"}}
+    db[decks.CANDIDATES_COLLECTION].docs[0]["relationship"] = GATE_SENTINEL
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(gateway.narratives_for_run(db, RUN_ID))
+    asyncio.run(gateway.disclosure_for_run(db, RUN_ID))
+    for name, projection, _ in reads:
+        if name == "audits":
+            assert "group_choices" not in {k for k, v in (projection or {}).items() if v}, "no gateway read asks for the saved choices"
+    sent = adapter.payloads[0]
+    for needle in ("group_choices", "feedfacecafe0001", "deadbeefdeadbeef", "0123456789abcdef", GATE_SENTINEL, "relationship"):
+        assert needle not in sent, f"{needle!r} reached the provider"
+    assert not {"group_id", "group_role", "relationship"} & decks.GATEWAY_READABLE_FIELDS
+
+
+def test_a_relationship_note_and_an_exposure_reason_name_a_rank_and_a_page_never_a_file_or_deck_text():
+    """The notes of a repeat, a part under another set, a part waiting for a conflict and a total (claim-groups.md sections 3 and 4) are built
+    from the rank and the page label of a row and closed words; the file name and the snippet of a deck never enter them."""
+    from test_claim_groups import annual, halves, quarters, related
+    secret = "client_secret_board.pptx"
+    rows = [annual(1_000_000, cid="a1"), annual(1_004_000, cid="a2", rank=2), annual(1_300_000, cid="a3", rank=3), *quarters([240_000, 250_000, 250_000, 260_000]),
+            *halves([480_000, 520_000])]
+    for r in rows:
+        r.update(deck_file=secret, snippet=f"{secret} Revenue FY2024 EUR secret-snippet")
+    related(rows)
+    texts = [r["relationship"] or "" for r in rows] + [r["vas_reason"] or "" for r in rows]
+    assert any("Same figure as" in t for t in texts) and any("waiting for the choice" in t for t in texts)
+    for text in texts:
+        assert secret not in text and "secret-snippet" not in text, text
+    done = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000]), *halves([480_000, 520_000])]
+    for r in done:
+        r.update(deck_file=secret)
+    related(done)
+    assert any("also reconcile" in (r["relationship"] or "") for r in done) and not any(secret in (r["relationship"] or "") for r in done)
+
+
 def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
     """Static: every log call in a register function names the run, the label counts or a row count, as format arguments
     and nothing else (no row, no claim, no gate, no value)."""
@@ -1614,7 +1664,8 @@ def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
                 found.append((fn.name, ast.unparse(node)))
                 assert not node.keywords and isinstance(node.args[0], ast.Constant) and "{" not in node.args[0].value, ast.unparse(node)
                 for arg in node.args[1:]:
-                    allowed = {"answer_turnover": TURNOVER_LOG_ARGS, "answer_definition_check": DEFINITION_LOG_ARGS}.get(fn.name, REGISTER_LOG_ARGS)
+                    allowed = {"answer_turnover": TURNOVER_LOG_ARGS, "answer_definition_check": DEFINITION_LOG_ARGS,
+                               "choose_group": GROUP_LOG_ARGS, "undo_group_choice": GROUP_LOG_ARGS}.get(fn.name, REGISTER_LOG_ARGS)
                     assert ast.unparse(arg) in allowed, f"{fn.name}: {ast.unparse(node)} logs {ast.unparse(arg)}"
     assert found, "the register logs its label counts"
     module = ast.parse((BACKEND / "app" / "claim_matching.py").read_text(encoding="utf-8"))

@@ -82,7 +82,7 @@
     watchers, timers or "notify me when done" tasks: each one wakes the session later and
     spends usage on nothing. A session ends when its report is posted; nothing may keep it
     alive after that.
-30. Never commit local file paths, user names or machine folder names. Before every commit, run git grep -iE '/Users/|georgesidjimkov|Mobile Documents' on the staged files and remove any match.
+30. Never commit local file paths, user names or machine folder names. Before every commit, run git grep --cached -iE '/Users/|/home/[a-z]|Mobile Documents|\.codex' -- . ':(exclude)CLAUDE.md' (the staged files; CLAUDE.md itself is excluded because this rule names the strings) and remove any match.
     
 ## Rule: which decisions to bring to George
 19. Decide engineering questions yourself: rule wording, limits measured from data, test design,

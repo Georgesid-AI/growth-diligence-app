@@ -74,6 +74,19 @@ def _set_paths(doc, values):
         target[parts[-1]] = value
 
 
+def _unset_paths(doc, keys):
+    """Mongo's $unset: a dotted key removes a nested field."""
+    for key in keys:
+        parts = key.split(".")
+        target = doc
+        for part in parts[:-1]:
+            target = target.get(part)
+            if not isinstance(target, dict):
+                break
+        else:
+            target.pop(parts[-1], None)
+
+
 def _inc_paths(doc, values):
     """Mongo's $inc: a dotted key adds to a nested number, creating it at zero."""
     for key, value in values.items():
@@ -135,8 +148,7 @@ class FakeCollection:
             if _matches(d, flt):
                 _set_paths(d, update.get("$set", {}))
                 _inc_paths(d, update.get("$inc", {}))
-                for k in update.get("$unset", {}):
-                    d.pop(k, None)
+                _unset_paths(d, update.get("$unset", {}))
                 return FakeResult(modified_count=1)
         if upsert:
             # Like Mongo: an upsert seeds the new document from the filter's
@@ -153,8 +165,7 @@ class FakeCollection:
         for d in self.docs:
             if _matches(d, flt):
                 _set_paths(d, update.get("$set", {}))
-                for k in update.get("$unset", {}):
-                    d.pop(k, None)
+                _unset_paths(d, update.get("$unset", {}))
                 n += 1
         return FakeResult(modified_count=n)
 

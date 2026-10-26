@@ -14,6 +14,7 @@ import re
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from app import claim_groups as cg
 from app import claim_matching as cm
 from app import disclosure
 from app import formatting as fmt
@@ -362,6 +363,8 @@ def vas_cells(rows: List[dict], currency: Optional[str]) -> Dict[int, str]:
     for r in rows:
         amount, shortfall = r["value_at_stake_arr"], r["shortfall"]
         text = cm._money(amount, currency) if amount is not None else (r.get("vas_reason") or "not yet computed")
+        if amount is not None and r.get("vas_reason"):      # a short period annualised says so: "run-rate: Q3 2024 × 4"
+            text += f" ({r['vas_reason']})"
         if amount is not None and carrier.get(r["rank"], r["rank"]) != r["rank"]:
             text += f" (counted in #{carrier[r['rank']]})"
         cells[r["rank"]] = text + (f" · shortfall {shortfall * 100:.1f}%" if shortfall is not None else "")
@@ -417,6 +420,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
             *([f"{vd.SELECTION_CHANGED}."] if ver["top5"]["changed"] else []), ""]
     out += ["Other contradictions:"]
     out += [f"- {o['metric']}: {o['gap']}{notes.register([o['rank']])}" for o in others] or [vd.NO_OTHER_CONTRADICTIONS]
+    conflicts = ver.get("conflicts") or []
+    if conflicts:      # claim-groups.md section 5: an unresolved conflict between annual figures stays in the conclusion until it is resolved
+        out += ["Unresolved conflicts:"] + [f"- {c['text']}{notes.register()}" for c in conflicts]
     out += ["", ANALYST_JUDGMENT, "Reasons:"]
     out += [f"- {r}{notes.register(top_ranks)}" for r in ver["reasons"]]
     out += ["Unresolved questions:"]
@@ -432,6 +438,10 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
             "Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"]
+    grouped = cg.counts(rows)
+    if grouped["groups"]:          # displayed groups are reported apart from the underlying claims (claim-groups.md section 4)
+        out += [f"Grouping: {grouped['items']} items are shown for {grouped['claims']} claims; {grouped['groups']} annual "
+                f"{'total stands' if grouped['groups'] == 1 else 'totals stand'} for {'its' if grouped['groups'] == 1 else 'their'} parts.{notes.register()}"]
     checks = cm.definition_counts(rows)
     if checks["yes"] or checks["no"]:            # claim-matching.md section 4.1: an open one blocks the verdict, so none is left here
         out += [f"Definition checks: {checks['yes']} answered Yes, {checks['no']} answered No.{notes.register()}"]
@@ -540,6 +550,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}",
             r["evidence_label"], cm.AUTO_LABEL if r.get("auto_approval") else cm.ANALYST_LABEL,      # who entered the claim: Python ("auto") or the analyst
             r.get("basis") or "—", f"{r['scenario']} case" if r.get("scenario") not in (None, "none") else "—",      # the page reader's basis and case (contract 6)
+            r.get("relationship") or "—",                    # claim-groups.md: how the claim relates to an annual total, or why it does not
             vas[r["rank"]],
             ", ".join(f"#{by_id[o]['rank']}" for o in r["overlaps_with"] or () if o in by_id) or "—",
             f"{r['evidence_analysis']} {r['observed_citation']}" if r["evidence_analysis"] and r.get("observed_citation")      # issue #136
@@ -548,7 +559,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
             vd.gate_text(r) or "—",
             "key" if r["claim_id"] in {g["claim_id"] for g in key["gates"]} else "", "top 5" if r["claim_id"] in {f["claim_id"] for f in ver["five"]} else ""]
            for r in rows]
-    app += [_table(["#", "Claim", "Label", "Approval", "Basis", "Case", "VaS", "Overlaps with", "Evidence", "Gate", "Key gate", "Top 5"], reg), ""]
+    app += [_table(["#", "Claim", "Label", "Approval", "Basis", "Case", "Relationship", "VaS", "Overlaps with", "Evidence", "Gate", "Key gate", "Top 5"], reg), ""]
 
     review = ic.get("first_quarterly_review")
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]

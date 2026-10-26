@@ -180,7 +180,9 @@ def test_the_five_are_in_force_without_a_confirmation_and_follow_the_selection_r
     v = vd.verdict(rows, results_for(RUNS["A"]), None)
     assert v["status"] == "ok" and v["top5"]["proposed"] == vd.proposal(rows) == v["top5"]["in_force"]
     assert v["top5"]["changed"] is False and "confirmed" not in v["top5"]
-    assert v["top5"]["proposed"] == ["c28", "c05", "c32", "c24", "c23"], "plan claims first, by normalised shortfall: no Target ARR on the fixture"
+    # plan claims first, by normalised shortfall: no Target ARR on the fixture. c05 and c19#2 state two FY2023 ARR figures that differ: while neither
+    # is chosen, none can enter the five (claim-groups.md section 5), so c27 takes the fifth place
+    assert v["top5"]["proposed"] == ["c28", "c32", "c24", "c23", "c27"]
 
 
 def _sel(rank, label, vas=None, shortfall=None, claim_type="revenue", value=100.0):
@@ -212,20 +214,23 @@ def test_a_stored_set_the_analyst_changed_stays_in_force_and_one_equal_to_the_se
     same = vd.top5_state(rows, {"claim_ids": list(reversed(selection))})
     assert (same["changed"], same["in_force"]) == (False, selection)
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": swapped})
-    assert v["rule"] == "3 selected claims are Contradicted." and swapped[0] in [f["claim_id"] for f in v["five"]]
+    assert v["rule"] == "2 selected claims are Contradicted." and swapped[0] in [f["claim_id"] for f in v["five"]]
 
 
 @pytest.mark.parametrize("size", [0, 4, 6])
 def test_a_set_of_the_wrong_size_or_with_a_claim_twice_or_unknown_is_refused(size):
     rows = register(RUNS["A"])
+    eligible = vd.sortable(rows)         # the two FY2023 ARR figures that conflict are not, until one is chosen
     with pytest.raises(ValueError):
-        vd.check_top5(rows, [r["claim_id"] for r in rows[:size]])
+        vd.check_top5(rows, [r["claim_id"] for r in eligible[:size]])
     with pytest.raises(ValueError):
-        vd.check_top5(rows, [rows[0]["claim_id"]] * 5)
+        vd.check_top5(rows, [eligible[0]["claim_id"]] * 5)
     with pytest.raises(ValueError):
-        vd.check_top5(rows, [*[r["claim_id"] for r in rows[:4]], "nope"])
-    vd.check_top5(rows, [r["claim_id"] for r in rows[:5]])
-    vd.check_top5(rows[:3], [r["claim_id"] for r in rows[:3]])
+        vd.check_top5(rows, [*[r["claim_id"] for r in eligible[:4]], "nope"])
+    vd.check_top5(rows, [r["claim_id"] for r in eligible[:5]])
+    vd.check_top5(eligible[:3], [r["claim_id"] for r in eligible[:3]])
+    with pytest.raises(ValueError):
+        vd.check_top5(rows, [next(r["claim_id"] for r in rows if r["group_role"] == "candidate"), *[r["claim_id"] for r in eligible[:4]]])
 
 
 def test_a_changed_claim_leaving_the_register_drops_the_change_and_the_selection_is_in_force_again():
@@ -366,7 +371,7 @@ def test_the_verdict_endpoint_gives_the_outcome_at_once_from_the_five_the_app_se
     assert body["verdict"]["status"] == "ok" and body["verdict"]["outcome"] is not None
     assert body["verdict"]["top5"]["proposed"] == vd.proposal(register) == body["verdict"]["top5"]["in_force"]
     assert body["verdict"]["top5"]["changed"] is False
-    assert len(body["candidates"]) == len(register)
+    assert len(body["candidates"]) == len(vd.sortable(register)) == len(register) - 2, "the two figures of an unresolved conflict are not offered"
     assert body["selection_sentence"] == "Selected by the app by value at stake; the analyst may change the selection"
     assert body["ratings"]["data_reliability"]["line"] and "judgment" not in body["ic_inputs"]
     assert {g["claim_id"] for g in body["key_gates"]["sentences"]} <= set(body["verdict"]["top5"]["in_force"])
@@ -381,7 +386,7 @@ def test_changing_the_set_stores_it_as_the_analysts_and_a_wrong_size_is_refused(
     same = _inputs(client, {"top5": ids})
     assert same.status_code == 200 and same.json()["verdict"]["top5"]["changed"] is False, "a set equal to the selection is the selection"
     register = _get(client)["register"]
-    other = next(r["claim_id"] for r in register if r["claim_id"] not in ids and r["claim_type"] not in vd.PROPOSAL_EXCLUDED)
+    other = next(r["claim_id"] for r in vd.sortable(register) if r["claim_id"] not in ids and r["claim_type"] not in vd.PROPOSAL_EXCLUDED)
     changed = _inputs(client, {"top5": [other, *ids[1:]]})
     assert changed.status_code == 200
     top5 = changed.json()["verdict"]["top5"]
@@ -394,7 +399,7 @@ def test_changing_the_set_stores_it_as_the_analysts_and_a_wrong_size_is_refused(
 def test_a_changed_claim_that_is_rejected_leaves_the_register_and_the_selection_is_in_force_again(register_api):
     client, db = register_api
     ids = _verdict(client)["verdict"]["top5"]["proposed"]
-    other = next(r["claim_id"] for r in _get(client)["register"] if r["claim_id"] not in ids and r["claim_type"] not in vd.PROPOSAL_EXCLUDED)
+    other = next(r["claim_id"] for r in vd.sortable(_get(client)["register"]) if r["claim_id"] not in ids and r["claim_type"] not in vd.PROPOSAL_EXCLUDED)
     _inputs(client, {"top5": [other, *ids[1:]]})
     gone = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == other.split("#")[0])
     gone["status"] = "rejected"

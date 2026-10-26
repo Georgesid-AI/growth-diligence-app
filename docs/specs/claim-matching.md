@@ -260,7 +260,8 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `definition_check`, `definition_question` | str or null | §4.1: null (no gap beyond the limit), ask, yes, no; the question, set whenever `definition_check` is |
 | `rank` | int | §3 |
 | `value_at_stake_arr` | float or null | the ARR the claim stands for (2026-10-24, top of this spec); null while Target ARR or Target date is empty, and for a claim with no ARR link |
-| `vas_reason` | str or null | why `value_at_stake_arr` is null: "not yet computed: Target ARR empty" (and the other empty-field forms), "no ARR link: ..."; null when it is computed |
+| `vas_reason` | str or null | why `value_at_stake_arr` is null: "not yet computed: Target ARR empty" (and the other empty-field forms), "no ARR link: ...", "counted in the annual total: its parts add no separate exposure" (amended 2026-10-26); for an amount annualised from a short period, "run-rate: {period} × {multiplier}"; null when the amount is as stated |
+| `group_id`, `group_role`, `relationship` | str or null | amended 2026-10-26 (claim-groups.md): the reconciled group a row belongs to, its role there (`total`, `part`; `candidate` or `alternative` for an annual figure in an unresolved conflict), and the note that says how it relates to an annual total or why it does not; null for a row that relates to nothing. The last three fields of the row |
 | `gate_sentence`, `gate_status` | str or null | §5; the gate written from the claim, "proposed", or the analyst's, "set by the analyst"; null for a row with no gate |
 | `gate_threshold`, `gate_budget_decision`, `gate_date`, `gate_saved` | float, str, date, bool | the gate shown (the proposal, else the analyst's); `gate_saved` is true for the analyst's edit only |
 | `as_of_month`, `as_of_defaulted` | str, bool | |
@@ -524,3 +525,11 @@ A claim whose period ends after the as-of month reads Unverified "Forecast perio
 2. Four review flags (`sources disagree`, `source ambiguous`, `source not associated`, `extraction incomplete`) list a claim under Review; the first two with several periods offer one button
    per candidate and apply none. A new Diagnostics kind, `no printed source`, is a value on no cell of a page the reader read completely (point 2 of the entry of 2026-10-26 above applies
    to it: no row, no card). The register, the matching and the evidence label read the claim as before.
+
+### Amended 2026-10-26 (George, docs/design/claim-review-simplified-design.md sections 1 and 2; docs/specs/claim-groups.md)
+1. The register row gains `group_id`, `group_role` and `relationship` (the last three fields; the baseline CSV and the memo's Appendix A carry them). They relate rows that match in metric definition, segment, currency, unit,
+   fiscal calendar and scenario: an annual total with the complete quarters, halves or months that reconcile with it within 2% (a balance with its year-end observation). No claim, label, gap, reason, gate or tolerance changes.
+2. A part of a reconciled group has no value at stake of its own ("counted in the annual total"); the total keeps its own. An independent short-period claim keeps the capped annualisation and `vas_reason` says
+   "run-rate: {period} × {multiplier}". A non-reconciling annual claim takes nothing from it.
+3. The top-5 proposal takes a group once, by its total, ranked by its value at stake and the largest shortfall among its members; a part, and an annual figure of an unresolved conflict that is not the preferred one, are not
+   proposed. `verdict.sortable` is that rule.

@@ -4,6 +4,7 @@ import { EvidenceLabel, EvidenceDefinitions } from "@/components/EvidenceLabel";
 import { getClaimRegister } from "@/lib/api";
 import { claimCellText, detailItems, observedText, registerRows } from "@/lib/claimRegister";
 import { NO_DATE } from "@/lib/deckClaims";
+import { partsLabel } from "@/lib/claimGroups";
 
 export const FIVE_HEADING = "The five selected claims";
 export const FIVE_COLUMNS = ["Plan assumes", "Evidence shows", "Result"];
@@ -27,6 +28,11 @@ function Row({ f, row, rows, ccy }) {
         <div data-testid="five-plan">
           <span className="font-mono text-slate-700">#{f.rank}</span> <span className="text-slate-900">{row ? claimCellText(row, ccy) : f.claim}</span>
           {row && <div className="font-mono text-[11px] text-slate-500">{row.period || NO_DATE}</div>}
+          {f.group && (
+            <div className="text-[11px] text-slate-500" data-testid="five-group">
+              Annual total with {partsLabel(f.group.parts)}{f.group.contradicted.length > 0 ? ` · ${f.group.contradicted.length} contradicted` : ""}
+            </div>
+          )}
         </div>
         <div data-testid="five-evidence" className="font-mono text-slate-900">
           {observed && observed.value !== "—" ? (
@@ -47,6 +53,7 @@ function Row({ f, row, rows, ccy }) {
           {[row?.observed_citation, row?.page_ref].filter(Boolean).join(" · ") || "—"}
         </div>
       )}
+      {details && row && row.relationship && <div className="mt-1 text-[11px] text-slate-500" data-testid="five-relationship">{row.relationship}</div>}
       {details && row && (
         <div className="mt-1 text-[11px] text-slate-500" data-testid="five-details">
           {detailItems(row, rows, ccy, "five-").map(([text, testId], i) => (

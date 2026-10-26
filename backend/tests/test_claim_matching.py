@@ -709,7 +709,8 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed gate_status as_of_month "
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
                  "implied_take_rate_source turnover_suggested deck_revenue_note definition_check definition_question "
-                 "period_coverage months_missing growth_basis population figure_type required_unknown auto_approval basis scenario").split()
+                 "period_coverage months_missing growth_basis population figure_type required_unknown auto_approval basis scenario "
+                 "group_id group_role relationship").split()
     assert list(register(RUNS["A"])[0]) == section_6 == list(cm.FIELDS)
 
 
