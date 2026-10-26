@@ -180,6 +180,35 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
     return candidate
 
 
+def corrected_row(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int, page: int):
+    """(row, log): the approval-list row of a checked claim with the corrections its checks name (George, 2026-10-26). A correction with
+    one candidate is applied before the register: the row carries `corrections` [{field, reason, original, corrected, state "applied",
+    undo}] and the flag that named it is gone. With several candidates the flag stays and the entry is {state "choose", options
+    [{value, set}]}, one button each; `set` and `undo` are the row fields the choice or the undo writes. `log` is the Diagnostics lines
+    ({page, kind "corrected", field, reason, original, corrected}); a label is logged by cell id, never by its text (rule 17)."""
+    from . import corrections
+    base, entries, log = dict(item), [], []
+    flags = list(item.get("flags") or [])
+    for plan in item.get("corrections") or ():
+        field, options = plan["field"], plan["options"]
+        undo = corrections.row_fields(field, row_from_claim(corrections.restore_original(base, plan), grid, deck, fiscal_year_end))
+        entry = {"field": field, "reason": plan["flag"], "original": plan["original_text"], "undo": undo}
+        if len(options) == 1:
+            base = corrections.apply_option(base, field, options[0])
+            flags = [f for f in flags if f != plan["flag"]]
+            entries.append({**entry, "state": "applied", "corrected": options[0]["value"]})
+            log.append({"page": page, "kind": "corrected", "field": field, "reason": plan["flag"], "original": plan["original"],
+                        "corrected": options[0]["ref"]})
+        else:
+            entries.append({**entry, "state": "choose", "options": [
+                {"value": o["value"], "set": corrections.row_fields(field, row_from_claim(corrections.apply_option(base, field, o), grid, deck, fiscal_year_end))}
+                for o in options]})
+    row = row_from_claim({**base, "flags": flags}, grid, deck, fiscal_year_end)
+    if entries:
+        row["corrections"] = entries
+    return row, log
+
+
 def row_out_of_range(claim: Dict, page: int, deck: Dict) -> Dict:
     """The approval-list row of a claim on a page the document does not have (checker.PAGE_OUT_OF_RANGE): the model's values, no
     cell, no snippet, never matched; listed in the review tab."""
@@ -205,7 +234,16 @@ def _target_date_of(period: Optional[str]) -> Optional[str]:
 
 def stored_items(checked: List[Dict]) -> Dict:
     """The checked claims as llm_structures keeps them (rule 17): cell ids, values, periods, statuses and checks. No text."""
-    return {"claims": [dict(c) for c in checked]}
+    return {"claims": [_without_text(c) for c in checked]}
+
+
+def _without_text(item: Dict) -> Dict:
+    """A checked claim as it is stored: the corrections keep their cell ids and period labels, never the text of a label cell (rule 17)."""
+    out = dict(item)
+    if out.get("corrections"):
+        out["corrections"] = [{"flag": p["flag"], "field": p["field"], "original": p["original"], "options": [o["ref"] for o in p["options"]]}
+                              for p in out["corrections"]]
+    return out
 
 
 async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
@@ -217,7 +255,8 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
-                                              {"_id": 0, "file": 1, "page_unit": 1, "pages": 1, "blocks": 1, "page_reads": 1, "retry_pages": 1})
+                                              {"_id": 0, "file": 1, "page_unit": 1, "pages": 1, "blocks": 1, "page_reads": 1, "retry_pages": 1,
+                                               "diagnostics": 1})
     if not audit or not deck:
         return NOT_READ
     if audit.get("structure_reading_consent") is not True:
@@ -233,6 +272,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     known = _python_cells(reviewed)
     order = len(reviewed)
     reads, sent, stopped_message = [], [], None
+    diagnostics = list(deck.get("diagnostics") or [])      # Diagnostics lines of the pages read so far; a page read again replaces its lines
     fresh = set()                       # ids of the rows this run wrote: a later page with the same text never replaces them
     # A run that follows one that left pages to retry asks only for those pages; any other run reads the whole deck (the cache serves
     # the pages already read).
@@ -263,6 +303,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
             # guard, not an expected path): one row with the model's values, flagged, never matched (checker rule 4).
             rows = [(row_out_of_range(c, page, deck), page) for page, listed in claims_of.items() if page not in numbers
                     and checker.out_of_range(page, page_count) for c in listed]
+            diagnostics_new = []
             for page in numbers:
                 grid = by_page[page]
                 checked = checker.check(grid, claims_of.get(page, []), year_end, checker.page_blocks(deck.get("blocks") or [], grid),
@@ -270,8 +311,17 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                 for k in counts:
                     counts[k] += checked[k]
                 checked_all += [{**c, "page": page} for c in checked["items"]]
-                rows += [(row_from_claim(item, grid, deck, year_end), page) for item in checked["items"]]
+                for item in checked["items"]:
+                    if item["drop"]:            # a derived figure, a launch date with no product: no row, one Diagnostics line (George, 2026-10-26)
+                        counts["dropped"] += 1
+                        diagnostics_new.append({"page": page, "kind": item["drop"], "metric": item["metric"], "value": item.get("value"),
+                                                "period": item.get("period")})
+                        continue
+                    row, log = corrected_row(item, grid, deck, year_end, page)
+                    rows.append((row, page))
+                    diagnostics_new += log
             counts["flagged"] += sum(1 for row, _ in rows if checker.review_flags(row["flags"]) and row["cell"] is None)
+            diagnostics = [d for d in diagnostics if d["page"] not in numbers] + diagnostics_new
             # A page read again (Run audit, a new upload of the file): the rows an earlier run stored for this reply that nobody has touched
             # (pending, origin "ai") are replaced by the rows checked now, so a row stored before a check existed does not outlive it
             # (live bug, 2026-10-23: rows kept "unmatched" with no flags). A row the analyst approved, edited or rejected stays.
@@ -336,5 +386,6 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     # Run audit asks again for the pages a failure left unread, not for a page the cap, the size or a refusal will refuse again.
     retry = sorted({n for r in reads if r["status"] in RETRY_STATUSES for n in r["pages"]})
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {
-        "page_reads": kept + reads, "sent": list((previous or {}).get("sent") or []) + sent, "unread_pages": unread, "retry_pages": retry}})
+        "page_reads": kept + reads, "sent": list((previous or {}).get("sent") or []) + sent, "unread_pages": unread, "retry_pages": retry,
+        "diagnostics": diagnostics}})
     return await _deck_status(db, audit_id, deck_id, overall, stopped_message or (gateway.PROMPT_MISSING_TEXT if overall == PROMPT_MISSING else None))

@@ -5,7 +5,7 @@ import Diagnostics from "./Diagnostics";
 import * as api from "@/lib/api";
 import { S22_RECONCILIATION, S22_SAME_SOURCE } from "@/lib/chatUpload";
 
-jest.mock("@/lib/api", () => ({ getAudit: jest.fn(), getResults: jest.fn(), reportUsage: jest.fn() }));
+jest.mock("@/lib/api", () => ({ getAudit: jest.fn(), getResults: jest.fn(), reportUsage: jest.fn(), getDecks: jest.fn() }));
 jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn() }), { virtual: true });
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
 
@@ -17,12 +17,18 @@ const month = (m, file, pnl) => ({ month: m, revenue_file: file, pnl, gap: file 
 const REC = { available: true, first: "2024-01", last: "2024-02", file_total: 2000, pnl_total: 2000, gap: 0, gap_pct: 0, blocker: false,
   by_month: [month("2024-01", 1100, 1000), month("2024-02", 900, 1000)] };
 const RESULTS = (rec) => ({ audit: {}, results: { reporting_currency: "EUR", missing_data: [], anomalies: null, revenue_reconciliation: rec } });
+const DECKS = [{ deck_id: "d1", file: "plan.pdf", page_unit: "page", diagnostics: [
+  { page: 4, kind: "corrected", field: "period", reason: "year under bar differs", original: "2023", corrected: "2022" },
+  { page: 5, kind: "derived figure, not a claim", metric: "revenue", value: 200000, period: null },
+  { page: 7, kind: "launch date without product name", metric: "product", value: null, period: "2025-Q3" },
+] }];
 const q = (id) => document.body.querySelector(`[data-testid="${id}"]`);
 let root, host;
 
 async function mount(rec) {
   api.getAudit.mockResolvedValue({ id: "a1" });
   api.getResults.mockResolvedValue(RESULTS(rec));
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [] });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -119,4 +125,26 @@ test("stale results read Stale – re-run audit, not Not computed yet; no result
   root = createRoot(host);
   await act(async () => { root.render(<Diagnostics />); });
   expect(document.body.textContent).toContain("Not computed yet.");
+});
+
+test("the deck reading lines list what a check corrected, with both values, and the claims that never entered the register", async () => {
+  await mount(REC);
+  const lines = [...document.body.querySelectorAll('[data-testid="diagnostics-deck-line"]')].map((n) => n.textContent);
+  expect(lines).toEqual([
+    "plan.pdf · page 4: corrected period, 2023 → 2022 (year under bar differs)",
+    "plan.pdf · page 5: derived figure, not a claim · revenue 200000",
+    "plan.pdf · page 7: launch date without product name · product · 2025-Q3",
+  ]);
+});
+
+test("no deck diagnostics, no deck reading section", async () => {
+  await mount(REC);
+  await act(async () => { root.unmount(); });
+  host.remove();
+  api.getDecks.mockResolvedValue({ decks: [{ deck_id: "d1", file: "plan.pdf" }], candidates: [] });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<Diagnostics />); });
+  expect(q("diagnostics-deck-reading")).toBeNull();
 });

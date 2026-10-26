@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import FxText from "@/components/FxText";
 import { TurnoverCell, TurnoverReason } from "@/components/ClaimRegister";
 import { NO_FILE_PERIOD, UNVERIFIED, answerReady, metricOptions, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
-import { addClaim, addFromDeck, answerTurnover, getDeckPage, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
+import { addClaim, addFromDeck, answerCorrection, answerTurnover, getDeckPage, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
@@ -15,6 +15,7 @@ import {
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText, scenarioText,
+  KEEP_ALL_LABEL, UNDO_LABEL, appliedCorrections, correctionText, keepAllRows,
 } from "@/lib/deckClaims";
 
 // The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
@@ -151,6 +152,26 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
       toast.error(describeRequestError(err).message);      // names the rejected field and the reason: "HTTP 422 — unit: ..."
       return false;
     }
+  };
+
+  // Undo on a correction a check applied before the register (claim-matching.md section 33).
+  const correct = async (candidate, payload) => {
+    try {
+      await answerCorrection(auditId, candidate.id, payload);
+      await load();
+    } catch (err) {
+      toast.error(describeRequestError(err).message);
+    }
+  };
+
+  // Keep all: one section's flagged rows are kept in turn, as Keep does one by one; the rows a section does not hold are not touched.
+  const keepAll = async (rows) => {
+    try {
+      for (const row of rows) await updateCandidate(auditId, row.id, { status: "approved" });
+    } catch (err) {
+      toast.error(describeRequestError(err).message);
+    }
+    await load();
   };
 
   // Revenue or Volume for a turnover claim, answered in its row before it is approved (claim-matching.md section 11 point 8).
@@ -338,10 +359,16 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                               {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                               {section.title}{!other && <span className="font-mono font-normal text-slate-500"> ({section.claims.length})</span>}
                             </button>
+                            {keepAllRows(section.claims).length > 0 && (
+                              <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" data-testid={`claim-group-keep-all-${section.group}`}
+                                title="Keep every flagged claim of this section" onClick={() => keepAll(keepAllRows(section.claims))}>
+                                {KEEP_ALL_LABEL}
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>
-                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} highlight={flash === c.id}
+                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} onCorrect={correct} highlight={flash === c.id}
                         autoEdit={editing === c.id} />)}
                     </Fragment>
                   );
@@ -473,7 +500,7 @@ function DeckPageView({ auditId, deck, onAdd }) {
   );
 }
 
-export function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = false }) {
+export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highlight, autoEdit = false }) {
   const [draft, setDraft] = useState(null);
   const [why, setWhy] = useState(false);
   const explanation = inconsistencyText(c);
@@ -671,6 +698,14 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEd
             {flagsText(c)}
           </div>
         )}
+        {onCorrect && appliedCorrections(c).map((e) => (
+          <div key={e.index} className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal max-w-[14rem] text-sky-800 border-sky-500/50 bg-sky-50"
+            data-testid="candidate-correction">
+            {correctionText(e)}{" "}
+            <button type="button" className="underline underline-offset-2" data-testid="candidate-correction-undo"
+              onClick={() => onCorrect(c, { index: e.index, action: "undo" })}>{UNDO_LABEL}</button>
+          </div>
+        ))}
         {c.mixed_slide && (
           <div className="mt-1">
             <span className="text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
@@ -704,6 +739,10 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEd
               <Button size="sm" variant="outline" title="Keep" onClick={() => onSave(c, { status: "approved" })} className="h-7 px-2" data-testid="candidate-keep">
                 <Check className="h-3.5 w-3.5 text-emerald-700" />
               </Button>
+            )}
+            {c.status === "rejected" && (
+              <Button size="sm" variant="outline" title="Restore the status it had" onClick={() => onSave(c, { undo: true })} className="h-7 px-2 text-xs"
+                data-testid="candidate-undo-reject">{UNDO_LABEL}</Button>
             )}
             <Button size="sm" variant="outline" title="Reject" onClick={() => onSave(c, { status: "rejected" })} className="h-7 px-2" data-testid="candidate-reject">
               <X className="h-3.5 w-3.5 text-rose-700" />

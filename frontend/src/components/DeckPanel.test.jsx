@@ -6,7 +6,7 @@ import * as api from "@/lib/api";
 import { PROMPT_MISSING_LINE, REVIEW_INTRO } from "@/lib/deckClaims";
 
 jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn(),
-  answerTurnover: jest.fn() }));
+  answerTurnover: jest.fn(), answerCorrection: jest.fn() }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn(), message: jest.fn() } }));
 const { toast } = require("sonner");
 
@@ -999,5 +999,48 @@ describe("review of PR #164 (George, 2026-10-23)", () => {
     root = createRoot(host);
     await act(async () => { root.render(<DeckPanel auditId="a1" />); });
     expect(q("deck-run-log").textContent).toBe(PROMPT_MISSING_LINE);
+  });
+});
+
+
+describe("corrections, Keep all and Undo on a rejected row (George, 2026-10-26)", () => {
+  const applied = { field: "period", reason: "year under bar differs", original: "2023", corrected: "2022", state: "applied" };
+
+  test("a corrected row reads 'Corrected: period 2023 → 2022' with Undo, and Undo asks the server to undo that correction", async () => {
+    api.answerCorrection.mockResolvedValue({});
+    await reload([claim("k", "d1", 1, { group: 1, status: "approved", corrections: [applied], flags: [] })]);
+    const row = q("candidate-row-k");
+    expect(row.querySelector("[data-testid='candidate-correction']").textContent).toContain("Corrected: period 2023 → 2022");
+    await act(async () => { row.querySelector("[data-testid='candidate-correction-undo']").click(); });
+    expect(api.answerCorrection).toHaveBeenCalledWith("a1", "k", { index: 0, action: "undo" });
+  });
+
+  test("an undone correction shows no note", async () => {
+    await reload([claim("k", "d1", 1, { group: 1, status: "approved", corrections: [{ ...applied, state: "undone" }] })]);
+    expect(q("candidate-row-k").querySelector("[data-testid='candidate-correction']")).toBeNull();
+  });
+
+  test("Keep all is on a section that holds flagged rows, keeps those rows only, and leaves the other sections alone", async () => {
+    const flaggedRow = (id, group, over = {}) => claim(id, "d1", 1, { group, flags: ["scenario label not on page"], ...over });
+    await reload([flaggedRow("f1", 1), flaggedRow("f2", 1), claim("ok", "d1", 2, { group: 1, status: "approved" }),
+      claim("n", "d1", 3, { group: 1, status: "pending" }), flaggedRow("g1", 5, { claim_type: "market" })]);
+    api.updateCandidate.mockResolvedValue({});
+    await act(async () => { q("claims-view-review").click(); });
+    expect(q("claim-group-keep-all-1").textContent).toBe("Keep all");
+    await act(async () => { q("claim-group-keep-all-1").click(); });
+    expect(api.updateCandidate.mock.calls.map((c) => [c[1], c[2]])).toEqual([["f1", { status: "approved" }], ["f2", { status: "approved" }]]);
+  });
+
+  test("a section with no flagged row has no Keep all", async () => {
+    await reload([claim("ok", "d1", 2, { group: 1, status: "approved" })]);
+    expect(q("claim-group-keep-all-1")).toBeNull();
+  });
+
+  test("a rejected row shows Undo, which restores the previous status; other rows have none", async () => {
+    api.updateCandidate.mockResolvedValue({});
+    await reload([claim("r", "d1", 1, { group: 1, status: "rejected" }), claim("p", "d1", 2, { group: 1, status: "pending" })]);
+    expect(q("candidate-row-p").querySelector("[data-testid='candidate-undo-reject']")).toBeNull();
+    await act(async () => { q("candidate-row-r").querySelector("[data-testid='candidate-undo-reject']").click(); });
+    expect(api.updateCandidate).toHaveBeenCalledWith("a1", "r", { undo: true });
   });
 });

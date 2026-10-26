@@ -854,7 +854,24 @@ def _population(c: dict, metric: Optional[str]) -> Tuple[Optional[str], Optional
         return "registered", "python"
     if kind == "sales" and metric in METRIC_POPULATION:
         return METRIC_POPULATION[metric], "python"
+    if kind in ("users", "user_growth"):
+        inferred = population_in_label(f"{c.get('label_from') or ''} {c.get('snippet') or ''}")
+        if inferred:
+            return inferred, "python"
     return None, None
+
+
+# The nouns of a label that say which people a user figure counts (George, 2026-10-26): only a label that holds exactly one of the
+# three kinds answers; "paying and active users" stays a question.
+_LABEL_POPULATION = (("paying", re.compile(r"(?i)\b(?:paying|paid|subscribers?)\b")),
+                     ("registered", re.compile(r"(?i)\b(?:registered|sign-?ups?|signed[- ]up)\b")),
+                     ("active", re.compile(r"(?i)\b(?:active|MAU|DAU|WAU)\b")))
+
+
+def population_in_label(text: Optional[str]) -> Optional[str]:
+    """paying, registered or active when the label text holds the noun of exactly one of them; None when it holds none or several."""
+    found = [population for population, rx in _LABEL_POPULATION if rx.search(text or "")]
+    return found[0] if len(found) == 1 else None
 
 
 def _figure_type(c: dict, text: str, end: Optional[int], as_of_i: Optional[int]) -> Optional[str]:

@@ -509,7 +509,9 @@ def test_the_qualified_reason_is_only_for_users_with_a_qualifier_and_an_edit_to_
     base = {"claim_type": "users", "unit": None, "currency": None, "value": 40, "target_date": "2024-02",
             "snippet": "Registered Institutions 40"}
     assert run_claim({**base, "qualifier": "registered"})["reason"] == QUALIFIED
-    assert run_claim(base)["required_unknown"] == ["population"], "a users claim with no qualifier waits for its population"
+    # no qualifier and a label that names no population ("Registered" in the line would answer it, George 2026-10-26): the claim waits
+    assert run_claim({**base, "snippet": "Institutions 40"})["required_unknown"] == ["population"], "a users claim with no qualifier waits for its population"
+    assert run_claim(base)["required_unknown"] == [], "the line says registered: the population is read from it"
     edited = run_claim({**base, "claim_type": "customers", "qualifier": "registered", "status": "edited"})
     assert (edited["metric"], edited["observed_value"], edited["definition_check"]) == ("Customer count", 5, "ask"), \
         "tested: 40 against 5 is beyond 50%, so the analyst is asked whether they are the same customers (section 4.1)"

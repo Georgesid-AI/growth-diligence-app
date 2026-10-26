@@ -6,8 +6,8 @@ import { DefinitionCell, TurnoverCell } from "@/components/ClaimRegister";
 import { CandidateRow } from "@/components/DeckPanel";
 import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
 import * as apiModule from "@/lib/api";
-import { answerDefinitionCheck, answerTurnover, decideColumns, getDatasets, getDecks, updateCandidate } from "@/lib/api";
-import { claimPeriod, claimValue, flagsText, scenarioText, sourceRef, typeLabel } from "@/lib/deckClaims";
+import { answerCorrection, answerDefinitionCheck, answerTurnover, decideColumns, getDatasets, getDecks, updateCandidate } from "@/lib/api";
+import { POPULATION_ANSWERS, POPULATION_QUESTION, asksPopulationOnly, claimPeriod, claimValue, flagsText, scenarioText, sourceRef, typeLabel, waitingCorrections } from "@/lib/deckClaims";
 import { definitionOf, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
 import { MAPPING_HEADERS, S13_status } from "@/lib/chatUpload";
 import { ATTENTION_HEADING, SHOWN_QUESTIONS, attentionCount, lessLabel, moreLabel, openQuestions, openViews } from "@/lib/attention";
@@ -48,6 +48,11 @@ function ClaimCard({ item, busy, act, auditId }) {
           ))
         ) : (
           <>
+            {waitingCorrections(c).map((e) => e.options.map((o, i) => (
+              <Button key={`${e.index}-${i}`} size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="attention-correction"
+                title={`Use ${e.field}: ${o.value}`}
+                onClick={() => act(c.id, () => answerCorrection(auditId, c.id, { index: e.index, action: "choose", option: i }))}>{o.value}</Button>
+            )))}
             <Button size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="attention-keep"
               onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "approved" }))}>Keep</Button>
             <Button size="sm" variant="ghost" className="h-7" disabled={busy !== null} data-testid="attention-reject"
@@ -72,6 +77,18 @@ function TurnoverCard({ item, answer }) {
 /** A claim in the register that its own reason asks the analyst to set or confirm (a period not read, a required field unknown): the claim as
  *  the claims list prints it, with that list's own editor. */
 function SetCard({ item, save, answer }) {
+  if (asksPopulationOnly(item.reason)) {
+    return (
+      <div className="text-xs" data-testid="attention-population">
+        <div className="text-slate-900 mb-1">{typeLabel(item.c.claim_type)} · <span className="font-mono">{claimValue(item.c)}</span> · <span className="font-mono text-slate-600">{claimPeriod(item.c)}</span></div>
+        <div className="text-amber-800 mb-1.5" data-testid="attention-set-reason">{POPULATION_QUESTION}</div>
+        {POPULATION_ANSWERS.map(([population, label]) => (
+          <Button key={population} size="sm" variant="outline" className="h-7 mr-1.5" data-testid={`attention-population-${population}`}
+            onClick={() => save(item.c, { population })}>{label}</Button>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="text-xs" data-testid="attention-set">
       <div className="text-amber-800 mb-1" data-testid="attention-set-reason">{item.reason}</div>

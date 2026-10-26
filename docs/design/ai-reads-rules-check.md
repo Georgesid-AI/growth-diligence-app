@@ -33,6 +33,12 @@ The model reads each page as redacted cell lines with ids (the structure-text fo
 
 All three pass → "Matched to page", in the register without a click. Otherwise "AI suggestion, not matched", listed collapsed, approved by a click (decided 2026-10-22, review of PR #159, 2a: the unmatched row shows the model's value, never the cell's first figure). The metric is never checked by Python, as today; Confidence keeps "no heading" when the label cell holds no keyword of the type. Deck inconsistency, cross-page dedupe (`same_claim`), the register and the within-tolerance step are unchanged.
 
+**Amended 2026-10-26 (George, first live run)**: a check that offers exactly one correction (period from another cell, year under bar differs, a period
+the page's heading states, a label mismatch with one candidate) has it applied before the register: the row reads "Corrected: ..." with Undo, Diagnostics logs the original and
+the corrected value, no card. With several candidates the row goes to "Needs your attention" with a button per candidate. A "value not on page" claim that the
+figures of the same page compute is dropped ("derived figure, not a claim"), and a launch date with no product name never enters the register; both leave a Diagnostics
+line only. The checker still flags and never changes a claim; the pipeline applies the correction. Spec: claim-matching.md, "Amended 2026-10-26".
+
 ## 3. Removed, kept, missing
 
 **Removed** (~3,500 lines): §2 candidate detection (keyword typing, nearest heading, borrowing, bar typing, use-of-funds cues, qualifier); §7 structure detection (KPI, label, value and title boxes, roadmaps, date boxes); the item list and labelling schema; the three merge paths and "period corrected"; the candidate pin.

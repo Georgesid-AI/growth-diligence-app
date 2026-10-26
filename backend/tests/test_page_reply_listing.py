@@ -22,7 +22,7 @@ from app.llm import gateway  # noqa: E402
 
 PAGE = [(50, 560, 20, "Plan"), (50, 520, 12, "Revenue 2025 $150,000"), (50, 500, 12, "Customers Q3 800"), (50, 480, 12, "Users H2 900"),
         (50, 460, 12, "Margin April 40%"), (50, 440, 12, "ARR FY2025 $2M"), (50, 420, 12, "Revenue FY2025/26 $3M to $4M"),
-        (50, 400, 12, "Launch of the new product in 2025-Q4")]
+        (50, 400, 12, "Launch of Aurora in 2025-Q4")]
 PERIODS = ["2025", "2025-Q3", "2025-H2", "2025-04", "FY2025", "FY2025/26"]
 
 
@@ -113,7 +113,10 @@ def test_the_reply_with_a_page_form_and_a_span_is_read_stored_normalised_and_lis
     stored, = reading.db[gateway.STRUCTURES_COLLECTION].docs
     assert [c["period"] for c in stored["output"]["claims"]] == ["2022-H2", None]
     rows = reading.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]
-    assert sorted((r["claim_type"], r["target_date"]) for r in rows) == [("customers", None), ("revenue", "2022-H2")]
+    # the model's H2 2022 stands on no cell; the page's one heading period (2025) is the one candidate, so the check applies it (2026-10-26)
+    assert sorted((r["claim_type"], r["target_date"]) for r in rows) == [("customers", None), ("revenue", "2025")]
+    revenue = next(r for r in rows if r["claim_type"] == "revenue")
+    assert [(e["original"], e["corrected"], e["state"]) for e in revenue["corrections"]] == [("2022-H2", "2025", "applied")]
 
 
 # ---------------------------------------------------------------------------

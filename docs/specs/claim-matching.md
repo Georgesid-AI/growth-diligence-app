@@ -492,3 +492,28 @@ Every flag declares which kind it is (`checker.INFORMATIONAL_FLAGS`, `checker.RE
 
 ### Amended 2026-10-25 (George, first live run)
 A claim whose period ends after the as-of month reads Unverified "Forecast period after the data (as-of {month}); cannot be tested until that period's revenue lines are supplied." in place of "no metric", "Missing: ..." and the former "forecast: the period ends after the as-of month". A row whose reason asks the analyst to set or confirm something (period not read, period unclear, period missing, required field unknown, growth basis unknown, churn rate unclear) is a card under "Needs your attention" with the claim's editor, and counts in the open-question count. The reporting period of the assumptions strip is the first and last month of the supplied revenue data.
+
+### Amended 2026-10-26 (George, first live run): corrections, derived figures, launch dates, population, Keep all, Undo
+1. **A check with one correction applies it** (`structures/corrections.py`, `pages.corrected_row`; before the register). A check *names a correction* when it offers
+   candidates for the field it failed on: `period from another cell` (the period Python rebuilt from a cell outside the figure's block, when it
+   differs from the model's; one candidate), `year under bar differs` (the year label under the bar; one candidate), `period not on page` (the periods
+   the page's heading cells state, one candidate each) and a label mismatch (the label cell the model cited is not next to the figure; the cells where a
+   label may stand that hold words and no figure, one candidate each). **Exactly one candidate**: the correction is applied, the flag that named it goes, and the row
+   carries `corrections: [{field, reason, original, corrected, state: "applied", undo}]`. The claims list prints "Corrected: period 2023 → 2022" with **Undo**
+   (`POST /decks/candidates/{id}/correction {index, action: "undo"}` writes the stored `undo` fields back; the state reads "undone", the flag does not
+   return). The claim raises **no card**. Diagnostics logs one line `{page, kind: "corrected", field, reason, original, corrected}` (a label by cell id, never its
+   text: rule 17); a page read again replaces its lines. **More than one candidate** (periods only): the flag stays, the row goes to "Needs your attention" with one button per candidate
+   (`{action: "choose", option}` sets the field, removes the flag and keeps the claim, as Keep does; Undo is then offered like for an applied one)
+   next to the existing Keep and Not a company claim. A label with several candidates is left as the model cited it (no label, confidence "no heading"), as before:
+   a card for each such claim would swamp the page (to be confirmed by George). The checker still flags and never changes the claim itself (`checker.check`
+   returns `corrections`); the pipeline applies.
+2. **Derived figures**: a claim flagged `value not on page` whose value is a sum of two or three, a difference, a product, a ratio, a percentage or a growth percentage of figures of
+   the same page (tolerance 0.5% for displayed rounding; the parts of a sum or difference are each at least 5% of the largest, so a value that merely sits near a figure is no sum) is dropped before the register; Diagnostics line `{page, kind: "derived figure, not a claim", metric, value, period}`. No card.
+3. **Launch dates**: a claim of metric product with a period and no figure whose value cell and label cell name no product (only launch words, a date or a filler remain) never
+   enters the register; Diagnostics line kind `launch date without product name`. No card.
+4. **Population**: for Users and User growth, a label (the claim's label, else its line) that holds exactly one of paying (paying, paid, subscriber), registered
+   (registered, sign-up, signed up) or active (active, MAU, DAU, WAU) sets the population (set by `python`). A label with none, or with several, asks: the card
+   reads "Are these paying customers or registered users?" with two buttons (Paying customers, Registered users) that store the population. A reason that asks for
+   more than the population keeps the claims list's editor.
+5. **Keep all**: each section of the claims list has a Keep all button while it holds flagged pending rows; it keeps those rows only (status approved, as Keep), no other row of the section and no other section.
+6. **Undo on a rejected row**: rejecting stores the previous status (and whether Python entered it); a Rejected row shows Undo (`PUT {undo: true}`) which restores it.
