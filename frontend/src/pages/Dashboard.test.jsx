@@ -193,7 +193,8 @@ test("the five are in force at once: the outcome is shown with the selection sen
   const section = host.querySelector('[data-testid="verdict"]');
   expect(section.querySelector("h2").textContent).toBe("Claim-review conclusion — assessment of the five selected claims");
   expect(section.querySelector('[data-testid="verdict-outcome"]').textContent).toContain("Selected claims not supported");
-  expect(section.querySelector('[data-testid="verdict-top5-note"]').textContent).toBe("Selected by the app by value at stake; the analyst may change the selection");
+  expect(section.querySelector('[data-testid="verdict-top5-note"]')).toBeNull();
+  expect(section.textContent.split("by value at stake").length - 1).toBe(1);
   expect(section.querySelector('[data-testid="top5-change"]').textContent).toBe("Change");
   expect(section.querySelector('[data-testid="verdict-top5"]')).toBeNull();
   expect(host.querySelector('[data-testid="verdict-confirm"]')).toBeNull();

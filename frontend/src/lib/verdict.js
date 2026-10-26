@@ -7,12 +7,11 @@
 // docs/specs/claim-review-conclusion.md: the section describes the five selected claims, never a recommendation. The server sends
 // the heading and the scope sentence; these are the same words for a response that lacks them.
 export const CONCLUSION_HEADING = "Claim-review conclusion — assessment of the five selected claims";
-export const SCOPE_SENTENCE = "This assesses the five claims the analyst selected. It is not an investment recommendation.";
+export const SCOPE_SENTENCE = "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation.";
 export const OTHER_CONTRADICTIONS = "Other contradictions";
 export const NO_OTHER_CONTRADICTIONS = "None found among tested claims.";
 export const TOP5_HEADING = "Top 5";
 // The five are selected by the app and in force at once; the analyst may change the set (simplified-flow.md section 3, decision 11).
-export const SELECTION_SENTENCE = "Selected by the app by value at stake; the analyst may change the selection";
 export const SELECTION_CHANGED = "Top 5 changed by the analyst —";
 export const RESET = "reset";
 export const REPLACE = "Replace with…";

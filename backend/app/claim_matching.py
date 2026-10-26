@@ -123,6 +123,7 @@ MONEY_TYPES = ("revenue", "arr", "mrr", "costs", "burn", "cash", "gross_profit",
 # The types whose period may stay unknown (the plan's table: optional or "–").
 PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product", "pricing")
 PERIOD_MISSING = "period missing; set it with Edit"
+FORECAST_AFTER_DATA = "Forecast period after the data (as-of {month}); cannot be tested until that period's revenue lines are supplied."   # George, 2026-10-25
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
 GROWTH_BASES = ("mom", "yoy", "annualised", "cumulative")
 GROWTH_TYPES = ("revenue_growth", "growth", "user_growth")
@@ -226,6 +227,12 @@ def _ms(index: int) -> str:
 
 def _month_of(day: Optional[str]) -> Optional[int]:
     return _mi(str(day)[:7]) if day else None
+
+
+def forecast_after_data(as_of: Optional[str]) -> str:
+    """The reason of a claim whose period ends after the as-of month (George, 2026-10-25)."""
+    from .formatting import fmt_month_name
+    return FORECAST_AFTER_DATA.format(month=fmt_month_name(as_of))
 
 
 def _label_of(index: int) -> str:
@@ -1018,6 +1025,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
             return finish("Unsupported", QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"])))
         if c.get("claim_type") in METRIC_TYPES and not c.get("target_date") and c.get("claim_type") not in PERIOD_OPTIONAL_TYPES:
             return finish("Unverified", PERIOD_MISSING)     # George, 2026-10-24: the metric follows the period, so the period is the gap
+        if end is not None and as_of_i is not None and end > as_of_i:
+            return finish("Unverified", forecast_after_data(as_of))
         return finish("Unsupported", "no metric")
     if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
         if turn and turn["file_revenue"] is not None and low and not c.get("value_high"):
@@ -1073,10 +1082,12 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         if observed_at == "missing":
             if (spec.get("base") or metric) == "Revenue":     # George, 2026-10-20: no revenue series, no figure read from anywhere else
                 return finish("Unverified", NO_REVENUE_SERIES)
+            if forecast:
+                return finish("Unverified", forecast_after_data(as_of))
             unlock = _missing(results, metric)
             return finish(*(("Unverified", f"Missing: {unlock}") if unlock else ("Unsupported", "not computed")))
         if forecast:
-            return finish("Unverified", f"forecast: the period ends after the as-of month ({as_of})")
+            return finish("Unverified", forecast_after_data(as_of))
         return finish("Unsupported", why or "not computed")
 
     # currency claims are converted at the audit's FX rate (checked above: a claim with no saved rate is not tested)
@@ -1124,7 +1135,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     shown_claim[0] = claimed
 
     if forecast:
-        return finish("Unverified", f"forecast: the period ends after the as-of month ({as_of})")
+        return finish("Unverified", forecast_after_data(as_of))
     verified = within_tolerance(metric, gap, claimed)
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
@@ -1502,6 +1513,15 @@ def _overlaps(rows: List[dict]) -> None:
 
 
 # --- the register -----------------------------------------------------------------------------------------------------
+
+# George, 2026-10-25: a row whose reason asks the analyst to set or confirm something is a card under "Needs your attention" and an open
+# question; the control is the claim's editor in the claims list. Not Verified or Contradicted, whatever the reason says.
+ASK_REASONS = (PERIOD_NOT_READ, PERIOD_UNCLEAR, PERIOD_MISSING, "required field unknown", GROWTH_UNKNOWN_REASON, "churn rate unclear")
+
+
+def asks_analyst(row: dict) -> bool:
+    return row.get("evidence_label") in ("Unverified", "Unsupported", INCONCLUSIVE) and str(row.get("reason") or "").startswith(ASK_REASONS)
+
 
 def is_untested(row: dict) -> bool:
     """A row that is never matched, ranked among the tested ones, gated or put in the top 5: use of funds, acquisition channels, a

@@ -93,11 +93,11 @@ def test_the_memo_is_built_from_the_run_a_fixture_in_the_order_of_w15_with_the_f
     summary = head_of(text).split("## Summary\n")[1]
     assert summary.startswith("Claim-review conclusion — assessment of the five selected claims\n"
                               "Verdict: Selected claims not supported – 4 selected claims are Contradicted.")
-    assert "This assesses the five claims the analyst selected. It is not an investment recommendation." in summary
+    assert "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation." in summary
     assert "Conclusion:" not in text and "Evidence supports the plan" not in text
-    assert text.count("Selected by the app by value at stake; the analyst may change the selection.") == 1
+    assert text.count("by value at stake; the analyst may change the selection") == 1, "said once, in the scope sentence"
     assert "Top 5 set by the analyst pending" not in text, "W24 is gone: the app picks the five"
-    assert head_of(text).index("Selected by the app by value at stake") < head_of(text).index("## Deal thesis")
+    assert head_of(text).index("selected by the app by value at stake") < head_of(text).index("## Deal thesis")
 
 
 def test_the_run_a_memo_fits_1500_words_and_every_number_in_sections_1_to_6_has_a_footnote_resolved_in_appendix_d():

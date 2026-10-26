@@ -61,8 +61,7 @@ Order, top to bottom. Nothing is added that the engine does not already compute;
 4. **The five selected claims**, one row each, read **Plan assumes · Evidence shows · Result**: the claimed figure and period;
    the observed figure and month; the status of evidence-labels.md. Each row carries a **source link** (the citation: file,
    sheet, rows; the deck page for the claim) and a **Details** toggle that opens today's second line (segment, metric,
-   tolerance, basis and case, flags, VaS, the gate, the lineage). One memo line under the rows: "Selected by the app by value at
-   stake; the analyst may change the selection", with the single **Change** link of the conclusion screen. The five are chosen
+   tolerance, basis and case, flags, VaS, the gate, the lineage). The selection wording is the scope sentence of the conclusion (George, 2026-10-25: said once, no second line under "Other contradictions"); the single **Change** link of the conclusion screen stays. The five are chosen
    by the rule of §3.
 5. **Needs your attention**: the question box above, at most three questions, each answerable in place, with the "{n} more"
    link to the rest. At 0 it is hidden. Top-5 questions come first, so the count never hides one.
@@ -98,8 +97,7 @@ It is always computed and shown; an open question is a count on the explanation 
 2. **One explanation line**, the spec's rule text: "{n} selected claim is (are) Contradicted." · "No selected claim is
    Contradicted; {u} of {N} are untested (Unverified, Inconclusive or Unsupported)." · "All {N} selected claims are Verified." ·
    "No selected claim is Contradicted; {v} of {N} are Verified, {u} untested." Add "1 question open." only when a question is
-   open. Then the scope sentence, word for word: "This assesses the five claims the analyst selected. It is not an investment
-   recommendation."
+   open. Then the scope sentence, word for word: "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation."
 3. **Contradiction lines** (rule 21), directly under the explanation: a Contradicted top-5 claim, and "Other contradictions"
    (every Contradicted register row outside the five, by rank, with its metric, gap and source; none: "None found among tested
    claims."). The register under Supporting detail repeats none of this: it keeps row labels only.

@@ -251,3 +251,19 @@ def test_the_verdict_endpoint_counts_the_waiting_claims_and_the_open_definition_
     assert body["verdict"]["rule"] == ("No selected claim is Contradicted; 1 of 2 are Verified, 1 untested. 3 questions open. "
                                        "Top 2 (the register has 2 claims)."), "two claims wait for an answer and one Definition check is open"
     assert "3 claim questions open on the Audit page." in body["unresolved_questions"]
+
+
+# --- g. a row whose reason asks the analyst to set something is a question (George, 2026-10-25) --------------------------------------------
+def test_an_untested_row_that_asks_the_analyst_to_set_something_is_a_card_and_an_open_question(run_api):
+    prepared(run_api, claim("plain", value=150000), claim("noperiod", target_date=None, period_text=None, snippet="ARR of €200,000"))
+    stage(run_api, "claims")
+    row = registered(run_api)["noperiod"]
+    assert (row["evidence_label"], row["reason"]) == ("Unverified", cm.PERIOD_NOT_READ)
+    attention = run_api.get(f"/api/audits/{AUDIT}/decks").json()["attention"]
+    assert [(q["id"], q.get("set")) for q in attention] == [("noperiod", cm.PERIOD_NOT_READ)], "the verified claim is no card"
+    body = run_api.get(f"/api/audits/{AUDIT}/verdict").json()
+    assert body["verdict"]["open_questions"] == 1 and "1 question open." in body["verdict"]["rule"]
+    # the analyst sets the period in the claim's editor: the card and the question go
+    assert run_api.put(f"/api/audits/{AUDIT}/decks/candidates/noperiod", json={"target_date": "2024-02"}).status_code == 200
+    assert run_api.get(f"/api/audits/{AUDIT}/decks").json()["attention"] == []
+    assert run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["open_questions"] == 0

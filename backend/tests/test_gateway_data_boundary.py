@@ -3512,3 +3512,11 @@ def cf_gross_churn():
     import contract_fixtures as cf
     return cf.gross_churn(0.061, series=[{"month": "2026-06", "churn_pct": 0.061}],
                           monthly=[{"month": "2026-06", "churn_pct": MONTHLY_CHURN_SENTINEL}])
+
+
+def test_the_forecast_reason_and_the_ask_reasons_are_closed_sentences():
+    """George, 2026-10-25: the reason of a claim for a period after the as-of month is one closed sentence with a month name and no deck text;
+    the reasons that ask the analyst to set something are the closed texts of claim_matching."""
+    assert re.fullmatch(r"Forecast period after the data \(as-of [A-Z][a-z]+ \d{4}\); cannot be tested until that period's revenue lines are supplied\.",
+                        claim_matching.forecast_after_data("2024-02"))
+    assert all(r == r.strip() and "{" not in r for r in claim_matching.ASK_REASONS)

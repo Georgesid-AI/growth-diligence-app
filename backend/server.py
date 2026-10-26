@@ -1998,10 +1998,14 @@ async def _attention_order(audit_id: str, audit: dict, current: dict, candidates
         return []
     asking = {c["id"] for c in live if c.get("status") == "pending" or (c.get("turnover") and any(v.get("turnover_state") == "ask" for v in c["turnover"]))
               or (c.get("definition") and any(v.get("definition_check") == claim_matching.DEFINITION_ASK for v in c["definition"]))}
-    if not asking:
-        return []
     trial = [{**c, "status": "approved"} for c in live]
     rows = claim_matching.build_register(sorted(trial, key=lambda c: (c.get("file") or "", c.get("order", 0))), results, settings, peers=trial)
+    # a row whose reason asks the analyst to set or confirm something (period not read, a required field unknown ...) is a question too
+    to_set = {str(r["claim_id"]).split("#")[0]: r["reason"] for r in rows if claim_matching.asks_analyst(r)}
+    to_set = {cid: reason for cid, reason in to_set.items() if cid not in asking}
+    asking |= set(to_set)
+    if not asking:
+        return []
     five = set(verdict_mod.top5_state(rows, (audit.get("ic_inputs") or {}).get("top5"))["in_force"])
     keys: dict = {}
     for r in rows:
@@ -2011,7 +2015,7 @@ async def _attention_order(audit_id: str, audit: dict, current: dict, candidates
     in_five = {str(r["claim_id"]).split("#")[0] for r in rows if r["claim_id"] in five} & asking
     last = (True, True, True, 0, 0, 0, 0)            # a claim with no row of its own (not testable) ranks after the others
     ordered = sorted(asking, key=lambda cid: (cid not in in_five, keys.get(cid, last)))
-    return [{"id": cid, "in_top5": cid in in_five} for cid in ordered]
+    return [{"id": cid, "in_top5": cid in in_five, **({"set": to_set[cid]} if cid in to_set else {})} for cid in ordered]
 
 
 def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
@@ -2576,7 +2580,10 @@ async def _open_claim_questions(audit_id: str, audit: dict, rows: list) -> int:
     register rows whose Definition check is open (simplified-flow.md section 2). A count only."""
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
     waiting = (await _entry_plan(audit_id, audit, found))["waiting"]
-    return waiting + sum(1 for r in rows if r.get("definition_check") == claim_matching.DEFINITION_ASK)
+    definitions = [r for r in rows if r.get("definition_check") == claim_matching.DEFINITION_ASK]
+    asked = {str(r["claim_id"]).split("#")[0] for r in definitions}
+    to_set = {str(r["claim_id"]).split("#")[0] for r in rows if claim_matching.asks_analyst(r)} - asked      # one card per claim
+    return waiting + len(definitions) + len(to_set)
 
 
 async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict:

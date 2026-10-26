@@ -44,7 +44,7 @@ GATE_TAGS = {cm.GATE_PROPOSED: "(proposed)", cm.GATE_SET: "(set by the analyst)"
 
 # docs/specs/claim-review-conclusion.md: the outcome describes the five selected claims, never a recommendation.
 HEADING = "Claim-review conclusion — assessment of the five selected claims"
-SCOPE_SENTENCE = "This assesses the five claims the analyst selected. It is not an investment recommendation."
+SCOPE_SENTENCE = "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation."
 OUTCOMES = {"not_supported": "Selected claims not supported", "insufficient": "Insufficient evidence",
             "supported": "Selected claims supported", "partly_supported": "Selected claims partly supported"}
 INSUFFICIENT_UNTESTED = 3               # this many untested selected claims, with none Contradicted, is insufficient evidence
