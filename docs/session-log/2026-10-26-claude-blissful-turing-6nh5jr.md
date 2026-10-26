@@ -1,6 +1,6 @@
-2026-10-26 · claude/blissful-turing-6nh5jr
-Deleted: the cards for single-candidate periods and for derived figures and nameless launch dates (they go to Diagnostics lines), the free-text Edit step for a population the label already names.
-Decided: the checker still only flags and the pipeline applies a correction with exactly one candidate (so the review flags and their tests stay), the undo fields are computed at read time and stored on the row; a label with several candidates is left as cited, not a new card (it would swamp the page); derived-figure sums need parts of comparable size, else any value near a figure plus a small figure was dropped; Undo of a rejection restores status and the "Python entered it" mark.
-Slow or unclear: the four "named corrections" of the brief had no code names ("label mismatch" exists nowhere in the deck checks), so I mapped them to period from another cell, year under bar differs, period not on page (heading candidates) and a cited label that is not adjacent; George to confirm the mapping.
-Root cause and rule: nothing broken; the live run showed the checks asking about what they could settle themselves. Rule for next time: a check that can name its candidates returns them (`corrections.plan`), and the card count is the number of choices only the analyst can make.
-Process change: put the code name of each check next to the screen wording in the brief (the same table as simplified-flow.md section 2), so the mapping is not guessed.
+2026-10-26, claude/blissful-turing-6nh5jr
+Deleted: nothing.
+Decided: ruff==0.16.8 pinned in backend/requirements.txt (the only requirements file; it already holds the test tools), installed in the venv; the one finding fixed with no rule change and no new noqa.
+Slow or unclear: the backend suite takes about 90 s with -n 4 and passes the 120 s tool limit only when run with a longer timeout; there is no separate dev requirements file.
+Root cause: a truncated import line in backend/tests/test_claim_corrections.py (trailing comma, `stored` missing) was a syntax error for ruff 0.16.8; ruff was not in the venv, so nobody ran it locally. Rule that prevents it: ruff is now in requirements.txt, so the session hook installs it and `ruff check backend` runs as CI does.
+Process change to propose: add `ruff check backend` to the session start hook's checks so a lint failure shows before the push.
