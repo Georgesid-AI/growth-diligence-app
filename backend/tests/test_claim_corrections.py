@@ -186,7 +186,7 @@ def _url(cid):
     return f"/api/audits/{AUDIT_RUN}/decks/candidates/{cid}"
 
 
-from test_claims_enter_on_their_own import AUDIT as AUDIT_RUN, claim as run_claim, listed, stored  # noqa: E402
+from test_claims_enter_on_their_own import AUDIT as AUDIT_RUN, claim as run_claim, listed,  # noqa: E402
 
 APPLIED = {"field": "period", "reason": "year under bar differs", "original": "2023", "corrected": "2022", "state": "applied",
            "undo": {"target_date": "2023", "period_text": "2023", "period_start": "2023-01-01", "period_end": "2023-12-31"}}
