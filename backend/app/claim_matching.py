@@ -771,6 +771,11 @@ RECURRING_METRIC = {"arr": "ARR", "mrr": "MRR", "churn": "Gross revenue churn", 
 METRIC_TYPES = (*RECURRING_METRIC, "customers", "users", "user_growth", "gross_margin", "revenue_growth")
 
 
+# George, 2026-10-26: a revenue-typed figure whose own text names no metric takes it from the title over its chart or the page heading when that
+# names exactly one (association.heading_word); "sales" follows the Sales answer of the deck.
+HEADING_METRIC = {"revenue": "Revenue", "ARR": "ARR", "MRR": "MRR"}
+
+
 def is_sales_claim(c: dict, results: Optional[dict]) -> bool:
     """A money claim labelled Sales with a past period (George, 2026-10-26): the deck's "Sales" may be revenue or bookings, so the analyst answers once
     per deck. Past means the claim's period ends in or before the as-of month; a plan or scenario figure is not asked."""
@@ -778,7 +783,7 @@ def is_sales_claim(c: dict, results: Optional[dict]) -> bool:
     end = _month_of(c.get("period_end"))
     return bool(as_of and end is not None and end <= _mi(as_of) and c.get("claim_type") in ("revenue", "sales") and c.get("currency")
                 and c.get("value") is not None and c.get("scenario") in (None, "none") and c.get("basis") != "projection"
-                and c.get("label_from") and _SALES_LABEL.match(c["label_from"]))
+                and ((c.get("label_from") and _SALES_LABEL.match(c["label_from"])) or c.get("heading_metric") == "sales"))
 
 
 def sales_questions(candidates: List[dict], results: Optional[dict], settings: dict) -> List[dict]:
@@ -1034,6 +1039,9 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         metric, metric_by = turn["metric"], turn["set_by"]
         hint = deck_revenue_hint(c, peers or []) if turn["state"] == "ask" else None
         suggested = VOLUME_CHOICE if hint or turn["suggested"] else None
+    if metric is None and metric_by == "python" and c.get("claim_type") == "revenue" and HEADING_METRIC.get(c.get("heading_metric")) \
+            and _fits(METRICS[HEADING_METRIC[c["heading_metric"]]]["unit"], claim_unit):
+        metric = HEADING_METRIC[c["heading_metric"]]
     sales_reason = None
     if metric is None and metric_by == "python" and is_sales_claim(c, results):        # the deck-wide answer decides what "Sales" is
         choice = ((settings.get("sales_choices") or {}).get(c.get("deck_id")) or {}).get("as")

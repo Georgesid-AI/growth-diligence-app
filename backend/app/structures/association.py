@@ -69,6 +69,18 @@ def period_marker(text: Optional[str]) -> Optional[str]:
     return "actual" if _ACTUAL.search(text) else None
 
 
+# The metric a chart title or page heading names (George, 2026-10-26): one closed word, or none when it names no metric or more than one.
+_HEADING_WORDS = (("revenue", re.compile(r"(?i)\brevenues?\b")), ("sales", re.compile(r"(?i)\bsales\b")), ("ARR", re.compile(r"\bARR\b")),
+                  ("MRR", re.compile(r"\bMRR\b")))
+GRAPHIC_GAPS = ("graphic", "chart")        # the reader saw a drawing it could not read: a pie or a chart whose slices are no rectangles
+
+
+def heading_word(texts: List[str]) -> Optional[str]:
+    """The one metric word the texts name (revenue, sales, ARR or MRR), else None. "Annual recurring revenue" is not a word here."""
+    found = {word for text in texts for word, rx in _HEADING_WORDS if rx.search(text or "")}
+    return next(iter(found)) if len(found) == 1 else None
+
+
 def _box(at) -> Optional[Tuple[float, float, float, float]]:
     return tuple(at) if at and len(at) == 4 else None
 
@@ -229,6 +241,31 @@ class Layout:
         texts = {self.by_id[i]["text"].strip().lower() for i in found}
         return {"cells": sorted(found), "ambiguous": len(texts) > 1}
 
+    def _chart_extent(self, cell: Dict) -> Optional[Tuple[float, float, float, float]]:
+        """The box around the bars of the chart a figure is printed in, else None."""
+        box = _box(cell.get("at"))
+        if not self.measured or not box:
+            return None
+        bar = self.bar_of(cell)
+        extents = self.extents()
+        scope = bar["scope"] if bar else next((s for s, e in extents.items() if self.is_chart(s) and _inside(_centre(box), e, CHART_MARGIN)), None)
+        return extents[scope] if scope is not None and scope in extents and self.is_chart(scope) else None
+
+    @staticmethod
+    def _over(at, ext) -> bool:
+        """Whether a line stands over the box of a chart's bars, centred on them: the chart's own title."""
+        return at[3] <= ext[1] + 1e-9 and ext[1] - at[3] <= AXIS_REACH and abs(_centre(at)[0] - _centre(ext)[0]) <= (ext[2] - ext[0]) / 4
+
+    def heading_metric(self, cell: Dict) -> Optional[str]:
+        """The metric word (revenue, sales, ARR, MRR) of the chart title over the figure's chart when it names exactly one, else of the page's heading
+        cells (title or top band) when they name exactly one, else None. Only Python reads the text; the word is closed."""
+        ext = self._chart_extent(cell)
+        if ext is not None:
+            word = heading_word([c["text"] for c in self.cells if _box(c.get("at")) and not c.get("rot") and c.get("table") is None and self._over(_box(c["at"]), ext)])
+            if word:
+                return word
+        return heading_word([c["text"] for c in self.cells if c.get("title") or c.get("top_band")])
+
     def legend_items(self, cell: Dict) -> List[str]:
         """The ids of the short lines of words a figure printed in a chart may be named by, for a card that asks the analyst which one it is
         (never paired automatically): lines of words with no figure, at most LABEL_MAX long, standing within LEGEND_ZONE of the chart's bars,
@@ -237,12 +274,11 @@ class Layout:
         box = _box(cell.get("at"))
         if not self.measured or not box:
             return []
-        bar = self.bar_of(cell)
-        extents = self.extents()
-        scope = bar["scope"] if bar else next((s for s, e in extents.items() if self.is_chart(s) and _inside(_centre(box), e, CHART_MARGIN)), None)
-        if scope is None or scope not in extents or not self.is_chart(scope):
+        ext = self._chart_extent(cell)
+        pie = ext is None and any(g in GRAPHIC_GAPS for g in self.gaps)         # a drawing the reader cannot read: the whole page is its zone
+        if ext is None and not pie:
             return []
-        ext = extents[scope]
+        ext = ext or (0.0, 0.0, 1.0, 1.0)
         zone = (ext[0] - LEGEND_ZONE, ext[1] - LEGEND_ZONE, ext[2] + LEGEND_ZONE, ext[3] + LEGEND_ZONE)
         found = []
         for c in self.cells:
@@ -252,8 +288,7 @@ class Layout:
                 continue
             if verify.is_date_line(c["text"]) or verify.period_header(c["text"]) or not _inside(_centre(at), zone) or _NOT_A_LEGEND.search(c["text"]):
                 continue
-            over = at[3] <= ext[1] + 1e-9 and ext[1] - at[3] <= AXIS_REACH and abs(_centre(at)[0] - _centre(ext)[0]) <= (ext[2] - ext[0]) / 4
-            if over:
+            if not pie and self._over(at, ext):
                 continue            # the chart's own title
             found.append((_gap(at, ext), redact.cell_id(c)))
         return [i for _, i in sorted(found)[:MAX_LEGEND_ITEMS]]

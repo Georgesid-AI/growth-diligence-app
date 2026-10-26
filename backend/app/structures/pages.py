@@ -29,6 +29,7 @@ from ..decks import pages as page_grids_mod
 from ..llm import gateway
 from ..llm import redaction as llm_redaction
 from ..llm.schemas import PAGE_CLAIMS
+from . import association
 from . import checker, page_check, redact
 
 logger = logging.getLogger("growth.structures")
@@ -168,6 +169,7 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
         "ai_status": item["status"], "ai_label": page_check.label(item["status"]), "ai_checks": item.get("checks"),
         "period_cells": list(item.get("period_cells") or []), "basis": item.get("basis"), "scenario": item.get("scenario") or checker.NO_SCENARIO,
         "flags": list(item.get("flags") or []), "proposed_flags": [],
+        "heading_metric": association.Layout(grid).heading_metric(cell),      # the one metric word of the title over the figure; a closed word, no text
     }
     claims.recurring_year_end(candidate)             # "MRR in 2021" is Dec 2021 (issue #151)
     found = claims.period_range(candidate["target_date"], fiscal_year_end) if candidate.get("period_read_note") else \

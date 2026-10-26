@@ -221,3 +221,80 @@ def test_a_sales_claim_asks_once_per_deck_and_the_answer_decides_how_it_is_teste
     assert client.put(f"/api/audits/{AUDIT}/decks/d1/sales", json={"as": "revenue"}).status_code == 200
     row = {r["claim_id"]: r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"]}["c1"]
     assert row["metric"] == "Revenue"
+
+
+# ---------------------------------------------------------------------------
+# Decision 2: the metric of a revenue-typed figure from the title above it
+# ---------------------------------------------------------------------------
+def pie_page(title="Revenue by Channel", gaps=("graphic",)):
+    """A pie: a title, two slice labels (the figures), two legend lines and a footnote. No rectangle: the slices are a graphic the reader does not draw."""
+    cells = [sa.cell(1, title, (0.05, 0.05, 0.60, 0.10), 1, title=True),
+             sa.cell(2, "600,000", (0.20, 0.40, 0.30, 0.44), 2),
+             sa.cell(3, "400,000", (0.35, 0.55, 0.45, 0.59), 3),
+             sa.cell(4, "Online", (0.60, 0.40, 0.75, 0.43), 4),
+             sa.cell(5, "Retail", (0.60, 0.46, 0.75, 0.49), 5),
+             sa.cell(6, "Source: management accounts", (0.05, 0.95, 0.40, 0.98), 6)]
+    return sa.grid(cells, [], gaps=list(gaps))
+
+
+def test_a_pie_with_a_graphic_the_reader_cannot_draw_still_offers_its_legend_items():
+    item = sa.check(pie_page(), sa.claim("r2c1", 600_000, unit="EUR", label_cell="r6c1"))
+    plan, = item["corrections"]
+    assert plan["field"] == "segment" and [o["value"] for o in plan["options"]] == ["Online", "Retail"]
+    plain = sa.check(pie_page(gaps=()), sa.claim("r2c1", 600_000, unit="EUR", label_cell="r6c1"))
+    assert plain["corrections"] == [], "nothing says a chart is there"
+
+
+@pytest.mark.parametrize("title, word", [("Revenue by Channel", "revenue"), ("ARR by Channel", "ARR"), ("MRR split", "MRR"), ("Sales by Channel", "sales"),
+                                         ("Revenue and ARR by Channel", None), ("Growth by Channel", None), ("Sales and Revenue", None)])
+def test_the_title_names_the_metric_only_when_it_names_exactly_one(title, word):
+    grid = pie_page(title)
+    item = sa.check(grid, sa.claim("r2c1", 600_000, unit="EUR", label_cell="r6c1"))
+    row = pipeline.corrected_row(item, grid, {"file": "deck.pdf", "blocks": []}, FYE, 1)[0]
+    assert row.get("heading_metric") == word
+
+
+def test_a_chart_title_over_the_bars_outranks_the_page_title():
+    cells, rects = chart_page()
+    cells[1]["text"] = "ARR by year"                       # the chart's own title, over the bars; the page title says Revenue by product
+    grid = sa.grid(cells, rects)
+    item = sa.check(grid, sa.claim("r3c1", 42, unit="EUR", label_cell="r9c1"))
+    assert pipeline.corrected_row(item, grid, {"file": "deck.pdf", "blocks": []}, FYE, 1)[0]["heading_metric"] == "ARR"
+
+
+def part(cid, value, segment, heading="revenue", **over):
+    c = cand(cid, value, "FY2024", **{"snippet": f"EUR {value:,}", "claim_inputs": {cid: {"segment": segment}}, "slide": 4, **over})
+    return {**c, "heading_metric": heading} if heading else c
+
+
+def test_legend_labelled_parts_of_a_chart_titled_revenue_join_the_partition_of_the_revenue_total():
+    rows = register([TOTAL, part("c2", 600_000, "Online"), part("c3", 400_000, "Retail")])
+    by = {r["claim_id"]: r for r in rows}
+    assert (by["c2"]["metric"], by["c2"]["metric_set_by"]) == ("Revenue", "python")
+    assert by["c2"]["group_role"] == by["c3"]["group_role"] == "segment_part" and by["c1"]["group_role"] == "total"
+    assert cg.made_of(by["c2"], rows) == {"segment": "Online", "part_of": "part of Revenue FY2024 total"}
+
+
+def test_without_a_title_that_names_the_metric_the_parts_stay_apart():
+    for heading in (None, "ARR"):
+        rows = register([TOTAL, part("c2", 600_000, "Online", heading), part("c3", 400_000, "Retail", heading)])
+        assert {r["group_role"] for r in rows if r["claim_id"] in ("c2", "c3")} != {"segment_part"}, heading
+
+
+def test_a_figure_whose_own_text_names_a_metric_keeps_it():
+    c = part("c2", 600_000, "Online", "ARR", snippet="MRR EUR 600,000")
+    assert register([c])[0]["metric"] == "MRR"
+
+
+def test_a_title_naming_sales_follows_the_sales_answer():
+    c = part("c1", 1_200_000, "Online", "sales", target_date="FY2022", period_text="FY2022")
+    c = deck_claims_resolve(c)
+    assert row_of(c)["reason"] == cm.SALES_ASK_REASON
+    assert row_of(c, {"d1": {"as": "bookings"}})["reason"] == "bookings not in the data"
+    assert row_of(c, {"d1": {"as": "revenue"}})["metric"] == "Revenue"
+    assert cm.sales_questions([c], engine_results(), {}) == [{"deck_id": "d1", "file": "testco_board.pptx", "claims": 1}]
+
+
+def deck_claims_resolve(c):
+    from app.decks import claims as deck_claims
+    return deck_claims.resolve_period({**c, "deck_id": "d1"}, FYE)

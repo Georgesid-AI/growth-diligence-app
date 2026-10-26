@@ -1724,6 +1724,16 @@ def test_the_sales_question_the_made_of_line_and_the_legend_items_hold_no_deck_t
     assert sentinel not in caplog.text
 
 
+def test_the_heading_metric_is_one_closed_word_and_never_the_title_text():
+    """A title that names a metric gives the candidate `heading_metric`: revenue, sales, ARR or MRR, never the title (which may hold a company name)."""
+    from app.structures import association
+    sentinel = "Zephyr Holdings"
+    assert association.heading_word([f"{sentinel} Revenue by Channel"]) == "revenue"
+    assert association.heading_word([f"{sentinel} growth"]) is None and association.heading_word(["Revenue and ARR"]) is None
+    assert "heading_metric" not in decks.GATEWAY_READABLE_FIELDS
+    assert set(claim_matching.HEADING_METRIC) == {"revenue", "ARR", "MRR"}
+
+
 def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
     """Static: every log call in a register function names the run, the label counts or a row count, as format arguments
     and nothing else (no row, no claim, no gate, no value)."""
