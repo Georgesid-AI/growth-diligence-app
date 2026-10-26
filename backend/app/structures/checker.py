@@ -57,7 +57,7 @@ import re
 from typing import Dict, List, Optional
 
 from ..decks import claims, parser
-from . import page_check, verify
+from . import corrections, page_check, verify
 
 VALUE_NOT_ON_PAGE = "value not on page"
 CURRENCY_ASSUMED = "currency assumed"
@@ -81,6 +81,9 @@ PERIOD_FROM_HEADING = "period from page heading"
 PERIOD_FROM_OTHER_CELL = "period from another cell"
 PERIOD_IS_RANGE = "period is a range"
 GROWTH_START_YEAR = "growth dated to start year"
+LABEL_MISMATCH = "label mismatch"        # the reason of a label correction; no review flag, a label with several candidates stays as the model cited it
+DERIVED_FIGURE = corrections.DERIVED_FIGURE
+LAUNCH_NO_PRODUCT = corrections.LAUNCH_NO_PRODUCT
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL,
@@ -303,11 +306,23 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
         if claim.get("metric") in claims.GROWTH_TYPES and starts_at_period(cell["text"], claim.get("period"), fiscal_year_end):
             flags.append(GROWTH_START_YEAR)
         flags += [f for f in rule_flags(grid, grid_views, cell, claim, lines, fiscal_year_end) if f not in flags]
+        item["corrections"] = corrections.plan(grid, grid_views, claim, item, cell, flags, LABEL_MISMATCH, fiscal_year_end)
+        item["drop"] = drop_reason(claim, cell, by_id.get(claim.get("label_cell")), flags, listed, furniture)
         item["flags"] = flags
         item["basis"] = claim.get("basis")
         item["scenario"] = claim.get("scenario") or NO_SCENARIO
-    checked["flagged"] = sum(1 for i in checked["items"] if flagged(i))
+    checked["flagged"] = sum(1 for i in checked["items"] if not i["drop"] and flagged(i))
     return checked
+
+
+def drop_reason(claim: Dict, cell: Dict, label: Optional[Dict], flags: List[str], listed: Dict, furniture: frozenset) -> Optional[str]:
+    """Why the claim never enters the register though the model read it (George, 2026-10-26): DERIVED_FIGURE, a value on no cell that the
+    figures of the page compute; LAUNCH_NO_PRODUCT, a launch date whose text names no product. None otherwise."""
+    if VALUE_NOT_ON_PAGE in flags and corrections.computable(claim.get("value"), corrections.page_figures(listed, furniture)):
+        return DERIVED_FIGURE
+    if corrections.launch_without_product(claim, cell["text"], label["text"] if label else None):
+        return LAUNCH_NO_PRODUCT
+    return None
 
 
 def flagged(item: Dict) -> bool:

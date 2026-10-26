@@ -8,7 +8,7 @@ import * as api from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
   getDatasets: jest.fn(), getDecks: jest.fn(), updateCandidate: jest.fn(), decideColumns: jest.fn(), answerDefinitionCheck: jest.fn(), answerTurnover: jest.fn(),
-  getBlockers: jest.fn(), runStage: jest.fn(),
+  getBlockers: jest.fn(), runStage: jest.fn(), answerCorrection: jest.fn(),
 }));
 jest.mock("react-router-dom", () => ({ Link: ({ to, children }) => <a href={to}>{children}</a>, useNavigate: () => jest.fn() }), { virtual: true });
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -147,5 +147,48 @@ test("an untested row whose reason asks the analyst to set something is a card w
     await act(async () => { q(host, "edit-save").click(); });
     expect(api.updateCandidate).toHaveBeenCalledWith("a1", "s1", expect.objectContaining({ target_date: "2024-02" }));
     expect(q(host, "needs-attention")).toBeNull();
+  } finally { await done(); }
+});
+
+test("a correction with several candidates is a card with one button per candidate next to Keep and Not a company claim", async () => {
+  api.answerCorrection.mockResolvedValue({});
+  const waiting = { field: "period", reason: "period not on page", original: "2027", state: "choose", options: [{ value: "2025", set: {} }, { value: "2024", set: {} }] };
+  const { host, done } = await mount([claim("k1", { flags: ["period not on page"], corrections: [waiting] })]);
+  try {
+    const buttons = [...host.querySelectorAll('[data-testid="attention-correction"]')];
+    expect(buttons.map((b) => b.textContent)).toEqual(["2025", "2024"]);
+    expect(q(host, "attention-keep")).not.toBeNull();
+    expect(q(host, "attention-reject").textContent).toBe("Not a company claim");
+    await act(async () => { buttons[1].click(); });
+    expect(api.answerCorrection).toHaveBeenCalledWith("a1", "k1", { index: 0, action: "choose", option: 1 });
+  } finally { await done(); }
+});
+
+test("a claim with an applied correction raises no card", async () => {
+  const applied = { field: "period", reason: "year under bar differs", original: "2023", corrected: "2022", state: "applied" };
+  const { host, done } = await mount([claim("k1", { status: "approved", corrections: [applied] })]);
+  try { expect(q(host, "needs-attention")).toBeNull(); } finally { await done(); }
+});
+
+test("a population that the label does not say is asked with two buttons, and the answer is stored on the claim", async () => {
+  api.updateCandidate.mockResolvedValue({});
+  const REASON = "required field unknown: population; set it with Edit in the claims list";
+  const set = claim("u1", { status: "approved", claim_type: "users", snippet: "10,000" });
+  const { host, done } = await mount([set], [], {}, [{ id: "u1", in_top5: false, set: REASON }]);
+  try {
+    expect(q(host, "attention-set-reason").textContent).toBe("Are these paying customers or registered users?");
+    const buttons = ["paying", "registered"].map((p) => q(host, `attention-population-${p}`));
+    expect(buttons.map((b) => b.textContent)).toEqual(["Paying customers", "Registered users"]);
+    await act(async () => { buttons[1].click(); });
+    expect(api.updateCandidate).toHaveBeenCalledWith("a1", "u1", { population: "registered" });
+  } finally { await done(); }
+});
+
+test("a reason that asks for more than the population keeps the claims list's editor", async () => {
+  const REASON = "required field unknown: currency, population; set it with Edit in the claims list";
+  const { host, done } = await mount([claim("u1", { status: "approved", claim_type: "users" })], [], {}, [{ id: "u1", in_top5: false, set: REASON }]);
+  try {
+    expect(q(host, "attention-population-paying")).toBeNull();
+    expect(q(host, "candidate-row-u1")).not.toBeNull();
   } finally { await done(); }
 });

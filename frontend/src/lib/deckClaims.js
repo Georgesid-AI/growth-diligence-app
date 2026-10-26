@@ -431,6 +431,31 @@ export function claimsForView(claims, view) {
   return (claims || []).filter((c) => isFlagged(c) === (view === REVIEW_VIEW));
 }
 
+/** Corrections a check made or offers (claim-matching.md section 33): `corrections` [{field, reason, original, corrected, state, options}] on a
+ *  claim; an applied one reads "Corrected: period 2023 → 2022" with Undo, one that waits is a button per candidate on the card. */
+const withIndex = (c, state) => (c?.corrections || []).map((e, index) => ({ ...e, index })).filter((e) => e.state === state);
+export const appliedCorrections = (c) => withIndex(c, "applied");
+export const waitingCorrections = (c) => withIndex(c, "choose");
+export const correctionText = (e) => `Corrected: ${e.field} ${e.original ?? "none"} → ${e.corrected}`;
+export const UNDO_LABEL = "Undo";
+export const DIAGNOSTICS_DECK_HEADING = "Deck reading";
+/** The Diagnostics lines of the decks' page reads (claim-matching.md section 33): what a check corrected, with the original and the corrected
+ *  value, and the claims that never entered the register ("derived figure, not a claim", "launch date without product name"). */
+export function diagnosticLines(decks) {
+  return (decks || []).flatMap((d) => (d.diagnostics || []).map((x) => {
+    const where = `${d.file} · ${d.page_unit === "slide" ? "slide" : "page"} ${x.page}`;
+    if (x.kind === "corrected") return `${where}: corrected ${x.field}, ${x.original ?? "none"} → ${x.corrected} (${x.reason})`;
+    return `${where}: ${x.kind}${x.metric ? ` · ${x.metric}` : ""}${x.value != null ? ` ${x.value}` : ""}${x.period ? ` · ${x.period}` : ""}`;
+  }));
+}
+export const KEEP_ALL_LABEL = "Keep all";
+/** The rows "Keep all" keeps: the section's claims a check asks about (pending, flagged), never an Other figure. */
+export const keepAllRows = (claims) => (claims || []).filter((c) => c.status === "pending" && !isOther(c) && isFlagged(c));
+export const POPULATION_QUESTION = "Are these paying customers or registered users?";
+export const POPULATION_ANSWERS = [["paying", "Paying customers"], ["registered", "Registered users"]];
+/** Whether a reason of the register is the question about the population alone ("required field unknown: population; set it ..."). */
+export const asksPopulationOnly = (reason) => /^required field unknown: population;/.test(reason || "");
+
 /** "currency assumed · scenario label not on page": the flags of a claim, as the checker wrote them. */
 export const flagsText = (c) => (c?.flags || []).join(" · ");
 

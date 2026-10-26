@@ -1848,6 +1848,14 @@ class CandidateUpdate(BaseModel):
     figure_type: Optional[Literal[deck_claims.FIGURE_TYPES]] = None
     growth_basis: Optional[Literal["mom", "yoy", "annualised", "cumulative", "unknown"]] = None
     reason: Literal[tuple(deck_claims.EDIT_REASONS)] = "parser_misread"
+    undo: Optional[bool] = None         # restore a rejected claim to the status it had before (George, 2026-10-26)
+
+
+class CorrectionAnswer(BaseModel):
+    """Undo a correction a check applied, or choose one of the candidates of a correction that waits (claim-matching.md section 33)."""
+    index: int = Field(ge=0)
+    action: Literal["undo", "choose"]
+    option: Optional[int] = Field(default=None, ge=0)
 
 
 _EDITABLE = ("claim_type", "value", "value_high", "unit", "currency", "target_date", "by_period")
@@ -1934,7 +1942,7 @@ async def list_deck_candidates(audit_id: str):
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
-                   "page_reads": 1, "skipped_pages": 1, "unread_pages": 1}
+                   "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "diagnostics": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     for d in found:
@@ -2219,6 +2227,12 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     if not current:
         raise HTTPException(404, "Candidate not found")
     sent = payload.model_fields_set
+    if payload.undo:
+        # Undo on a rejected row: the status, and whether Python entered it, as they were before the rejection (George, 2026-10-26).
+        if current.get("status") != "rejected":
+            raise _rejected("status", "only a rejected claim can be restored")
+        await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": {**(current.get("previous_state") or {"status": "pending"}), "previous_state": None}})
+        return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
     edits = {k: getattr(payload, k) for k in _EDITABLE + _CLAIM_FIELDS if k in sent}
     if not edits and "status" not in sent:
         raise HTTPException(400, "Nothing to change")
@@ -2281,6 +2295,42 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         # Approving an edited claim keeps it "edited": it is approved with the analyst's corrections.
         status = "edited" if payload.status == "approved" and "parsed" in current else payload.status
         changes = {"status": status, "auto_accepted": False, "auto_note": None}     # a status the analyst sets is the analyst's decision (PR 157)
+        if status == "rejected" and current.get("status") != "rejected":
+            changes["previous_state"] = {k: current.get(k) for k in ("status", "auto_accepted", "auto_note")}     # what Undo restores
+    await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
+    return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
+
+
+@api.post("/audits/{audit_id}/decks/candidates/{candidate_id}/correction")
+async def answer_correction(audit_id: str, candidate_id: str, payload: CorrectionAnswer):
+    """Undo a correction a check applied before the register (the field goes back to what the model read), or choose one of the candidates
+    of a correction that waits (the field is set, the flag that asked goes, the claim is kept like Keep). docs/specs/claim-matching.md 33."""
+    where = {"audit_id": audit_id, "id": candidate_id}
+    current = await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0})
+    if not current:
+        raise HTTPException(404, "Candidate not found")
+    entries = list(current.get("corrections") or [])
+    if payload.index >= len(entries):
+        raise _rejected("index", "this claim has no such correction")
+    entry = dict(entries[payload.index])
+    changes: dict = {}
+    if payload.action == "undo":
+        if entry.get("state") != "applied":
+            raise _rejected("action", "only an applied correction can be undone")
+        changes.update(entry["undo"])
+        entry["state"] = "undone"
+    else:
+        options = entry.get("options") or []
+        if entry.get("state") != "choose" or payload.option is None or payload.option >= len(options):
+            raise _rejected("option", "choose one of the candidates of a correction that waits")
+        chosen = options[payload.option]
+        changes.update(chosen["set"])
+        changes.update(status="approved", auto_accepted=False, auto_note=None)
+        changes["flags"] = [f for f in current.get("flags") or [] if f != entry["reason"]]
+        entry.update(state="applied", corrected=chosen["value"])
+        entry.pop("options", None)
+    entries[payload.index] = entry
+    changes["corrections"] = entries
     await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 

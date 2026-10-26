@@ -3413,6 +3413,8 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
                              "matches analyst claim", "basis and scenario disagree", "basis conflicts with period",
                              "cell corrected", "sign not on page", "period from page heading", "period from another cell",
                              "period is a range", "growth dated to start year")
+    assert (checker.DERIVED_FIGURE, checker.LAUNCH_NO_PRODUCT) == ("derived figure, not a claim", "launch date without product name"), \
+        "the two Diagnostics kinds of a dropped claim are closed words (George, 2026-10-26)"
     assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"), \
         "the flags that leave a claim in the main list (George, 2026-10-23: the unit and the period only flag)"
     assert set(checker.REVIEW_FLAGS) == set(checker.FLAGS) - set(checker.INFORMATIONAL_FLAGS)
@@ -3520,3 +3522,24 @@ def test_the_forecast_reason_and_the_ask_reasons_are_closed_sentences():
     assert re.fullmatch(r"Forecast period after the data \(as-of [A-Z][a-z]+ \d{4}\); cannot be tested until that period's revenue lines are supplied\.",
                         claim_matching.forecast_after_data("2024-02"))
     assert all(r == r.strip() and "{" not in r for r in claim_matching.ASK_REASONS)
+
+
+def test_corrections_and_dropped_claims_log_values_and_cell_ids_never_deck_text():
+    """George, 2026-10-26: what a check corrected or dropped is logged for Diagnostics (the deck document) and stored with the verified
+    claims (llm_structures): period labels, cell ids, model values and the closed kind words, never the text of a label cell or a line."""
+    import asyncio
+    import test_claim_corrections as cc
+    from app.llm import gateway as _gateway
+    tc = cc.tc
+    parsed = tc.deck([(50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words"),
+                      (50, 440, 12, "Launch Q3 2025"), (50, 420, 12, "$150,000 annual revenue run rate")])
+    db = tc._page_db(parsed)
+    launch = tc.claim(cc.at(parsed, "Launch Q3 2025"), None, metric="product", unit=None, period="2025-Q3", period_cell=cc.at(parsed, "Launch Q3 2025"))
+    label = tc.claim(cc.at(parsed, "800"), 800, metric="customers", unit="count", label_cell=cc.at(parsed, "Footnote words"))
+    adapter = cc.t.FakeAdapter(replies=[json.dumps({"type": "page_claims", "claims": [launch, label]})])
+    assert asyncio.run(cc.structures.process_deck(db, cc.AUDIT, "d1", adapter=adapter, sleep=cc.t._noop_sleep)) == "read"
+    deck_doc, = db[cc.TEXT_COLLECTION].docs
+    assert {d["kind"] for d in deck_doc["diagnostics"]} == {"corrected", "launch date without product name"}
+    logged = json.dumps(deck_doc["diagnostics"]) + json.dumps(db[_gateway.STRUCTURES_COLLECTION].docs[0]["items"])
+    for needle in ("Paying customers", "Footnote", "Launch Q3", "annual revenue"):
+        assert needle not in logged, f"{needle!r} in a Diagnostics line or a stored item"
