@@ -48,7 +48,7 @@ final). Location: docs/specs/claim-types-and-correction.md. Amends deck-parser.m
   | Unit, Currency | the parser; a currency type with no currency | an amount claim with no currency |
   | Period | the stated period (deck-parser.md §2) | no period stated |
   | Population | customers: paying; users: registered when the deck label carries a qualifier (deck-parser.md §2), else Unknown; retention: the register's segment (Whole company or a segment); sales: the metric's population (Median sales cycle: deals won; Win rate: all closed; a "pipeline" keyword: open) | users with no qualifier; sales with no metric |
-  | Figure type | the parser: `target` when the claim's line or borrowed label holds a target cue (§2.1); otherwise Python on read: `target` when the period ends after the as-of month, else `actual` | never, once the period is known |
+  | Figure type | the parser: `target` when the claim's line or borrowed label holds a target cue (§2.1); otherwise Python on read from the source classification (amended 2026-10-26, forecast-and-payback.md section 2): `target` when the page reader's `basis` is projection or scenario and the period ends after the as-of month, else `actual`. A period after the as-of month alone makes no target | never, once the period is known |
   | Growth basis | dates-and-periods.md §5 | no cue, or cues of two bases |
 - Order on a register row: direction only; turnover question; use of funds and acquisition channels (unchanged); no app
   metric (Unsupported); then the R fields: any Unknown → Unverified, reason `required field unknown: {fields}; set it with
@@ -56,7 +56,7 @@ final). Location: docs/specs/claim-types-and-correction.md. Amends deck-parser.m
   (George, 2026-10-19, issue #136; a date the parser could not read is the same case, no longer Unsupported "period not readable")
   (growth basis alone keeps its own reason and one-click task, dates-and-periods.md §5); then the
   matching of claim-matching.md with coverage (dates-and-periods.md §4).
-- Figure type Target: a period after the as-of month is a forecast, as today (claim-matching.md table 2b). A period that is
+- Figure type Target: a target with a period after the as-of month is a forecast (claim-matching.md table 2b, amended 2026-10-26: the period alone no longer makes one). A period that is
   not after the as-of month: Unverified, reason `target figure: the deck states a plan for this period, not a result`; the
   computed figure is shown, no gap. Figure type Actual is matched as any claim.
 - Users and user_growth claims are read against Customer count and Customer growth (paying customers): the population

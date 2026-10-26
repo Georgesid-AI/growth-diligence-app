@@ -121,28 +121,27 @@ test("a set as-of month is not marked default", async () => {
   try { expect(q(host, "assumption-as-of").textContent).toBe("As-of month January 2024"); } finally { await done(); }
 });
 
-test("the five selected claims read Plan assumes · Evidence shows · Result, each with a source link and a Details toggle", async () => {
+test("the five selected claims read Claim and period · Evidence / calculation · Result · Source, each with a Details toggle", async () => {
   const { host, done } = await mount();
   try {
     const five = q(host, "verdict-five");
-    expect(five.textContent).toContain("Plan assumes");
-    expect(five.textContent).toContain("Evidence shows");
-    expect(five.textContent).toContain("Result");
+    const heads = ["Claim and period", "Evidence / calculation", "Result", "Source"];
+    heads.forEach((h) => expect(five.textContent).toContain(h));
+    expect(heads.map((h) => five.textContent.indexOf(h))).toEqual([...heads.map((h) => five.textContent.indexOf(h))].sort((a, b) => a - b));
     const rows = five.querySelectorAll('[data-testid="verdict-five-row"]');
     expect(rows.length).toBe(5);
     const first = rows[0];
     expect(q(first, "five-plan").textContent).toContain("200,000 EUR");
     expect(q(first, "five-plan").textContent).toContain("Feb 2024");
-    expect(q(first, "five-evidence").textContent).toContain("150,000");
-    expect(q(first, "five-evidence").textContent).toContain("2024-02");
+    expect(q(first, "five-evidence-cell").textContent).toContain("150,000");
+    expect(q(first, "five-evidence-cell").textContent).toContain("2024-02");
     expect(q(first, "five-result").textContent).toContain("Contradicted");
-    expect(q(first, "five-source")).toBeNull();
-    await act(async () => { q(first, "five-source-link").click(); });
-    expect(q(first, "five-source").textContent).toBe("(mrr_series.data.total, CSV, rows 2–71, Feb 2024) · slide 4");
+    expect(q(first, "five-result").textContent).toContain("outside ±5%: a miss");
+    expect(q(first, "five-source").textContent).toBe("(mrr_series.data.total, CSV, rows 2–71, Feb 2024)slide 4");
     expect(q(first, "five-details")).toBeNull();
     await act(async () => { q(first, "five-details-toggle").click(); });
-    expect(q(first, "five-details").textContent).toContain("outside ±5%: a miss");
     expect(q(first, "five-details").textContent).toContain("VaS");
+    expect(five.textContent).not.toMatch(/#\d/);                     // no rank prefix on a screen (design note section 6)
   } finally { await done(); }
 });
 

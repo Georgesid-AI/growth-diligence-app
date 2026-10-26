@@ -45,19 +45,19 @@ async function mount(rows) {
   return { host, done: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
 }
 
-test("plan 5: High extraction confidence and Contradicted sit in two columns, with the computed figure and the gap", async () => {
+test("plan 5: the evidence status sits in the Result column and the extraction confidence under Details, apart, with the computed figure and the gap", async () => {
   const { host, done } = await mount([ROW]);
   try {
     const heads = [...host.querySelectorAll("thead th")];
-    expect(heads.map((th) => th.textContent.split("(")[0].trim())).toEqual(
-      ["#", "Claim", "Segment", "Observed", "Gap", "Extraction confidence", "Evidence status"]);
-    expect(heads[5].getAttribute("title")).toBe(EXTRACTION);
-    expect(heads[6].getAttribute("title")).toBe(EVIDENCE);
-    expect(heads[6].textContent).toContain("(within the supplied evidence)");
+    expect(heads.map((th) => th.textContent.split("(")[0].trim())).toEqual(["Claim and period", "Evidence / calculation", "Result", "Source"]);
+    expect(heads[2].getAttribute("title")).toBe(EVIDENCE);
+    expect(heads[2].textContent).toContain("(within the supplied evidence)");
     const row = host.querySelector('[data-testid="claim-register-row"]');
+    await act(async () => { row.querySelector('[data-testid="register-details-toggle"]').click(); });
     const confidence = row.querySelector('[data-testid="register-confidence"]');
     const status = row.querySelector('[data-testid="register-evidence"]');
     expect(confidence.textContent).toBe("High");
+    expect(confidence.parentElement.getAttribute("title")).toBe(EXTRACTION);
     expect(status.textContent).toBe("Contradicted");
     expect(confidence.closest("td")).not.toBe(status.closest("td"));
     expect(row.querySelector('[data-testid="register-observed"]').textContent).toContain("198,143 EUR");

@@ -207,10 +207,10 @@ test("a pick replaces a row with another register row and Use this selection sen
   const { host, unmount } = await mountDashboard(sample, OK);
   await act(async () => { host.querySelector('[data-testid="top5-change"]').click(); });
   const select = host.querySelectorAll('[data-testid="verdict-pick-select"]')[1];
-  expect([...select.options].map((o) => o.textContent)).toEqual(["Replace with…", "#3 Win rate"]);
+  expect([...select.options].map((o) => o.textContent)).toEqual(["Replace with…", "Win rate"]);
   await type(select, "c3");
   expect([...host.querySelectorAll('[data-testid="verdict-pick-row"]')].map((r) => r.querySelector("span").textContent))
-    .toEqual(["#1 ARR, FY2023", "#3 Win rate"]);
+    .toEqual(["ARR, FY2023", "Win rate"]);
   await act(async () => { host.querySelector('[data-testid="verdict-use"]').click(); });
   expect(api.putIcInputs).toHaveBeenCalledWith("a1", { top5: ["c1", "c3"] });
   await unmount();

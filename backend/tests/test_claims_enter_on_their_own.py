@@ -22,6 +22,7 @@ from test_run_audit import AUDIT, confirm_open_columns, stage, upload_files  # n
 from app import claim_matching as cm  # noqa: E402
 from app import decks, run_audit  # noqa: E402
 from app import ic_memo as im  # noqa: E402
+from app import verdict as vd  # noqa: E402
 from app.decks import claims as deck_claims  # noqa: E402
 
 RUN = RUNS["A"]
@@ -195,9 +196,10 @@ def test_the_baseline_csv_and_the_memo_register_show_auto(run_api):
     appendix = memo.split("## Appendix A")[1].split("## Appendix B")[0]
     table = [[c.strip() for c in line.strip("|").split("|")] for line in appendix.splitlines() if line.startswith("| ")]
     header, body = table[0], table[1:]
-    assert header[:4] == ["#", "Claim", "Label", "Approval"]
-    approval = {r[0]: (r[2], r[3]) for r in body}
-    assert approval[f"#{rows[0]['rank']}"] == (rows[0]["evidence_label"], cm.AUTO_LABEL)
+    assert tuple(header[:4]) == vd.FOUR_COLUMNS and "Approval" in header
+    ref, result, who = header.index("Ref"), header.index("Result"), header.index("Approval")
+    approval = {r[ref]: (r[result], r[who]) for r in body}
+    assert approval[f"#{rows[0]['rank']}"][0].startswith(rows[0]["evidence_label"]) and approval[f"#{rows[0]['rank']}"][1] == cm.AUTO_LABEL
     assert {v[1] for k, v in approval.items() if k != f"#{rows[0]['rank']}"} == {cm.ANALYST_LABEL}
 
 

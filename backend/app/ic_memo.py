@@ -396,6 +396,34 @@ def _growth_narrative(narratives: List[dict]) -> Optional[dict]:
     return _step_narrative(narratives, "growth_engine")
 
 
+def evidence_cell(r: dict, currency: Optional[str]) -> str:
+    """The Evidence / calculation cell (forecast-and-payback.md section 5): the row's calculation lines, else the observed figure with the period
+    it was read at and the gap in words. The screen shows the same lines (`calc_lines`) and figures."""
+    if r.get("calc_lines"):
+        return " / ".join(r["calc_lines"])
+    if r.get("observed_value") is None:
+        return "—"
+    at = f" ({cm.period_words(r['observed_at'])})" if r.get("observed_at") else ""
+    return f"Observed {vd.observed_text(r, currency)}{at}" + (f" · {r['gloss']}" if r.get("gloss") else "")
+
+
+def result_cell(r: dict) -> str:
+    """The Result cell: the evidence label and the row's reason, the same two the register shows."""
+    return f"{r['evidence_label'] or 'Definition check open'} – {r['reason']}"
+
+
+def source_cell(r: dict) -> str:
+    """The Source cell: the figure's citation (issue #136), else its analysis and source key, then the deck page the claim was read from."""
+    if r.get("evidence_analysis") and r.get("observed_citation"):
+        figure = f"{r['evidence_analysis']} {r['observed_citation']}"
+    elif r.get("evidence_analysis") and r.get("observed_at"):
+        figure = f"{r['evidence_analysis']} · {r['evidence_source_key']} ({r['observed_at']})"
+    else:
+        figure = f"{r['evidence_analysis']} · {r['evidence_source_key']}" if r.get("evidence_analysis") else ""
+    page = " ".join(p for p in (r.get("deck_file"), r.get("page_ref")) if p)
+    return " · ".join(p for p in (figure, page) if p) or "—"
+
+
 def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, files, decks, tables, today, integrity,
            thesis: Dict[str, str], rated: dict, unresolved: List[str], drafted: Iterable[str] = ()) -> Tuple[str, str]:
     """(sections 1-6 with the title, the whole text) for one view of the thesis."""
@@ -438,6 +466,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
             "Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"]
+    if vd.has_forecast(rows):      # forecast-and-payback.md section 3.7: one sentence whenever a forecast appears, on no row
+        out += [vd.FORECAST_NOTE]
     grouped = cg.counts(rows)
     if grouped["groups"]:          # displayed groups are reported apart from the underlying claims (claim-groups.md section 4)
         out += [f"Grouping: {grouped['items']} items are shown for {grouped['claims']} claims; {grouped['groups']} annual "
@@ -547,19 +577,17 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     app: List[str] = []
     app += [f"## {APPENDICES[0]}"]
     vas = vas_cells(rows, results.get("reporting_currency"))
-    reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}",
-            r["evidence_label"], cm.AUTO_LABEL if r.get("auto_approval") else cm.ANALYST_LABEL,      # who entered the claim: Python ("auto") or the analyst
+    reg = [[vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}", evidence_cell(r, results.get("reporting_currency")),
+            result_cell(r), source_cell(r), f"#{r['rank']}",
+            cm.AUTO_LABEL if r.get("auto_approval") else cm.ANALYST_LABEL,      # who entered the claim: Python ("auto") or the analyst
             r.get("basis") or "—", f"{r['scenario']} case" if r.get("scenario") not in (None, "none") else "—",      # the page reader's basis and case (contract 6)
             r.get("relationship") or "—",                    # claim-groups.md: how the claim relates to an annual total, or why it does not
             vas[r["rank"]],
             ", ".join(f"#{by_id[o]['rank']}" for o in r["overlaps_with"] or () if o in by_id) or "—",
-            f"{r['evidence_analysis']} {r['observed_citation']}" if r["evidence_analysis"] and r.get("observed_citation")      # issue #136
-            else f"{r['evidence_analysis']} · {r['evidence_source_key']} ({r['observed_at']})" if r["evidence_analysis"] and r["observed_at"]
-            else (f"{r['evidence_analysis']} · {r['evidence_source_key']}" if r["evidence_analysis"] else r["reason"]),
             vd.gate_text(r) or "—",
             "key" if r["claim_id"] in {g["claim_id"] for g in key["gates"]} else "", "top 5" if r["claim_id"] in {f["claim_id"] for f in ver["five"]} else ""]
            for r in rows]
-    app += [_table(["#", "Claim", "Label", "Approval", "Basis", "Case", "Relationship", "VaS", "Overlaps with", "Evidence", "Gate", "Key gate", "Top 5"], reg), ""]
+    app += [_table([*vd.FOUR_COLUMNS, "Ref", "Approval", "Basis", "Case", "Relationship", "VaS", "Overlaps with", "Gate", "Key gate", "Top 5"], reg), ""]
 
     review = ic.get("first_quarterly_review")
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]

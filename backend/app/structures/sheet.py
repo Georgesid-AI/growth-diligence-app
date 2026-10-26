@@ -889,6 +889,25 @@ def pending(line: Dict, used: set) -> bool:
     return line.get("source") == "ai" or (line.get("confidence") or 0) <= cr.MAPPING_THRESHOLD
 
 
+_SM_TOTAL = re.compile(r"sales\s*(?:and|&|/)\s*marketing|\bs\s*&\s*m\b")
+_SM_MARKETING = re.compile(r"\bmarketing\b|\badvertising\b")
+_SM_SALES = re.compile(r"\bsales\b")
+
+
+def sm_scope(labels: List[str]) -> str:
+    """What the S&M line covers, from the labels of the lines that were summed (docs/specs/forecast-and-payback.md section 4.3): `sales and marketing`
+    (one line that names both, a Sales line with a Marketing line, or "Sales" alone in a cost section, rule 4 of 26.2), `marketing only`
+    (marketing or advertising), `sales only` (sales expenses or costs), else `unknown`. A marketing-only line is never total S&M."""
+    texts = [str(label).lower().strip() for label in labels]
+    if any(_SM_TOTAL.search(t) or t == "sales" for t in texts) or (any(_SM_SALES.search(t) for t in texts) and any(_SM_MARKETING.search(t) for t in texts)):
+        return "sales and marketing"
+    if texts and all(_SM_MARKETING.search(t) for t in texts):
+        return "marketing only"
+    if texts and all(_SM_SALES.search(t) for t in texts):
+        return "sales only"
+    return "unknown"
+
+
 def yearly_input(lines: List[Dict], periods: List[Dict], scale: float, meta: Dict) -> Optional[Dict]:
     """The engine's yearly input (26.8): every actual year with its fields and cells, the forecast and budget years of the same
     lines (the track record) and the actual years, halves and quarters with a revenue line (against the revenue file). None
@@ -904,6 +923,8 @@ def yearly_input(lines: List[Dict], periods: List[Dict], scale: float, meta: Dic
             v = _field_values(chosen[f], k, scale, f) if chosen[f] else None
             if v is not None:
                 out[f] = {"value": v, "cells": [f"{get_column_letter(periods[k]['col'])}{x['row']}" for x in chosen[f]]}
+                if f == "sm_expense":
+                    out[f]["scope"] = sm_scope([x["label"] for x in chosen[f]])
         return out
     actual = [{"period": periods[k]["header"], "year": periods[k]["year"], "start": periods[k]["start"], "end": periods[k]["end"],
                "fields": fields(k)} for k in years]

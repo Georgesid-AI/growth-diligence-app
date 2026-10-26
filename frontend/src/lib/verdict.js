@@ -50,8 +50,8 @@ export function replacePick(picks, index, claimId) {
 
 export const samePicks = (a, b) => a.length === b.length && [...a].sort().join("|") === [...b].sort().join("|");
 
-/** "#3 Median sales cycle" for a candidate of the verdict response. */
-export const candidateText = (c) => `#${c.rank} ${c.claim}`;
+/** "Median sales cycle, Q4 2023" for a candidate of the verdict response: the claim by name, no rank prefix. */
+export const candidateText = (c) => c.claim;
 
 /** The reason a download of the memo was refused, from the body the server sent (its detail), else the status text. */
 export function refusalText(err) {

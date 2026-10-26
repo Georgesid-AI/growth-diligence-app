@@ -122,7 +122,7 @@ def test_the_yearly_pnl_is_never_split_into_months_and_its_actual_years_are_the_
     assert fed["pnl"] is None, "no month column: nothing reaches the engine as a monthly P&L"
     years = {y["period"]: y["fields"] for y in fed["yearly"]["actual"]}
     assert list(years) == ["FY2021", "FY2022", "FY2023"], "only the actual-tagged year columns"
-    assert years["FY2023"]["sm_expense"] == {"value": 550000.0, "cells": ["D10", "D13"]}, "Sales + Marketing, ×1,000"
+    assert years["FY2023"]["sm_expense"] == {"value": 550000.0, "cells": ["D10", "D13"], "scope": "sales and marketing"}, "Sales + Marketing, ×1,000"
     assert "sm_expense" not in years["FY2021"], "a blank breakdown is no figure, never 0"
     assert [p["period"] for p in fed["yearly"]["planned"]] == ["FY2024", "FY2025", "FY2026"]
 
@@ -351,7 +351,7 @@ def test_a_reported_actual_year_is_compared_with_the_revenue_file_when_it_covers
 def test_the_metrics_computed_from_the_revenue_file_are_not_listed_missing():
     results = {"nrr": {"overall_pct": 1.0}, "gross_churn": {"overall_pct": 0.1}}
     missing = [m["metric"] for m in _yearly_block(results=results)["missing"]]
-    assert missing == ["Integrity tests (revenue reconciliation)", "Median sales cycle", "CAC payback (monthly)"]
+    assert missing == ["Integrity tests (revenue reconciliation)", "Median sales cycle", "CAC payback (monthly timing)"]
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +435,7 @@ def test_compute_reads_the_yearly_statement_and_the_results_carry_the_yearly_bas
     block = results["yearly_basis"]
     assert [y["period"] for y in block["years"]] == ["FY2021", "FY2022", "FY2023"]
     assert all(y["basis"] == "yearly basis, not monthly" for y in block["years"])
-    assert results["cac_payback"] is None and "CAC payback (monthly)" in [m["metric"] for m in block["missing"]]
+    assert results["cac_payback"] is None and "CAC payback (monthly timing)" in [m["metric"] for m in block["missing"]]
     assert results["revenue_reconciliation"] is None, "a yearly statement is no monthly P&L"
 
 

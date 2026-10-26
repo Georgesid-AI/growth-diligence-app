@@ -7,7 +7,10 @@ import { fmtCurrency, fmtMonths, fmtPct, PLACEHOLDER } from "@/lib/format";
  * that need monthly or per-customer data and were not computed are listed as Missing.
  */
 export const S30G_TITLE = "Yearly basis (P&L summary)";
-export const YEARS_HEADERS = ["Year", "Revenue", "New revenue", "S&M % of revenue", "Gross margin", "Change", "CAC payback", "Basis"];
+// Two annual payback proxies, each named by its denominator, and what the S&M line covers (docs/specs/forecast-and-payback.md section 4):
+// neither verifies a claim defined differently, and a marketing-only line is never read as total S&M.
+export const YEARS_HEADERS = ["Year", "Revenue", "New revenue", "S&M % of revenue", "Gross margin", "Change", "CAC payback (revenue growth)",
+  "CAC payback (net new ARR)", "S&M line", "Basis"];
 export const TRACK_HEADERS = ["Year", "Line", "Forecast", "Actual", "Gap", "Gap %", "Basis"];
 export const REPORTED_HEADERS = ["Period", "Reported", "Revenue file", "Gap %", "Basis"];
 
@@ -42,9 +45,17 @@ export default function YearlyBasis({ block, ccy }) {
                 <td className="py-1.5 pr-3">{fmtPct(y.sm_pct_revenue)}</td>
                 <td className="py-1.5 pr-3">{fmtPct(y.gross_margin_pct)}</td>
                 <td className="py-1.5 pr-3">{fmtPoints(y.gross_margin_change)}</td>
-                <td className="py-1.5 pr-3" title={y.cac_payback_reason || ""}>
+                <td className="py-1.5 pr-3" title={y.cac_payback_reason || ""} data-testid="yearly-payback-revenue">
                   {y.cac_payback_months != null ? fmtMonths(y.cac_payback_months) : <span className="text-slate-600">n/c</span>}
+                  {y.cac_payback_months == null && y.cac_payback_reason && <div className="text-[10px] text-slate-500">{y.cac_payback_reason}</div>}
                 </td>
+                <td className="py-1.5 pr-3" title={y.cac_payback_net_new_arr_reason || ""} data-testid="yearly-payback-arr">
+                  {y.cac_payback_net_new_arr_months != null ? fmtMonths(y.cac_payback_net_new_arr_months) : <span className="text-slate-600">n/c</span>}
+                  {y.cac_payback_net_new_arr_months == null && y.cac_payback_net_new_arr_reason && (
+                    <div className="text-[10px] text-slate-500">{y.cac_payback_net_new_arr_reason}</div>
+                  )}
+                </td>
+                <td className="py-1.5 pr-3 text-[11px]" data-testid="yearly-sm-scope">{y.sm_scope || PLACEHOLDER}</td>
                 {basis(y)}
               </tr>
             ))}

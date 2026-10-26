@@ -32,6 +32,13 @@ const ROW = {
 };
 const RESULTS = { reporting_currency: "EUR", mrr_series: { segments: ["Enterprise", "SMB"] } };
 
+// The Details of every row (a button each): the corrections, the formula inputs and the secondary fields sit under it.
+async function openDetails(host) {
+  for (const b of host.querySelectorAll('[data-testid="register-details-toggle"], [data-testid="register-group-toggle"]')) {
+    await act(async () => { b.click(); });
+  }
+}
+
 async function mount(rows) {
   api.getClaimRegister.mockResolvedValue({ claims: [], register: rows });
   const host = document.createElement("div");
@@ -41,8 +48,9 @@ async function mount(rows) {
   return { host, root };
 }
 
-test("the section has its title, the download button and one row per claim with the spec's columns", async () => {
+test("the section has its title, the download button and one row per claim with the four columns", async () => {
   const { host } = await mount([ROW, { ...ROW, claim_id: "c02", rank: 2 }]);
+  await openDetails(host);
   expect(host.querySelector("h2").textContent).toBe("Claim register");
   const button = host.querySelector('[data-testid="claim-register-csv"]');
   expect(button.textContent).toBe("Download baseline (CSV)");
@@ -53,18 +61,19 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.textContent).toContain("Revenue · 200,000 EUR");
   expect(row.textContent).toContain("Feb 2024");
   expect(row.textContent).toContain("slide 4");
-  expect(row.textContent).toContain("Read by the parser");
+  expect(row.textContent).toContain("Read by the parser");           // under Details
   expect(row.querySelector('[data-testid="register-observed"]').textContent).toContain("202,125 EUR");
   // issue #136: the figure's own citation stands beside the number, not only on hover
   expect(row.querySelector('[data-testid="register-observed-citation"]').textContent).toBe("(mrr_series.data.total, CSV, rows 2–71, Feb 2024)");
   expect(row.querySelector('[data-testid="register-gap"]').textContent).toBe("beat 2,125 EUR · 1.1%");
   expect(row.querySelector('[data-testid="register-gloss"]').textContent).toBe("€2,125 better than claimed");
   expect(row.querySelector('[data-testid="register-evidence"]').textContent).toBe("Verified");
-  expect(row.textContent).toContain("within ±5% of the claim");
+  expect(row.querySelector('[data-testid="register-evidence-reason"]').textContent).toBe("within ±5% of the claim");
   expect(row.querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("VaS not yet computed");
   expect(row.querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with —");
   expect(row.querySelector('[data-testid="register-page"]').textContent).toBe("slide 4");
   expect(row.querySelector('[data-testid="register-period"]').textContent).toBe("Feb 2024");
+  expect(row.textContent).not.toMatch(/#\d/);                      // no rank prefix on a screen (design note section 6)
   expect(row.textContent).not.toContain("Value at stake");
   expect(row.querySelector('[data-testid="register-evidence-source"]').textContent).toBe("Monthly MRR by Segment · mrr_series.data.total (2024-02)");
   expect(row.querySelector('[data-testid="register-gate-sentence"]')).toBeNull();          // a Verified row has no gate
@@ -78,9 +87,9 @@ test("a period the parser read from 'in 2021' shows its note under the period; a
   expect(notes.map((n) => n.textContent)).toEqual([note]);
 });
 
-test("the table has the seven columns, each claim's second line spans the row, and the layout cannot scroll sideways at 1280 px", async () => {
+test("the table has the four columns, each claim's second line spans the row, and the layout cannot scroll sideways at 1280 px", async () => {
   const { host } = await mount([ROW, { ...ROW, claim_id: "c02", rank: 2, evidence_label: "Unverified" }]);
-  expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Segment", "Observed", "Gap", "Extraction confidence", "Evidence status"]);
+  expect(REGISTER_COLUMNS).toEqual(["Claim and period", "Evidence / calculation", "Result", "Source"]);
   expect(REGISTER_COLUMN_WIDTHS.reduce((a, b) => a + b, 0)).toBe(100);
   const table = host.querySelector('[data-testid="claim-register-table"]');
   const cols = [...table.querySelectorAll("col")].map((c) => c.style.width);
@@ -99,7 +108,7 @@ test("the table has the seven columns, each claim's second line spans the row, a
     expect(first.querySelectorAll("td").length).toBe(REGISTER_COLUMNS.length);
     expect(second.querySelectorAll("td").length).toBe(1);
     expect(second.querySelector("td").getAttribute("colspan")).toBe(String(REGISTER_COLUMNS.length));
-    expect(second.querySelector('[data-testid="register-page"]')).not.toBeNull();
+    expect(second.querySelector('[data-testid="register-details-toggle"]')).not.toBeNull();
   }
   // the download stays at the top; Save all gates is gone with the gate form (docs/design/simplified-flow.md)
   expect(host.querySelector('[data-testid="register-gates-save-all"]')).toBeNull();
@@ -113,6 +122,7 @@ test("the gate is read-only text in the row's details: the sentence written from
   const rows = labels.map((evidence_label, i) => ({ ...ROW, claim_id: `c${i}`, rank: i + 1, evidence_label,
     ...(evidence_label === "Verified" ? {} : { gate_sentence: PROPOSED, gate_status: i === 2 ? "set by the analyst" : "proposed", gate_saved: i === 2 }) }));
   const { host } = await mount(rows);
+  await openDetails(host);
   const found = [...host.querySelectorAll('[data-testid="claim-register-row"]')];
   expect(found.map((r) => r.querySelector('[data-testid="register-gate-sentence"]') !== null)).toEqual([false, true, true]);
   expect(found[1].querySelector('[data-testid="register-gate-status"]').textContent).toBe("(proposed)");
@@ -128,16 +138,20 @@ test("the register has no gate form: no Set gate, no threshold field, no key gat
   expect(host.textContent).not.toMatch(/Set gate|Key gate|Gate needed|prefilled/);
 });
 
-test("overlaps show the other rows' ranks and a shortfall shows beside the value at stake", async () => {
-  const { host } = await mount([{ ...ROW, overlaps_with: ["c02"], shortfall: 0.183 }, { ...ROW, claim_id: "c02", rank: 2, overlaps_with: ["c01"] }]);
+test("overlaps name the other rows (no rank) and a shortfall shows beside the value at stake", async () => {
+  const { host } = await mount([{ ...ROW, overlaps_with: ["c02"], shortfall: 0.183 },
+    { ...ROW, claim_id: "c02", rank: 2, metric: "Revenue", period: "FY2024", overlaps_with: ["c01"] }]);
+  await openDetails(host);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  expect(rows[0].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with #2");
-  expect(rows[1].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with #1");
+  expect(rows[0].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with Revenue, FY2024");
+  expect(rows[1].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with ARR, Feb 2024");
   expect(rows[0].querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("VaS not yet computed · shortfall 18.3%");
 });
 
-test("the segment and metric are selects of the right options; the rest is text", async () => {
+test("the segment and metric are selects of the right options, under Details; the rest is text", async () => {
   const { host } = await mount([ROW]);
+  expect(host.querySelector('[data-testid="register-segment"]')).toBeNull();
+  await openDetails(host);
   const segment = host.querySelector('[data-testid="register-segment"]');
   expect([...segment.options].map((o) => o.value)).toEqual(["Whole company", "Enterprise", "SMB", "Not in the data"]);
   const metric = host.querySelector('[data-testid="register-metric"]');
@@ -148,6 +162,7 @@ test("the segment and metric are selects of the right options; the rest is text"
 
 test("choosing a segment saves it and the rows follow the server's answer", async () => {
   const { host } = await mount([ROW]);
+  await openDetails(host);
   api.updateClaimInputs.mockResolvedValue({ register: [{ ...ROW, segment: "Enterprise", segment_set_by: "analyst" }] });
   const segment = host.querySelector('[data-testid="register-segment"]');
   await act(async () => {

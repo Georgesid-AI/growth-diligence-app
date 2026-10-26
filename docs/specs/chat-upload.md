@@ -992,14 +992,18 @@ When no monthly P&L is mapped and the statement has actual-tagged year columns, 
 (schemas/metrics.py `YearlyBasis`; server-only, no narrative reads it):
 - per actual year: revenue; S&M as % of revenue; gross margin (revenue − cost of revenue, or the money gross margin line, ÷
   revenue) and its change from the year before, in points; new revenue = revenue this year − revenue the year before; CAC payback
-  (yearly basis) = yearly S&M ÷ (yearly new revenue × gross margin), in months (×12, the unit of the monthly figure), shown only
-  when new revenue and the gross margin are positive;
+  (yearly basis) = 12 × yearly S&M ÷ (incremental annual recurring value × gross margin), in months, with two named proxies (amended
+  2026-10-26, forecast-and-payback.md section 4): the revenue-growth proxy (new revenue) and the net-new-ARR proxy (year-end ARR less the prior
+  year-end ARR, ARR from the revenue file), each shown only when its denominator, the S&M and the gross margin are positive, each with its own reason
+  when not; the S&M line's scope (`sm_scope`: sales and marketing, marketing only, sales only, unknown, read from its labels) and the fiscal year's first
+  and last month; neither proxy verifies a claim defined differently;
 - past forecasts against yearly actuals (the forecast track record): each line and year the sheet holds both as actual and as
   forecast or budget: forecast, actual, gap and gap %;
 - company-reported actuals against the revenue file: each actual year, half or quarter with a revenue line, against the revenue
   file's revenue over the same months when it covers all of them;
-- `missing`: NRR, gross churn, the integrity tests (the revenue reconciliation), the median sales cycle and CAC payback (monthly)
-  when the engine did not compute them, each "Missing: monthly P&L / revenue by customer, last 24 months".
+- `missing`: NRR, gross churn, the integrity tests (the revenue reconciliation), the median sales cycle and CAC payback (monthly timing)
+  when the engine did not compute them, each "Missing: monthly P&L / revenue by customer, last 24 months". The request for a monthly P&L is
+  dropped only for a claim the annual figure answers (forecast-and-payback.md section 4.4).
 Every figure and row carries `basis: "yearly basis, not monthly"`, shown on each row of the Audit tab's section (S30g).
 
 ### 26.9 Screen wording (new; chosen under rule 19 for George's review)
@@ -1012,7 +1016,7 @@ Every figure and row carries `basis: "yearly basis, not monthly"`, shown on each
 | S30d | over the cap | Sheet too long: first 400 rows read |
 | S30e | no month, quarter, half or year column | One period only: export the P&L with one column per month and upload again. |
 | S30f | a KPI series line | Company-reported series · Unverified |
-| S30g | Audit tab section | Title "Yearly basis (P&L summary)", each row ending "yearly basis, not monthly"; tables Years (Year · Revenue · New revenue · S&M % of revenue · Gross margin · Change · CAC payback), Past forecasts (Year · Line · Forecast · Actual · Gap · Gap %), Reported vs revenue file (Period · Reported · Revenue file · Gap %); the missing lines "{metric} – Missing: monthly P&L / revenue by customer, last 24 months" |
+| S30g | Audit tab section | Title "Yearly basis (P&L summary)", each row ending "yearly basis, not monthly"; tables Years (Year · Revenue · New revenue · S&M % of revenue · Gross margin · Change · CAC payback (revenue growth) · CAC payback (net new ARR) · S&M line, amended 2026-10-26), Past forecasts (Year · Line · Forecast · Actual · Gap · Gap %), Reported vs revenue file (Period · Reported · Revenue file · Gap %); the missing lines "{metric} – Missing: monthly P&L / revenue by customer, last 24 months" |
 | S30h | status line (S13) of a statement file | {n} lines wait for your decision · Ready – press Run audit (a monthly P&L) · Read as P&L (yearly summary): yearly-basis metrics after Run audit · No monthly P&L: no line read as {fields} |
 
 ### 26.10 Words (in `structures/sheet.py`, one list each)

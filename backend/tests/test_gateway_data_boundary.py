@@ -1496,6 +1496,11 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "PERIOD_UNCLEAR", "period_unclear", "UNIT_ECONOMICS_REASON", "UNIT_ECONOMICS", "results_stale",
                             # 2026-10-23 (engine contract 8): the monthly-churn reason and the metric each recurring type is tested against
                             "CHURN_RATE_UNCLEAR_REASON", "RECURRING_METRIC",
+                            # docs/specs/forecast-and-payback.md: the calculation lines, the forecast reason, the annual payback and the S&M scope
+                            "calc_lines", "calc_details", "sm_scope", "net_new_arr", "FORECAST_REASON", "FORECAST_NO_CALC", "FORECAST_METRICS",
+                            "FORECAST_BASES", "FORECAST_NOTE", "FOUR_COLUMNS", "forecast_calc", "payback_definition", "diagnose", "claimed_definition",
+                            "ANNUAL_ANALYSIS", "ANNUAL_KEYS", "ANNUAL_NOT_CALCULATED", "ANNUAL_NO_YEAR", "POPULATION_REASON_FC", "RULE_CONFLICTS",
+                            "is_forecast_row", "has_forecast", "evidence_cell", "result_cell", "source_cell",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -2703,7 +2708,7 @@ def test_chat_a_file_type_text_still_holding_the_company_name_is_refused():
 # run and two counts.
 # ---------------------------------------------------------------------------
 import server  # noqa: E402
-from app import column_rules as cr_mod, forecast_claims  # noqa: E402
+from app import column_rules as cr_mod, forecast_calc, forecast_claims  # noqa: E402
 
 FORECAST_SENTINEL = "Zephyr Holdings Revenue"           # a line label: client text, only on the candidate
 FORECAST_LOG_ARGS = frozenset({"audit_id", "len(made)", "saved"})
@@ -3618,10 +3623,11 @@ def cf_gross_churn():
 
 
 def test_the_forecast_reason_and_the_ask_reasons_are_closed_sentences():
-    """George, 2026-10-25: the reason of a claim for a period after the as-of month is one closed sentence with a month name and no deck text;
-    the reasons that ask the analyst to set something are the closed texts of claim_matching."""
-    assert re.fullmatch(r"Forecast period after the data \(as-of [A-Z][a-z]+ \d{4}\); cannot be tested until that period's revenue lines are supplied\.",
-                        claim_matching.forecast_after_data("2024-02"))
+    """George, 2026-10-25, amended 2026-10-26 (forecast-and-payback.md section 3): the reason of a forecast claim is "Forecast: " and a closed
+    phrase, a calculated figure or one of the closed reasons of forecast_calc, no deck text; the reasons that ask the analyst to set something are
+    the closed texts of claim_matching."""
+    assert claim_matching.FORECAST_REASON.format(text=claim_matching.FORECAST_NO_CALC) == "Forecast: no comparison is calculated for this metric"
+    assert all(r == r.strip() for r in forecast_calc.REASONS)
     assert all(r == r.strip() and "{" not in r for r in claim_matching.ASK_REASONS)
 
 
@@ -3644,3 +3650,43 @@ def test_corrections_and_dropped_claims_log_values_and_cell_ids_never_deck_text(
     logged = json.dumps(deck_doc["diagnostics"]) + json.dumps(db[_gateway.STRUCTURES_COLLECTION].docs[0]["items"])
     for needle in ("Paying customers", "Footnote", "Launch Q3", "annual revenue"):
         assert needle not in logged, f"{needle!r} in a Diagnostics line or a stored item"
+
+
+# ---------------------------------------------------------------------------
+# docs/specs/forecast-and-payback.md section 6: the forecast calculation, the payback definition and the annual payback are pure Python over the
+# register's rows and the stored results. Nothing reaches the gateway, nothing is logged, and the new fields and reasons hold figures and closed
+# words only (CLAUDE.md rules 14 and 17).
+# ---------------------------------------------------------------------------
+def test_the_forecast_calculation_and_the_payback_definition_import_nothing_from_the_gateway_and_log_nothing():
+    for name in ("forecast_calc.py", "payback_definition.py"):
+        tree = ast.parse((BACKEND / "app" / name).read_text(encoding="utf-8"))
+        offenders = [f"{m} -> {n}" for m, n in _imports(tree)
+                     if (set(re.split(r"[.\s\"'()]+", m)) | {n}) & {"llm", "gateway", "anthropic", "structures", "<dynamic>", "server", "logging", "claim_matching"}]
+        assert not offenders, f"{name} reaches for the gateway or logs:\n  " + "\n  ".join(offenders)
+        calls = [ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                 and n.func.attr in ("debug", "info", "warning", "error", "exception", "critical", "log")]
+        assert not calls, f"{name} writes a log line: {calls}"
+
+
+def test_the_new_register_fields_and_the_yearly_scope_are_names_the_gateway_never_mentions():
+    from app import decks as decks_mod
+    names = {"calc_lines", "calc_details", "sm_scope", "net_new_arr", "arr_year_end", "arr_prior_year_end"}   # sm_expense is the monthly P&L field the gateway already names
+    assert {"calc_lines", "calc_details"} <= set(claim_matching.FIELDS)
+    offenders = []
+    for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offenders += [f"{path.name}:{n.lineno}: {n.value!r}" for n in ast.walk(tree) if isinstance(n, ast.Constant) and n.value in names]
+    assert not offenders, "the gateway names the forecast and payback fields:\n  " + "\n  ".join(offenders)
+    assert not names & gateway.OUTBOUND_FIELDS and not names & decks_mod.GATEWAY_READABLE_FIELDS
+    assert not ({"calc_lines", "calc_details"} & set(gateway.OUTBOUND_TOP_LEVEL))
+
+
+def test_the_calculation_lines_hold_figures_and_closed_words_never_the_claims_words():
+    """A claim whose words hold a sentinel: the register row carries its figures and the closed texts, not its snippet."""
+    import forecast_support as fs
+    secret = "Falcon Orchid hiring plan"
+    row = fs.row_of(fs.claim(f"Revenue €2.1M in FY2026, {secret}", 2_073_600, "FY2026", "2026", basis="projection"))
+    assert row["calc_lines"] and all(secret not in str(v) for v in (*row["calc_lines"], *row["calc_details"], row["reason"], row["relationship"]))
+    annual = fs.row_of(fs.payback_claim(f"CAC payback 16 months in FY2024, {secret}, sales and marketing over net new ARR, gross margin", 16),
+                       results=fs.payback_results())
+    assert annual["calc_lines"] and all(secret not in str(v) for v in (*annual["calc_lines"], *annual["calc_details"], annual["reason"]))

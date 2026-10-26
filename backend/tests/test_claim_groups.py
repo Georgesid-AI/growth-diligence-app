@@ -564,7 +564,7 @@ def test_two_annual_figures_within_the_tolerance_are_the_same_figure_not_a_confl
     found = related(rows)
     assert found["conflicts"] == [] and len(found["groups"]) == 1 and found["groups"][0]["total"] == "a1"
     assert roles(rows)["a2"] == "repeat" and rows[1]["group_id"] == rows[0]["group_id"], "the repeat folds into its total's group"
-    assert rows[1]["relationship"] == "Same figure as #1 (slide 1); counted once"
+    assert rows[1]["relationship"] == "Same figure as the one stated on slide 1; counted once"
     assert rows[1]["value_at_stake_arr"] is None and rows[1]["vas_reason"] == cg.VAS_REPEAT, "and adds no exposure"
     assert cg.counts(rows) == {"items": 1, "claims": 6, "groups": 1}
     assert cg.is_subordinate(rows[1]) and cg.is_ineligible(rows[1])
@@ -592,8 +592,8 @@ def test_a_saved_choice_holds_hashes_only_and_a_relationship_names_no_claim_id()
 
 def test_the_groups_add_three_register_fields_and_no_engine_output_field():
     from schemas import metrics
-    assert cm.FIELDS[-3:] == ("group_id", "group_role", "relationship")
-    assert metrics.CONTRACT_VERSION == 9, "the engine output is unchanged: results stored under contract 9 need no re-run"
+    assert cm.FIELDS[-5:-2] == ("group_id", "group_role", "relationship"), "followed by the calculation lines of forecast-and-payback.md"
+    assert metrics.CONTRACT_VERSION == 10, "contract 10 moved for the yearly-basis block only (forecast-and-payback.md section 4.5), not for the groups"
     assert not {"group_id", "group_role", "relationship"} & set(metrics.MetricsPayload.model_fields)
 
 
@@ -699,7 +699,7 @@ def test_the_same_annual_figure_stated_twice_folds_into_one_row_also_when_no_gro
     assert found["groups"] == [] and found["conflicts"] == []
     assert roles(rows) == {"a1": None, "a2": "repeat"}
     assert rows[0]["group_id"] and rows[0]["group_id"] == rows[1]["group_id"], "the lead and its repeat share an id, so the screen can show both sources"
-    assert rows[1]["relationship"] == "Same figure as #1 (slide 1); counted once"
+    assert rows[1]["relationship"] == "Same figure as the one stated on slide 1; counted once"
     assert rows[1]["value_at_stake_arr"] is None and rows[1]["vas_reason"] == cg.VAS_REPEAT
     assert cg.counts(rows) == {"items": 1, "claims": 2, "groups": 0}
     assert not cg.is_ineligible(rows[0]) and cg.is_ineligible(rows[1])
@@ -721,7 +721,7 @@ def test_a_part_stated_twice_folds_into_its_group_too():
     assert [g["total"] for g in found["groups"]] == ["a1"]
     repeat = rows[-1]
     assert repeat["group_role"] == "repeat" and repeat["group_id"] == rows[0]["group_id"]
-    assert repeat["relationship"] == "Same figure as #11 (slide 11); counted once" and repeat["value_at_stake_arr"] is None
+    assert repeat["relationship"] == "Same figure as the one stated on slide 11; counted once" and repeat["value_at_stake_arr"] is None
     assert cg.counts(rows) == {"items": 1, "claims": 6, "groups": 1}
 
 

@@ -36,7 +36,7 @@ SUBORDINATE = (PART, ALSO, REPEAT)      # shown under another row's Details, nev
 
 NOTE_TOTAL = "Annual total: {parts} reconcile with it ({sum} against {total}, within " + TOLERANCE_TEXT + ")"
 NOTE_PART = "Part of the annual total for {period}"
-NOTE_REPEAT = "Same figure as #{rank} ({page}); counted once"
+NOTE_REPEAT = "Same figure as the one stated on {page}; counted once"
 NOTE_ALSO = "{parts} also reconcile with this total; shown under its Details"
 NOTE_PENDING = "Part of a set that reconciles with one of the annual figures still in conflict; no exposure of its own until one is chosen"
 NOTE_DIFFERS = "{parts} sum to {sum}, outside " + TOLERANCE_TEXT + " of {total}; kept as independent claims"
@@ -236,7 +236,7 @@ def _fold(out: dict, cluster: List[_Fig], group_id: str) -> None:
     lead = cluster[0].row
     for fig in cluster[1:]:
         out["roles"][fig.row["claim_id"]] = (group_id, REPEAT)
-        out["notes"][fig.row["claim_id"]] = NOTE_REPEAT.format(rank=lead.get("rank"), page=lead.get("page_ref") or _source(lead))
+        out["notes"][fig.row["claim_id"]] = NOTE_REPEAT.format(page=lead.get("page_ref") or _source(lead))
     out["folded"].add(lead["claim_id"])
 
 
