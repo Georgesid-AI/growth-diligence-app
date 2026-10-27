@@ -14,6 +14,8 @@ export const STAGE_STATUS_TEXT = {
 export const DATA_EXTENSIONS = ["xlsx", "csv"];
 export const RUN_LABEL = "Run audit";
 export const RETRY_LABEL = "Retry stage";
+// The Run audit buttons of Upload & Mapping are slightly larger than the standard button (h-9 px-4 text-sm) (George, 2026-10-27).
+export const RUN_BUTTON_CLASS = "h-11 px-6 text-base";
 export const POLL_MS = 5000;
 export const MAX_POLLS = 24;
 
@@ -121,4 +123,39 @@ export async function runAudit({ api, auditId, pick = { data: [], decks: [] }, f
     if (result.status !== "done") return { stopped: key, status: result.status };
   }
   return { stopped: null, status: "done" };
+}
+
+/**
+ * Whether the audit can run at all (George, 2026-10-27): it needs a mapped file, a Target ARR and a Target date. One line saying what is
+ * missing, or null. `views` are the audit's stored datasets.
+ */
+export function missingForRun({ audit, views = [] }) {
+  const missing = [
+    !views.length && "a mapped file",
+    !Number(audit?.target_arr) && "Target ARR",
+    !audit?.target_date && "Target date",
+  ].filter(Boolean);
+  return missing.length ? `The audit cannot run yet. Missing: ${missing.join(", ")}.` : null;
+}
+
+const auditPath = (auditId, page) => `/audit/${auditId}/${page}`;
+
+/**
+ * Run audit from the audit list: the run the Upload & Mapping button makes, with the files already stored (nothing attached). Resolves with
+ * where to go: the Audit page when the run is done or waits for the analyst's answers on it, else Upload & Mapping with one line (`line`)
+ * saying what is missing, or what stopped the run.
+ */
+export async function runFromList({ api, audit, wait, onStart = () => {} }) {
+  const safe = (p, fallback) => p.catch(() => fallback);
+  const [views, summary, deckData] = await Promise.all([
+    safe(api.getDatasets(audit.id), []), safe(api.getReview(audit.id), null), safe(api.getDecks(audit.id), { decks: [], candidates: [] })]);
+  const line = missingForRun({ audit, views });
+  if (line) return { to: auditPath(audit.id, "mapping"), line };
+  const messages = {};
+  onStart();                                          // the run begins: the caller marks it (the "revenue file missing" blocker shows from here)
+  const from = firstStageNotDone(stagesFromState({ views, summary, deckData }));
+  const out = await runAudit({ api, auditId: audit.id, from, wait, onUpdate: (key, result) => { messages[key] = result.message; } });
+  if (out.status === "done" || out.status === "needs_review") return { to: auditPath(audit.id, "dashboard") };
+  const stage = STAGES.find((s) => s.key === out.stopped);
+  return { to: auditPath(audit.id, "mapping"), line: messages[out.stopped] || `${stage.label}: ${STAGE_STATUS_TEXT[out.status].toLowerCase()}.` };
 }

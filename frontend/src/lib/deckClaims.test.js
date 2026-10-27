@@ -334,9 +334,10 @@ describe("structure labelling in the approval list (docs/specs/structure-labelli
     expect(CLAIM_TYPES.map(typeLabel)).toContain("Market size");
   });
 
-  test("the confidence column shows the server's text: the level and the failed checks", () => {
-    expect(confidenceText({ confidence: { level: "Low", failed: ["no date", "no heading"], text: "Low – no date, no heading" } })).toBe("Low – no date, no heading");
+  test("the confidence column shows the level once; the reasons are on their own lines (George, 2026-10-27)", () => {
+    expect(confidenceText({ confidence: { level: "Low", failed: ["no date", "no heading"], text: "Low – no date, no heading" } })).toBe("Low");
     expect(confidenceText({ confidence: { level: "High", failed: [], text: "High" } })).toBe("High");
+    expect(confidenceText({ confidence: { level: null, failed: [], text: "Analyst-edited" } })).toBe("Analyst-edited");
     expect(confidenceText({})).toBe("—");
   });
 });
@@ -449,7 +450,7 @@ describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-
     expect(isFlagged(both)).toBe(true);
     expect(claimsForView([corrected, both], CLAIMS_VIEW).map((c) => c.id)).toEqual(["c"]);
     expect(claimsForView([corrected, both], REVIEW_VIEW).map((c) => c.id)).toEqual(["b"]);
-    expect(flagsText(corrected)).toBe("cell corrected");
+    expect(flagsText(corrected)).toBe("The figure was found in a different cell than the one cited");
   });
   test("George, 2026-10-23: the year label hint is informational (the claim stays in the main list, the note on its row), in the Review page and the panel alike", () => {
     const hinted = { id: "y", flags: ["year label below: 2022"] };
@@ -460,7 +461,7 @@ describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-
     expect([hintedAndSign, lookalike].map(isFlagged)).toEqual([true, true]);
     expect(claimsForView([hinted, hintedAndCurrency, hintedAndSign], CLAIMS_VIEW).map((c) => c.id)).toEqual(["y", "yc"]);
     expect(claimsForView([hinted, hintedAndCurrency, hintedAndSign], REVIEW_VIEW).map((c) => c.id)).toEqual(["ys"]);
-    expect(flagsText(hinted)).toBe("year label below: 2022");
+    expect(flagsText(hinted)).toBe("The year label printed below the figure is 2022");
   });
   test("a claim with a flag is listed under Review and nowhere else; a claim without one under Claims", () => {
     expect(claimsForView([plain, flagged, none], CLAIMS_VIEW).map((c) => c.id)).toEqual(["p", "n"]);
@@ -469,8 +470,8 @@ describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-
     expect(isFlagged(plain)).toBe(false);
     expect(isFlagged(none)).toBe(false);
   });
-  test("the flags read as the checker wrote them, joined; the labels are Claims and Review", () => {
-    expect(flagsText(flagged)).toBe("currency assumed · scenario label not on page");
+  test("the flags read as their plain texts, joined; the labels are Claims and Review", () => {
+    expect(flagsText(flagged)).toBe("The app assigned a currency without an explicit currency label for this figure. Check the assumption. · The scenario (best, realistic, worst) is not written near the figure");
     expect(flagsText(plain)).toBe("");
     expect(VIEW_LABELS).toEqual({ claims: "Claims", review: "Review" });
     expect(REVIEW_INTRO).toBe("Flagged by the checks: the figure, its unit, its label or its page could not be confirmed on the slide. Each flag names what to check.");

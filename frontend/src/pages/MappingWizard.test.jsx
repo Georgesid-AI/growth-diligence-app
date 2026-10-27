@@ -17,7 +17,7 @@ jest.mock("@/lib/api", () => ({
   saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(), updateAudit: jest.fn(), putIcInputs: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
-jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn() }), { virtual: true });
+jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn(), useLocation: () => ({ pathname: "/audit/a1/mapping" }) }), { virtual: true });
 jest.mock("@/components/Layout", () => ({ Layout: ({ audit, children }) => <div><span data-testid="header-target">{audit ? String(audit.target_arr) : ""}</span>{children}</div> }));
 jest.mock("@/components/DeckPanel", () => ({ reloadKey = 0 }) => <div data-testid="deck-panel" data-reload={reloadKey} />);
 

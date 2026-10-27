@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import DeckPanel from "./DeckPanel";
 import * as api from "@/lib/api";
-import { PROMPT_MISSING_LINE, REVIEW_INTRO } from "@/lib/deckClaims";
+import { COLUMNS, PROMPT_MISSING_LINE, REVIEW_INTRO } from "@/lib/deckClaims";
 
 jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn(),
   answerTurnover: jest.fn(), answerCorrection: jest.fn() }));
@@ -53,7 +53,7 @@ test("the table has an Extraction confidence column between Period and the claim
   const heads = [...document.body.querySelectorAll("[data-testid='deck-candidates'] thead th")].map((th) => th.textContent);
   expect(heads).toEqual(["Type", "Value", "Period", "Claim in the deck", "Source", "Extraction confidence", "Status", "Action"]);
   const cells = rows().map((tr) => tr.querySelector("[data-testid='candidate-confidence-text']").textContent);
-  expect(cells.sort()).toEqual(["High", "Low – no date, no heading", "Medium – not corroborated", "Medium – not corroborated"].sort());
+  expect(cells.sort()).toEqual(["High", "Low", "Medium", "Medium"].sort());
 });
 
 test("All lists the claims in the server's order, group by group; a deck tab keeps that order", async () => {
@@ -123,7 +123,7 @@ test("a figure in another currency shows both figures, and a direction with no f
   expect(rows()[0].querySelector("[data-testid='candidate-value']").getAttribute("title")).toBe("Rate used: 1 GBP = 1.14 EUR on 30 Jun 2026");
   expect(rows()[0].textContent).not.toMatch(/1\.14|30 Jun 2026/);
   expect(rows()[2].querySelectorAll("td")[2].textContent).toBe("Q2 2024");
-  expect(rows()[2].querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Medium – no figure");
+  expect(rows()[2].querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Medium");
 });
 
 test("a figure with no type reads Other, has no Keep, and saves only once a claim type is chosen; Market size is a choice", async () => {
@@ -273,7 +273,7 @@ test("after the analyst edits a claim its confidence reads Analyst-edited, not a
     confidence: { level: "Low", failed: ["no unit", "not corroborated"], text: "Low – no unit, not corroborated" } });
   await reload([parsed]);
   await open(8);
-  expect(q("candidate-row-c").querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Low – no unit, not corroborated");
+  expect(q("candidate-row-c").querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Low");
   api.updateCandidate.mockResolvedValue({ id: "c", status: "edited" });
   api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [{ ...parsed, status: "edited", currency: "EUR",
     confidence: { level: null, failed: [], text: "Analyst-edited" } }] });
@@ -917,7 +917,7 @@ describe("upload box", () => {
   });
 });
 
-test("the deck-list AI badge reads Matched to page or AI suggestion, not matched", async () => {
+test("the deck-list shows the AI badge only when it says something the confidence cell does not: AI suggestion, not matched; Matched to page repeats it (George, 2026-10-27)", async () => {
   api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [
     claim("m", "d1", 1, { group: 1, origin: "ai", ai_label: "Verified" }),
     claim("n", "d1", 2, { group: 1, origin: "ai", ai_label: "AI suggestion, not verified" }),
@@ -925,7 +925,7 @@ test("the deck-list AI badge reads Matched to page or AI suggestion, not matched
   await act(async () => { root.render(<DeckPanel auditId="a2" />); });
   await act(async () => { q("deck-tab-all").click(); });
   const badges = [...document.body.querySelectorAll("[data-testid='candidate-ai-label']")].map((b) => b.textContent);
-  expect(badges.sort()).toEqual(["AI suggestion, not matched", "Matched to page"]);
+  expect(badges).toEqual(["AI suggestion, not matched"]);
 });
 
 test("a period Python read from 'in 2021' shows its note under the period in the deck list, as the register does; a row with no note or no period shows none (PR 152 follow-up)", async () => {
@@ -958,7 +958,9 @@ describe("the Review view (George, 2026-10-22, docs/design/ai-reads-rules-check.
     await act(async () => { q("claims-view-review").click(); });
     expect(q("claims-view-review").getAttribute("aria-selected")).toBe("true");
     expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["f"]);
-    expect(q("candidate-flags").textContent).toBe("currency assumed · scenario label not on page");
+    expect([...q("candidate-flags").children].map((d) => d.textContent)).toEqual([
+      "The app assigned a currency without an explicit currency label for this figure. Check the assumption.",
+      "The scenario (best, realistic, worst) is not written near the figure"]);
     expect(q("candidate-ai-label").textContent).toBe("AI suggestion, not matched");
     expect(q("review-intro").textContent).toBe(REVIEW_INTRO);
     expect(q("candidate-keep")).not.toBeNull();                          // a flagged claim waits for an answer: keep, edit or reject
@@ -1003,7 +1005,7 @@ describe("review of PR #164 (George, 2026-10-23)", () => {
 });
 
 
-describe("corrections, Keep all and Undo on a rejected row (George, 2026-10-26)", () => {
+describe("corrections and Undo on a rejected row (George, 2026-10-26)", () => {
   const applied = { field: "period", reason: "year under bar differs", original: "2023", corrected: "2022", state: "applied" };
 
   test("a corrected row reads 'Corrected: period 2023 → 2022' with Undo, and Undo asks the server to undo that correction", async () => {
@@ -1020,22 +1022,11 @@ describe("corrections, Keep all and Undo on a rejected row (George, 2026-10-26)"
     expect(q("candidate-row-k").querySelector("[data-testid='candidate-correction']")).toBeNull();
   });
 
-  test("Keep all is on a section that holds flagged rows, keeps those rows only, and leaves the other sections alone", async () => {
-    const flaggedRow = (id, group, over = {}) => claim(id, "d1", 1, { group, flags: ["scenario label not on page"], ...over });
-    await reload([flaggedRow("f1", 1), flaggedRow("f2", 1), claim("ok", "d1", 2, { group: 1, status: "approved" }),
-      claim("n", "d1", 3, { group: 1, status: "pending" }), flaggedRow("g1", 5, { claim_type: "market" })]);
-    api.updateCandidate.mockResolvedValue({});
-    await act(async () => { q("claims-view-review").click(); });
-    expect(q("claim-group-keep-all-1").textContent).toBe("Keep all");
-    await act(async () => { q("claim-group-keep-all-1").click(); });
-    expect(api.updateCandidate.mock.calls.map((c) => [c[1], c[2]])).toEqual([["f1", { status: "approved" }], ["f2", { status: "approved" }]]);
-  });
-
-  test("a section with no flagged row has no Keep all", async () => {
+  test("a section with nothing waiting for a yes has no Accept all", async () => {
     await reload([claim("ok", "d1", 2, { group: 1, status: "approved" })]);
-    expect(q("claim-group-keep-all-1")).toBeNull();
+    expect(q("claim-group-accept-all-top-1")).toBeNull();
+    expect(q("claim-group-accept-all-bottom-1")).toBeNull();
   });
-
   test("a rejected row shows Undo, which restores the previous status; other rows have none", async () => {
     api.updateCandidate.mockResolvedValue({});
     await reload([claim("r", "d1", 1, { group: 1, status: "rejected" }), claim("p", "d1", 2, { group: 1, status: "pending" })]);
@@ -1068,5 +1059,183 @@ describe("column headings and confidence reasons", () => {
     const cell = document.body.querySelector("[data-testid='candidate-type']");
     expect(cell.textContent).toContain("Revenue · Platform Subscriptions");
     expect(cell.querySelector("[data-testid='candidate-part-of']").textContent).toBe("part of ARR 2025 total");
+  });
+});
+
+describe("column widths, pop-ups, the confidence and status cells (George, 2026-10-27)", () => {
+  const widths = () => Object.fromEntries([...document.body.querySelectorAll("[data-testid='claims-table'] col")].map((c) => [c.getAttribute("data-testid").slice(4), parseFloat(c.style.width)]));
+  const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top });
+
+  test("Claim in the deck and Type are narrow, Extraction confidence and Status are the widest, and the columns fill the table", async () => {
+    await act(async () => { q("deck-tab-all").click(); });
+    const w = widths();
+    expect(Object.keys(w)).toEqual(COLUMNS);
+    expect(Object.values(w).reduce((a, b) => a + b, 0)).toBe(100);
+    expect(w["Extraction confidence"]).toBeGreaterThan(Math.max(w.Type, w["Claim in the deck"], w.Value, w.Period, w.Source));
+    expect(w.Status).toBeGreaterThan(Math.max(w.Type, w["Claim in the deck"], w.Value, w.Period, w.Source));
+    expect(w.Type).toBeLessThanOrEqual(10);
+    expect(w["Claim in the deck"]).toBeLessThanOrEqual(15);
+    expect(document.body.querySelector("[data-testid='claims-table']").className).toContain("table-fixed");
+  });
+
+  describe("a heading's pop-up stays inside the window", () => {
+    let spy;
+    beforeEach(() => {
+      window.innerWidth = 1440; window.innerHeight = 800;
+    });
+    afterEach(() => spy.mockRestore());
+    const at = (anchors) => {
+      spy = jest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function rectOf() {
+        if (this.getAttribute("role") === "tooltip") return rect(0, 0, 288, 120);
+        const th = this.closest && this.closest("th");
+        return th && anchors[th.getAttribute("data-testid")] ? anchors[th.getAttribute("data-testid")] : rect(0, 0, 0, 0);
+      });
+    };
+    const show = async (name) => { await act(async () => { q(`column-${name}`).querySelector("button").click(); }); return q(`column-tip-${name}`); };
+    const within = (tip) => {
+      const left = parseFloat(tip.style.left); const top = parseFloat(tip.style.top);
+      expect(left).toBeGreaterThanOrEqual(0); expect(top).toBeGreaterThanOrEqual(0);
+      expect(left + 288).toBeLessThanOrEqual(window.innerWidth); expect(top + 120).toBeLessThanOrEqual(window.innerHeight);
+    };
+
+    test("the rightmost column (Action) flips left, so its right edge sits on the heading's", async () => {
+      at({ "column-Action": rect(1380, 300, 50, 16) });
+      const tip = await show("Action");
+      expect(tip.style.position).toBe("fixed");
+      expect(parseFloat(tip.style.left)).toBe(1430 - 288);
+      within(tip);
+    });
+    test("Status flips left near the right edge", async () => {
+      at({ "column-Status": rect(1250, 300, 50, 16) });
+      const tip = await show("Status");
+      expect(parseFloat(tip.style.left)).toBe(1300 - 288);
+      within(tip);
+    });
+    test("a heading with room keeps the pop-up under it, starting at its left edge", async () => {
+      at({ "column-Type": rect(100, 300, 40, 16) });
+      const tip = await show("Type");
+      expect([parseFloat(tip.style.left), parseFloat(tip.style.top)]).toEqual([100, 320]);
+    });
+    test("near the bottom edge the pop-up flips up", async () => {
+      at({ "column-Source": rect(500, 780, 60, 16) });
+      const tip = await show("Source");
+      expect(parseFloat(tip.style.top)).toBe(780 - 4 - 120);
+      within(tip);
+    });
+  });
+
+  test("the confidence cell shows the level once and the reason under it without the level", async () => {
+    await reload([claim("m", "d1", 1, { group: 1, confidence: { level: "Medium", failed: ["period from another cell"], text: "Medium – period from another cell" } })]);
+    const cell = q("candidate-row-m").querySelector("[data-testid='candidate-confidence']");
+    expect(cell.querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Medium");
+    const reason = cell.querySelector("[data-testid='candidate-confidence-reason']").textContent;
+    expect(reason).toMatch(/^The period comes from another cell of the page/);
+    expect(reason).not.toMatch(/Medium/);
+    expect(cell.textContent.match(/Medium/g)).toHaveLength(1);
+  });
+
+  test("the status cell shows the status only: no Matched to page, no flag that the confidence reason already says; a flag it does not say stays", async () => {
+    await reload([claim("v", "d1", 1, { group: 1, origin: "ai", ai_label: "Verified", flags: ["period from another cell"],
+      confidence: { level: "Medium", failed: ["period from another cell"], text: "Medium – period from another cell" } })]);
+    const cell = q("candidate-row-v").querySelector("[data-testid='candidate-status']").parentElement;
+    expect(cell.textContent).toBe("Needs your attention");
+    expect(cell.querySelector("[data-testid='candidate-ai-label']")).toBeNull();
+    expect(cell.querySelector("[data-testid='candidate-flags']")).toBeNull();
+    await reload([claim("w", "d1", 1, { group: 1, origin: "ai", ai_label: "AI suggestion, not verified", flags: ["axis tick", "period from another cell"],
+      confidence: { level: "Medium", failed: ["period from another cell"], text: "Medium – period from another cell" } })]);
+    await act(async () => { q("claims-view-review").click(); });
+    const kept = q("candidate-row-w").querySelector("[data-testid='candidate-status']").parentElement;
+    expect([...kept.querySelector("[data-testid='candidate-flags']").children].map((d) => d.textContent)).toEqual(["The figure looks like a mark on a chart axis, not a claim"]);
+    expect(kept.querySelector("[data-testid='candidate-ai-label']").textContent).toBe("AI suggestion, not matched");
+  });
+
+  test("an AI suggestion that the confidence reason already calls unmatched shows no second badge", async () => {
+    await reload([claim("u", "d1", 1, { group: 1, origin: "ai", ai_label: "AI suggestion, not verified", flags: [],
+      confidence: { level: "Low", failed: ["not matched"], text: "Low – not matched" } })]);
+    expect(q("candidate-row-u").querySelector("[data-testid='candidate-ai-label']")).toBeNull();
+  });
+});
+
+describe("Accept all (George, 2026-10-27)", () => {
+  const readings = [{ value: 2500, dot_reading: "2.500 as 2,500" }, { value: 2.5, dot_reading: "2.500 as 2.5" }];
+  const choose = { field: "segment", reason: "label mismatch", original: null, state: "choose", options: [{ value: "Platform" }, { value: "Services" }] };
+  const mixed = () => [
+    claim("a", "d1", 1, { group: 1 }),
+    claim("b", "d1", 2, { group: 1 }),
+    claim("rd", "d1", 3, { group: 1, readings }),
+    claim("lg", "d1", 4, { group: 1, corrections: [choose] }),
+    claim("tu", "d1", 5, { group: 1, turnover: [{ claim_id: "tu", turnover_state: "ask", turnover_set_by: "app" }] }),
+    claim("pp", "d1", 6, { group: 1, claim_type: "customers", unit: "customers", currency: null }),
+    claim("lm", "d1", 7, { group: 1, flags: ["label mismatch"] }),
+    claim("ok", "d1", 8, { group: 1, status: "approved" }),
+  ];
+  const click = async (id) => act(async () => { q(id).click(); });
+
+  test("a button at the top and at the bottom of the category counts the rows that wait for a plain yes and says how many need a choice", async () => {
+    await reload(mixed());
+    expect(q("claim-group-accept-all-top-1").textContent).toBe("Accept all (2)");
+    expect(q("claim-group-accept-all-bottom-1").textContent).toBe("Accept all (2)");
+    expect(q("claim-group-need-choice-top-1").textContent).toBe("4 need a choice");
+    expect(q("claim-group-need-choice-bottom-1").textContent).toBe("4 need a choice");
+    await click("claims-view-review");      // the label-mismatch row is a flagged one: Review lists it, and it asks which label
+    expect(q("claim-group-accept-all-top-1")).toBeNull();
+    expect(q("claim-group-need-choice-top-1").textContent).toBe("1 needs a choice");
+    await click("claims-view-claims");
+    expect(q("claim-group-footer-1").compareDocumentPosition(q("candidate-row-ok")) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
+
+  test("it accepts exactly the plain rows, from the top or the bottom, and leaves the choice rows and the other categories alone", async () => {
+    await reload([...mixed(), claim("m1", "d1", 9, { group: 5, claim_type: "market" })]);
+    api.updateCandidate.mockResolvedValue({});
+    await click("claim-group-accept-all-bottom-1");
+    expect(api.updateCandidate.mock.calls.map((c) => [c[1], c[2]])).toEqual([["a", { status: "approved" }], ["b", { status: "approved" }]]);
+    expect(q("claim-group-accept-all-top-5").textContent).toBe("Accept all (1)");
+    expect(q("claim-group-need-choice-top-5")).toBeNull();
+  });
+
+  test("a category whose rows all need a choice shows the note and no button; a deck whose Sales question is open needs a choice on its Sales rows", async () => {
+    api.getDecks.mockResolvedValue({ decks: DECKS, sales_questions: [{ deck_id: "d1", file: "older.pptx", claims: 1 }], candidates: [
+      claim("s", "d1", 1, { group: 1, label_from: "Sales" }), claim("s2", "d2", 1, { group: 1, label_from: "Sales" })] });
+    await reload([]);
+    api.getDecks.mockResolvedValue({ decks: DECKS, sales_questions: [{ deck_id: "d1", file: "older.pptx", claims: 1 }], candidates: [
+      claim("s", "d1", 1, { group: 1, label_from: "Sales" }), claim("s2", "d2", 1, { group: 1, label_from: "Sales" })] });
+    await act(async () => { root.render(<DeckPanel auditId="a1" key="again" />); });
+    await act(async () => { q("deck-tab-all").click(); });
+    expect(q("claim-group-accept-all-top-1").textContent).toBe("Accept all (1)");
+    expect(q("claim-group-need-choice-top-1").textContent).toBe("1 needs a choice");
+  });
+
+  test("each accepted row keeps its own Undo, one Undo accept all stands, and both go at the next action", async () => {
+    const plain = [claim("a", "d1", 1, { group: 1 }), claim("b", "d1", 2, { group: 1 }), claim("c", "d1", 3, { group: 1 })];
+    await reload(plain);
+    api.updateCandidate.mockResolvedValue({});
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: plain.map((c) => ({ ...c, status: "approved" })) });
+    await click("claim-group-accept-all-top-1");
+    expect(q("claim-group-undo-accept-all-1").textContent).toBe("Undo accept all");
+    expect(document.body.querySelectorAll("[data-testid='claim-group-undo-accept-all-1']")).toHaveLength(1);
+    expect(document.body.querySelectorAll("[data-testid='candidate-undo-accept']")).toHaveLength(3);
+    expect(q("claim-group-accept-all-top-1")).toBeNull();
+    api.updateCandidate.mockClear();
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [{ ...plain[0], status: "pending" }, ...plain.slice(1).map((c) => ({ ...c, status: "approved" }))] });
+    await act(async () => { q("candidate-row-a").querySelector("[data-testid='candidate-undo-accept']").click(); });
+    expect(api.updateCandidate.mock.calls.map((c) => [c[1], c[2]])).toEqual([["a", { undo: true }]]);
+    expect(document.body.querySelectorAll("[data-testid='candidate-undo-accept']")).toHaveLength(2);
+    api.updateCandidate.mockClear();
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: plain.map((c) => ({ ...c, status: "pending" })) });
+    await click("claim-group-undo-accept-all-1");
+    expect(api.updateCandidate.mock.calls.map((c) => [c[1], c[2]])).toEqual([["b", { undo: true }], ["c", { undo: true }]]);
+    expect(q("claim-group-undo-accept-all-1")).toBeNull();
+  });
+
+  test("Undo accept all goes at the next action: rejecting a row, or opening another tab", async () => {
+    const plain = [claim("a", "d1", 1, { group: 1 }), claim("b", "d1", 2, { group: 1 })];
+    await reload(plain);
+    api.updateCandidate.mockResolvedValue({});
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [{ ...plain[0], status: "approved" }, plain[1]] });
+    await click("claim-group-accept-all-top-1");
+    expect(q("claim-group-undo-accept-all-1")).not.toBeNull();
+    await act(async () => { q("candidate-row-b").querySelector("[data-testid='candidate-reject']").click(); });
+    expect(q("claim-group-undo-accept-all-1")).toBeNull();
+    expect(document.body.querySelector("[data-testid='candidate-undo-accept']")).toBeNull();
   });
 });

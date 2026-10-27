@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { Check, Circle, Loader2, AlertTriangle } from "lucide-react";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
@@ -6,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import * as apiModule from "@/lib/api";
 import { getDatasets, getDecks, getReview } from "@/lib/api";
 import { setCalculatePressed } from "@/lib/chatUpload";
-import { RETRY_LABEL, RUN_LABEL, STAGES, STAGE_STATUS_TEXT, firstStageNotDone, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
+import { RETRY_LABEL, RUN_BUTTON_CLASS, RUN_LABEL, STAGES, STAGE_STATUS_TEXT, firstStageNotDone, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
 
 /**
  * Run audit, on the Upload & Mapping page (docs/specs/chat-upload.md section 24): one button, then the files attached in the
@@ -17,8 +18,10 @@ import { RETRY_LABEL, RUN_LABEL, STAGES, STAGE_STATUS_TEXT, firstStageNotDone, i
  *
  * `pick` is a ref to {data, decks}, the attached files not yet sent; `onRan(leftover)` hands back the ones the run did not send;
  * `onRunning(bool)` lets the page hold Map while a run is in progress; `blocked` holds this button while it runs.
+ * `topHost` is an element at the top of the page: a second Run audit button is drawn into it (George, 2026-10-27); it and the one below share this
+ * panel's run, so they are one run and one state.
  */
-export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked = false }) {
+export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked = false, topHost = null }) {
   const nav = useNavigate();
   const [stages, setStages] = useState(idleStages());
   const [running, setRunning] = useState(false);
@@ -59,6 +62,11 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
     if (out.status === "done" || out.status === "needs_review") nav(`/audit/${auditId}/dashboard`);
   }, [auditId, running, update, nav, pick, onRan, onRunning, readState]);
 
+  const runButton = (testId) => (
+    <Button data-testid={testId} onClick={() => start()} disabled={running || blocked} className={`bg-sky-600 hover:bg-sky-500 gap-2 ${RUN_BUTTON_CLASS}`}>
+      {running && <Loader2 className="h-4 w-4 animate-spin" />}{RUN_LABEL}
+    </Button>
+  );
   const failed = STAGES.find((s) => stages[s.key].status === "failed");
   return (
     <section className="mt-5" data-testid="run-audit-panel">
@@ -66,9 +74,8 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
         Attach the files in the box below and press Run audit. The columns are mapped, the metrics calculated and the deck claims read.
         You stop only where a decision is yours, on the Audit page.
       </p>
-      <Button data-testid="run-audit" onClick={() => start()} disabled={running || blocked} className="bg-sky-600 hover:bg-sky-500 gap-2">
-        {running && <Loader2 className="h-4 w-4 animate-spin" />}{RUN_LABEL}
-      </Button>
+      {runButton("run-audit")}
+      {topHost && createPortal(runButton("run-audit-top"), topHost)}
 
       <ol className="mt-4 space-y-2 max-w-3xl" data-testid="run-stages">
         {STAGES.map((s) => {
