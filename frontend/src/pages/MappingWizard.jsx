@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Loader2, Plus, X, Search } from "lucide-react";
 import { Layout } from "@/components/Layout";
@@ -18,6 +18,8 @@ import { splitFiles } from "@/lib/runAudit";
 
 export default function MappingWizard() {
   const { id } = useParams();
+  const missing = useLocation()?.state?.missing;        // the audit list sent the analyst here: one line saying what stopped the run
+  const [topHost, setTopHost] = useState(null);       // the top of the page, where the second Run audit button is drawn
   const [audit, setAudit] = useState(null);
   const [views, setViews] = useState([]);
   const [asOf, setAsOf] = useState("");
@@ -46,7 +48,9 @@ export default function MappingWizard() {
         <div>
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Upload & Mapping</h1>
         </div>
+        <div ref={setTopHost} data-testid="run-audit-top-host" />
       </div>
+      {missing && <p role="status" className="mb-4 text-sm text-amber-800" data-testid="run-missing-line">{missing}</p>}
 
       <AuditSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
 
@@ -59,7 +63,7 @@ export default function MappingWizard() {
         <DeckPanel auditId={audit.id} reloadKey={fxVersion} />
       </div>
 
-      <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={mapping} />
+      <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={mapping} topHost={topHost} />
     </Layout>
   );
 }

@@ -1,0 +1,6 @@
+2026-10-27 · claude/keen-mayer-o5wr1y
+Deleted: the "Keep all" button and its helper (Accept all covers it); the 14rem and 28rem max-widths and the no-wrap classes that fought the column widths.
+Decided: Accept all replaces Keep all (one button, not two); flags show as their plain texts, once, and a flag or badge the confidence reason already says is dropped; undo of an accepted row is a server change (previous_state kept on approve) because the API only restored rejected rows; the pop-up is fixed to the window and placed by a pure function, as the table's scroll box clipped the absolute one; the second Run audit button is a portal into the page header so both share one run; "cannot run" = no mapped file, no Target ARR or no Target date.
+Slow or unclear: "required settings" was not defined in the task; a first backend test used a flagged row the server had already auto-accepted, so it proved nothing until a blocking flag was used.
+Root cause and rule: the confidence level was printed twice because the reason texts carry their own "Level – " prefix; the reason lines now strip it in code and a test asserts no line starts with the level.
+Process change to propose: a spec line naming the "required settings" of a run, so the audit list and the server refuse for the same reasons.

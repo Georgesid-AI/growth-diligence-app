@@ -9,7 +9,11 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
+import * as api from "@/lib/api";
 import { listAudits, createAudit, deleteAudit } from "@/lib/api";
+import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
+import { setCalculatePressed } from "@/lib/chatUpload";
+import { RUN_LABEL, runFromList } from "@/lib/runAudit";
 import { S18_TITLE, S18_BODY, S18_MISMATCH } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { describeRequestError } from "@/lib/requestError";
@@ -57,6 +61,21 @@ export default function AuditHub() {
       toast.error(msg || "Failed to create audit");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Run audit on a tile runs the audit as the button on Upload & Mapping does and ends on the Audit page. Only an audit that cannot run, or whose run
+  // stopped, opens Upload & Mapping, with one line saying why (George, 2026-10-27).
+  const [running, setRunning] = useState(null);       // the id of the audit being run
+  const run = async (audit) => {
+    if (running) return;
+    setRunning(audit.id);
+    try {
+      const out = await runFromList({ api, audit, onStart: () => setCalculatePressed(audit.id) });
+      window.dispatchEvent(new Event(BLOCKERS_CHANGED));
+      nav(out.to, out.line ? { state: { missing: out.line } } : undefined);
+    } finally {
+      if (alive.current) setRunning(null);
     }
   };
 
@@ -174,10 +193,11 @@ export default function AuditHub() {
                     variant="outline"
                     size="sm"
                     data-testid={`run-audit-${a.id}`}
-                    onClick={() => nav(`/audit/${a.id}/mapping`)}
-                    className="bg-transparent border-[#E5E7EB] text-slate-700 hover:bg-sky-50 hover:text-slate-900"
+                    disabled={running !== null}
+                    onClick={() => run(a)}
+                    className="bg-transparent border-[#E5E7EB] text-slate-700 hover:bg-sky-50 hover:text-slate-900 gap-1"
                   >
-                    Run audit
+                    {running === a.id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{RUN_LABEL}
                   </Button>
                   <Button
                     data-testid={`open-dashboard-${a.id}`}

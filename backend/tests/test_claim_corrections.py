@@ -247,6 +247,19 @@ def test_a_rejected_row_is_restored_to_the_status_it_had(run_api):
     assert client.put(_url("c1"), json={"undo": True}).status_code == 400, "only a rejected row is restored"
 
 
+def test_an_approved_row_is_restored_to_the_status_it_had_before_the_approval(run_api):
+    """Accept all (George, 2026-10-27): each accepted row keeps its own Undo, back to what it was before the yes."""
+    client = _api(run_api, run_claim("c1", status="pending", flags=["axis tick"]), run_claim("c2", status="approved", auto_accepted=True))
+    assert stored(client)["c1"]["status"] == "pending"
+    assert client.put(_url("c1"), json={"status": "approved"}).status_code == 200
+    assert stored(client)["c1"]["status"] == "approved"
+    r = client.put(_url("c1"), json={"undo": True})
+    assert r.status_code == 200, r.text
+    assert stored(client)["c1"]["status"] == "pending"
+    assert client.put(_url("c1"), json={"undo": True}).status_code == 400, "undone once, nothing left to restore"
+    assert client.put(_url("c2"), json={"undo": True}).status_code == 400, "a row Python entered on its own has nothing before it to restore"
+
+
 # ---------------------------------------------------------------------------
 # 4. Population from the label
 # ---------------------------------------------------------------------------

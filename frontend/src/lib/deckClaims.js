@@ -101,6 +101,10 @@ export const COUNT_UNIT = "count";
 // One header per column of the approval list, in column order.
 export const COLUMNS = ["Type", "Value", "Period", "Claim in the deck", "Source", "Extraction confidence", "Status", "Action"];
 
+// Column widths in percent (George, 2026-10-27): Type and Claim in the deck are narrow; the width they free goes to Extraction confidence and
+// Status, so their text wraps less. They fill the table, so it needs no horizontal scroll at 1440 px.
+export const COLUMN_WIDTHS = { "Type": 9, "Value": 11, "Period": 8, "Claim in the deck": 14, "Source": 11, "Extraction confidence": 19, "Status": 19, "Action": 9 };
+
 /** The pop-up of a heading (hover, or a tap on a phone): what the column holds and what its values mean. All texts: claims_list_texts.json. */
 export const columnText = (name) => listTexts.columns[name] || "";
 
@@ -330,22 +334,31 @@ export const ADDED_FROM_DECK_TAG = "Added from deck by analyst";
 export const VIEW_PAGE_LABEL = "View page";
 export const ADD_FROM_DECK_LABEL = "Add from deck";
 
-/** The Confidence column: "High", "Medium – not corroborated", "Low – no date, no heading". The server derives it from
- *  the checks the parser runs (never a model's own score); a row from an older server shows the placeholder. */
-export const confidenceText = (c) => c?.confidence?.text || PLACEHOLDER;
+/** The Confidence column shows the level once: "High", "Medium", "Low"; an analyst-entered or analyst-edited claim shows its word. The server
+ *  derives it from the checks the parser runs (never a model's own score); a row from an older server shows the placeholder. */
+export const confidenceText = (c) => c?.confidence?.level || c?.confidence?.text || PLACEHOLDER;
 
 const reasonOf = (word) => {
   const year = /^year label below: (\d{4})$/.exec(word);
   return year ? listTexts.year_label_below.replace("{year}", year[1]) : listTexts.reasons[word] || word;
 };
-/** The one-line plain reason under the confidence value, from the checks the server named in confidence.failed:
- *  "Medium – the period comes from the page heading, not from the figure's own label." Empty for a row without a confidence. */
-export function confidenceReason(c) {
+/** A plain text as a sentence of its own: its level, when it starts with one ("High – every check passed"), is left off, because the cell
+ *  already shows it; the first letter is a capital. */
+const sentence = (text, level) => {
+  const bare = level && String(text).startsWith(`${level} – `) ? String(text).slice(level.length + 3) : String(text);
+  return bare.charAt(0).toUpperCase() + bare.slice(1);
+};
+const once = (lines) => lines.filter((line, i) => line && lines.indexOf(line) === i);
+
+/** The plain reason lines under the confidence value, from the checks the server named in confidence.failed, one line per check and a
+ *  text that two checks share once: "The period comes from another cell of the page, not from the figure's own cell". Never the level.
+ *  Empty for a row without a confidence. */
+export function confidenceReasons(c) {
   const conf = c?.confidence;
-  if (!conf) return "";
-  if (!conf.level) return listTexts.reasons[conf.text] || "";
-  if (!(conf.failed || []).length) return listTexts.reasons.High;
-  return `${conf.level} – ${conf.failed.map(reasonOf).join("; ")}`;
+  if (!conf) return [];
+  if (!conf.level) return once([sentence(listTexts.reasons[conf.text] || "", conf.text)]);
+  if (!(conf.failed || []).length) return once([sentence(listTexts.reasons.High, "High")]);
+  return once(conf.failed.map((w) => sentence(reasonOf(w), conf.level)));
 }
 
 /** The claim cell of the list: the type, with the segment when one is set, and the "part of <metric> <period> total" line of a part of a group. */
@@ -472,19 +485,48 @@ export function diagnosticLines(decks) {
     return `${where}: ${x.kind}${x.metric ? ` · ${x.metric}` : ""}${x.value != null ? ` ${x.value}` : ""}${x.period ? ` · ${x.period}` : ""}`;
   }));
 }
-export const KEEP_ALL_LABEL = "Keep all";
-/** The rows "Keep all" keeps: the section's claims a check asks about (pending, flagged), never an Other figure. */
-export const keepAllRows = (claims) => (claims || []).filter((c) => c.status === "pending" && !isOther(c) && isFlagged(c));
+// Accept all (George, 2026-10-27): one button at the top and the bottom of each category accepts every row that waits for a plain yes.
+export const ACCEPT_ALL_LABEL = "Accept all";
+export const UNDO_ACCEPT_ALL_LABEL = "Undo accept all";
+export const acceptAllLabel = (n) => `${ACCEPT_ALL_LABEL} (${n})`;
+export const needChoiceText = (n) => `${n} need${n === 1 ? "s" : ""} a choice`;
+const SALES_WORD = /^\s*(?:(?:total|net|gross)\s+)?sales(?:\s+by\s+[a-z][\w /&-]*?)?\s*(?:\([^)]*\))?\s*$/i;
+
+/** Whether the row's card asks for a choice that a yes cannot give: a legend item to name, which figure or label, a reading of the figure,
+ *  revenue or volume (turnover), revenue or bookings (a deck's Sales), the population of customers or users. `salesDecks` are the decks that still
+ *  owe the Sales answer. */
+export function needsChoice(c, salesDecks = []) {
+  const sales = salesDecks.includes(c?.deck_id) && ["revenue", "sales"].includes(c?.claim_type) && (SALES_WORD.test(c?.label_from || "") || c?.heading_metric === "sales");
+  return readingChoices(c).length > 0 || waitingCorrections(c).length > 0 || (c?.flags || []).includes(LABEL_MISMATCH_FLAG)
+    || (c?.turnover || []).some((v) => v.turnover_set_by !== "analyst") || sales
+    || (Boolean(POPULATION_OPTIONS[c?.claim_type]) && !claimFields(c).population);
+}
+/** [accepted by one click, waiting for a choice] among a category's claims: the pending rows that are no Other figure. */
+export function acceptAllSplit(claims, salesDecks = []) {
+  const pending = (claims || []).filter((c) => c.status === "pending" && !isOther(c));
+  return { rows: pending.filter((c) => !needsChoice(c, salesDecks)), choice: pending.filter((c) => needsChoice(c, salesDecks)).length };
+}
 export const POPULATION_QUESTION = "Are these paying customers or registered users?";
 export const POPULATION_ANSWERS = [["paying", "Paying customers"], ["registered", "Registered users"]];
 /** Whether a reason of the register is the question about the population alone ("required field unknown: population; set it ..."). */
 export const asksPopulationOnly = (reason) => /^required field unknown: population;/.test(reason || "");
 
-/** "currency assumed · scenario label not on page": the flags of a claim, as the checker wrote them. */
+/** The flags of a claim as plain lines, the closed word of each replaced by its text in claims_list_texts.json; two flags that map to the same
+ *  text give it once. */
 export const LABEL_MISMATCH_FLAG = "label mismatch";
 export const LABEL_MISMATCH_QUESTION = listTexts.label_mismatch_question;
 // The closed word of the server stays; the screen asks the question (George, 2026-10-26).
-export const flagsText = (c) => (c?.flags || []).map((f) => (f === LABEL_MISMATCH_FLAG ? LABEL_MISMATCH_QUESTION : f)).join(" · ");
+export const flagTexts = (c) => once((c?.flags || []).map((f) => sentence(f === LABEL_MISMATCH_FLAG ? LABEL_MISMATCH_QUESTION : reasonOf(f))));
+export const flagsText = (c) => flagTexts(c).join(" · ");
+
+/** What the Status cell adds to the status (George, 2026-10-27): the flag texts and the model-reading badge, each only when the confidence
+ *  cell does not already say it. "Matched to page" says what a High confidence says, so it is no badge. */
+export function statusNotes(c) {
+  const said = confidenceReasons(c);
+  const badge = c?.ai_label && c.ai_label !== VERIFIED_LABEL ? badgeText(c.ai_label) : null;
+  const unmatched = sentence(listTexts.reasons["not matched"]);
+  return { flags: flagTexts(c).filter((t) => !said.includes(t)), badge: badge && !said.includes(unmatched) ? badge : null };
+}
 
 // The order of the claims table (docs/specs/deck-parser.md section 6): the group of the claim's type, set by the server, then
 // slide or page. Other starts collapsed under its count (claim-types-and-correction.md section 4).

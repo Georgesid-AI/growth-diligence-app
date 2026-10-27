@@ -10,6 +10,7 @@ jest.mock("@/lib/api", () => ({
   listAudits: jest.fn(),
   createAudit: jest.fn(),
   deleteAudit: jest.fn(),
+  getDatasets: jest.fn(), getReview: jest.fn(), getDecks: jest.fn(), runStage: jest.fn(), uploadChatFile: jest.fn(), uploadDeck: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 const mockNavigate = jest.fn();
@@ -284,9 +285,58 @@ describe("the audit tile (docs/specs/chat-upload.md section 24)", () => {
     expect(formatCreated("not a date")).toBe("n.a.");
   });
 
-  test("Run audit and Open both land on Upload & Mapping", async () => {
-    await act(async () => { q("run-audit-a1").click(); });
+  test("Open lands on Upload & Mapping", async () => {
     await act(async () => { q("open-dashboard-a1").click(); });
-    expect(mockNavigate.mock.calls).toEqual([["/audit/a1/mapping"], ["/audit/a1/mapping"]]);
+    expect(mockNavigate.mock.calls).toEqual([["/audit/a1/mapping"]]);
+  });
+
+  describe("Run audit on a tile runs the audit (George, 2026-10-27)", () => {
+    const VIEW = { status: "ok", dtype: "revenue", file: "revenue.csv", pending: 0, missing_required: [] };
+    const press = async (id) => { await act(async () => { q(id).click(); }); await act(async () => { await Promise.resolve(); }); await act(async () => { await Promise.resolve(); }); };
+    beforeEach(() => {
+      api.getDatasets.mockResolvedValue([VIEW]);
+      api.getReview.mockResolvedValue({ computed: false });
+      api.getDecks.mockResolvedValue({ decks: [], candidates: [] });
+      api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" }));
+    });
+    afterEach(() => { jest.resetAllMocks(); });
+
+    test("an audit that can run is run from the stage it stands at and ends on the Audit page, never on Upload & Mapping", async () => {
+      await press("run-audit-a1");
+      expect(api.runStage.mock.calls).toEqual([["a1", "engine"], ["a1", "claims"]]);
+      expect(mockNavigate.mock.calls.map((c) => c[0])).toEqual(["/audit/a1/dashboard"]);
+    });
+    test("a run that waits for the analyst's answers ends on the Audit page too", async () => {
+      api.runStage.mockResolvedValue({ stage: "engine", status: "needs_review" });
+      await press("run-audit-a1");
+      expect(mockNavigate.mock.calls.map((c) => c[0])).toEqual(["/audit/a1/dashboard"]);
+    });
+    test("with no mapped file the audit does not run: Upload & Mapping opens with one line saying what is missing", async () => {
+      api.getDatasets.mockResolvedValue([]);
+      await press("run-audit-a1");
+      expect(api.runStage).not.toHaveBeenCalled();
+      expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/mapping", { state: { missing: "The audit cannot run yet. Missing: a mapped file." } });
+    });
+    test("with Target ARR and Target date not set it does not run, and names both", async () => {
+      await press("run-audit-a2");
+      expect(api.runStage).not.toHaveBeenCalled();
+      expect(mockNavigate).toHaveBeenCalledWith("/audit/a2/mapping", { state: { missing: "The audit cannot run yet. Missing: Target ARR, Target date." } });
+    });
+    test("a stage that fails opens Upload & Mapping with its message, where Retry stage is", async () => {
+      api.runStage.mockImplementation(async (id, key) => (key === "engine" ? { stage: key, status: "failed", message: "The calculations could not be completed." } : { stage: key, status: "done" }));
+      await press("run-audit-a1");
+      expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/mapping", { state: { missing: "The calculations could not be completed." } });
+    });
+    test("while an audit runs no second run starts", async () => {
+      let release;
+      api.runStage.mockImplementation((id, key) => new Promise((resolve) => { release = () => resolve({ stage: key, status: "done" }); }));
+      await act(async () => { q("run-audit-a1").click(); });
+      await act(async () => { await Promise.resolve(); });
+      expect(q("run-audit-a1").disabled).toBe(true);
+      expect(q("run-audit-a2").disabled).toBe(true);
+      await act(async () => { release(); });
+      await act(async () => { release(); });
+      await act(async () => { await Promise.resolve(); });
+    });
   });
 });

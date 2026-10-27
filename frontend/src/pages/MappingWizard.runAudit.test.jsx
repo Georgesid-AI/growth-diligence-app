@@ -9,6 +9,7 @@ import * as api from "@/lib/api";
 // Run audit on the Upload & Mapping page (docs/specs/chat-upload.md section 24): the button and its stages sit below the set-up
 // section and above the mapping; Map stays, Calculate is gone and Run audit is the only way to calculate.
 const mockNavigate = jest.fn();
+let mockLocation = { pathname: "/audit/a1/mapping" };
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), updateAudit: jest.fn(), reportUsage: jest.fn(), getBlockers: jest.fn(),
   uploadChatFile: jest.fn(), uploadDeck: jest.fn(), runStage: jest.fn(), decideColumns: jest.fn(), changeDatasetType: jest.fn(),
@@ -17,7 +18,7 @@ jest.mock("@/lib/api", () => ({
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({
-  useParams: () => ({ id: "a1" }), useNavigate: () => mockNavigate, useLocation: () => ({ pathname: "/audit/a1/mapping" }),
+  useParams: () => ({ id: "a1" }), useNavigate: () => mockNavigate, useLocation: () => mockLocation,
   Navigate: ({ to }) => <span data-testid="redirect" data-to={to} />,
   BrowserRouter: ({ children }) => <div>{children}</div>, Routes: ({ children }) => <div>{children}</div>, Route: () => null,
   Link: ({ to, children, ...rest }) => <a href={to} {...rest}>{children}</a>,
@@ -38,6 +39,7 @@ let root, host;
 beforeEach(() => {
   jest.resetAllMocks();
   mockNavigate.mockClear();
+  mockLocation = { pathname: "/audit/a1/mapping" };
   api.getAudit.mockResolvedValue(AUDIT);
   api.getBlockers.mockResolvedValue([]);
   api.reportUsage.mockResolvedValue(null);
@@ -259,4 +261,47 @@ test("a file attached after a finished run goes through the mapping stage first,
   await press("run-audit");
   expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
   expect(ranStages()).toEqual(["mapping", "engine", "claims"]);
+});
+
+describe("a second Run audit button at the top of the page, and both a little larger (George, 2026-10-27)", () => {
+  test("the page has Run audit at the top, above the set-up section, and the one at the bottom; the two are the only ones", async () => {
+    await mount();
+    expect(q("run-audit-top").textContent).toBe("Run audit");
+    expect(q("run-audit").textContent).toBe("Run audit");
+    expect(document.body.querySelectorAll("button[data-testid^='run-audit']")).toHaveLength(2);
+    expect(follows("run-audit-top", "audit-setup")).toBe(true);
+    expect(follows("deck-panel", "run-audit")).toBe(true);
+  });
+  test("both are larger than the standard button (h-9 px-4 text-sm)", async () => {
+    await mount();
+    ["run-audit-top", "run-audit"].forEach((id) => {
+      const tokens = q(id).className.split(/\s+/);
+      expect(tokens).toEqual(expect.arrayContaining(["h-11", "px-6", "text-base"]));
+      expect(tokens).not.toContain("h-9");
+      expect(tokens).not.toContain("text-sm");
+    });
+  });
+  test("the top button makes the same run as the bottom one, and one run holds both", async () => {
+    const order = [];
+    let release;
+    api.runStage.mockImplementation((id, key) => new Promise((resolve) => { order.push(`stage:${key}`); if (key === "mapping") release = () => resolve({ stage: key, status: "done" }); else resolve({ stage: key, status: "done" }); }));
+    await mount();
+    await press("run-audit-top");
+    expect(order).toEqual(["stage:mapping"]);
+    expect(q("run-audit-top").disabled).toBe(true);
+    expect(q("run-audit").disabled).toBe(true);
+    await act(async () => { release(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(order).toEqual(["stage:mapping", "stage:engine", "stage:claims"]);
+    expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
+  });
+  test("the audit list opened this page because the audit could not run: one line says what is missing", async () => {
+    mockLocation = { pathname: "/audit/a1/mapping", state: { missing: "The audit cannot run yet. Missing: a mapped file." } };
+    await mount();
+    expect(q("run-missing-line").textContent).toBe("The audit cannot run yet. Missing: a mapped file.");
+  });
+  test("a visit with no such line shows none", async () => {
+    await mount();
+    expect(q("run-missing-line")).toBeNull();
+  });
 });

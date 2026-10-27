@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Check, ChevronDown, ChevronRight, FileText, Loader2, Pencil, Plus, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,14 +8,15 @@ import { TurnoverCell, TurnoverReason } from "@/components/ClaimRegister";
 import { NO_FILE_PERIOD, UNVERIFIED, answerReady, metricOptions, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
 import { addClaim, addFromDeck, answerCorrection, answerTurnover, getDeckPage, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
+import { placeTip } from "@/lib/tipPlacement";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog, uploadLineText,
-  confidenceText, confidenceReason, columnText, typeCellLines, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
+  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog, uploadLineText,
+  COLUMN_WIDTHS, acceptAllLabel, acceptAllSplit, confidenceText, confidenceReasons, columnText, needChoiceText, statusNotes, typeCellLines, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
-  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText, scenarioText,
-  KEEP_ALL_LABEL, UNDO_LABEL, appliedCorrections, correctionText, keepAllRows,
+  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, scenarioText,
+  UNDO_ACCEPT_ALL_LABEL, UNDO_LABEL, appliedCorrections, correctionText,
 } from "@/lib/deckClaims";
 
 // The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
@@ -27,20 +28,35 @@ const STATUS_STYLE = {
   edited: "text-sky-700",
 };
 /** A heading of the claims list with its pop-up: shown on hover or focus, and on a tap or click (a phone has no hover). The text is
- *  columnText(name), from claims_list_texts.json. */
+ *  columnText(name), from claims_list_texts.json. The pop-up is fixed to the window and placed by placeTip, so it flips left or up near an
+ *  edge and is never cut off by the table's own scroll box. */
 function ColumnHeading({ name }) {
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(false);
+  const [at, setAt] = useState(null);
+  const button = useRef(null);
+  const tip = useRef(null);
   const shown = hover || pinned;
+  useLayoutEffect(() => {
+    if (!shown || !button.current || !tip.current) { setAt(null); return; }
+    const place = () => {
+      const t = tip.current.getBoundingClientRect();
+      setAt(placeTip(button.current.getBoundingClientRect(), { width: t.width, height: t.height }, { width: window.innerWidth, height: window.innerHeight }));
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [shown]);
   return (
-    <th className="py-2 pr-3 relative" data-testid={`column-${name}`}>
-      <button type="button" aria-expanded={shown} aria-describedby={shown ? `column-tip-${name}` : undefined}
-        className="uppercase tracking-wider font-mono cursor-help underline decoration-dotted underline-offset-2"
+    <th className="py-2 pr-3 relative align-top" data-testid={`column-${name}`}>
+      <button type="button" ref={button} aria-expanded={shown} aria-describedby={shown ? `column-tip-${name}` : undefined}
+        className="uppercase tracking-wider font-mono cursor-help underline decoration-dotted underline-offset-2 text-left"
         onMouseOver={() => setHover(true)} onMouseOut={() => setHover(false)} onFocus={() => setHover(true)} onBlur={() => setHover(false)}
         onClick={() => setPinned((p) => !p)}>{name}</button>
       {shown && (
-        <div role="tooltip" id={`column-tip-${name}`} data-testid={`column-tip-${name}`}
-          className="absolute left-0 top-full z-20 mt-1 w-72 max-w-[80vw] rounded-md border border-[#D1D5DB] bg-white p-2 text-[11px] normal-case tracking-normal font-sans font-normal text-slate-800 shadow-md whitespace-normal">
+        <div role="tooltip" id={`column-tip-${name}`} data-testid={`column-tip-${name}`} ref={tip}
+          style={{ position: "fixed", left: at?.left ?? 0, top: at?.top ?? 0, visibility: at ? "visible" : "hidden" }}
+          className="z-20 w-72 max-w-[calc(100vw-16px)] rounded-md border border-[#D1D5DB] bg-white p-2 text-[11px] normal-case tracking-normal font-sans font-normal text-slate-800 shadow-md whitespace-normal">
           {columnText(name)}
         </div>
       )}
@@ -69,6 +85,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   const [expanded, setExpanded] = useState({});     // group -> opened or closed by the analyst; Other starts closed
   const [editing, setEditing] = useState(null);     // a claim just added from the deck with no type: opened in the editor
   const [view, setView] = useState(CLAIMS_VIEW);    // Claims (no flag) or Review (the claims the checks flagged)
+  const [batch, setBatch] = useState(null);         // {group, ids}: the rows the last Accept all accepted; kept until the next action
 
   // After a load, keep the chosen tab if its deck still exists; otherwise show the most recent deck.
   // A background poll (silent) that meets an error, a 404 included, stops for good and shows nothing; so does a
@@ -159,6 +176,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   };
 
   const save = async (candidate, payload, quiet = false) => {
+    setBatch(null);
     try {
       const updated = await updateCandidate(auditId, candidate.id, payload);
       setData((d) => ({ ...d, candidates: d.candidates.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)) }));
@@ -178,6 +196,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
 
   // Undo on a correction a check applied before the register (claim-matching.md section 33).
   const correct = async (candidate, payload) => {
+    setBatch(null);
     try {
       await answerCorrection(auditId, candidate.id, payload);
       await load();
@@ -186,10 +205,22 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     }
   };
 
-  // Keep all: one section's flagged rows are kept in turn, as Keep does one by one; the rows a section does not hold are not touched.
-  const keepAll = async (rows) => {
+  // Accept all: the rows of one category that wait for a plain yes are accepted in turn, as Keep does one by one. Each keeps its own Undo and
+  // one "Undo accept all" stands until the next action (George, 2026-10-27).
+  const acceptAll = async (group, rows) => {
+    const done = [];
     try {
-      for (const row of rows) await updateCandidate(auditId, row.id, { status: "approved" });
+      for (const row of rows) { await updateCandidate(auditId, row.id, { status: "approved" }); done.push(row.id); }
+    } catch (err) {
+      toast.error(describeRequestError(err).message);
+    }
+    setBatch(done.length ? { group, ids: done } : null);
+    await load();
+  };
+  const undoAccepted = async (ids) => {
+    setBatch((b) => { const left = b ? b.ids.filter((id) => !ids.includes(id)) : []; return left.length ? { ...b, ids: left } : null; });
+    try {
+      for (const id of ids) await updateCandidate(auditId, id, { undo: true });
     } catch (err) {
       toast.error(describeRequestError(err).message);
     }
@@ -198,6 +229,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
 
   // Revenue or Volume for a turnover claim, answered in its row before it is approved (claim-matching.md section 11 point 8).
   const answer = async (row, payload) => {
+    setBatch(null);
     try {
       await answerTurnover(auditId, row.claim_id, payload);
       await load();
@@ -208,6 +240,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   };
 
   const add = async (payload) => {
+    setBatch(null);
     try {
       const created = await addClaim(auditId, payload);
       setAdding(false);
@@ -223,6 +256,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   // Add from deck (claim-types-and-correction.md section 5): the server reads the line's text; its group is shown open, and a figure
   // with no type opens in the editor.
   const addLine = async (deckId, page, ref) => {
+    setBatch(null);
     try {
       const created = await addFromDeck(auditId, deckId, { page, ref });
       toast.success("Claim added from the deck");
@@ -238,6 +272,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   };
 
   const remove = async (deckId) => {
+    setBatch(null);
     try {
       await removeDeck(auditId, deckId);
       setConfirming(null);
@@ -251,8 +286,30 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   const underTab = claimsForDeck(data.candidates, tab);
   const shown = claimsForView(underTab, view);
   const counts = statusCounts(shown);
+  // Accept all (n) with "k need a choice" beside it, at the top and at the bottom of a category; "Undo accept all" at the top of the category it was used on.
+  const acceptBar = (section, where) => {
+    const { rows, choice } = acceptAllSplit(section.claims, salesDecks);
+    const undo = where === "top" && batch?.group === section.group && batch.ids.length > 0;
+    if (!rows.length && !choice && !undo) return null;
+    return (
+      <div className="flex items-center gap-2" data-testid={`claim-group-accept-bar-${where}-${section.group}`}>
+        {choice > 0 && <span className="text-[11px] text-slate-600" data-testid={`claim-group-need-choice-${where}-${section.group}`}>{needChoiceText(choice)}</span>}
+        {rows.length > 0 && (
+          <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" data-testid={`claim-group-accept-all-${where}-${section.group}`}
+            title="Accept every claim of this category that waits for a plain yes" onClick={() => acceptAll(section.group, rows)}>
+            {acceptAllLabel(rows.length)}
+          </Button>
+        )}
+        {undo && (
+          <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" data-testid={`claim-group-undo-accept-all-${section.group}`}
+            onClick={() => undoAccepted(batch.ids)}>{UNDO_ACCEPT_ALL_LABEL}</Button>
+        )}
+      </div>
+    );
+  };
   const viewCount = (v) => claimsForView(underTab, v).length;
   const selectedDeck = data.decks.find((d) => d.deck_id === tab);
+  const salesDecks = (data.sales_questions || []).map((q) => q.deck_id);      // the decks that still owe the Sales answer: their Sales rows need a choice
 
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-lg p-5" data-testid="deck-panel">
@@ -314,7 +371,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
             onSave={add} onCancel={() => setAdding(false)} />}
           <div className="flex flex-wrap gap-1 border-b border-[#E5E7EB] mb-3" role="tablist" data-testid="deck-tabs">
             {deckTabs(data.decks, data.candidates).map((t) => (
-              <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => { setTab(t.id); setConfirming(null); }}
+              <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => { setTab(t.id); setConfirming(null); setBatch(null); }}
                 className={`px-3 py-1.5 text-xs -mb-px border-b-2 ${tab === t.id ? "border-sky-600 text-slate-900 font-semibold" : "border-transparent text-slate-500 hover:text-slate-800"}`}
                 data-testid={`deck-tab-${t.id}`}>
                 {t.label} <span className="font-mono text-slate-400">({t.count})</span>
@@ -343,7 +400,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
           )}
           <div className="flex flex-wrap gap-1 mb-2" role="tablist" data-testid="claims-views">
             {[CLAIMS_VIEW, REVIEW_VIEW].map((v) => (
-              <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => setView(v)}
+              <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => { setView(v); setBatch(null); }}
                 className={`px-2.5 py-1 text-xs rounded-md border ${view === v ? "border-sky-600 bg-sky-50 text-slate-900 font-semibold" : "border-[#E5E7EB] text-slate-500 hover:text-slate-800"}`}
                 data-testid={`claims-view-${v}`}>
                 {VIEW_LABELS[v]} <span className="font-mono font-normal text-slate-400">({viewCount(v)})</span>
@@ -355,7 +412,10 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
             {countLine(counts)}
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full table-fixed text-xs" data-testid="claims-table">
+              <colgroup>
+                {COLUMNS.map((name) => <col key={name} style={{ width: `${COLUMN_WIDTHS[name]}%` }} data-testid={`col-${name}`} />)}
+              </colgroup>
               <thead>
                 <tr className="text-left text-[10px] font-mono uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
                   {COLUMNS.map((name) => <ColumnHeading key={name} name={name} />)}
@@ -381,17 +441,17 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                               {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                               {section.title}{!other && <span className="font-mono font-normal text-slate-500"> ({section.claims.length})</span>}
                             </button>
-                            {keepAllRows(section.claims).length > 0 && (
-                              <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" data-testid={`claim-group-keep-all-${section.group}`}
-                                title="Keep every flagged claim of this section" onClick={() => keepAll(keepAllRows(section.claims))}>
-                                {KEEP_ALL_LABEL}
-                              </Button>
-                            )}
+                            {acceptBar(section, "top")}
                           </div>
                         </td>
                       </tr>
                       {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} onCorrect={correct} highlight={flash === c.id}
-                        autoEdit={editing === c.id} />)}
+                        autoEdit={editing === c.id} onUndoAccepted={batch?.ids.includes(c.id) ? () => undoAccepted([c.id]) : null} />)}
+                      {open && acceptBar(section, "bottom") && (
+                        <tr data-testid={`claim-group-footer-${section.group}`}>
+                          <td colSpan={COLUMNS.length} className="py-1.5 px-2"><div className="flex items-center justify-end gap-3">{acceptBar(section, "bottom")}</div></td>
+                        </tr>
+                      )}
                     </Fragment>
                   );
                 })}
@@ -522,10 +582,12 @@ function DeckPageView({ auditId, deck, onAdd }) {
   );
 }
 
-export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highlight, autoEdit = false }) {
+export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highlight, autoEdit = false, onUndoAccepted = null }) {
   const [draft, setDraft] = useState(null);
   const [why, setWhy] = useState(false);
   const explanation = inconsistencyText(c);
+  const reasons = confidenceReasons(c);
+  const notes = statusNotes(c);
   const isRow = Boolean(c.by_period?.length);      // a table row: its values by period
   const turnover = turnoverOf(c);                  // a turnover claim never reads "Revenue" before the analyst confirms it
   const choices = readingChoices(c);               // a figure that reads two ways: the default is pre-selected
@@ -662,7 +724,7 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
         </>
       ) : (
         <>
-          <td className={`py-2 pr-3 text-slate-800 ${turnover.views.length ? "min-w-[14rem]" : "whitespace-nowrap"}`} data-testid="candidate-type">
+          <td className={`py-2 pr-3 text-slate-800 break-words ${turnover.views.length ? "min-w-[14rem]" : ""}`} data-testid="candidate-type">
             {turnover.views.length ? turnover.views.map((v) => (
               <TurnoverCell key={v.claim_id} row={v} onAnswer={onAnswer} heading={turnoverHeading(v, isRow)} />
             )) : typeCellLines(c).title}
@@ -670,7 +732,7 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
             {scenarioText(c) && <div className="text-[10px] font-mono text-slate-500" data-testid="candidate-scenario">{scenarioText(c)}</div>}
             {c.channel && <div className="text-[10px] text-slate-500 mt-0.5" data-testid="candidate-channel">{c.channel}</div>}
           </td>
-          <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow || claimValue(c).includes(FX_SETTINGS_LABEL) ? "" : "whitespace-nowrap"}`}>
+          <td className="py-2 pr-3 font-mono text-slate-900 break-words">
             {choices.length ? (
               <select value={0} onChange={(e) => Number(e.target.value) && startEdit(choices[Number(e.target.value)].value)}
                 className={selectClass} title="This figure reads two ways. Keep the first reading, or choose the other to edit the claim."
@@ -679,51 +741,54 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
               </select>
             ) : <span title={conversionHover(c) || undefined} data-testid="candidate-value"><FxText text={claimValue(c)} href={`#${FX_SETTINGS_ANCHOR}`} testId="fx-settings-link" /></span>}
           </td>
-          <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">
+          <td className="py-2 pr-3 font-mono text-slate-700 break-words">
             {claimPeriod(c)}
             {c.target_date && c.period_read_note ? <div className="font-sans text-[11px] text-slate-500 whitespace-normal" data-testid="candidate-period-note">{c.period_read_note}</div> : null}
           </td>
         </>
       )}
-      <td className="py-2 pr-3 text-slate-700 max-w-md">
+      <td className="py-2 pr-3 text-slate-700 break-words">
         <div>{c.snippet}</div>
         {c.origin === "deck_analyst" && <div className="text-slate-400 mt-0.5" data-testid="candidate-added-from-deck">{ADDED_FROM_DECK_TAG}</div>}
         {c.label_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-label">Label from: {c.label_from}</div>}
         {c.date_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-date-from">Date from: {c.date_from}</div>}
       </td>
-      <td className="py-2 pr-3 font-mono text-[11px] text-slate-600" data-testid="candidate-source">
+      <td className="py-2 pr-3 font-mono text-[11px] text-slate-600 break-words" data-testid="candidate-source">
         {c.sources.map((s, i) => <div key={i}>{sourceRef(s)}</div>)}
       </td>
-      <td className="py-2 pr-3 max-w-[14rem]" data-testid="candidate-confidence">
+      <td className="py-2 pr-3" data-testid="candidate-confidence">
         <span className={CONFIDENCE_STYLE[c.confidence?.level] || "text-slate-500"} title={CONFIDENCE_HOVER} data-testid="candidate-confidence-text">{confidenceText(c)}</span>
-        {confidenceReason(c) && <div className="text-[10px] text-slate-500 whitespace-normal" data-testid="candidate-confidence-reason">{confidenceReason(c)}</div>}
+        {reasons.length > 0 && (
+          <div className="text-[10px] text-slate-500 whitespace-normal space-y-0.5" data-testid="candidate-confidence-reason">
+            {reasons.map((line) => <div key={line}>{line}</div>)}
+          </div>
+        )}
       </td>
       <td className="py-2 pr-3">
-        <span className={`text-[10px] font-mono whitespace-nowrap cursor-default ${STATUS_STYLE[c.status] || ""}`} title={[editLogText(c), c.auto_approval && c.auto_citation].filter(Boolean).join("\n") || undefined}
+        <span className={`text-[10px] font-mono cursor-default ${STATUS_STYLE[c.status] || ""}`} title={[editLogText(c), c.auto_approval && c.auto_citation].filter(Boolean).join("\n") || undefined}
           data-testid="candidate-status">
           {statusText(c)}
         </span>
         {turnover.open && (
-          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
+          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal text-amber-800 border-amber-500/50 bg-amber-50"
             data-testid="candidate-turnover-label">
             {UNVERIFIED}
           </div>
         )}
-        {c.ai_label && (
-          <div className={`mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${c.ai_label === VERIFIED_LABEL
-            ? "text-emerald-800 border-emerald-500/50 bg-emerald-50" : "text-amber-800 border-amber-500/50 bg-amber-50"}`}
+        {notes.badge && (
+          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal text-amber-800 border-amber-500/50 bg-amber-50"
             data-testid="candidate-ai-label">
-            {badgeText(c.ai_label)}
+            {notes.badge}
           </div>
         )}
-        {flagsText(c) && (
-          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal max-w-[14rem] text-amber-800 border-amber-500/50 bg-amber-50"
+        {notes.flags.length > 0 && (
+          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal text-amber-800 border-amber-500/50 bg-amber-50 space-y-0.5"
             data-testid="candidate-flags">
-            {flagsText(c)}
+            {notes.flags.map((line) => <div key={line}>{line}</div>)}
           </div>
         )}
         {onCorrect && appliedCorrections(c).map((e) => (
-          <div key={e.index} className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal max-w-[14rem] text-sky-800 border-sky-500/50 bg-sky-50"
+          <div key={e.index} className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal text-sky-800 border-sky-500/50 bg-sky-50"
             data-testid="candidate-correction">
             {correctionText(e)}{" "}
             <button type="button" className="underline underline-offset-2" data-testid="candidate-correction-undo"
@@ -732,7 +797,7 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
         ))}
         {c.mixed_slide && (
           <div className="mt-1">
-            <span className="text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
+            <span className="text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal text-amber-800 border-amber-500/50 bg-amber-50"
               data-testid="candidate-mixed-slide">
               {MIXED_SLIDE_LABEL}
             </span>
@@ -741,7 +806,7 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
         {explanation && (
           <div className="mt-1">
             <button type="button" aria-expanded={why} onClick={() => setWhy((v) => !v)} title={explanation}
-              className="text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
+              className="text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal text-amber-800 border-amber-500/50 bg-amber-50"
               data-testid="candidate-inconsistency">
               {INCONSISTENCY_LABEL}
             </button>
@@ -749,16 +814,20 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
           </div>
         )}
       </td>
-      <td className="py-2 whitespace-nowrap">
+      <td className="py-2">
         {draft ? (
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             <Button size="sm" onClick={saveEdit} disabled={stillOther(draft) || answerBlocked(draft)}
               title={answerBlocked(draft) ? "Choose a reason for the answer first." : stillOther(draft) ? "Choose a claim type first." : undefined}
               className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save</Button>
             <Button size="sm" variant="outline" onClick={() => setDraft(null)} className="h-7">Cancel</Button>
           </div>
         ) : (
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
+            {onUndoAccepted && ["approved", "edited"].includes(c.status) && (
+              <Button size="sm" variant="outline" title="Back to what it was before it was accepted" onClick={onUndoAccepted} className="h-7 px-2 text-xs"
+                data-testid="candidate-undo-accept">{UNDO_LABEL}</Button>
+            )}
             {!isOther(c) && c.status === "pending" && (
               <Button size="sm" variant="outline" title="Keep" onClick={() => onSave(c, { status: "approved" })} className="h-7 px-2" data-testid="candidate-keep">
                 <Check className="h-3.5 w-3.5 text-emerald-700" />

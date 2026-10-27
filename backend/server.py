@@ -2259,8 +2259,9 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     sent = payload.model_fields_set
     if payload.undo:
         # Undo on a rejected row: the status, and whether Python entered it, as they were before the rejection (George, 2026-10-26).
-        if current.get("status") != "rejected":
-            raise _rejected("status", "only a rejected claim can be restored")
+        # An approved row the analyst accepted is restored the same way (Accept all, George, 2026-10-27).
+        if current.get("status") != "rejected" and not (current.get("status") in ("approved", "edited") and current.get("previous_state")):
+            raise _rejected("status", "only a rejected or an accepted claim can be restored")
         await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": {**(current.get("previous_state") or {"status": "pending"}),
                                                                            "previous_state": None, "excluded_reason": None}})
         return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
@@ -2326,10 +2327,12 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         # Approving an edited claim keeps it "edited": it is approved with the analyst's corrections.
         status = "edited" if payload.status == "approved" and "parsed" in current else payload.status
         changes = {"status": status, "auto_accepted": False, "auto_note": None}     # a status the analyst sets is the analyst's decision (PR 157)
-        if status == "rejected" and current.get("status") != "rejected":
+        rejecting = status == "rejected" and current.get("status") != "rejected"
+        accepting = status in ("approved", "edited") and current.get("status") == "pending"       # Accept all's Undo goes back to the pending row
+        if rejecting or accepting:
             changes["previous_state"] = {k: current.get(k) for k in ("status", "auto_accepted", "auto_note")}     # what Undo restores
-            if "reason" in sent:       # excluded with a reason, one of the closed words of an edit (claim-groups.md section 5)
-                changes["excluded_reason"] = payload.reason
+        if rejecting and "reason" in sent:       # excluded with a reason, one of the closed words of an edit (claim-groups.md section 5)
+            changes["excluded_reason"] = payload.reason
     await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
