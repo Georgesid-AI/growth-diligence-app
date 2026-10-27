@@ -378,6 +378,7 @@ export const DECK_AI_STATUS = {
 // A deck whose page reader model is not on the allow-list (page-image.md section 2): nothing is sent, and the one line says so.
 export const BLOCKED_STATUS = "blocked – model not permitted";
 export const BLOCKED_LINE = `AI read: ${BLOCKED_STATUS}`;
+export const IMAGES_NEED_FILE_LINE = "Images need the file: re-upload the deck to read pages with images";
 export const PROMPT_MISSING_LINE = "AI reading not run – deck_reading prompt missing in prompt store";
 export const CONSENT_OFF_LINE = "Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.";
 
@@ -424,6 +425,7 @@ export function deckRunLog(deck) {
   if (deck.skipped_pages?.length) lines.push(`Skipped pages ${deck.skipped_pages.join(", ")}: no numbers in the page text.`);
   if (deck.ai_status !== "reading") for (const n of deck.unread_pages || []) lines.push(`page ${n} not read`);
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
+  if (deck.images_need_file) lines.push(IMAGES_NEED_FILE_LINE);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
   if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);
   const quoted = (deck.diagnostics || []).filter((x) => x.kind === QUOTED_FIGURE_KIND).length;

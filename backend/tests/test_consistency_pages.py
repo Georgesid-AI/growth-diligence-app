@@ -274,3 +274,14 @@ def test_the_report_is_written_after_every_pass_so_a_crash_keeps_the_figures_pai
     text = path.read_text(encoding="utf-8")
     assert "| 03-buffer.pptx | 1 |" in text and "| 03-buffer.pptx | 2 |" in text, "the passes paid for are in the report"
     assert "| 03-buffer.pptx | 3 |" not in text and "Fake run" in text
+
+
+def test_a_page_reader_model_off_the_allow_list_stops_the_pages_run_before_any_file_is_converted_or_drawn(script, monkeypatch):
+    from app.decks import render
+    monkeypatch.setenv("PAGE_READER_MODEL", "claude-fable-5-1")
+    touched = []
+    monkeypatch.setattr(render, "to_pdf", lambda *a, **k: touched.append("to_pdf"))
+    monkeypatch.setattr(render, "render_page", lambda *a, **k: touched.append("render_page"))
+    with pytest.raises(SystemExit) as stop:
+        _run(script, decks=DECKS[:1])
+    assert "model not permitted" in str(stop.value) and touched == []

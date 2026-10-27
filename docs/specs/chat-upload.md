@@ -777,7 +777,9 @@ uploaded to the audit is read through the normal structure path (`process_deck`:
 monthly allowance and the daily caps), in the background after the response. A deck that waits for the revenue file waits as at
 upload. A structure already read is served from the cache, and a candidate already listed is not listed twice. Data files already
 mapped are not re-mapped. Unticking stops new AI calls only (`process_deck` and the mapping path check the flag) and keeps every
-result already read. The line "Uploaded before AI reading was enabled; re-upload to read." and the field `uploaded_before_consent`
+result already read; it also deletes the audit's stored deck files (`deck_files`), because the file is kept only for the page images. A consent ticked
+again finds no file for a deck uploaded before: its pages are "not read" with the reason "page image unavailable: file not stored", and the deck panel
+adds the line "Images need the file: re-upload the deck to read pages with images" (`images_need_file` in the deck list). A re-upload stores the file and reads the deck. The line "Uploaded before AI reading was enabled; re-upload to read." and the field `uploaded_before_consent`
 are removed.
 
 **Decided (engineering, rule 19).** The re-read touches no allowance counter of files (no file is uploaded); the allowance

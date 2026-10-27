@@ -258,6 +258,13 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "reading", ai_message: "restarted" })).toEqual(["AI reading: restarted"]);
   });
 
+  test("a deck whose file was removed with the consent says that images need the file, after the deck line", () => {
+    const deck = { ai_status: "not_read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 0, pages_rejected: 5, unread_pages: [], images_need_file: true };
+    expect(deckRunLog(deck)).toEqual(["5 pages parsed · 5 with figures · AI read: done, 0 read, 5 rejected",
+      "Images need the file: re-upload the deck to read pages with images"]);
+    expect(deckRunLog({ ...deck, images_need_file: false }).join(" ")).not.toContain("Images need the file");
+  });
+
   test("the run log names the skipped pages and each page not read, after the deck line (the status wording is the deck line's)", () => {
     expect(deckRunLog({ ai_status: "read", pages: 24, page_unit: "page", figure_pages: 11, pages_read: 9, pages_rejected: 2, skipped_pages: [3, 7, 20], unread_pages: [5, 9] }))
       .toEqual(["24 pages parsed · 11 with figures · AI read: done, 9 read, 2 rejected",

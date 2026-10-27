@@ -536,6 +536,8 @@ async def update_audit(audit_id: str, payload: AuditUpdate, background: Backgrou
         await db.audits.update_one({"id": audit_id}, {"$set": {**updates, **({"setup_stale": True} if changed and a.get("results") else {})}})
         if "fiscal_year_end" in updates and updates["fiscal_year_end"] != _fiscal_year_end(a):
             await _remap_periods(audit_id, updates["fiscal_year_end"])
+    if consent is False and a.get("structure_reading_consent") is True:
+        await deck_render.remove(db, audit_id)      # unticked: the stored deck files go (re-upload to read pages with images after ticking again)
     if ticked_later:
         # Consent false to true (chat-upload.md section 23): every deck already uploaded is read through the normal
         # structure path, after the response. Mapped data files are not touched.
@@ -1958,6 +1960,7 @@ async def list_deck_candidates(audit_id: str):
         reads = d.pop("page_reads", None) or []
         d["pages_read"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") == "read")
         d["pages_rejected"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") not in ("read", "stopped"))
+        d["images_need_file"] = any(r.get("reason") == deck_render.NO_FILE for r in reads)     # consent ticked after the file was removed
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
     # The claims Python enters on its own read as approved ("auto"), the ones a check asks about as pending (simplified-flow.md section 2).
@@ -3954,7 +3957,7 @@ async def seed_demo():
     if await db.audits.count_documents({"seed_version": SEED_VERSION}) > 0:
         return
     demo_ids = {"audit_id": {"$in": [a["id"] for a in await db.audits.find({"demo": True}, {"id": 1}).to_list(50)]}}
-    for name in ("datasets", decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION, structures.COLUMN_MAPPINGS_COLLECTION):
+    for name in ("datasets", decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION, structures.COLUMN_MAPPINGS_COLLECTION, deck_render.COLLECTION):
         await db[name].delete_many(demo_ids)
     for audit in demo_ids["audit_id"]["$in"]:
         await llm_gateway.purge_run(db, audit)

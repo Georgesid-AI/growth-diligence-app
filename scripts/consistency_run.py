@@ -1039,6 +1039,9 @@ async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0
         prompt = await prompt_store.load(db, gateway.PAGE_CLAIMS_PROMPT)
     except prompt_store.PromptMissing:
         sys.exit(prompt_store.NO_PROMPT)
+    blocked = gateway.page_reader_problem()         # the allow-list first, before any file is converted or drawn (rule 31)
+    if blocked:
+        sys.exit(blocked)
     guard = SpendGuard(adapter or gateway.AnthropicAdapter(), max_spend, pause)
     per_deck = {}
     with mock.patch.dict(os.environ, {"DECK_PIPELINE": "ai", "LLM_DAILY_SPEND_CAP_USD": str(max_spend)}):

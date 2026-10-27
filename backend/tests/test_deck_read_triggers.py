@@ -250,3 +250,45 @@ def test_removing_the_deck_or_deleting_the_audit_removes_the_stored_file(reading
     name = reading.db["audits"].docs[0]["company_name"]
     assert reading.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": name}).status_code == 200
     assert stored_files(reading) == [], "delete audit removes every stored file (rule 22)"
+
+
+def test_unticking_consent_removes_the_stored_deck_files_and_ticking_again_says_the_images_need_the_file(reading, monkeypatch):
+    from app.decks import render
+
+    async def prepared(db, audit_id, deck_id, fmt, pages):          # the real prepare's first step; the suite's stub always finds a file
+        if await render._load(db, audit_id, deck_id, "original") is None:
+            raise render.PageImageError(render.NO_FILE)
+        return b"synthetic pdf"
+    monkeypatch.setattr(render, "prepare", prepared)
+    upload_file(reading, "revenue.csv")
+    upload_deck(reading)
+    assert len(stored_files(reading)) == 1 and listed(reading)["images_need_file"] is False
+    assert reading.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": False}).status_code == 200
+    assert stored_files(reading) == [], "unticked: the stored deck files go with the permission to read"
+    assert reading.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True}).status_code == 200
+    assert listed(reading)["images_need_file"] is True, "ticked again with no file: the panel asks for a re-upload"
+    upload_deck(reading)
+    assert len(stored_files(reading)) == 1 and listed(reading)["images_need_file"] is False
+
+
+def test_a_save_that_leaves_consent_ticked_keeps_the_stored_deck_files(reading):
+    upload_deck(reading)
+    reading.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True})
+    reading.put(f"/api/audits/{AUDIT}", json={"company_name": "Renamed"})
+    assert len(stored_files(reading)) == 1
+
+
+def test_reseeding_the_demo_audits_removes_the_stored_deck_files_of_the_old_ones(monkeypatch):
+    import asyncio
+    import server
+    db = t.FakeDB()
+    monkeypatch.setattr(server, "db", db)
+    asyncio.run(server.seed_demo())
+    old = [a["id"] for a in db["audits"].docs if a.get("demo")]
+    assert old
+    db["deck_files"].docs.extend([{"audit_id": old[0], "deck_id": "d", "kind": "original", "part": 0, "data": b"x"},
+                                  {"audit_id": "someone-elses", "deck_id": "d", "kind": "original", "part": 0, "data": b"y"}])
+    for audit in db["audits"].docs:
+        audit.pop("seed_version", None)
+    asyncio.run(server.seed_demo())
+    assert [f["audit_id"] for f in db["deck_files"].docs] == ["someone-elses"]
