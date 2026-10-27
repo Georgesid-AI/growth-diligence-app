@@ -38,14 +38,11 @@ def test_every_page_goes_with_the_image_of_that_page_and_the_instruction_in_the_
     for request, payload in zip(adapter.requests, adapter.payloads):
         page = page_of(payload)
         assert request["images"] == [page_images.png(page)], "one image, the image of the page whose text is in this request"
-        assert gateway.PAGE_IMAGE_RULE in request["system"]
         assert json.loads(payload)["type"] == "page_claims" and "p%dr1c1" % page in json.loads(payload)["text"]
 
 
-def test_the_instruction_says_printed_values_only_and_never_an_estimate_from_an_unlabelled_mark():
-    rule = gateway.PAGE_IMAGE_RULE.lower()
-    assert "printed" in rule and "never estimate" in rule
-    assert all(word in rule for word in ("bar", "point", "slice"))
+def test_the_gateway_carries_no_copy_of_the_printed_values_only_instruction():
+    assert not hasattr(gateway, "PAGE_IMAGE_RULE"), "the stored deck_reading prompt carries it"
 
 
 def test_the_adapter_puts_the_images_before_the_text_in_one_user_message():
@@ -66,17 +63,44 @@ def test_the_parallel_read_and_the_timeout_stay_and_no_cap_is_set_on_images():
     assert not [name for name in dir(gateway) if name.isupper() and "IMAGE" in name and ("CAP" in name or "MAX" in name or "LIMIT" in name)]
 
 
-def test_a_deck_that_cannot_be_drawn_leaves_every_page_not_read_with_its_reason_and_sends_nothing(monkeypatch):
-    async def no_file(db, audit_id, deck_id, fmt, pages_):
-        raise render.PageImageError(render.NO_FILE)
-    monkeypatch.setattr(render, "prepare", no_file)
-    parsed = many_pages(3)
-    db, adapter = _page_db(parsed), Gauge(hold=0.0)
-    assert run_deck(db, adapter) == "not_read"
-    assert adapter.calls == 0
+def _text_only_deck(monkeypatch, failure):
+    async def cannot_draw(db, audit_id, deck_id, fmt, pages_):
+        raise render.PageImageError(failure)
+    monkeypatch.setattr(render, "prepare", cannot_draw)
+    db, adapter = _page_db(many_pages(3)), Gauge(hold=0.0)
+    assert run_deck(db, adapter) == "read"
+    return db, adapter
+
+
+@pytest.mark.parametrize("failure", [render.NOT_RENDERED, render.PAGE_COUNT_DIFFERS, render.NO_FILE])
+def test_a_deck_that_cannot_be_drawn_is_read_as_text_alone_never_not_read(monkeypatch, failure):
+    """LibreOffice absent (NOT_RENDERED) or a drawn page count that differs: the text goes without an image, as before."""
+    db, adapter = _text_only_deck(monkeypatch, failure)
+    assert len(adapter.requests) == 3 and all(not r.get("images") for r in adapter.requests)
     doc, = db[TEXT_COLLECTION].docs
-    assert [(r["status"], r["reason"]) for r in doc["page_reads"]] == [("not_read", render.NO_FILE)] * 3
-    assert doc["retry_pages"] == [1, 2, 3], "Run audit reads them again"
+    assert [r["status"] for r in doc["page_reads"]] == ["read"] * 3 and doc["unread_pages"] == []
+    assert doc["images_unavailable"] is True, "the panel says so"
+
+
+def test_a_deck_that_is_drawn_does_not_set_the_text_only_note():
+    db = _page_db(many_pages(2))
+    assert run_deck(db, Gauge(hold=0.0)) == "read"
+    assert db[TEXT_COLLECTION].docs[0]["images_unavailable"] is False
+
+
+def test_a_page_that_fails_to_draw_goes_as_text_alone_and_the_others_keep_their_image(monkeypatch):
+    real = render.render_page
+
+    def flaky(pdf, page):
+        if page == 2:
+            raise render.PageImageError(render.NOT_RENDERED)
+        return real(pdf, page)
+    monkeypatch.setattr(render, "render_page", flaky)
+    db, adapter = _page_db(many_pages(3)), Gauge(hold=0.0)
+    assert run_deck(db, adapter) == "read"
+    by_page = {page_of(p): bool(r.get("images")) for r, p in zip(adapter.requests, adapter.payloads)}
+    assert by_page == {1: True, 2: False, 3: True}
+    assert db[TEXT_COLLECTION].docs[0]["images_unavailable"] is True
 
 
 # ---------------------------------------------------------------------------

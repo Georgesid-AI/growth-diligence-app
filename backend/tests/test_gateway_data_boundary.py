@@ -3194,7 +3194,6 @@ def test_a_page_text_with_a_figure_as_digits_reaches_the_provider_as_printed_wit
     assert all(re.match(r"^p\d+r\d+c\d+( title)?: ", line) for line in sent["text"].splitlines())
     assert adapter.requests[-1]["cache_system"] is True, "the fixed prompt is marked for the provider's prompt cache"
     assert adapter.requests[-1]["images"] == [page_images.png(1)], "the page image goes in the same request as the text"
-    assert gateway.PAGE_IMAGE_RULE in adapter.requests[-1]["system"], "the reading instructions carry the printed-values-only rule"
     assert [c["value_cell"] for c in result.claims] == ["p5r2c1", "p5r3c1"]
 
 
@@ -3264,11 +3263,12 @@ def test_a_page_goes_as_printed_names_customers_emails_phones_and_file_names_inc
     assert "Northwind" not in " ".join(c["text"] for c in out)
 
 
-def test_a_page_read_without_its_image_is_refused_and_sends_nothing():
+def test_a_page_read_without_its_image_goes_as_text_alone():
     adapter = t.FakeAdapter(replies=[PAGE_REPLY])
     result = asyncio.run(gateway.read_structure(_structure_db(), STRUCTURE_AUDIT["id"], GOOD_PAGE, PAGE_CLAIMS, adapter=adapter,
                                                 sleep=t._noop_sleep))
-    assert (result.status, result.reason, adapter.calls, getattr(adapter, "counted", 0)) == ("refused", "refused: no_image", 0, 0)
+    assert result.status == "read" and adapter.calls == 1 and not adapter.requests[-1].get("images")
+    assert json.loads(adapter.payloads[0]) == {"type": PAGE_CLAIMS, "text": GOOD_PAGE}
 
 
 def test_the_image_goes_only_with_a_page_read():

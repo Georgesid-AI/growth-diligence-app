@@ -92,8 +92,8 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
     split in two when it holds more than one page; a single page too large or cut is kept with its status. After the audit's token
     cap stops reading, the calls not yet started are marked stopped without a call. `use_cache=False` (a consistency pass) asks the
     model again for pages this audit already read. `progress(done, total)` is awaited after each call. `image_for(page)` is an async
-    function giving the PNG of a page (a render.PageImageError leaves the page "not_read" with its reason); every page goes with its
-    image, and a read without `image_for` is refused by the gateway."""
+    function giving the PNG of a page, or None when the file cannot be drawn (LibreOffice absent, page count differs, no stored file):
+    that page then goes as text alone, as before, and is never "not read" for that reason."""
     queue = [b for b in batches(grids, per_call)
              if not all(page_grids_mod.page_number(p["grid"]) in set(skip) for p in b)]
     total = len(queue)
@@ -105,6 +105,8 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
 
     async def read_one(batch, numbers):
         images = [await image_for(n) for n in numbers] if image_for else None
+        if images is not None and any(i is None for i in images):
+            images = None
         return await gateway.read_structure(
             db, audit_id, batch_text(batch), PAGE_CLAIMS, deck_id=deck_id, pages=numbers, adapter=adapter, sleep=sleep,
             use_cache=use_cache, on_rate_limit=lower, images=images)
@@ -116,9 +118,6 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
             return [(grids_of, gateway._structure_result("stopped", PAGE_CLAIMS, state["stopped"]))]
         try:
             result = await asyncio.wait_for(read_one(batch, numbers), page_timeout)
-        except render.PageImageError as exc:
-            logger.warning("page not read: run_id=%s deck_id=%s pages=%s reason=no_image", audit_id, deck_id, numbers)
-            return [(grids_of, gateway._structure_result("not_read", PAGE_CLAIMS, exc.reason))]
         except asyncio.TimeoutError:
             logger.warning("page not read: run_id=%s deck_id=%s pages=%s reason=timeout", audit_id, deck_id, numbers)
             return [(grids_of, gateway._structure_result("not_read", PAGE_CLAIMS, "timeout"))]
@@ -311,16 +310,23 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"read_progress": {"done": done, "total": total}}})
 
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"skipped_pages": skipped}})
-    # The deck's pages are drawn once from the stored file; a deck that cannot be drawn leaves every page "not read" with the reason.
+    # The deck's pages are drawn once from the stored file. A deck that cannot be drawn (no LibreOffice, another page count, no stored
+    # file) or a page that fails goes as text alone, as before; the panel says so (`images_unavailable`). Never "not read" for that.
     try:
-        pdf, drawn = await render.prepare(db, audit_id, deck_id, deck.get("format") or "pdf", deck.get("pages")), None
-    except render.PageImageError as exc:
-        pdf, drawn = None, exc
+        pdf = await render.prepare(db, audit_id, deck_id, deck.get("format") or "pdf", deck.get("pages"))
+    except render.PageImageError:
+        pdf = None
+        logger.warning("page images unavailable: run_id=%s deck_id=%s", audit_id, deck_id)
+    undrawn = []
 
-    async def image_for(page: int) -> bytes:
-        if drawn is not None:
-            raise drawn
-        return await asyncio.to_thread(render.render_page, pdf, page)
+    async def image_for(page: int) -> Optional[bytes]:
+        if pdf is not None:
+            try:
+                return await asyncio.to_thread(render.render_page, pdf, page)
+            except render.PageImageError:
+                logger.warning("page image unavailable: run_id=%s deck_id=%s page=%d", audit_id, deck_id, page)
+        undrawn.append(page)
+        return None
 
     for batch, result in await read_pages(db, audit_id, deck_id, grids, image_for, adapter, sleep,
                                           per_call=1, skip=done_before, parallel=PARALLEL_PAGES, progress=progress):
@@ -424,12 +430,13 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     blocked = any(r["status"] == "blocked" for r in reads)
     overall = STOPPED if stopped_message else READ if any(r["status"] == "read" for r in kept + reads) else BLOCKED if blocked else \
         PROMPT_MISSING if missing else NOT_READ
-    previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1})
+    previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1, "images_unavailable": 1})
     unread = sorted({n for r in reads if r["status"] != "read" for n in r["pages"]})
     # Run audit asks again for the pages a failure left unread, not for a page the cap, the size or a refusal will refuse again.
     retry = sorted({n for r in reads if r["status"] in RETRY_STATUSES for n in r["pages"]})
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {
         "page_reads": kept + reads, "sent": list((previous or {}).get("sent") or []) + sent, "unread_pages": unread, "retry_pages": retry,
+        "images_unavailable": bool(undrawn) or bool(kept and (previous or {}).get("images_unavailable")),     # a retry keeps the earlier pages' state
         "diagnostics": diagnostics}})
     return await _deck_status(db, audit_id, deck_id, overall, stopped_message or (gateway.PROMPT_MISSING_TEXT if overall == PROMPT_MISSING else
                                                                                 gateway.PAGE_READER_BLOCKED if overall == BLOCKED else None))

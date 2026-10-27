@@ -269,6 +269,13 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
       .toEqual(["5 pages parsed · 5 with figures · AI read: page 2 of 4"]);
   });
 
+  test("the run log says when page images were unavailable and the pages went as text only", () => {
+    const deck = { ai_status: "read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, skipped_pages: [], unread_pages: [] };
+    expect(deckRunLog({ ...deck, images_unavailable: true }))
+      .toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected", "page images unavailable for this file; text only"]);
+    expect(deckRunLog({ ...deck, images_unavailable: false }).join()).not.toContain("images unavailable");
+  });
+
   test("the run log counts the periods Python corrected from the header cells", () => {
     expect(deckRunLog({ ai_status: "read", periods_corrected: 2 }))
       .toEqual(["AI reading: read", "Periods corrected from the header cells: 2"]);

@@ -24,10 +24,10 @@ what is written here is an architecture change: a session that needs one stops a
 George approved (22 Oct 2026, decision 1b on PR #158, docs/design/ai-reads-rules-check.md) widening the deck boundary for one new
 step. For the `page_claims` step only, the default path since 22 Oct 2026 (`DECK_PIPELINE=ai`; the former rules read of
 docs/specs/deck-parser.md section 2 is the fallback behind `DECK_PIPELINE=rules`, kept until the first tester decks are read; George,
-2026-10-22), the model may receive the redacted text lines of a deck page that carries a figure written in digits, prose lines included, as
-extracted text with cell positions (`p<page>r<row>c<col>: <text>`, the page grid of `app/decks/pages.py`), at most 5 pages per
-call. A page with no such figure never goes; number-words do not count as figures. Prose lines pass the people-name rule as well
-as the customer rule before they go (`app/structures/redact.redact_page`), and the gateway runs the redaction again. The reply
+2026-10-22), the model may receive every deck page that carries a figure written in digits, as printed with no redaction (rule 16): the page's
+text lines, prose lines included, as extracted text with cell positions (`p<page>r<row>c<col>: <text>`, the page grid of
+`app/decks/pages.py`), at most 5 pages per call, and one PNG of the whole page in the same request (a page the file cannot be drawn
+for goes as text alone). A page with no such figure never goes; number-words do not count as figures. The reply
 holds closed words, numbers and cell ids only, with each claim's `basis` and `scenario` (closed words); Python checks each claim
 at cell level (`app/structures/page_check.py`: figure in its cell, unit adjacent, period from that cell's own sources) and labels
 it "Matched to page" or "AI suggestion, not matched" (decisions 2a and 3a), then flags it (`app/structures/checker.py`: the
@@ -95,8 +95,8 @@ Two paths reach the gateway and each has its own fields (docs/specs/deck-parser.
   headers, row labels, indents, num/blank markers), after redaction and the withhold rule; never any figure; at most 400
   labelled rows per sheet. For the `file_recognition` step only (the amendment of 2026-10-19 above): the row labels of a
   metric-labelled sheet, "Row n" for every other sheet, never a figure beyond the per-column sample. For the `page_claims` step
-  only (the amendment of 2026-10-22 above, behind `DECK_PIPELINE`): the redacted text lines of a deck page that carries a figure as
-  digits, prose included, at most 5 pages per call; never a page without such a figure.
+  only (the amendment of 2026-10-22 above, behind `DECK_PIPELINE`): a deck page that carries a figure as digits, as printed (text lines,
+  prose included, and one image of the whole page), at most 5 pages per call; never a page without such a figure.
 
 What is stored (rule 17): model JSON output with cell references, the item list without raw text, prompt version,
 model version, content hash, token counts and cost. Never deck text sent to the model. The boundary is enforced in
