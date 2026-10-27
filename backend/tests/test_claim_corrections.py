@@ -77,7 +77,9 @@ def test_a_blank_period_rebuilt_from_another_cell_is_applied_and_logged_and_a_pe
     rows, deck = read(parsed, tc.claim(cell, 150_000, period="2023", period_cell=other))
     row, = rows
     assert row["target_date"] == "2023" and all(e["state"] != "applied" for e in row.get("corrections", ()))
-    assert not deck.get("diagnostics"), "nothing was applied, nothing logged"
+    line, = deck["diagnostics"]          # nothing applied; one line says the sources disagree (review of PR #193)
+    assert (line["page"], line["kind"], line["field"], line["original"]) == (1, checker.SOURCES_DISAGREE, "period", "2023")
+    assert [(r["period"], r["cells"]) for r in line["read"]] == [("2024", [tc.cell_of(parsed, "Plan year 2024")])]
 
 
 def test_a_period_on_no_cell_stays_flagged_whatever_the_page_headings_say():

@@ -188,7 +188,9 @@ def corrected_row(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int, page
     one candidate is applied before the register: the row carries `corrections` [{field, reason, original, corrected, state "applied",
     undo}] and the flag that named it is gone. With several candidates the flag stays and the entry is {state "choose", options
     [{value, set}]}, one button each; `set` and `undo` are the row fields the choice or the undo writes. `log` is the Diagnostics lines
-    ({page, kind "corrected", field, reason, original, corrected}); a label is logged by cell id, never by its text (rule 17)."""
+    ({page, kind "corrected", field, reason, original, corrected}; a period the model set that a cited source reads otherwise, kept with
+    SOURCES_DISAGREE (page_check._kept): {page, kind "sources disagree", field, original, read: [{period, cells, marker}]}, the periods the
+    page reads by token and cell id); a label is logged by cell id, never by its text (rule 17)."""
     from . import corrections
     base, entries, log = dict(item), [], []
     flags = list(item.get("flags") or [])
@@ -208,6 +210,11 @@ def corrected_row(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int, page
                 {"value": o["value"], **_period_source(field, o), **({"segment": o["segment"]} if field == "segment" else {}),
                  "set": corrections.row_fields(field, row_from_claim(corrections.apply_option(base, field, o), grid, deck, fiscal_year_end))}
                 for o in options]})
+            if field == "period" and plan["flag"] == checker.SOURCES_DISAGREE and plan["original"] is not None:
+                # A period the model set that a cited source reads otherwise is kept (page-image.md section 5, review of PR #193): nothing is
+                # applied, and one line says so, with the periods the page reads by token and cell id.
+                log.append({"page": page, "kind": checker.SOURCES_DISAGREE, "field": field, "original": plan["original"],
+                            "read": [{"period": o["ref"], **_period_source(field, o)} for o in options if o["ref"] != plan["original"]]})
     row = row_from_claim({**base, "flags": flags}, grid, deck, fiscal_year_end)
     if entries:
         row["corrections"] = entries

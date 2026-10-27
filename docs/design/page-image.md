@@ -45,7 +45,7 @@ No other behaviour. The row keeps `segment` and `share_of` as `page_segment` and
 ## 5. Rule changes
 
 - **Label corrections (L1, C4):** run only when `label_text` is empty. When `label_text` is present and the cell text disagrees, the claim is flagged, not corrected.
-- **Period fills (P2, C1, C3):** from a heading or another cell, they fill a blank period only. They never replace a period the model set.
+- **Period fills (P2, C1, C3):** from a heading or another cell, they fill a blank period only. They never replace a period the model set. The same holds for the cell the model cites for its period, the figure's own text or header included (George, review of PR #193, 2026-10-27): a model period the cited cell reads otherwise is kept, flagged `sources disagree`, logged as one Diagnostics line, and the model's period and the cell's are the two buttons. The year-under-bar check (`year under bar differs`, the year label under the figure's bar by place) is the only check that still changes a non-null model period.
 - **No-minus-sign rule (X2):** becomes the flag `sign not on page`, listed under Review, instead of a change to the claim.
 - All other checks are unchanged.
 

@@ -19,8 +19,10 @@ Pure: no I/O, no model, no database. checker.check calls this after its flags ar
   whose text names no product). Such a claim never enters the register; the pipeline writes a Diagnostics line.
 
   * SOURCES_DISAGREE and SOURCE_AMBIGUOUS (source association, 2026-10-26): the options are the periods the figure's own sources state and the
-    broader source cited (disagreement; the figure's own is the item's period), or every candidate (own sources that state several periods, or
-    several page headings): never applied, always a button each ("select nothing automatically when several candidates remain").
+    broader source cited (disagreement over a blank model period; the figure's own is the item's period), the model's period and the cited
+    source's (a period the model set that the source reads otherwise, page_check._kept, 2026-10-27: the model's stays the item's period), or
+    every candidate (own sources that state several periods, or several page headings): never applied, always a button each ("select nothing
+    automatically when several candidates remain").
 
 A period option keeps the period token, the ids of the cells it was read from (`period_cells`) and its actual/forecast marker apart
 (`marker`: "actual", "forecast" or None, association.period_marker): never the heading's prose (George, 2026-10-26, section 4 of

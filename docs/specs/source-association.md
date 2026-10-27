@@ -52,6 +52,8 @@ Sources of a field, nearest first, as closed words (`association.SOURCES`): `own
 - **Unit.** The unit marks of a value are its cell and the cells beside it (as before) and now the chart's axis titles and its legend label.
 - **Period.** The figure's own sources are its own text and the date labels or headers beside it. A period cited from a heading or another cell while the figure's
   own sources state a different one: Python's period is the figure's own, the claim is `sources disagree`, and it waits with one button per candidate (never applied).
+  Amended 2026-10-27 (George, review of PR #193; docs/design/page-image.md section 5): this precedence fills a blank model period only. A period the model set
+  is kept over the figure's own source and the heading alike, `sources disagree`, with the model's period and the figure's own as the buttons and one Diagnostics line.
   Own sources that state several periods while a heading is cited: `source ambiguous`. A cited heading while the page's heading cells state several different periods:
   `source ambiguous`, nothing selected (the model's period stays, flagged; both headings are the buttons). The year under a bar stays with `year under bar differs`.
 - **Marker annotations.** A date printed inside a chart's plot area (above the baseline of its bars, inside its horizontal extent) that is not an axis tick is the date of

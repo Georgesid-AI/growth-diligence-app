@@ -482,12 +482,15 @@ export const QUOTED_FIGURE_KIND = "quoted figure, not a company claim";        /
 export const labelLine = (c) => (c?.label_from ? `Label from: ${c.label_from}${c.page_segment ? ` · ${c.page_segment}` : ""}` : c?.page_segment ? `Segment: ${c.page_segment}` : null);
 export const shareOfLine = (c) => (c?.page_share_of ? `Share of: ${c.page_share_of}` : null);
 export const DIAGNOSTICS_DECK_HEADING = "Deck reading";
+export const SOURCES_DISAGREE_KIND = "sources disagree";        // a period the model set that a cited cell reads otherwise: kept, both are buttons (page-image.md section 5)
 /** The Diagnostics lines of the decks' page reads (claim-matching.md section 33): what a check corrected, with the original and the corrected
- *  value, and the claims that never entered the register ("derived figure, not a claim", "launch date without product name"). */
+ *  value, a period the model set that the page reads otherwise (kept; the periods the page reads follow), and the claims that never entered
+ *  the register ("derived figure, not a claim", "launch date without product name"). */
 export function diagnosticLines(decks) {
   return (decks || []).flatMap((d) => (d.diagnostics || []).map((x) => {
     const where = `${d.file} · ${d.page_unit === "slide" ? "slide" : "page"} ${x.page}`;
     if (x.kind === "corrected") return `${where}: corrected ${x.field}, ${x.original ?? "none"} → ${x.corrected} (${x.reason})`;
+    if (x.kind === SOURCES_DISAGREE_KIND) return `${where}: sources disagree on ${x.field}, ${x.original} kept; the page reads ${(x.read || []).map((r) => r.period).join(", ")}`;
     return `${where}: ${x.kind}${x.metric ? ` · ${x.metric}` : ""}${x.value != null ? ` ${x.value}` : ""}${x.period ? ` · ${x.period}` : ""}`;
   }));
 }

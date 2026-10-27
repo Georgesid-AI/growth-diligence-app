@@ -3,6 +3,9 @@
 1. Four nullable fields on a page claim: label_text, segment, share_of, is_quote. The claim's label is label_text when present; label_cell is location only.
 2. Label corrections (L1 in page_check.check, C4 in corrections.plan) run only when label_text is empty; with it a mismatch is a flag.
 3. Period fills (P2 in page_check.period_check, C1 and C3 in corrections.plan) fill a blank period only; a period the model set is kept.
+   Review of PR #193 (George): the same for the cell the model cites, the figure's own text or header included: a model period the cited cell
+   reads otherwise is kept, flagged "sources disagree", logged as one Diagnostics line, and the model's period and the cell's are the two buttons.
+   The year under a bar by place (checker.BAR_YEAR) is the only check that still changes a model period.
 4. The no-minus-sign rule (X2) sets "sign not on page" and no longer changes the value.
 """
 import json
@@ -146,6 +149,54 @@ def test_a_model_period_and_a_conflicting_heading_keep_the_model_period_with_a_f
     row, = cc.read(parsed, form(tc.claim(cell, 150_000, period="2027", period_cell=title)))[0]
     assert row["target_date"] == "2027" and checker.SOURCES_DISAGREE in row["flags"], "the row keeps the model's period"
     assert all(e["state"] != "applied" for e in row.get("corrections", ())), "nothing was applied"
+
+
+def test_a_model_period_citing_a_heading_over_a_local_header_that_reads_otherwise_is_kept_with_the_local_period_as_the_other_button():
+    """Review of PR #193, finding 2: the model wrote 2027 and cited the heading "Plan 2025"; the figure's own column header reads 2024."""
+    g = sa.grid([{"row": 1, "col": 1, "text": "Plan 2025", "box": 1, "title": True, "top_band": True},
+                 {"row": 2, "col": 2, "text": "2024", "table": 1, "trow": 1, "tcol": 2},
+                 {"row": 3, "col": 1, "text": "Revenue", "table": 1, "trow": 2, "tcol": 1},
+                 {"row": 3, "col": 2, "text": "1,200", "table": 1, "trow": 2, "tcol": 2}],
+                tables=[{"table": 1, "header_rows": 1}], measured=False)
+    item = sa.check(g, form(sa.claim("r3c2", 1200, unit="EUR", period="2027", period_cell="r1c1", label_cell="r3c1")))
+    assert item["period"] == "2027" and item["period_cells"] == [] and item["checks"]["period_corrected"] is False and "model_period" not in item
+    assert checker.SOURCES_DISAGREE in item["flags"] and checker.PERIOD_FROM_HEADING not in item["flags"]
+    plan, = corrections_of(item, "period")
+    assert plan["flag"] == checker.SOURCES_DISAGREE
+    assert [(o["period"], o["period_cells"]) for o in plan["options"]] == [("2027", []), ("2024", ["r2c2"])], "the model's period and the local source, not the heading"
+
+
+def test_a_model_period_the_cited_cell_reads_otherwise_is_kept_flagged_logged_and_both_are_buttons():
+    """Review of PR #193, finding 1: the model wrote 2023 and cited the line "FY2024" directly above the figure."""
+    parsed = tc.deck([tc.TITLE, (50, 500, 12, "FY2024"), (50, 480, 12, "$150,000 annual revenue run rate")])
+    cell, header = cc.at(parsed, "$150,000 annual revenue run rate"), cc.at(parsed, "FY2024")
+    item = tc.one(parsed, form(tc.claim(cell, 150_000, period="2023", period_cell=header)))
+    assert item["period"] == "2023" and item["period_cells"] == [] and item["checks"]["period_corrected"] is False and "model_period" not in item
+    assert checker.SOURCES_DISAGREE in item["flags"]
+    plan, = corrections_of(item, "period")
+    assert plan["flag"] == checker.SOURCES_DISAGREE and [o["period"] for o in plan["options"]] == ["2023", "2024"]
+    rows, deck = cc.read(parsed, form(tc.claim(cell, 150_000, period="2023", period_cell=header)))
+    row, = rows
+    assert row["target_date"] == "2023" and checker.SOURCES_DISAGREE in row["flags"], "the row keeps the model's period, under Review"
+    entry, = row["corrections"]
+    assert entry["state"] == "choose" and [o["value"] for o in entry["options"]] == ["2023", "2024"], "two buttons, nothing applied"
+    assert [o["set"]["target_date"] for o in entry["options"]] == ["2023", "2024"]
+    line, = deck["diagnostics"]
+    assert (line["page"], line["kind"], line["field"], line["original"]) == (1, checker.SOURCES_DISAGREE, "period", "2023")
+    assert [(r["period"], r["cells"]) for r in line["read"]] == [("2024", [tc.cell_of(parsed, "FY2024")])]
+    agree = tc.one(parsed, form(tc.claim(cell, 150_000, period="2024", period_cell=header)))
+    assert agree["period"] == "2024" and agree["period_cells"] == [tc.cell_of(parsed, "FY2024")] and checker.SOURCES_DISAGREE not in agree["flags"]
+
+
+def test_the_year_under_a_bar_still_corrects_a_model_period():
+    """pin (review of PR #193, finding 3): BAR_YEAR is the one check that still changes a non-null model period."""
+    parsed = tc.bars()
+    first = cc.at(parsed, "€1.48MM")
+    for period_cell in (None, cc.at(parsed, "2022")):
+        row, = cc.read(parsed, form(tc.claim(first, 1_480_000, unit="EUR", period="2023", period_cell=period_cell)))[0]
+        assert row["target_date"] == "2022" and checker.SOURCES_DISAGREE not in row["flags"], period_cell
+        entry, = row["corrections"]
+        assert (entry["state"], entry["reason"], entry["original"], entry["corrected"]) == ("applied", checker.BAR_YEAR, "2023", "2022")
 
 
 def test_a_model_period_on_no_cell_is_flagged_and_never_replaced_by_the_heading():

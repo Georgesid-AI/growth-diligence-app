@@ -54,7 +54,9 @@ GROWTH_START_YEAR, a growth claim whose period is the year after "from" or "comp
 Added 2026-10-26 (source association, docs/specs/source-association.md; section 4 of docs/design/claim-review-simplified-design.md): four review
 flags and one drop kind, all closed words.
 - SOURCES_DISAGREE: the figure's own sources (its cell, its table header or label beside it, the legend label of its bar) state another period or
-  label than the broader source cited; the local one is used (it takes precedence) and the claim is listed under Review with both as buttons.
+  label than the broader source cited; the local one fills a blank period (it takes precedence) and the claim is listed under Review with both as
+  buttons. Since 2026-10-27 (George, review of PR #193) also a period the model set that the cell it cites reads otherwise, the figure's own text
+  or header included: the model's period is kept, the model's and the cell's are the buttons, and one Diagnostics line says so.
 - SOURCE_AMBIGUOUS: several candidates and none chosen: two legend labels for one bar colour (or one colour in two charts), two axis titles, own
   sources stating several periods while a heading is cited, or two page headings stating different periods.
 - SOURCE_NOT_ASSOCIATED: the period or label rests on a source the figure has no association with: a marker annotation of a chart (a date printed in
@@ -69,7 +71,8 @@ Changed 2026-10-27 (George, docs/design/page-image.md sections 4 and 5): a claim
 The label is label_text when present and label_cell only locates it: the label corrections (page_check.check swapping in a legend or axis label,
 corrections.plan's one-option label) run only without label_text, and with it a cited cell that says another thing sets LABEL_MISMATCH and changes
 nothing. A heading or another cell fills a blank period only (page_check.period_check; corrections.plan no longer applies a heading's period when the
-model's is not on the page): a model period that conflicts with a cited heading is kept with SOURCES_DISAGREE, PERIOD_NOT_ON_PAGE only flags.
+model's is not on the page): a model period that conflicts with a cited heading, another cell or the figure's own source is kept with
+SOURCES_DISAGREE (page_check._kept), PERIOD_NOT_ON_PAGE only flags; BAR_YEAR is the one check that still changes a model period.
 SIGN_NOT_ON_PAGE no longer changes the value.
 
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.

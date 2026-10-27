@@ -247,17 +247,22 @@ def test_a_date_on_the_axis_below_the_bars_is_not_an_annotation():
     assert NOT_ASSOCIATED not in item["flags"] and item["period"] == "2024" and item["period_cells"] == ["r4c1"]
 
 
-def test_the_figures_own_column_header_takes_precedence_over_the_heading_and_the_disagreement_is_reviewed():
+def test_the_figures_own_column_header_fills_a_blank_period_before_the_heading_and_a_model_period_is_kept_over_both():
     g = grid([{"row": 1, "col": 1, "text": "Plan 2025", "box": 1, "title": True, "top_band": True},
               {"row": 2, "col": 2, "text": "FY2024", "table": 1, "trow": 1, "tcol": 2},
               {"row": 3, "col": 1, "text": "Revenue", "table": 1, "trow": 2, "tcol": 1},
               {"row": 3, "col": 2, "text": "1,200", "table": 1, "trow": 2, "tcol": 2}],
              tables=[{"table": 1, "header_rows": 1}], measured=False)
-    item = check(g, claim("r3c2", 1200, unit="EUR", period="2025", period_cell="r1c1", label_cell="r3c1"))
-    assert item["period"] == "2024" and item["period_cells"] == ["r2c2"], "the local header comes first"
-    assert DISAGREE in item["flags"]
-    plan, = [p for p in item["corrections"] if p["flag"] == DISAGREE]
+    blank = check(g, claim("r3c2", 1200, unit="EUR", period=None, period_cell="r1c1", label_cell="r3c1"))
+    assert blank["period"] == "2024" and blank["period_cells"] == ["r2c2"], "the local header comes first"
+    assert DISAGREE in blank["flags"]
+    plan, = [p for p in blank["corrections"] if p["flag"] == DISAGREE]
     assert [o["period"] for o in plan["options"]] == ["2024", "2025"], "two buttons, none applied"
+    # A period the model set is never replaced (page-image.md section 5, review of PR #193): it stays, the figure's own header is the other button.
+    item = check(g, claim("r3c2", 1200, unit="EUR", period="2025", period_cell="r1c1", label_cell="r3c1"))
+    assert item["period"] == "2025" and item["period_cells"] == [] and DISAGREE in item["flags"]
+    plan, = [p for p in item["corrections"] if p["flag"] == DISAGREE]
+    assert [o["period"] for o in plan["options"]] == ["2025", "2024"], "the model's period and the local source, not the heading"
 
 
 def test_a_heading_that_agrees_with_the_figures_own_header_raises_nothing():

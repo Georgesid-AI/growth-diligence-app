@@ -655,7 +655,7 @@ def test_the_gateway_names_no_deck_text_snippet_or_source_field():
     the saved rate, computed in Python and shown to the analyst only)."""
     forbidden = {"blocks", "snippet", "label_from", "date_from", "sources", "by_period",
                  "confidence", "type_from", "reading", "claim_direction", "group", "fx", "fx_rate", "fx_date",
-                 "mixed_slide", "inconsistencies"}
+                 "mixed_slide", "inconsistencies", "page_segment", "page_share_of"}
     offenders = []
     for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -3749,10 +3749,16 @@ def test_corrections_and_dropped_claims_log_values_and_cell_ids_never_deck_text(
     db = tc._page_db(parsed)
     launch = tc.claim(cc.at(parsed, "Launch Q3 2025"), None, metric="product", unit=None, period="2025-Q3", period_cell=cc.at(parsed, "Launch Q3 2025"))
     label = tc.claim(cc.at(parsed, "800"), 800, metric="customers", unit="count", label_cell=cc.at(parsed, "Footnote words"))
-    adapter = cc.t.FakeAdapter(replies=[json.dumps({"type": "page_claims", "claims": [launch, label]})])
+    # A period the model set that the cited cell reads otherwise is kept and logged as "sources disagree" (review of PR #193): the line holds
+    # the model's period, the period token the page reads and its cell id, never the cell's text.
+    kept = tc.claim(cc.at(parsed, "$150,000 annual revenue run rate"), 150_000, period="2023", period_cell=cc.at(parsed, "Launch Q3 2025"))
+    adapter = cc.t.FakeAdapter(replies=[json.dumps({"type": "page_claims", "claims": [launch, label, kept]})])
     assert asyncio.run(cc.structures.process_deck(db, cc.AUDIT, "d1", adapter=adapter, sleep=cc.t._noop_sleep)) == "read"
     deck_doc, = db[cc.TEXT_COLLECTION].docs
-    assert {d["kind"] for d in deck_doc["diagnostics"]} == {"corrected", "launch date without product name"}
+    assert {d["kind"] for d in deck_doc["diagnostics"]} == {"corrected", "launch date without product name", "sources disagree"}
+    disagree, = [d for d in deck_doc["diagnostics"] if d["kind"] == "sources disagree"]
+    assert set(disagree) == {"page", "kind", "field", "original", "read"} and disagree["original"] == "2023"
+    assert [(r["period"], r["cells"]) for r in disagree["read"]] == [("2025-Q3", [tc.cell_of(parsed, "Launch Q3 2025")])]
     logged = json.dumps(deck_doc["diagnostics"]) + json.dumps(db[_gateway.STRUCTURES_COLLECTION].docs[0]["items"])
     for needle in ("Paying customers", "Footnote", "Launch Q3", "annual revenue"):
         assert needle not in logged, f"{needle!r} in a Diagnostics line or a stored item"
