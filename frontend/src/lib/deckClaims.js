@@ -416,11 +416,13 @@ export function deckRunLog(deck) {
   if (deck.ai_status === "python_only" && deck.ai_message) return [deck.ai_message];
   if (deck.ai_status === "prompt_missing") return [deck.ai_message || PROMPT_MISSING_LINE];
   const lines = [deck.figure_pages != null && deck.pages ? deckReadLine(deck) : `AI reading: ${deck.ai_status === "reading" && deck.ai_message === "restarted" ? "restarted" : DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
-  if (deck.skipped_pages?.length) lines.push(`Skipped the following pages (${deck.skipped_pages.join(", ")}) – no figures relevant for the audit`);
+  if (deck.skipped_pages?.length) lines.push(`Skipped pages ${deck.skipped_pages.join(", ")}: no numbers in the page text.`);
   if (deck.ai_status !== "reading") for (const n of deck.unread_pages || []) lines.push(`page ${n} not read`);
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
   if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);
+  const quoted = (deck.diagnostics || []).filter((x) => x.kind === QUOTED_FIGURE_KIND).length;
+  if (quoted) lines.push(`Quoted figures skipped: ${quoted}`);
   return lines;
 }
 
@@ -475,13 +477,20 @@ export const appliedCorrections = (c) => withIndex(c, "applied");
 export const waitingCorrections = (c) => withIndex(c, "choose");
 export const correctionText = (e) => `Corrected: ${e.field} ${e.original ?? "none"} → ${e.corrected}`;
 export const UNDO_LABEL = "Undo";
+export const QUOTED_FIGURE_KIND = "quoted figure, not a company claim";        // the Diagnostics kind of a claim the model marked is_quote (page-image.md section 4)
+/** The label line of a claim row: the label, then the segment the page prints after it; the segment alone when no label was read. */
+export const labelLine = (c) => (c?.label_from ? `Label from: ${c.label_from}${c.page_segment ? ` · ${c.page_segment}` : ""}` : c?.page_segment ? `Segment: ${c.page_segment}` : null);
+export const shareOfLine = (c) => (c?.page_share_of ? `Share of: ${c.page_share_of}` : null);
 export const DIAGNOSTICS_DECK_HEADING = "Deck reading";
+export const SOURCES_DISAGREE_KIND = "sources disagree";        // a period the model set that a cited cell reads otherwise: kept, both are buttons (page-image.md section 5)
 /** The Diagnostics lines of the decks' page reads (claim-matching.md section 33): what a check corrected, with the original and the corrected
- *  value, and the claims that never entered the register ("derived figure, not a claim", "launch date without product name"). */
+ *  value, a period the model set that the page reads otherwise (kept; the periods the page reads follow), and the claims that never entered
+ *  the register ("derived figure, not a claim", "launch date without product name"). */
 export function diagnosticLines(decks) {
   return (decks || []).flatMap((d) => (d.diagnostics || []).map((x) => {
     const where = `${d.file} · ${d.page_unit === "slide" ? "slide" : "page"} ${x.page}`;
     if (x.kind === "corrected") return `${where}: corrected ${x.field}, ${x.original ?? "none"} → ${x.corrected} (${x.reason})`;
+    if (x.kind === SOURCES_DISAGREE_KIND) return `${where}: sources disagree on ${x.field}, ${x.original} kept; the page reads ${(x.read || []).map((r) => r.period).join(", ")}`;
     return `${where}: ${x.kind}${x.metric ? ` · ${x.metric}` : ""}${x.value != null ? ` ${x.value}` : ""}${x.period ? ` · ${x.period}` : ""}`;
   }));
 }

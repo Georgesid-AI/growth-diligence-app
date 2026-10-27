@@ -21,6 +21,7 @@ const DECKS = [{ deck_id: "d1", file: "plan.pdf", page_unit: "page", diagnostics
   { page: 4, kind: "corrected", field: "period", reason: "year under bar differs", original: "2023", corrected: "2022" },
   { page: 5, kind: "derived figure, not a claim", metric: "revenue", value: 200000, period: null },
   { page: 7, kind: "launch date without product name", metric: "product", value: null, period: "2025-Q3" },
+  { page: 9, kind: "sources disagree", field: "period", original: "2023", read: [{ period: "2024", cells: ["r2c1"], marker: null }] },
 ] }];
 const q = (id) => document.body.querySelector(`[data-testid="${id}"]`);
 let root, host;
@@ -127,13 +128,14 @@ test("stale results read Stale – re-run audit, not Not computed yet; no result
   expect(document.body.textContent).toContain("Not computed yet.");
 });
 
-test("the deck reading lines list what a check corrected, with both values, and the claims that never entered the register", async () => {
+test("the deck reading lines list what a check corrected, with both values, a kept period the page reads otherwise, and the claims that never entered the register", async () => {
   await mount(REC);
   const lines = [...document.body.querySelectorAll('[data-testid="diagnostics-deck-line"]')].map((n) => n.textContent);
   expect(lines).toEqual([
     "plan.pdf · page 4: corrected period, 2023 → 2022 (year under bar differs)",
     "plan.pdf · page 5: derived figure, not a claim · revenue 200000",
     "plan.pdf · page 7: launch date without product name · product · 2025-Q3",
+    "plan.pdf · page 9: sources disagree on period, 2023 kept; the page reads 2024",
   ]);
 });
 

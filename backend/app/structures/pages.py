@@ -141,12 +141,12 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company
 
 def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> Dict:
     """One approval-list row for a checked page claim, citing its cell on its page. The snippet is the cell's own text; the period
-    keeps the text of its period cells; "Label from" is the label cell's text when it is adjacent and not the cell itself."""
+    keeps the text of its period cells; "Label from" is label_text when the model read one, else the label cell's text when it is adjacent and not the cell itself."""
     from . import _reading, _target_date, _where         # the orchestrator's helpers, shared with the structure read
     by_id = {redact.cell_id(c): c for c in grid["cells"]}
     cell = by_id[item["value_cell"]]
     period_cells = [by_id[c]["text"] for c in item.get("period_cells") or () if c in by_id]
-    label = by_id[item["label_cell"]]["text"] if item.get("label_cell") in by_id else None
+    label = item.get("label_text") or (by_id[item["label_cell"]]["text"] if item.get("label_cell") in by_id else None)     # label_cell only locates label_text
     unit = item.get("unit_other") if item.get("unit") == "other" else item.get("unit")
     target, stated = _target_date(item.get("period")), (" ".join(period_cells) or item.get("period"))
     source = {"file": deck["file"], **_where(grid), "kind": "page", "cell": item["value_cell"]}
@@ -169,6 +169,7 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
         "ai_status": item["status"], "ai_label": page_check.label(item["status"]), "ai_checks": item.get("checks"),
         "period_cells": list(item.get("period_cells") or []), "basis": item.get("basis"), "scenario": item.get("scenario") or checker.NO_SCENARIO,
         "flags": list(item.get("flags") or []), "proposed_flags": [],
+        "page_segment": item.get("segment"), "page_share_of": item.get("share_of"),      # as printed, shown on the row (page-image.md section 4)
         "heading_metric": association.Layout(grid).heading_metric(cell),      # the one metric word of the title over the figure; a closed word, no text
     }
     claims.recurring_year_end(candidate)             # "MRR in 2021" is Dec 2021 (issue #151)
@@ -187,7 +188,9 @@ def corrected_row(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int, page
     one candidate is applied before the register: the row carries `corrections` [{field, reason, original, corrected, state "applied",
     undo}] and the flag that named it is gone. With several candidates the flag stays and the entry is {state "choose", options
     [{value, set}]}, one button each; `set` and `undo` are the row fields the choice or the undo writes. `log` is the Diagnostics lines
-    ({page, kind "corrected", field, reason, original, corrected}); a label is logged by cell id, never by its text (rule 17)."""
+    ({page, kind "corrected", field, reason, original, corrected}; a period the model set that a cited source reads otherwise, kept with
+    SOURCES_DISAGREE (page_check._kept): {page, kind "sources disagree", field, original, read: [{period, cells, marker}]}, the periods the
+    page reads by token and cell id); a label is logged by cell id, never by its text (rule 17)."""
     from . import corrections
     base, entries, log = dict(item), [], []
     flags = list(item.get("flags") or [])
@@ -207,6 +210,11 @@ def corrected_row(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int, page
                 {"value": o["value"], **_period_source(field, o), **({"segment": o["segment"]} if field == "segment" else {}),
                  "set": corrections.row_fields(field, row_from_claim(corrections.apply_option(base, field, o), grid, deck, fiscal_year_end))}
                 for o in options]})
+            if field == "period" and plan["flag"] == checker.SOURCES_DISAGREE and plan["original"] is not None:
+                # A period the model set that a cited source reads otherwise is kept (page-image.md section 5, review of PR #193): nothing is
+                # applied, and one line says so, with the periods the page reads by token and cell id.
+                log.append({"page": page, "kind": checker.SOURCES_DISAGREE, "field": field, "original": plan["original"],
+                            "read": [{"period": o["ref"], **_period_source(field, o)} for o in options if o["ref"] != plan["original"]]})
     row = row_from_claim({**base, "flags": flags}, grid, deck, fiscal_year_end)
     if entries:
         row["corrections"] = entries
@@ -250,6 +258,8 @@ def _without_text(item: Dict) -> Dict:
     """A checked claim as it is stored: the corrections keep their cell ids and period labels, never the text of a label cell (rule 17); a
     period option keeps its token, the cells it was read from and its marker (section 4 of docs/design/claim-review-simplified-design.md)."""
     out = dict(item)
+    for key in ("label_text", "segment", "share_of"):       # printed text of the page: on the approval-list row, never in the stored read
+        out.pop(key, None)
     if out.get("corrections"):
         out["corrections"] = [{"flag": p["flag"], "field": p["field"], "original": p["original"],
                                "options": [o["ref"] for o in p["options"]],
@@ -325,7 +335,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                     counts[k] += checked[k]
                 checked_all += [{**c, "page": page} for c in checked["items"]]
                 for item in checked["items"]:
-                    if item["drop"]:            # a derived figure, a launch date with no product: no row, one Diagnostics line (George, 2026-10-26)
+                    if item["drop"]:            # a derived figure, a launch date with no product, a quoted figure: no row, one Diagnostics line (George, 2026-10-26)
                         counts["dropped"] += 1
                         diagnostics_new.append({"page": page, "kind": item["drop"], "metric": item["metric"], "value": item.get("value"),
                                                 "period": item.get("period")})

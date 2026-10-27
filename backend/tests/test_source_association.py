@@ -247,17 +247,22 @@ def test_a_date_on_the_axis_below_the_bars_is_not_an_annotation():
     assert NOT_ASSOCIATED not in item["flags"] and item["period"] == "2024" and item["period_cells"] == ["r4c1"]
 
 
-def test_the_figures_own_column_header_takes_precedence_over_the_heading_and_the_disagreement_is_reviewed():
+def test_the_figures_own_column_header_fills_a_blank_period_before_the_heading_and_a_model_period_is_kept_over_both():
     g = grid([{"row": 1, "col": 1, "text": "Plan 2025", "box": 1, "title": True, "top_band": True},
               {"row": 2, "col": 2, "text": "FY2024", "table": 1, "trow": 1, "tcol": 2},
               {"row": 3, "col": 1, "text": "Revenue", "table": 1, "trow": 2, "tcol": 1},
               {"row": 3, "col": 2, "text": "1,200", "table": 1, "trow": 2, "tcol": 2}],
              tables=[{"table": 1, "header_rows": 1}], measured=False)
-    item = check(g, claim("r3c2", 1200, unit="EUR", period="2025", period_cell="r1c1", label_cell="r3c1"))
-    assert item["period"] == "2024" and item["period_cells"] == ["r2c2"], "the local header comes first"
-    assert DISAGREE in item["flags"]
-    plan, = [p for p in item["corrections"] if p["flag"] == DISAGREE]
+    blank = check(g, claim("r3c2", 1200, unit="EUR", period=None, period_cell="r1c1", label_cell="r3c1"))
+    assert blank["period"] == "2024" and blank["period_cells"] == ["r2c2"], "the local header comes first"
+    assert DISAGREE in blank["flags"]
+    plan, = [p for p in blank["corrections"] if p["flag"] == DISAGREE]
     assert [o["period"] for o in plan["options"]] == ["2024", "2025"], "two buttons, none applied"
+    # A period the model set is never replaced (page-image.md section 5, review of PR #193): it stays, the figure's own header is the other button.
+    item = check(g, claim("r3c2", 1200, unit="EUR", period="2025", period_cell="r1c1", label_cell="r3c1"))
+    assert item["period"] == "2025" and item["period_cells"] == [] and DISAGREE in item["flags"]
+    plan, = [p for p in item["corrections"] if p["flag"] == DISAGREE]
+    assert [o["period"] for o in plan["options"]] == ["2025", "2024"], "the model's period and the local source, not the heading"
 
 
 def test_a_heading_that_agrees_with_the_figures_own_header_raises_nothing():
@@ -356,21 +361,23 @@ def read_with_layout(parsed, *claims_):
     return db, sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"]), deck_doc
 
 
-def test_a_heading_correction_keeps_the_token_the_cells_and_the_marker_and_no_heading_prose():
-    parsed = tc.deck([(50, 560, 20, "Plan 2025E strategy for Northwind"), (50, 480, 12, "$150,000 annual revenue run rate")])
+def test_a_blank_period_filled_from_another_cell_keeps_the_token_the_cells_and_the_marker_and_no_heading_prose():
+    """A heading or another cell fills a blank period only (page-image.md section 5): the correction record keeps the token, the cell and the marker."""
+    parsed = tc.deck([tc.TITLE, (50, 480, 12, "$150,000 annual revenue run rate"), (400, 300, 12, "Plan year 2025E strategy for Northwind")])
     cell_ = f"p1{tc.cell_of(parsed, '$150,000 annual revenue run rate')}"
-    db, rows, deck_doc = read_with_layout(parsed, claim(cell_, 150_000, unit="USD", period="2027"))
+    other = f"p1{tc.cell_of(parsed, 'Plan year 2025E strategy for Northwind')}"
+    db, rows, deck_doc = read_with_layout(parsed, claim(cell_, 150_000, unit="USD", period=None, period_cell=other))
     row, = rows
     entry, = row["corrections"]
-    assert (entry["state"], entry["reason"], entry["original"], entry["corrected"]) == ("applied", checker.PERIOD_NOT_ON_PAGE, "2027", "2025")
-    assert (entry["cells"], entry["marker"]) == (["r1c1"], "forecast")
+    assert (entry["state"], entry["reason"], entry["original"], entry["corrected"]) == ("applied", checker.PERIOD_FROM_OTHER_CELL, None, "2025")
+    assert (entry["cells"], entry["marker"]) == ([other[2:]], "forecast")
     line, = [d for d in deck_doc["diagnostics"] if d["kind"] == "corrected"]
-    assert (line["corrected"], line["cells"], line["marker"]) == ("2025", ["r1c1"], "forecast")
+    assert (line["corrected"], line["cells"], line["marker"]) == ("2025", [other[2:]], "forecast")
     stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs[0]["items"]) + json.dumps(deck_doc["diagnostics"])
-    for prose in ("strategy", "Northwind", "Plan 2025E"):
+    for prose in ("strategy", "Northwind", "Plan year 2025E"):
         assert prose not in stored, f"{prose!r} in a diagnostics line or a stored item"
     kept, = db[gateway.STRUCTURES_COLLECTION].docs[0]["items"]["claims"][0]["corrections"]
-    assert kept["options"] == ["2025"] and kept["sources"] == [{"cells": ["r1c1"], "marker": "forecast"}]
+    assert kept["options"] == ["2025"] and kept["sources"] == [{"cells": [other[2:]], "marker": "forecast"}]
 
 
 def test_the_marker_is_kept_apart_from_the_period_token():

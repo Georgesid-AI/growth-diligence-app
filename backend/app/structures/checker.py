@@ -54,7 +54,9 @@ GROWTH_START_YEAR, a growth claim whose period is the year after "from" or "comp
 Added 2026-10-26 (source association, docs/specs/source-association.md; section 4 of docs/design/claim-review-simplified-design.md): four review
 flags and one drop kind, all closed words.
 - SOURCES_DISAGREE: the figure's own sources (its cell, its table header or label beside it, the legend label of its bar) state another period or
-  label than the broader source cited; the local one is used (it takes precedence) and the claim is listed under Review with both as buttons.
+  label than the broader source cited; the local one fills a blank period (it takes precedence) and the claim is listed under Review with both as
+  buttons. Since 2026-10-27 (George, review of PR #193) also a period the model set that the cell it cites reads otherwise, the figure's own text
+  or header included: the model's period is kept, the model's and the cell's are the buttons, and one Diagnostics line says so.
 - SOURCE_AMBIGUOUS: several candidates and none chosen: two legend labels for one bar colour (or one colour in two charts), two axis titles, own
   sources stating several periods while a heading is cited, or two page headings stating different periods.
 - SOURCE_NOT_ASSOCIATED: the period or label rests on a source the figure has no association with: a marker annotation of a chart (a date printed in
@@ -64,6 +66,14 @@ flags and one drop kind, all closed words.
   decode): the value may stand there, so the claim is kept for review instead of dropped.
 - NO_PRINTED_SOURCE (a drop kind, like DERIVED_FIGURE): the same claim on a page whose extraction is measured and complete: no row, one Diagnostics line.
 A page without the deck's layout (stored before this field) is not measured: nothing is dropped and no extraction flag is set.
+
+Changed 2026-10-27 (George, docs/design/page-image.md sections 4 and 5): a claim carries label_text, segment, share_of and is_quote (nullable).
+The label is label_text when present and label_cell only locates it: the label corrections (page_check.check swapping in a legend or axis label,
+corrections.plan's one-option label) run only without label_text, and with it a cited cell that says another thing sets LABEL_MISMATCH and changes
+nothing. A heading or another cell fills a blank period only (page_check.period_check; corrections.plan no longer applies a heading's period when the
+model's is not on the page): a model period that conflicts with a cited heading, another cell or the figure's own source is kept with
+SOURCES_DISAGREE (page_check._kept), PERIOD_NOT_ON_PAGE only flags; BAR_YEAR is the one check that still changes a model period.
+SIGN_NOT_ON_PAGE no longer changes the value.
 
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.
 """
@@ -103,6 +113,7 @@ NO_PRINTED_SOURCE = "no printed source"
 LABEL_MISMATCH = "label mismatch"        # the reason of a label correction, and the review flag of a cited label with no candidate cell (hotfix of PR 182)
 DERIVED_FIGURE = corrections.DERIVED_FIGURE
 LAUNCH_NO_PRODUCT = corrections.LAUNCH_NO_PRODUCT
+QUOTED_FIGURE = "quoted figure, not a company claim"      # a drop kind: the model set is_quote true (docs/design/page-image.md section 4)
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL,
@@ -217,6 +228,12 @@ def sign_shown(text: str, metric: Optional[str] = None) -> bool:
             or (metric in BRACKET_NEGATIVE_METRICS and bool(_BRACKETED.search(text))))
 
 
+def label_agrees(label_text: str, cell_text: str) -> bool:
+    """Whether the cell a claim cites for its label says what label_text says: the same words in any case, either holding the other."""
+    a, b = " ".join(label_text.casefold().split()), " ".join((cell_text or "").casefold().split())
+    return bool(a) and bool(b) and (a in b or b in a)
+
+
 def basis_disagrees(basis: Optional[str], scenario: Optional[str]) -> bool:
     """The model's two words contradict each other: basis "actual" with a case named, or basis "scenario" with none (L8)."""
     case = bool(scenario) and scenario != NO_SCENARIO
@@ -259,7 +276,7 @@ def rule_flags(grid: Dict, grid_views: Dict, cell: Dict, claim: Dict, lines: Dic
         out.append(USE_OF_FUNDS)
     if text in lines["channels"]:
         out.append(ACQUISITION_CHANNEL)
-    if claim["metric"] == "revenue" and claims._TURNOVER_TERM.search(f"{text} {_cell_text(grid, claim.get('label_cell'))}"):
+    if claim["metric"] == "revenue" and claims._TURNOVER_TERM.search(f"{text} {claim.get('label_text') or _cell_text(grid, claim.get('label_cell'))}"):
         out.append(TURNOVER)
     if cell.get("bar_year") and claim.get("period"):
         bar = (claims.period_cell(str(cell["bar_year"])) or {}).get("label")
@@ -306,11 +323,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
             elif unit in ("%", "x", *_TIME_UNITS):
                 flags.append(UNIT_ASSUMED)
         if claim.get("value") is not None and claim["value"] < 0 and not sign_shown(cell["text"], claim.get("metric")):
-            flags.append(SIGN_NOT_ON_PAGE)
-            # The page shows no sign, so the row states the figure as the page writes it: positive (the model's minus is flagged, never kept).
-            if item["value"] is not None and item["value"] < 0:
-                item["value"] = abs(item["value"])
-                item["values"] = sorted(item["values"], key=lambda v: v["value"] < 0)
+            flags.append(SIGN_NOT_ON_PAGE)          # a flag only: the value stays as the model read it (docs/design/page-image.md section 5)
         if not scenario_near(page_check.view_of(grid_views, cell), cell, claim.get("scenario")):
             flags.append(SCENARIO_NOT_ON_PAGE)
         if basis_disagrees(claim.get("basis"), claim.get("scenario")):
@@ -326,7 +339,10 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
         if claim.get("metric") in claims.GROWTH_TYPES and starts_at_period(cell["text"], claim.get("period"), fiscal_year_end):
             flags.append(GROWTH_START_YEAR)
         flags += [f for f in rule_flags(grid, grid_views, cell, claim, lines, fiscal_year_end) if f not in flags]
-        if corrections.label_options(grid_views, claim, item, cell) == []:
+        if claim.get("label_text"):
+            if claim.get("label_cell") and not label_agrees(claim["label_text"], _cell_text(grid, claim["label_cell"])):
+                flags.append(LABEL_MISMATCH)        # label_text is the label; a cited cell that says another thing is flagged, never corrected
+        elif corrections.label_options(grid_views, claim, item, cell) == []:
             flags.append(LABEL_MISMATCH)            # a cited label no cell of the figure's row or column can replace: a card, no correction
         found = item.get("association") or {}
         flags += [f for f in found.get("flags") or () if f not in flags]
@@ -349,10 +365,13 @@ def drop_reason(claim: Dict, cell: Dict, label: Optional[Dict], flags: List[str]
     """Why the claim never enters the register though the model read it (George, 2026-10-26): DERIVED_FIGURE, a value on no cell that the
     figures of the page compute; LAUNCH_NO_PRODUCT, a launch date whose text names no product; NO_PRINTED_SOURCE, a value on no cell of a page whose
     extraction is measured and complete (`complete` True: nothing on the page was left unread, so the absence is established). None otherwise;
-    with `complete` False the claim is kept and flagged EXTRACTION_INCOMPLETE, with None (not measured) it stays as before."""
+    with `complete` False the claim is kept and flagged EXTRACTION_INCOMPLETE, with None (not measured) it stays as before.
+    QUOTED_FIGURE comes first: a claim the model marked is_quote true is no company claim whatever else the checks say (George, 2026-10-27)."""
+    if claim.get("is_quote") is True:
+        return QUOTED_FIGURE
     if VALUE_NOT_ON_PAGE in flags and corrections.computable(claim.get("value"), corrections.page_figures(listed, furniture)):
         return DERIVED_FIGURE
-    if corrections.launch_without_product(claim, cell["text"], label["text"] if label else None):
+    if corrections.launch_without_product(claim, cell["text"], claim.get("label_text") or (label["text"] if label else None)):
         return LAUNCH_NO_PRODUCT
     if VALUE_NOT_ON_PAGE in flags and claim.get("value") is not None and complete is True:
         return NO_PRINTED_SOURCE

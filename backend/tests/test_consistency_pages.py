@@ -169,7 +169,9 @@ def test_recorded_replies_are_written_per_pass_in_the_format_of_the_handwritten_
         assert re.fullmatch(rf"p{recorded['page']}r\d+c\d+.*", recorded["match"]) and "\n" not in recorded["match"]
         assert recorded["claims"] and all(c["value_cell"].startswith(f"p{recorded['page']}r") for c in recorded["claims"])
     first = json.loads((folder / "pass-1" / "buffer_p5.json").read_text(encoding="utf-8"))
-    assert first["claims"] == handwritten["claims"], "replayed and recorded again, the claims are the same"
+    # a recorded claim carries the four fields of the page-image answer form (null when the hand-written file has none)
+    assert first["claims"] == [{**dict.fromkeys(("label_text", "segment", "share_of", "is_quote")), **c} for c in handwritten["claims"]], \
+        "replayed and recorded again, the claims are the same"
 
 
 def test_a_later_run_the_same_day_never_overwrites_an_earlier_report(script):

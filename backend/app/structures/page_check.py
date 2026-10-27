@@ -19,7 +19,10 @@ the source):
    must be a date source of the value cell: its own text, a column header of its table (a month, quarter or half with the year
    cell above it), the top line or an adjacent line of its own text box, a line of another box directly next to it, or the year
    label of its bar by place (bar_year). A sentence is no source (#154): a cited cell other than the value cell must be a date
-   label or a period header. The rebuilt period replaces the model's; a difference is counted as a correction.
+   label or a period header. A null model period is filled from the cited source; a period the model set is kept when the source
+   reads another (SOURCES_DISAGREE, the model's period and the source's as buttons, one Diagnostics line; docs/design/page-image.md
+   section 5, George, review of PR #193). The year under the figure's bar by place is the only source that still corrects a model
+   period (the checker's BAR_YEAR).
 
 Matched (amended 2026-10-23, George): the figure is in the cited cell (check 1) and the claim has a value. The unit and the period no longer
 gate the match: a failed unit or period check is a flag the checker adds (checker.py), and the confidence label reads the flags (claims.confidence). A
@@ -190,7 +193,9 @@ def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optio
 
     `note` is the source association of the period (docs/specs/source-association.md): {"source": a closed word of association.SOURCES or
     None, "flags": [association flags], "options": [{"period", "period_cells", "source"}]}. A period cited from a heading or another cell
-    while the figure's own sources state another one is Python's own source, with the review flag SOURCES_DISAGREE and both as options; own
+    while the figure's own sources state another one fills a blank model period with the figure's own, with the review flag SOURCES_DISAGREE
+    and both as options; a period the model set that any cited source reads otherwise is kept (_kept: SOURCES_DISAGREE, the model's period
+    and the source's as options, the year under its bar excepted); own
     sources that state several periods, with a broader one cited, are SOURCE_AMBIGUOUS and select nothing; a marker annotation of the
     chart, or (for a value found only in another cell, `rehomed`) any cell the new cell has no association with, is SOURCE_NOT_ASSOCIATED
     and sets no period."""
@@ -246,11 +251,26 @@ def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optio
             return model, [], False, False, "ambiguous", note
         if near and near[0]["span"] != span:
             chosen = near[0]
+            if model is not None and wanted != chosen["span"]:
+                return _kept(model, chosen["period"], chosen["cells"], chosen["source"], note)
             note.update(source=chosen["source"], flags=[association.SOURCES_DISAGREE], options=[
                 {"period": chosen["period"], "period_cells": chosen["cells"], "source": chosen["source"]},
                 {"period": label, "period_cells": cells, "source": note["source"]}])
             return chosen["period"], chosen["cells"], True, wanted != chosen["span"], "disagree", note
+    if model is not None and wanted != span and note["source"] != association.AXIS:
+        return _kept(model, label, cells, note["source"], note)
     return label, cells, True, wanted != span, heading, note
+
+
+def _kept(model: str, period: str, cells: List[str], source: Optional[str], note: Dict):
+    """The period_check result when a source the model cited reads another period than the one it set: a period the model set is never
+    replaced (docs/design/page-image.md section 5; George, review of PR #193, for the figure's own text and header as for a heading or
+    another cell). The model's period stays with no cell, the claim is SOURCES_DISAGREE, and the analyst sees the model's period and the
+    source's as the two buttons (corrections.plan), with one Diagnostics line (pages.corrected_row). Only the year under the figure's bar by
+    place (association.AXIS, the checker's BAR_YEAR) still corrects a model period."""
+    note.update(source=None, flags=[association.SOURCES_DISAGREE], options=[
+        {"period": model, "period_cells": [], "source": None}, {"period": period, "period_cells": cells, "source": source}])
+    return model, [], False, False, False, note
 
 
 # ---------------------------------------------------------------------------
@@ -462,10 +482,11 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
         label = by_id.get(claim["label_cell"]) if claim.get("label_cell") else None
         local = lay.local_label(cell)
         label_ok = label is None or any(_id(label) == _id(c) for c in label_cells(structure, cell)) or _id(label) in local["cells"]
-        if local["ambiguous"]:
+        label_text = bool(claim.get("label_text"))        # the label is the text the model read; the cell only locates it: no swap, no drop (page-image.md section 5)
+        if local["ambiguous"] and not label_text:
             label, label_ok = None, True        # several candidate labels (a reused colour, two axis titles): none is chosen
             notes["flags"].append(association.SOURCE_AMBIGUOUS)
-        elif local["cells"]:
+        elif local["cells"] and not label_text:
             chosen = by_id[local["cells"][0]]   # the explicit local association takes precedence over a broader heading
             beside = label is not None and not label.get("title") and any(_id(label) == _id(c) for c in label_cells(structure, cell))
             if label is not None and _id(label) != _id(chosen) and _id(label) in {s["label"] for s in lay.swatches}:
@@ -490,7 +511,9 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
                "value_high": (span["high"] if span and item["id"] == span["items"][0] else None) if value_ok else claim.get("value_high"),
                "value_cell": _id(cell), "position": item["position"] if item else None,
                "period": period, "period_cells": period_cells,
-               "label_cell": _id(label) if label is not None and label_ok else None,
+               "label_cell": _id(label) if label is not None and (label_ok or label_text) else None,
+               "label_text": claim.get("label_text"), "segment": claim.get("segment"), "share_of": claim.get("share_of"),
+               "is_quote": claim.get("is_quote"),
                "status": MATCHED if ok else UNMATCHED,
                "checks": _checks(value_ok, unit_ok, period_ok, label_ok, corrected, values, heading)}
         if corrected:

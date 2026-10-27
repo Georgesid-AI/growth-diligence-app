@@ -1,6 +1,7 @@
 # Spec: Interface contracts on two handoffs
 Status: Draft; the agreed scope is the task of 2026-10-08. Location: docs/specs/interface-contracts.md.
 No architecture change: the engine stays pure, the gateway stays the only caller of a model, the export stays in the API.
+Amended 2026-10-27 (George, docs/design/page-image.md sections 4 and 5): `contract_version` 11. No engine block changes. A page claim gains four nullable fields (`label_text`, `segment`, `share_of`, `is_quote`) and the checks that retyped a claim now run on a blank field only, so claim matches and results stored under 10 read "Stale – re-run audit" until Run audit calculates again; demo audits are reseeded (SEED_VERSION 18).
 Amended 2026-10-26 (George, docs/specs/forecast-and-payback.md section 4.5): `contract_version` 10. The yearly-basis block (`yearly_basis.years`, chat-upload.md §26.8) gains optional fields: `period_start`, `period_end`, `sm_expense`, `sm_scope`
 (sales and marketing, marketing only, sales only, unknown), `arr_year_end`, `arr_prior_year_end`, `net_new_arr`, `cac_payback_net_new_arr_months` and `cac_payback_net_new_arr_reason`; `cac_payback_months` is named the revenue-growth
 proxy. The register rows gain `calc_lines` and `calc_details` (register fields, not engine output). Results and claim matches stored under version 9 read "Stale – re-run audit" until Run audit calculates again; `SEED_VERSION` 17.

@@ -115,10 +115,10 @@ def test_the_reply_with_a_page_form_and_a_span_is_read_stored_normalised_and_lis
     stored, = reading.db[gateway.STRUCTURES_COLLECTION].docs
     assert [c["period"] for c in stored["output"]["claims"]] == ["2022-H2", None]
     rows = reading.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]
-    # the model's H2 2022 stands on no cell; the page's one heading period (2025) is the one candidate, so the check applies it (2026-10-26)
-    assert sorted((r["claim_type"], r["target_date"]) for r in rows) == [("customers", None), ("revenue", "2025")]
+    # the model's H2 2022 stands on no cell; the page's one heading period (2025) fills a blank period only (page-image.md section 5), so the model's stays, flagged
+    assert sorted((r["claim_type"], r["target_date"]) for r in rows) == [("customers", None), ("revenue", "2022-H2")]
     revenue = next(r for r in rows if r["claim_type"] == "revenue")
-    assert [(e["original"], e["corrected"], e["state"]) for e in revenue["corrections"]] == [("2022-H2", "2025", "applied")]
+    assert "period not on page" in revenue["flags"] and "corrections" not in revenue
 
 
 # ---------------------------------------------------------------------------

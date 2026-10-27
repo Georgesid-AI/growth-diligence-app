@@ -1,7 +1,16 @@
 # Addendum: page image for the page reader
 
-**Status:** proposed, 27 October 2026 (George). Addendum to `claim-review-simplified-design.md`, which is not amended. Not built.
-The page reader is the `page_claims` step of `ai-reads-rules-check.md`. Check codes (L1, C4, P2, C1, C3, X2) are used as George named them; the repository does not define them by those codes, so the build maps each to its check in `structures/checker.py` before coding.
+**Status:** proposed, 27 October 2026 (George). Addendum to `claim-review-simplified-design.md`, which is not amended. Sections 4 and 5 built 27 October 2026 (engine contract 11); sections 1 to 3, 6 and 7 (the image, the disclosure, the owner page) are not built.
+The page reader is the `page_claims` step of `ai-reads-rules-check.md`. Check codes (L1, C4, P2, C1, C3, X2) are used as George named them; the repository does not define them by those codes, so the build mapped each to its check in `structures/checker.py` and its helpers (George's definitions, 27 October 2026; codes are handled as the two groups of section 5):
+
+| Code | Group | Check | Function |
+|---|---|---|---|
+| L1 | Label correction | the legend or axis label found by position replaces the cited one | `page_check.check` (local label) |
+| C4 | Label correction | one-candidate label correction | `corrections.plan` (flag `label mismatch`, field `label`) |
+| P2 | Period fill | the period from the page heading or another cell | `page_check.period_check` |
+| C1 | Period fill | the one-option "period from another cell" | `corrections.plan` (`PERIOD_FROM_OTHER_CELL`) |
+| C3 | Period fill | the heading's period when the model's is not on the page | `corrections.plan` (`PERIOD_NOT_ON_PAGE`), removed: it only ever applied to a model period |
+| X2 | Sign | rewrite of the value to its absolute value | `checker.check`, now only sets `sign not on page` |
 
 ## 1. What the reader sends
 
@@ -25,10 +34,18 @@ Shown on the Upload page and in the tester terms, in these words:
 
 Four nullable fields are added to each claim: `label_text`, `segment`, `share_of`, `is_quote`. `label_text` is the label as printed; `label_cell` only locates it. Null means the model did not read one. Any field that is a closed word, number or cell id keeps today's validation; `label_text`, `segment` and `share_of` are short printed text, validated for length and stored as model JSON output under rule 17. `is_quote` is a boolean.
 
+What each field does (George, 2026-10-27, PR #193):
+
+- `is_quote` true: the figure is a quotation, not a company claim. It is not entered as a claim. The pipeline writes one Diagnostics line, "page n: quoted figure, not a company claim", and the deck panel counts it ("Quoted figures skipped: n"). Null or false changes nothing.
+- `segment`: shown on the claim row after the label ("Label from: <label> · <segment>"; "Segment: <segment>" when no label was read). Display only; it is not the register's segment and sets nothing.
+- `share_of`: shown in the Why column (the reasons under Extraction confidence) as "Share of: <text>". Display only.
+
+No other behaviour. The row keeps `segment` and `share_of` as `page_segment` and `page_share_of`; the stored read still keeps neither (rule 17).
+
 ## 5. Rule changes
 
 - **Label corrections (L1, C4):** run only when `label_text` is empty. When `label_text` is present and the cell text disagrees, the claim is flagged, not corrected.
-- **Period fills (P2, C1, C3):** from a heading or another cell, they fill a blank period only. They never replace a period the model set.
+- **Period fills (P2, C1, C3):** from a heading or another cell, they fill a blank period only. They never replace a period the model set. The same holds for the cell the model cites for its period, the figure's own text or header included (George, review of PR #193, 2026-10-27): a model period the cited cell reads otherwise is kept, flagged `sources disagree`, logged as one Diagnostics line, and the model's period and the cell's are the two buttons. The year-under-bar check (`year under bar differs`, the year label under the figure's bar by place) is the only check that still changes a non-null model period.
 - **No-minus-sign rule (X2):** becomes the flag `sign not on page`, listed under Review, instead of a change to the claim.
 - All other checks are unchanged.
 

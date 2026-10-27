@@ -104,10 +104,15 @@ def test_a_scale_in_the_row_header_of_a_table_applies_and_the_period_comes_from_
              tables=[{"table": 1, "header_rows": 1}])
     got = one(g, claim("r2c2", 1200000, unit="GBP", period="FY2025", period_cell="r1c2", label_cell="r2c1"))
     assert got["status"] == MATCHED and got["period"] == "2025" and got["period_cells"] == ["r1c2"] and got["label_cell"] == "r2c1"
-    other = one(g, claim("r2c2", 1200000, unit="GBP", period="FY2026", period_cell="r1c3"))
-    assert other["status"] == MATCHED and other["period_cells"] == ["r1c2"] and other["period"] == "2025" and other["checks"]["period_other"] is False, \
-        "another column's header is not the figure's: its own column header takes precedence (source association, 2026-10-26; it replaces the " \
+    blank = one(g, claim("r2c2", 1200000, unit="GBP", period=None, period_cell="r1c3"))
+    assert blank["status"] == MATCHED and blank["period_cells"] == ["r1c2"] and blank["period"] == "2025" and blank["checks"]["period_other"] is False, \
+        "another column's header is not the figure's: its own column header fills the blank period (source association, 2026-10-26; it replaces the " \
         "informational 'period from another cell' of 2026-10-23 for a figure whose own sources state a period); the checker flags the disagreement"
+    other = one(g, claim("r2c2", 1200000, unit="GBP", period="FY2026", period_cell="r1c3"))
+    assert other["status"] == MATCHED and other["period"] == "FY2026" and other["period_cells"] == [] and other["checks"]["period_other"] is False, \
+        "a period the model set is kept (page-image.md section 5, review of PR #193); its own column header is the other button"
+    assert other["association"]["flags"] == ["sources disagree"]
+    assert [(o["period"], o["period_cells"]) for o in other["association"]["options"]] == [("FY2026", []), ("2025", ["r1c2"])]
     assert other["association"]["flags"] == ["sources disagree"]
 
 
@@ -210,7 +215,10 @@ def test_a_period_in_the_cells_own_text_and_a_date_label_next_to_it_are_sources(
     assert own["status"] == MATCHED and own["period"] == "2022" and own["period_cells"] == ["r1c1"]
     below = one(g, claim("r4c1", 55000, metric="users", unit="count", period="2011-01", period_cell="r3c1"))
     assert below["status"] == MATCHED and below["period"] == "2011-01" and below["period_cells"] == ["r3c1"]
-    assert one(g, claim("r1c1", 8000, unit="USD", period="2023", period_cell="r1c1"))["checks"]["period_corrected"] is True
+    kept = one(g, claim("r1c1", 8000, unit="USD", period="2023", period_cell="r1c1"))
+    assert kept["period"] == "2023" and kept["period_cells"] == [] and kept["checks"]["period_corrected"] is False, \
+        "a period the model set is never replaced by the cell it cites (page-image.md section 5, review of PR #193)"
+    assert kept["association"]["flags"] == ["sources disagree"] and [o["period"] for o in kept["association"]["options"]] == ["2023", "2022"]
 
 
 def test_a_null_period_stands_only_when_no_source_holds_one():
@@ -221,15 +229,20 @@ def test_a_null_period_stands_only_when_no_source_holds_one():
     assert one(g, claim("r4c1", 2000000, metric="costs", unit="USD", period="2021", period_cell=None))["checks"]["period"] is False
 
 
-def test_pythons_rebuilt_period_replaces_the_models_and_a_difference_is_a_correction():
+def test_pythons_rebuilt_period_fills_a_blank_one_and_a_model_period_the_header_reads_otherwise_is_kept():
     g = grid([{"row": 1, "col": 2, "text": "2025", "table": 1, "trow": 1, "tcol": 2},
               {"row": 2, "col": 2, "text": "Apr", "table": 1, "trow": 2, "tcol": 2},
               {"row": 3, "col": 1, "text": "Revenue", "table": 1, "trow": 3, "tcol": 1},
               {"row": 3, "col": 2, "text": "$5M", "table": 1, "trow": 3, "tcol": 2}],
              tables=[{"table": 1, "header_rows": 2}])
-    got = one(g, claim("r3c2", 5000000, unit="USD", period="2025-04", period_cell="r2c2"), fiscal_year_end=3)
+    got = one(g, claim("r3c2", 5000000, unit="USD", period=None, period_cell="r2c2"), fiscal_year_end=3)
     assert got["status"] == MATCHED and got["period"] == "FY2025-04" and got["period_cells"] == ["r2c2", "r1c2"]
-    assert got["checks"]["period_corrected"] is True and got["model_period"] == "2025-04"
+    assert got["checks"]["period_corrected"] is True and got["model_period"] is None
+    # A period the model set is kept when the cited header reads another (page-image.md section 5, review of PR #193): both are buttons.
+    kept = one(g, claim("r3c2", 5000000, unit="USD", period="2025-04", period_cell="r2c2"), fiscal_year_end=3)
+    assert kept["period"] == "2025-04" and kept["period_cells"] == [] and kept["checks"]["period_corrected"] is False and "model_period" not in kept
+    assert kept["association"]["flags"] == ["sources disagree"]
+    assert [(o["period"], o["period_cells"]) for o in kept["association"]["options"]] == [("2025-04", []), ("FY2025-04", ["r2c2", "r1c2"])]
     assert one(g, claim("r3c2", 5000000, unit="USD", period="2025-04", period_cell="r2c2"))["checks"]["period_corrected"] is False
 
 
