@@ -250,3 +250,18 @@ def test_removing_the_deck_or_deleting_the_audit_removes_the_stored_file(reading
     name = reading.db["audits"].docs[0]["company_name"]
     assert reading.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": name}).status_code == 200
     assert stored_files(reading) == [], "delete audit removes every stored file (rule 22)"
+
+
+def test_the_file_is_stored_only_when_consent_is_ticked_and_the_page_pipeline_is_on(reading, monkeypatch):
+    """Nothing about a deck is kept for page images unless a page read can happen (rule 17 as amended)."""
+    reading.db["audits"].docs[0]["structure_reading_consent"] = False
+    upload_deck(reading)
+    assert stored_files(reading) == [], "consent unticked: no copy of the file"
+    reading.db["audits"].docs[0]["structure_reading_consent"] = True
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
+    upload_deck(reading)
+    assert stored_files(reading) == [], "DECK_PIPELINE=rules: no page read, no copy of the file"
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    upload_deck(reading)
+    stored, = stored_files(reading)
+    assert stored["data"] == DECK

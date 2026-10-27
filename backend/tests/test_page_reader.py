@@ -4,6 +4,8 @@ families only) at startup and before each read; the image tokens and their cost 
 import asyncio
 import json
 import logging
+import threading
+import time
 
 import page_images
 import pytest
@@ -101,6 +103,86 @@ def test_a_page_that_fails_to_draw_goes_as_text_alone_and_the_others_keep_their_
     by_page = {page_of(p): bool(r.get("images")) for r, p in zip(adapter.requests, adapter.payloads)}
     assert by_page == {1: True, 2: False, 3: True}
     assert db[TEXT_COLLECTION].docs[0]["images_unavailable"] is True
+
+
+def _stored_deck(monkeypatch, fmt, pages_):
+    db = _page_db(many_pages(pages_))
+    db[TEXT_COLLECTION].docs[0].update(format=fmt)
+    asyncio.run(render.save(db, AUDIT, "d1", b"stored bytes", fmt))
+    return db
+
+
+@pytest.mark.real_render
+def test_a_stored_pptx_reaches_the_converter_with_its_format(monkeypatch):
+    """The deck's format is read from its record and handed to render.prepare (conftest's replacement of prepare is off here)."""
+    converted = []
+    monkeypatch.setattr(render, "to_pdf", lambda content, fmt: converted.append((content, fmt)) or b"pdf")
+    monkeypatch.setattr(render, "page_count", lambda pdf: 3)
+    monkeypatch.setattr(render, "render_page", lambda pdf, page: page_images.png(page))
+    db, adapter = _stored_deck(monkeypatch, "pptx", 3), Gauge(hold=0.0)
+    assert run_deck(db, adapter) == "read"
+    assert converted == [(b"stored bytes", "pptx")], "a .pptx is converted as a .pptx, not taken for a PDF"
+    assert all(r.get("images") for r in adapter.requests) and db[TEXT_COLLECTION].docs[0]["images_unavailable"] is False
+
+
+class _FakePdfium:
+    """A stand-in for pypdfium2 that records how many documents are open at once."""
+
+    def __init__(self):
+        self.open = self.peak = 0
+        self.lock = threading.Lock()
+
+    def enter(self):
+        with self.lock:
+            self.open += 1
+            self.peak = max(self.peak, self.open)
+
+    def leave(self):
+        with self.lock:
+            self.open -= 1
+
+    def module(self):
+        fake = self
+        from PIL import Image
+
+        class Sheet:
+            def get_size(self):
+                return 800, 450
+
+            def render(self, scale):
+                time.sleep(0.02)
+                return type("Bitmap", (), {"to_pil": lambda _self: Image.new("RGB", (1568, 882))})()
+
+        class PdfDocument:
+            def __init__(self, data):
+                fake.enter()
+
+            def __len__(self):
+                return 9
+
+            def __getitem__(self, index):
+                return Sheet()
+
+            def close(self):
+                fake.leave()
+        return type("pypdfium2", (), {"PdfDocument": PdfDocument})
+
+
+@pytest.mark.real_render
+def test_two_concurrent_page_reads_never_draw_at_the_same_time(monkeypatch):
+    """PDFium is not thread safe: the pages of a deck are drawn one at a time (render.PDFIUM_LOCK) while the model calls stay parallel."""
+    import sys
+    fake = _FakePdfium()
+    monkeypatch.setitem(sys.modules, "pypdfium2", fake.module())
+
+    async def prepared(db, audit_id, deck_id, fmt, pages_):
+        return b"pdf"
+    monkeypatch.setattr(render, "prepare", prepared)
+    db, adapter = _page_db(many_pages(6)), Gauge(hold=0.05)
+    assert run_deck(db, adapter) == "read"
+    assert len(adapter.requests) == 6 and all(r.get("images") for r in adapter.requests)
+    assert fake.peak == 1, "never two pages in PDFium at once"
+    assert adapter.peak > 1, "the model calls stay parallel"
 
 
 # ---------------------------------------------------------------------------
@@ -274,3 +356,24 @@ def test_the_text_and_title_lines_are_what_the_unchanged_page_text_builder_write
     parsed = deck([TITLE, *LINES])
     sent, = pipeline.sendable_pages(pages.page_grids(parsed["blocks"]))
     assert pipeline.batch_text([sent]).startswith("p1r1c1 title: Traction\np1r2c1: 800 Paying Users")
+
+
+@pytest.mark.real_render
+def test_a_model_off_the_allow_list_converts_and_draws_nothing_and_blocks_every_page(monkeypatch, caplog):
+    """The allow-list check runs before any conversion or drawing (rule 31): nothing is prepared, nothing is rendered, nothing is sent."""
+    monkeypatch.setenv("PAGE_READER_MODEL", "claude-fable-5-1")
+    touched = []
+
+    async def prepared(*args):
+        touched.append("prepare")
+        return b"pdf"
+    monkeypatch.setattr(render, "prepare", prepared)
+    monkeypatch.setattr(render, "to_pdf", lambda content, fmt: touched.append("to_pdf") or b"pdf")
+    monkeypatch.setattr(render, "render_page", lambda pdf, page: touched.append("render_page") or page_images.png(page))
+    db, adapter = _stored_deck(monkeypatch, "pptx", 3), Gauge(hold=0.0)
+    with caplog.at_level(logging.WARNING):
+        assert run_deck(db, adapter) == "blocked"
+    doc, = db[TEXT_COLLECTION].docs
+    assert touched == [] and adapter.calls == 0
+    assert [r["status"] for r in doc["page_reads"]] == ["blocked"] * 3 and doc["images_unavailable"] is False
+    assert "page reader model claude-fable-5-1 not permitted" in [r.getMessage() for r in caplog.records]

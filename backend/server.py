@@ -1890,7 +1890,7 @@ async def _upload_ai_status(audit_id: str) -> Optional[str]:
 
 @api.post("/audits/{audit_id}/decks/upload")
 async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...)):
-    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1})
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1, "structure_reading_consent": 1})
     if not audit:
         raise HTTPException(404, "Audit not found")
     content = await file.read(deck_parser.MAX_BYTES + 1)
@@ -1924,7 +1924,10 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
         "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"], "layout": deck.get("layout") or [],
         "structures": deck["structures"], "ai_status": "reading", "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "figure_pages": figure_pages})
-    await deck_render.save(db, audit_id, deck_id, content, deck["format"])        # the page reader draws each page from it (page-image.md)
+    # The page reader draws each page from the file (page-image.md), so it is kept only when a page read can happen: consent ticked and
+    # the page pipeline on. A deck uploaded under any other setting leaves no copy of the file behind.
+    if audit.get("structure_reading_consent") is True and structures.deck_pipeline() == "ai":
+        await deck_render.save(db, audit_id, deck_id, content, deck["format"])
     for order, c in enumerate(candidates):
         await db[decks.CANDIDATES_COLLECTION].insert_one(
             {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),

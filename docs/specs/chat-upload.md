@@ -755,15 +755,15 @@ with `structure_reading_consent` true, logged in `consent_log` as before (the cr
 `structure_reading_consent`; the dialog sends none.
 
 **Upload page.** The consent tick moves into the set-up section at the top (both the Map and the Run audit pages use it).
-Label, word for word (amended 2026-10-22, George, PR #158 decision 1b, with the page_claims step of docs/design/ai-reads-rules-check.md;
+Label, word for word (amended 2026-10-22, George, PR #158 decision 1b, with the page_claims step of docs/design/ai-reads-rules-check.md, and 2026-10-27, docs/design/page-image.md: deck pages as printed, as text and as an image;
 until 2026-10-22 it read "Use AI to read deck tables and charts and to suggest column matches. Untick if the client requires
 code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way."): "Use AI to read deck
 tables, charts and the text of pages that carry a figure, and to suggest column matches. Names, contact details and customer names
-are masked before anything is sent. Untick if the client requires code-based extraction only; this may find fewer figures.
-Narratives use AI on computed results either way." Under the set-up
+are masked in spreadsheet data before it is sent; deck pages are sent as printed, as text and as an image, with no redaction. Untick
+if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way." Under the set-up
 fields, one line: "Every extracted number is checked by code against its source cell. Numbers that don't match are marked
 unverified for review." Amended 2026-10-22 (George, docs/design/ai-reads-rules-check.md, §28): the consent explainer (S2, `S2_EXPLAINER_CONSENT`)
-gains one last sentence, word for word: "The AI reads every page of uploaded decks to find plan figures." The old explainer (`CONSENT_EXPLAINER` and its "What is sent" toggle) is removed with the dialog block that
+ends, since 2026-10-27 (docs/design/page-image.md sections 1 to 3), with these sentences, word for word: "The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction. Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training. Uploaded files are stored for this audit and deleted with it." (earlier: "The AI reads every page of uploaded decks to find plan figures.") The old explainer (`CONSENT_EXPLAINER` and its "What is sent" toggle) is removed with the dialog block that
 used it. The consent change is saved like the other set-up fields (PUT /audits/{id}) and logged in `consent_log` as today.
 
 **Client name removed.** The field is gone from the dialog, `AuditCreate`/`AuditUpdate` (a body that still sends it is ignored),

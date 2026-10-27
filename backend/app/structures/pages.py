@@ -282,7 +282,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
-                                              {"_id": 0, "file": 1, "page_unit": 1, "pages": 1, "blocks": 1, "layout": 1, "page_reads": 1, "retry_pages": 1,
+                                              {"_id": 0, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "blocks": 1, "layout": 1, "page_reads": 1, "retry_pages": 1,
                                                "diagnostics": 1})
     if not audit or not deck:
         return NOT_READ
@@ -310,25 +310,29 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"read_progress": {"done": done, "total": total}}})
 
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"skipped_pages": skipped}})
+    # The model allow-list comes first (CLAUDE.md rule 31): a model off the list reads no page, so nothing is converted or drawn; the
+    # gateway then answers every page "blocked" and the deck panel says so.
+    permitted = bool(gateway.PAGE_READER_MODELS.fullmatch(gateway.page_reader_model()))      # the gateway logs the refusal, once per page
     # The deck's pages are drawn once from the stored file. A deck that cannot be drawn (no LibreOffice, another page count, no stored
     # file) or a page that fails goes as text alone, as before; the panel says so (`images_unavailable`). Never "not read" for that.
-    try:
-        pdf = await render.prepare(db, audit_id, deck_id, deck.get("format") or "pdf", deck.get("pages"))
-    except render.PageImageError:
-        pdf = None
-        logger.warning("page images unavailable: run_id=%s deck_id=%s", audit_id, deck_id)
+    pdf = None
+    if permitted:
+        try:
+            pdf = await render.prepare(db, audit_id, deck_id, deck.get("format") or "pdf", deck.get("pages"))
+        except render.PageImageError:
+            logger.warning("page images unavailable: run_id=%s deck_id=%s", audit_id, deck_id)
     undrawn = []
 
     async def image_for(page: int) -> Optional[bytes]:
         if pdf is not None:
             try:
-                return await asyncio.to_thread(render.render_page, pdf, page)
+                return await asyncio.to_thread(render.render_page, pdf, page)     # one page at a time: render.PDFIUM_LOCK
             except render.PageImageError:
                 logger.warning("page image unavailable: run_id=%s deck_id=%s page=%d", audit_id, deck_id, page)
         undrawn.append(page)
         return None
 
-    for batch, result in await read_pages(db, audit_id, deck_id, grids, image_for, adapter, sleep,
+    for batch, result in await read_pages(db, audit_id, deck_id, grids, image_for if permitted else None, adapter, sleep,
                                           per_call=1, skip=done_before, parallel=PARALLEL_PAGES, progress=progress):
         numbers = [page_grids_mod.page_number(g) for g in batch]
         entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}

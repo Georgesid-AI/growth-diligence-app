@@ -47,7 +47,9 @@
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt
     version, model version, content hash, token counts and cost. Never deck text sent to
-    the model. Delete audit removes model outputs. Rules 16–18: see docs/architecture.md.
+    the model. Delete audit removes model outputs. The one stored copy of client data is the uploaded deck file, collection
+    `deck_files`, kept only while consent is ticked and DECK_PIPELINE is "ai", so that page images can be drawn from it
+    (docs/design/page-image.md); it is deleted with its deck and with the audit (rule 22). Rules 16–18: see docs/architecture.md.
 18. Model output never becomes Verified on its own. Python must match every value to a
     source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
 
@@ -124,4 +126,5 @@
 31. The page reader (`page_claims`) runs only on a ZDR-eligible model (Sonnet or Opus, never Fable or Mythos), because deck pages go to
     it as printed, without customer-name masking, under the API organisation's zero-data-retention arrangement
     (docs/design/page-image.md). The gateway refuses the step on any model outside the allow-list of Sonnet and Opus families
-    (gateway.PAGE_READER_MODELS), at startup and before each page read, and the panel says "AI read: blocked – model not permitted".
+    (gateway.PAGE_READER_MODELS). A model off the list is logged as an error at startup and the server stays up; every page read is then
+    blocked before anything is converted, drawn or sent, and the panel says "AI read: blocked – model not permitted".

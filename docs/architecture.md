@@ -16,7 +16,7 @@ what is written here is an architecture change: a session that needs one stops a
 | LLM gateway | `backend/app/llm/` | The only component allowed to call a model provider (`gateway.py`). Prompts are versioned documents in the MongoDB collection `prompts`, uploaded on the owner page and read by the gateway only (`prompt_store.py`); a missing prompt means no model call; cache keys carry text, type, prompt tag, model and schema hash (`cache.py`); guards hold the per-audit lock, the daily spend cap and the retry policy (`guards.py`); the per-audit pseudonym map (`redaction.py`); strict output schemas (`schemas.py`). |
 | Supporting modules | `backend/app/` | `formatting.py`, `disclosure.py` (the AI-provenance block), `narrative_export.py`, `logsafety.py` (no secret reaches a log line). |
 | Interface contracts | `backend/schemas/` | `metrics.py`: `MetricsPayload`, the one description of the calc engine's output (units, citations), validated by the engine, the gateway and the export (docs/specs/interface-contracts.md). |
-| Storage | MongoDB | `audits`, `datasets`, `deck_text` (parsed text and structures), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `pseudonym_map`, `column_mappings`, `prompts` (the model prompts; no `audit_id`), `access_tokens` (tester-phase token hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures); never a token; removed at the move to accounts; no `audit_id`). Delete audit removes an audit's documents in every collection that holds any; `prompts` and `access_tokens` hold no audit data and stay. |
+| Storage | MongoDB | `audits`, `datasets`, `deck_text` (parsed text and structures), `deck_files` (the uploaded deck file, in parts, kept only while consent is ticked and the page pipeline is on, so that page images can be drawn from it; deleted with its deck and with the audit), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `pseudonym_map`, `column_mappings`, `prompts` (the model prompts; no `audit_id`), `access_tokens` (tester-phase token hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures); never a token; removed at the move to accounts; no `audit_id`). Delete audit removes an audit's documents in every collection that holds any; `prompts` and `access_tokens` hold no audit data and stay. |
 | Manual tooling | `scripts/consistency_run.py` | Live consistency runs (paid), `--fake` replays, `--diagnostic` and `--probe` on the 10 public test decks. Reports are committed to docs/test-runs/. |
 
 ## The amendment of 2026-10-22
@@ -99,7 +99,9 @@ Two paths reach the gateway and each has its own fields (docs/specs/deck-parser.
   prose included, and one image of the whole page), at most 5 pages per call; never a page without such a figure.
 
 What is stored (rule 17): model JSON output with cell references, the item list without raw text, prompt version,
-model version, content hash, token counts and cost. Never deck text sent to the model. The boundary is enforced in
+model version, content hash, token counts and cost. Never deck text sent to the model. The one stored copy of client data is the uploaded
+deck file (`deck_files`), which holds the bytes for drawing page images, only while consent is ticked and the page pipeline is on; it is
+deleted with its deck and with the audit. The boundary is enforced in
 `backend/tests/test_gateway_data_boundary.py` (rule 14), which must pass on every build.
 
 The narrative path may read a count of deck documents per audit (number only). It never reads deck text, titles or file names.

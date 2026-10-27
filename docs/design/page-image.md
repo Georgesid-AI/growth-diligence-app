@@ -20,7 +20,7 @@ For each page selected for reading, two things: the page's text lines with posit
 
 Customer-name masking is removed entirely. Pages go to the model as printed. Reason: the API organisation runs under an Anthropic zero-data-retention (ZDR) arrangement and the audit terms disclose it.
 
-The page reader runs only on a ZDR-eligible model: Sonnet or Opus, never Fable or Mythos. The gateway refuses the step on any other model. This is recorded as CLAUDE.md rule 31.
+The page reader runs only on a ZDR-eligible model: Sonnet or Opus, never Fable or Mythos. A model off the allow-list is logged as an error at startup and the server stays up; the gateway then blocks every page read, and the pipeline converts, draws and sends nothing (the check runs first). This is recorded as CLAUDE.md rule 31.
 
 Not changed by this addendum: rule 17 (no deck text in logs or MongoDB; model JSON may be stored) and rule 18 (model output is never Verified on its own).
 
