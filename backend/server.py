@@ -1849,7 +1849,7 @@ class CandidateUpdate(BaseModel):
     target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
     by_period: Optional[List[PeriodValue]] = None   # a table row: every value, in the row's order
     # docs/specs/claim-types-and-correction.md section 3: the fields every claim type holds, and why the analyst changed them
-    population: Optional[Literal["paying", "registered", "active", "deals won", "all closed", "open"]] = None
+    population: Optional[Literal["paying", "registered", "active", "free", "trial", "all", "deals won", "all closed", "open"]] = None
     figure_type: Optional[Literal[deck_claims.FIGURE_TYPES]] = None
     growth_basis: Optional[Literal["mom", "yoy", "annualised", "cumulative", "unknown"]] = None
     reason: Literal[tuple(deck_claims.EDIT_REASONS)] = "parser_misread"
@@ -2039,6 +2039,9 @@ async def _attention_order(audit_id: str, audit: dict, current: dict, candidates
     # a row whose reason asks the analyst to set or confirm something (period not read, a required field unknown ...) is a question too
     to_set = {str(r["claim_id"]).split("#")[0]: r["reason"] for r in rows if claim_matching.asks_analyst(r)}
     to_set = {cid: reason for cid, reason in to_set.items() if cid not in asking}
+    kept = {c["id"] for c in live if c.get("undated_kept")}          # "Keep undated": the analyst saw the figure has no period and left it so
+    to_set = {cid: reason for cid, reason in to_set.items() if not (reason.startswith(claim_matching.PERIOD_NOT_READ) and cid in kept)}
+    undated = claim_matching.undated_by_page([r for r in rows if str(r["claim_id"]).split("#")[0] in to_set], kept)
     asking |= set(to_set)
     if not asking:
         return []
@@ -2063,7 +2066,7 @@ async def _attention_order(audit_id: str, audit: dict, current: dict, candidates
         name = claim_groups.adds_up_to(parts, rows)
         adds_up.update({str(r["claim_id"]).split("#")[0]: name for r in parts} if name else {})
     return [{"id": cid, "in_top5": cid in in_five, **({"set": to_set[cid]} if cid in to_set else {}),
-             **({"adds_up_to": adds_up[cid]} if cid in adds_up else {})} for cid in ordered]
+             **({"adds_up_to": adds_up[cid]} if cid in adds_up else {}), **({"undated": undated[cid]} if cid in undated else {})} for cid in ordered]
 
 
 def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
@@ -2346,6 +2349,22 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
             changes["excluded_reason"] = payload.reason
     await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
+
+
+class UndatedKept(BaseModel):
+    """The claims the analyst keeps without a period ("Keep undated"): they stay Unverified, "Period not read", and ask nothing more."""
+    model_config = {"extra": "forbid"}
+    claim_ids: List[str] = Field(min_length=1, max_length=500)
+
+
+@api.put("/audits/{audit_id}/undated-periods")
+async def keep_undated(audit_id: str, payload: UndatedKept):
+    """Mark the claims `undated_kept` (a flag on the candidate, no deck text). Their Period-not-read question closes; the register is unchanged."""
+    if not await db.audits.find_one({"id": audit_id}, {"_id": 1}):
+        raise HTTPException(404, "Audit not found")
+    done = await db[decks.CANDIDATES_COLLECTION].update_many({"audit_id": audit_id, "id": {"$in": payload.claim_ids}}, {"$set": {"undated_kept": True}})
+    logger.info("undated kept: run_id=%s n=%s", audit_id, done.modified_count)
+    return {"kept": done.modified_count}
 
 
 class SalesAnswer(BaseModel):
@@ -2967,6 +2986,8 @@ async def choose_group(audit_id: str, review_id: str, payload: GroupChoice):
     review = next((r for r in [*related["reviews"], *related["conflicts"]] if r["id"] == review_id), None)
     if review is None:
         raise HTTPException(404, "No such question")
+    if review["kind"] != claim_groups.KIND_TOTAL:
+        raise HTTPException(400, "This question has no figure to choose")
     offered = {c.get("identity") for c in review["candidates"]}
     if payload.choice not in offered:
         raise HTTPException(400, "That choice is not one of the options offered")

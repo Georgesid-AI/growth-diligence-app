@@ -108,6 +108,8 @@ GROWTH_START_YEAR = "growth dated to start year"
 SOURCES_DISAGREE = association.SOURCES_DISAGREE
 SOURCE_AMBIGUOUS = association.SOURCE_AMBIGUOUS
 SOURCE_NOT_ASSOCIATED = association.SOURCE_NOT_ASSOCIATED
+SOURCE_AMBIGUOUS_NOTED = "source ambiguous, noted"      # SOURCE_AMBIGUOUS on a claim whose label_text and period the page reader supplied: a note, never a card
+NO_LABEL = "no label read"                              # the only label the claim cites is a page or chart title: the row says "(no label read)" and asks
 EXTRACTION_INCOMPLETE = "extraction incomplete"
 NO_PRINTED_SOURCE = "no printed source"
 LABEL_MISMATCH = "label mismatch"        # the reason of a label correction, and the review flag of a cited label with no candidate cell (hotfix of PR 182)
@@ -117,7 +119,8 @@ QUOTED_FIGURE = "quoted figure, not a company claim"      # a drop kind: the mod
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL,
-         PERIOD_IS_RANGE, GROWTH_START_YEAR, LABEL_MISMATCH, SOURCES_DISAGREE, SOURCE_AMBIGUOUS, SOURCE_NOT_ASSOCIATED, EXTRACTION_INCOMPLETE)
+         PERIOD_IS_RANGE, GROWTH_START_YEAR, LABEL_MISMATCH, SOURCES_DISAGREE, SOURCE_AMBIGUOUS, SOURCE_NOT_ASSOCIATED, EXTRACTION_INCOMPLETE,
+         SOURCE_AMBIGUOUS_NOTED, NO_LABEL)
 INFORMATIONAL_FLAGS = claims.INFORMATIONAL_FLAGS        # a note on the row; the claim stays in the main list (George, 2026-10-23)
 REVIEW_FLAGS = tuple(f for f in FLAGS if f not in INFORMATIONAL_FLAGS)      # the claim is listed under Review
 review_flags = claims.review_flags
@@ -342,6 +345,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
         if claim.get("label_text"):
             if claim.get("label_cell") and not label_agrees(claim["label_text"], _cell_text(grid, claim["label_cell"])):
                 flags.append(LABEL_MISMATCH)        # label_text is the label; a cited cell that says another thing is flagged, never corrected
+        elif item.get("label_is_title"):
+            flags.append(NO_LABEL)                  # the cited label is a page or chart title: no label read, a card (George, 2026-10-27)
         elif corrections.label_options(grid_views, claim, item, cell) == []:
             flags.append(LABEL_MISMATCH)            # a cited label no cell of the figure's row or column can replace: a card, no correction
         found = item.get("association") or {}
@@ -351,6 +356,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
             flags.append(SOURCE_AMBIGUOUS)          # the period was taken from a page heading while the page states several: none is chosen
         if VALUE_NOT_ON_PAGE in flags and claim.get("value") is not None and lay.complete is False:
             flags.append(EXTRACTION_INCOMPLETE)
+        if claim.get("label_text") and claim.get("period") and SOURCE_AMBIGUOUS in flags:
+            flags[flags.index(SOURCE_AMBIGUOUS)] = SOURCE_AMBIGUOUS_NOTED      # both supplied by the page reader: the note stays, no card, no choice
         item["corrections"] = corrections.plan(grid, grid_views, claim, item, cell, flags, LABEL_MISMATCH, fiscal_year_end)
         item["drop"] = drop_reason(claim, cell, by_id.get(claim.get("label_cell")), flags, listed, furniture, lay.complete)
         item["flags"] = flags

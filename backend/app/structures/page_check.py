@@ -183,8 +183,22 @@ def local_periods(structure: Dict, cell: Dict, fiscal_year_end: int, lay: Option
     return out
 
 
+def page_headings(grid: Dict, grid_views: Dict, fiscal_year_end: int) -> List[Tuple[str, Tuple, List[str], str]]:
+    """The distinct periods the page's heading cells (title cell or top 20%) state, in reading order: [(label, span, cell ids, cell text)]. A
+    heading that holds a figure and no period ("800 Paying Users") states none."""
+    out, spans = [], []
+    for cell in grid["cells"]:
+        if not (cell.get("title") or cell.get("top_band")) or verify.figures(cell["text"]) and not claims.period_cell(cell["text"]):
+            continue
+        found = _from_source(view_of(grid_views, cell), cell, fiscal_year_end)
+        if found and found[1] not in spans:
+            spans.append(found[1])
+            out.append((found[0], found[1], found[2], cell["text"]))
+    return out
+
+
 def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optional[Dict], fiscal_year_end: int,
-                 lay: Optional[association.Layout] = None, rehomed: bool = False):
+                 lay: Optional[association.Layout] = None, rehomed: bool = False, headings: Optional[List] = None):
     """(period label, period cells, ok, corrected, heading, note): the period Python rebuilds from the cited cell when it is a date source
     of the value cell (its own text, an adjacent date label or header, its bar's year label), or the page's heading (a title cell
     of the page, `heading` True: the period stands on no line or block of the figure); a null period with nothing cited stands
@@ -202,7 +216,12 @@ def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optio
     note = {"source": None, "flags": [], "options": []}
     wanted = claims.period_range(model, fiscal_year_end) if model else None
     if cited is None and model is None:
-        return None, [], not holds_period(structure, cell, fiscal_year_end, lay), False, False, note
+        if holds_period(structure, cell, fiscal_year_end, lay):
+            return None, [], False, False, False, note
+        if headings is not None and len(headings) == 1:         # a blank period is filled from the page's one dated heading ("2021 KEY PERFORMANCE INDICATORS")
+            note["source"] = association.HEADING
+            return headings[0][0], headings[0][2], True, False, "heading", note
+        return None, [], True, False, False, note
     if cited is None:
         bar = (claims.period_cell(cell["bar_year"]) or {}).get("label") if cell.get("bar_year") else None
         span = claims.period_range(bar, fiscal_year_end) if bar else None
@@ -446,6 +465,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
     lay = association.Layout(grid)
     grid_views = views(grid)
     listed = {id(s): items.list_items(s, titles=True) for s in [grid_views["boxes"], *grid_views["tables"].values()]}
+    headings = [h for h in page_headings(grid, grid_views, fiscal_year_end) if not verify.figures(h[3])]      # a line with a figure in it is a figure's line, not a heading
     checked, dropped, corrected_count = [], 0, 0
     for claim in page_claims:
         cell = by_id.get(claim["value_cell"])
@@ -476,7 +496,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
                     break
         cited = by_id.get(claim["period_cell"]) if claim.get("period_cell") else None
         period, period_cells, period_ok, corrected, heading, period_note = period_check(
-            structure, cell, claim.get("period"), cited, fiscal_year_end, lay, rehomed=model_cell is not None)
+            structure, cell, claim.get("period"), cited, fiscal_year_end, lay, rehomed=model_cell is not None, headings=headings)
         corrected_count += int(corrected)
         notes.update(period=period_note["source"], options=period_note["options"], flags=list(period_note["flags"]))
         label = by_id.get(claim["label_cell"]) if claim.get("label_cell") else None
@@ -499,6 +519,9 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
             notes["label"] = association.OWN if _id(label) == _id(cell) else association.HEADING if label.get("title") else association.HEADER
         if model_cell is not None and claim.get("label_cell") and (not label_ok or label is None):
             notes["flags"].append(association.SOURCE_NOT_ASSOCIATED)        # a number elsewhere does not carry the label cited for another cell
+        label_title = label is not None and not label_text and lay.is_title(label, cell)      # a title names the page or the chart, not this figure
+        if label_title:
+            label, label_ok = None, True
         span = item.get("range") if item else None
         ok = value_ok and claim.get("value") is not None          # the figure is in the cited cell; unit and period only flag
         # A date claim (metric product, no value, a period) is matched when its period is stated by the cited period cell (George, 2026-10-23).
@@ -512,6 +535,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
                "value_cell": _id(cell), "position": item["position"] if item else None,
                "period": period, "period_cells": period_cells,
                "label_cell": _id(label) if label is not None and (label_ok or label_text) else None,
+               "label_is_title": label_title,
                "label_text": claim.get("label_text"), "segment": claim.get("segment"), "share_of": claim.get("share_of"),
                "is_quote": claim.get("is_quote"),
                "status": MATCHED if ok else UNMATCHED,

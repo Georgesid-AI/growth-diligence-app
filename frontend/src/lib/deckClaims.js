@@ -488,7 +488,10 @@ export const correctionText = (e) => `Corrected: ${e.field} ${e.original ?? "non
 export const UNDO_LABEL = "Undo";
 export const QUOTED_FIGURE_KIND = "quoted figure, not a company claim";        // the Diagnostics kind of a claim the model marked is_quote (page-image.md section 4)
 /** The label line of a claim row: the label, then the segment the page prints after it; the segment alone when no label was read. */
-export const labelLine = (c) => (c?.label_from ? `Label from: ${c.label_from}${c.page_segment ? ` · ${c.page_segment}` : ""}` : c?.page_segment ? `Segment: ${c.page_segment}` : null);
+export const NO_LABEL_READ = "(no label read)";          // a page or chart title is never shown as the label of a figure (George, 2026-10-27)
+export const labelLine = (c) => (c?.label_from ? `Label from: ${c.label_from}${c.page_segment ? ` · ${c.page_segment}` : ""}`
+  : (c?.flags || []).includes("no label read") ? `Label from: ${NO_LABEL_READ}${c.page_segment ? ` · ${c.page_segment}` : ""}`
+    : c?.page_segment ? `Segment: ${c.page_segment}` : null);
 export const shareOfLine = (c) => (c?.page_share_of ? `Share of: ${c.page_share_of}` : null);
 export const DIAGNOSTICS_DECK_HEADING = "Deck reading";
 export const SOURCES_DISAGREE_KIND = "sources disagree";        // a period the model set that a cited cell reads otherwise: kept, both are buttons (page-image.md section 5)

@@ -184,7 +184,8 @@ def test_a_cell_corrected_claim_counts_as_matched_in_the_row_the_panel_shows(mon
 # 5. Informational and review flags (George, 2026-10-23)
 # ---------------------------------------------------------------------------
 def test_every_flag_declares_whether_it_is_informational_or_for_review():
-    assert checker.INFORMATIONAL_FLAGS == (CORRECTED, "currency assumed", "unit assumed", "period from page heading", "period from another cell")
+    assert checker.INFORMATIONAL_FLAGS == (CORRECTED, "currency assumed", "unit assumed", "period from page heading", "period from another cell",
+                                            "source ambiguous, noted")
     assert set(checker.REVIEW_FLAGS) | set(checker.INFORMATIONAL_FLAGS) == set(checker.FLAGS)
     assert checker.is_informational(checker.year_label_flag("2022")) and not checker.is_informational("year label below: Q3 2022")
     assert not set(checker.REVIEW_FLAGS) & set(checker.INFORMATIONAL_FLAGS)

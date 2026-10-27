@@ -35,6 +35,8 @@ REPEAT = "repeat"        # the same figure stated again: folded into the row of 
 PENDING = "pending_part"    # a part of a candidate's reconciling set while the annual conflict is open: no top-five slot, no exposure of its own
 CANDIDATE, ALTERNATIVE = "candidate", "alternative"      # an annual figure in a conflict: none chosen yet, or passed over for the preferred one
 KIND_TOTAL = "total"           # what a review asks: which total
+SLICE = "slice"        # a figure of one segment of a set of segments with no company total to sit under, or with a slice larger than it (George, 2026-10-27)
+KIND_SIZE = "segment_size"     # what the card about an oversize slice asks: what the figure is
 SUBORDINATE = (PART, ALSO, REPEAT, SEGMENT_PART)      # shown under another row's Details, never an item of their own
 
 NOTE_TOTAL = "Annual total: {parts} reconcile with it ({sum} against {total}, within " + TOLERANCE_TEXT + ")"
@@ -42,6 +44,9 @@ NOTE_PART = "Part of the annual total for {period}"
 NOTE_SEGMENTS = "{parts} reconcile with it ({sum} against {total}, within " + TOLERANCE_TEXT + ")"
 NOTE_SEGMENT_PART = "{segment}: part of the company total for {period}, by segment"
 NOTE_SEGMENTS_DIFFER = "Segment figures sum to {sum}, outside " + TOLERANCE_TEXT + " of the company total {total}; kept as independent claims"
+NOTE_SLICE = "Segment slice: {n} segments of the same figure and period, no company total stated; kept out of the top five"
+NOTE_OVERSIZE = "Segment slice larger than the company total ({total}); check what this figure is"
+REASON_SIZE = "Segment larger than the company total; check what this figure is"
 NOTE_REPEAT = "Same figure as {figure} stated on {page}; counted once"
 NOTE_ALSO = "{parts} also reconcile with this total; shown under its Details"
 NOTE_PENDING = "Part of a set that reconciles with one of the annual figures still in conflict; no exposure of its own until one is chosen"
@@ -210,7 +215,7 @@ def _whole(key: tuple) -> bool:
     return key[3] in (None, "", cm.WHOLE)
 
 
-def _segment_set(by_segment: Dict[tuple, List[_Fig]], key: tuple, start: int, end: int, total: Decimal) -> dict:
+def _segment_set(by_segment: Dict[tuple, List[_Fig]], key: tuple, start: int, end: int, total: Decimal, deck: Optional[str] = None) -> dict:
     """The segment partition of a company total (docs/design/segment-partitions.md section 2): among the figures of the same scope and period
     that carry a segment, one figure per segment, the set of two or more whose sum is within the tolerance of `total` (the smallest difference,
     then one page, then the earliest). `parts` are the segments' clusters; `rest` the segment figures outside it, with their sum, for the note
@@ -220,7 +225,8 @@ def _segment_set(by_segment: Dict[tuple, List[_Fig]], key: tuple, start: int, en
         return out
     per: Dict[str, List[_Fig]] = {}
     for fig in by_segment.get((key[:3] + key[4:], start, end), ()):
-        per.setdefault(fig.key[3], []).append(fig)
+        if fig.row.get("deck_file") == deck:          # the slices sit under a total of their own deck
+            per.setdefault(fig.key[3], []).append(fig)
     clusters = []
     for figs in per.values():
         found = _clusters(figs)
@@ -228,6 +234,8 @@ def _segment_set(by_segment: Dict[tuple, List[_Fig]], key: tuple, start: int, en
             clusters.append(found[0])
     if len(clusters) < 2 or len(clusters) > SEGMENT_LIMIT:
         return out
+    if oversize(clusters, total):
+        return {**out, "state": "oversize"}        # the slices are checked on their own (_slices), never summed under this total
     best = None
     for size in range(2, len(clusters) + 1):
         for combo in combinations(clusters, size):
@@ -243,6 +251,11 @@ def _segment_set(by_segment: Dict[tuple, List[_Fig]], key: tuple, start: int, en
         return {"state": "reconciles", "parts": sorted(best[1], key=lambda c: c[0].index), "sum": best[2], "rest": rest,
                 "rest_sum": sum((c[0].value for c in rest), Decimal(0))}
     return {"state": "differs", "parts": [], "sum": Decimal(0), "rest": clusters, "rest_sum": sum((c[0].value for c in clusters), Decimal(0))}
+
+
+def oversize(clusters: List[List[_Fig]], total: Decimal) -> bool:
+    """Whether any single slice is larger than its company total (beyond the tolerance): a slice cannot be more than the whole."""
+    return total > 0 and any(c[0].value > total * (1 + TOLERANCE) for c in clusters)
 
 
 def _conflict_text(found: List[List[_Fig]], preferred: Optional[List[_Fig]]) -> str:
@@ -316,7 +329,7 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
             # the question is bound to the candidates and to the parts that reconcile with each: an edit to those parts is a new question
             sets = [f"{c[0].identity}:{name}:{'.'.join(p[0].identity for p in e['parts'])}"
                     for c, ev in zip(found, evaluations) for name, e in ev.items() if e["state"] == "reconciles"]
-            segment_sets = [_segment_set(by_segment, key, start, end, c[0].value) for c in found]
+            segment_sets = [_segment_set(by_segment, key, start, end, c[0].value, c[0].row.get("deck_file")) for c in found]
             sets += [f"{c[0].identity}:segments:{'.'.join(p[0].identity for p in e['parts'])}" for c, e in zip(found, segment_sets)
                      if e["state"] == "reconciles"]
             total_ctx = context_hash(KIND_TOTAL, key, start, end, [f.identity for c in found for f in c] + sets, fiscal_year_end)
@@ -349,7 +362,7 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
         evaluation = evaluations[found.index(preferred)]
         total = preferred[0]
         reconciling = [name for name, e in evaluation.items() if e["state"] == "reconciles"]
-        seg = _segment_set(by_segment, key, start, end, total.value)       # the segments of the company total: a partition of its own
+        seg = _segment_set(by_segment, key, start, end, total.value, total.row.get("deck_file"))       # the segments of the company total: a partition of its own
         segment_clusters = seg["parts"] if seg["state"] == "reconciles" else []
         if not reconciling and not segment_clusters:
             note = _why_not(evaluation, total)
@@ -396,6 +409,7 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
         _note_rest(out, seg, total)
         for c in [preferred] + part_clusters + also_clusters + segment_clusters:
             _fold(out, c, group_id)
+    _slices(out, by_segment, clusters)
     for slot in annual:               # an annual figure stated twice folds also when no group forms and for the candidates of a conflict
         for cluster in clusters[slot]:
             if len(cluster) > 1 and cluster[0].row["claim_id"] not in out["folded"]:
@@ -407,10 +421,52 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
     return out
 
 
+def _slices(out: dict, by_segment: Dict[tuple, List[_Fig]], clusters: Dict[tuple, List[List[_Fig]]]) -> None:
+    """The segment slices that no reconciling total took (George, 2026-10-27): figures of one metric and period (and deck) with two or more
+    different segments. With no company total stated they form a group of their own; with a slice larger than the company total they are not
+    independent claims either, and one card asks what the figure is. Both roles are out of the top five. A set that sits under its total, and slices
+    under a total they do not reconcile with, are left to the partition above."""
+    for (skey, start, end), members in by_segment.items():
+        by_deck: Dict[Optional[str], List[_Fig]] = {}
+        for fig in members:
+            if fig.row["claim_id"] not in out["roles"]:
+                by_deck.setdefault(fig.row.get("deck_file"), []).append(fig)
+        for deck, figs in by_deck.items():
+            segments = {f.key[3] for f in figs}
+            if len(segments) < 2:
+                continue
+            totals = [c for slot, found in clusters.items() if _whole(slot[0]) and slot[0][:3] + slot[0][4:] == skey and slot[1:] == (start, end)
+                      for c in found if c[0].row.get("deck_file") == deck]
+            if len(totals) > 1:
+                continue            # an annual conflict is open or chosen: its own question
+            group_id = _digest("slices", *skey, start, end, deck)
+            if not totals:
+                note = NOTE_SLICE.format(n=len(segments))
+            else:
+                per = {}
+                for fig in figs:
+                    per.setdefault(fig.key[3], []).append(fig)
+                found = [c for s in per.values() for c in _clusters(s)]
+                if not oversize(found, totals[0][0].value):
+                    continue
+                total = totals[0][0]
+                note = NOTE_OVERSIZE.format(total=_amount(total.value, total.row))
+                out["reviews"].append({
+                    "id": _slot_id(KIND_SIZE, skey, start, end, str(deck)), "kind": KIND_SIZE, "state": "open", "context": "", "reason": REASON_SIZE,
+                    "text": f"{cm.claim_name(total.row)}: {note}", "metric": total.row.get("metric"), "period": total.row.get("period"), "segment": None,
+                    "candidates": [{"claim_id": c[0].row["claim_id"], "claim_ids": [f.row["claim_id"] for f in c], "identity": c[0].identity,
+                                    "value": float(c[0].value), "currency": c[0].row.get("currency"), "unit": c[0].row.get("unit"),
+                                    "period": c[0].row.get("period"), "source": _source(c[0].row), "hint": c[0].row.get("segment"), "chosen": False}
+                                   for c in sorted(found, key=lambda c: c[0].index)]})
+            for fig in figs:
+                out["roles"][fig.row["claim_id"]] = (group_id, SLICE)
+                out["notes"][fig.row["claim_id"]] = note
+
+
 def _note_rest(out: dict, seg: dict, total: _Fig) -> None:
     """The segment figures outside a reconciling set (all of them when none reconciles): two or more of them that do not reconcile with the company
     total stay independent claims, each with the note that says so."""
-    if len(seg["rest"]) < 2 or within(seg["rest_sum"], total.value):
+    if seg.get("state") == "oversize" or len(seg["rest"]) < 2 or within(seg["rest_sum"], total.value):
         return
     note = NOTE_SEGMENTS_DIFFER.format(sum=_amount(seg["rest_sum"], total.row), total=_amount(total.value, total.row))
     for cluster in seg["rest"]:
@@ -471,7 +527,7 @@ def is_ineligible(row: dict) -> bool:
     """A row the top five does not take: a subordinate row, a part waiting for a conflict's choice, and an annual figure in an unresolved
     conflict that is not the preferred one. With no figure chosen, none of the candidates can enter the five; the conflict is reported beside
     the conclusion instead."""
-    return row.get("group_role") in (*SUBORDINATE, PENDING, CANDIDATE, ALTERNATIVE)
+    return row.get("group_role") in (*SUBORDINATE, PENDING, CANDIDATE, ALTERNATIVE, SLICE)
 
 
 def is_repeat_of_listed(row: dict, rows: List[dict]) -> bool:

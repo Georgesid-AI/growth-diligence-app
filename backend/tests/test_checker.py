@@ -252,7 +252,7 @@ def test_an_axis_tick_and_a_funds_raised_line_are_flagged_not_dropped():
 
 
 def test_every_flag_is_a_closed_string_and_a_cell_the_page_does_not_have_is_still_dropped():
-    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 27 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
+    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 29 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
     assert set(PAGE_BASES) == {"actual", "projection", "scenario"} and set(PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     parsed = deck([TITLE, *LINES])
     out = checker.check(grid_of(parsed), page_check.by_page([claim("p1r9c9", 1)])[1], 12)
@@ -286,15 +286,15 @@ def test_under_the_default_switch_each_row_carries_its_basis_scenario_figure_typ
     assert status == "read" and adapter.calls == 1
     rows = sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"])
     assert [(r["claim_type"], r["basis"], r["scenario"], r["figure_type"], r["flags"]) for r in rows] == [
-        ("customers", "actual", "none", None, []),
+        ("customers", "actual", "none", None, [checker.NO_LABEL]),
         ("revenue", "projection", "none", None, []),
         ("net_profit", "scenario", "best", None, [checker.CURRENCY_ASSUMED, checker.SCENARIO_NOT_ON_PAGE]),
     ]
     assert rows[2]["ai_label"] == "Matched to page" and rows[2]["value_high"] == 30_000_000
     assert all(r["figure_type_set_by"] is None for r in rows), "the model's basis sets no figure type (George, 2026-10-23, M2)"
     deck_doc, = db[TEXT_COLLECTION].docs
-    assert {k: deck_doc["page_reads"][0][k] for k in ("matched", "unmatched", "flagged")} == {"matched": 3, "unmatched": 0, "flagged": 1}
-    assert "pages checked: run_id=audit-s deck_id=d1 pages=1 matched=3 unmatched=0 dropped=0 flagged=1" in caplog.text
+    assert {k: deck_doc["page_reads"][0][k] for k in ("matched", "unmatched", "flagged")} == {"matched": 3, "unmatched": 0, "flagged": 2}      # the second: the title cited as the label
+    assert "pages checked: run_id=audit-s deck_id=d1 pages=1 matched=3 unmatched=0 dropped=0 flagged=2" in caplog.text
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
     assert stored["items"]["claims"][2]["flags"] == [checker.CURRENCY_ASSUMED, checker.SCENARIO_NOT_ON_PAGE]
     assert stored["output"]["claims"][2]["basis"] == "scenario" and stored["output"]["claims"][2]["scenario"] == "best"

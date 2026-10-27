@@ -106,6 +106,8 @@ export const updateCandidate = (id, candidateId, payload) =>
 export const answerCorrection = (id, candidateId, payload) =>
   api.post(`/audits/${id}/decks/candidates/${candidateId}/correction`, payload).then((r) => r.data);
 /** "Is 'Sales' in this deck revenue or bookings?": answer is "revenue" or "bookings", for every Sales claim of the deck. */
+// "Keep undated" (George, 2026-10-27): the claims stay without a period and ask nothing more.
+export const keepUndated = (id, claimIds) => api.put(`/audits/${id}/undated-periods`, { claim_ids: claimIds }).then((r) => r.data);
 export const answerSales = (id, deckId, answer) => api.put(`/audits/${id}/decks/${encodeURIComponent(deckId)}/sales`, { as: answer }).then((r) => r.data);
 // Add from deck (docs/specs/claim-types-and-correction.md section 5): a stored page's lines, and a claim from one of them by reference.
 export const getDeckPage = (id, deckId, page) => api.get(`/audits/${id}/decks/${deckId}/pages/${page}`).then((r) => r.data);

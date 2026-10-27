@@ -465,7 +465,7 @@ describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-
   test("an informational flag (cell corrected) keeps the claim in the main list, its note shown on the row; any other flag sends it to Review", () => {
     const corrected = { id: "c", flags: ["cell corrected"] };
     const both = { id: "b", flags: ["cell corrected", "sign not on page"] };
-    expect(INFORMATIONAL_FLAGS).toEqual(["cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"]);
+    expect(INFORMATIONAL_FLAGS).toEqual(["cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell", "source ambiguous, noted"]);
     expect(isFlagged({ id: "u", flags: ["currency assumed"] })).toBe(false);
     expect(isFlagged(corrected)).toBe(false);
     expect(isFlagged(both)).toBe(true);

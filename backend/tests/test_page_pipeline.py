@@ -166,7 +166,7 @@ def test_with_the_switch_at_ai_the_pages_are_read_and_each_claim_is_a_row_matche
     assert rows[2]["snippet"] == "97% margins", "the unmatched row shows the model's value against the cell it cited (decision 2a)"
     first = rows[0]
     assert first["sources"] == [{"file": "deck.pdf", "page": 1, "kind": "page", "cell": "r2c1"}]
-    assert first["label_from"] == "Traction" and first["snippet"] == "800 Paying Users" and first["origin"] == "ai"
+    assert first["label_from"] is None and first["snippet"] == "800 Paying Users" and first["origin"] == "ai"
     assert first["ai_checks"]["value"] is True and rows[2]["ai_checks"]["value"] is False
     deck_doc, = db[TEXT_COLLECTION].docs
     assert deck_doc["ai_status"] == "read" and deck_doc["page_reads"][0]["pages"] == [1]

@@ -9,9 +9,10 @@ and a segment and is never copied into a row, except the name a cited label give
 from __future__ import annotations
 
 import calendar
+import hashlib
 import re
 from datetime import date
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from . import forecast_calc, payback_definition
 from .decks.claims import BASIS_CONFLICT, CASES as SCENARIO_CASES, review_flags
@@ -115,6 +116,7 @@ REQUIRED_REASON = "required field unknown: {fields}; set it with Edit in the cla
 TARGET_REASON = "target figure: the deck states a plan for this period, not a result"
 POPULATION_REASON = "population differs: the claim counts {population}; the figure shown counts {measured}"
 POPULATION_WORDS = {"paying": "paying customers", "registered": "registered users", "active": "active users",
+                    "free": "free users", "trial": "trial users", "all": "all customers",
                     "deals won": "deals won", "all closed": "all closed deals", "open": "open deals"}
 METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "Median sales cycle": "deals won",
                      "Win rate": "all closed"}
@@ -741,6 +743,22 @@ _LABEL_DIMENSIONS = frozenset((
 LABEL_SEGMENT_MAX_WORDS = 4
 
 
+def page_segment(name: Optional[str], claim_type: Optional[str] = None) -> Optional[str]:
+    """The segment the page reader printed for a figure (`page_segment` of the deck claim), as printed, or None when it names no segment: only
+    period words (Q1, H2, a month, a year), only words for the whole company or the metric ("Total"), only a dimension word ("Product"), or, for
+    a customer or user count, a population (paying, free, trial, all ...), which sets the population instead (George, 2026-10-27)."""
+    text = " ".join((name or "").split())
+    if not text:
+        return None
+    left = [t.strip(".,&'") for t in _LABEL_NOISE.sub(" ", text).split()]
+    left = [t for t in left if t and t.lower() not in _LABEL_WORDS]
+    if not left or all(t.lower() in _LABEL_DIMENSIONS for t in left):
+        return None
+    if claim_type in POPULATION_TYPES and population_in_label(text):
+        return None
+    return text
+
+
 def label_segment(label: Optional[str]) -> Optional[str]:
     """The segment a cited label names, or None when it names the metric, the period, the company or a scenario only. The metric words, the
     period, currency and scale words and the closed words above are taken out; what is left must be one to four capitalised words (a product,
@@ -927,6 +945,10 @@ def _population(c: dict, metric: Optional[str]) -> Tuple[Optional[str], Optional
     if c.get("population"):
         return c["population"], c.get("population_set_by") or "parser"
     kind = c.get("claim_type")
+    if kind in POPULATION_TYPES and kind != "user_growth":      # a population the page reader's label or segment names sets it (George, 2026-10-27)
+        named = population_in_label(f"{c.get('label_from') or ''} {c.get('page_segment') or ''}")
+        if named:
+            return named, "python"
     if kind == "customers":
         return "paying", "python"
     if kind == "users" and c.get("qualifier") in QUALIFIERS:
@@ -944,12 +966,18 @@ def _population(c: dict, metric: Optional[str]) -> Tuple[Optional[str], Optional
 # three kinds answers; "paying and active users" stays a question.
 _LABEL_POPULATION = (("paying", re.compile(r"(?i)\b(?:paying|paid|subscribers?)\b")),
                      ("registered", re.compile(r"(?i)\b(?:registered|sign-?ups?|signed[- ]up)\b")),
-                     ("active", re.compile(r"(?i)\b(?:active|MAU|DAU|WAU)\b")))
+                     ("active", re.compile(r"(?i)\b(?:active|MAU|DAU|WAU)\b")),
+                     ("free", re.compile(r"(?i)\bfree\b")),
+                     ("trial", re.compile(r"(?i)\b(?:trials?|trialists?)\b")))
+_ALL_POPULATION = re.compile(r"(?i)\ball\b")
 
 
 def population_in_label(text: Optional[str]) -> Optional[str]:
-    """paying, registered or active when the label text holds the noun of exactly one of them; None when it holds none or several."""
+    """paying, registered, active, free or trial when the label text holds the noun of exactly one of them, "all" when it holds none of them and
+    says "all" ("All clients"); None when it holds none or several."""
     found = [population for population, rx in _LABEL_POPULATION if rx.search(text or "")]
+    if not found and _ALL_POPULATION.search(text or ""):
+        return "all"
     return found[0] if len(found) == 1 else None
 
 
@@ -1024,9 +1052,11 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         segment, segment_by = inputs["segment"], "analyst"
     else:
         named = [s for s in revenue_segments if re.search(rf"(?i)(?<!\w){re.escape(s)}(?!\w)", text)]
-        # a name in the data wins; two named is the whole company; with none, the label of a money figure may name a product, customer or use case
-        segment, segment_by = (named[0] if len(named) == 1 else
-                               (label_segment(c.get("label_from")) if not named and c.get("claim_type") in MONEY_TYPES else None) or WHOLE), "python"
+        # a name in the data wins; two named is the whole company; with none, the segment the page reader printed (George, 2026-10-27), else the
+        # label of a money figure may name a product, customer or use case
+        found = None if named else (page_segment(c.get("page_segment"), c.get("claim_type"))
+                                    or (label_segment(c.get("label_from")) if c.get("claim_type") in MONEY_TYPES else None))
+        segment, segment_by = (named[0] if len(named) == 1 else found or WHOLE), "python"
     start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
     figure_type = _figure_type(c, text, end, as_of_i)
     forecast = figure_type == "target" and end is not None and as_of_i is not None and end > as_of_i     # the classification says so
@@ -1726,6 +1756,25 @@ def _overlaps(rows: List[dict]) -> None:
 # George, 2026-10-25: a row whose reason asks the analyst to set or confirm something is a card under "Needs your attention" and an open
 # question; the control is the claim's editor in the claims list. Not Verified or Contradicted, whatever the reason says.
 ASK_REASONS = (PERIOD_NOT_READ, PERIOD_UNCLEAR, PERIOD_MISSING, "required field unknown", GROWTH_UNKNOWN_REASON, "churn rate unclear")
+
+
+def undated_by_page(rows: List[dict], kept: Iterable[str] = ()) -> Dict[str, dict]:
+    """The claims the register reads as "Period not read", grouped by the page they stand on (George, 2026-10-27): {claim id: {"key", "page",
+    "n"}} for each claim on a page where two or more of them stand, `n` being their number there. One card asks for the period of the page's
+    undated figures; a claim the analyst chose to keep undated (`kept`) asks nothing."""
+    pages: Dict[tuple, List[str]] = {}
+    for row in rows:
+        cid = str(row["claim_id"]).split("#")[0]
+        if asks_analyst(row) and str(row.get("reason") or "").startswith(PERIOD_NOT_READ) and cid not in kept:
+            ids = pages.setdefault((row.get("deck_file"), row.get("page_ref")), [])
+            if cid not in ids:
+                ids.append(cid)
+    out = {}
+    for (deck, page), ids in pages.items():
+        if len(ids) > 1:
+            key = hashlib.sha256(f"undated|{deck}|{page}".encode("utf-8")).hexdigest()[:16]
+            out.update({cid: {"key": key, "page": page, "n": len(ids)} for cid in ids})
+    return out
 
 
 def asks_analyst(row: dict) -> bool:

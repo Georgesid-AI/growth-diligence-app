@@ -16,6 +16,9 @@ export const lessLabel = "Show fewer";
 export const SALES_QUESTION = "Is 'Sales' in this deck revenue or bookings?";
 export const SALES_ANSWERS = [["revenue", "Revenue"], ["bookings", "Bookings"]];
 export const salesCount = (n) => (n === 1 ? "1 claim in this deck is labelled Sales." : `${n} claims in this deck are labelled Sales.`);
+export const UNDATED_ACTION = "Set the period";
+export const KEEP_UNDATED = "Keep undated";
+export const undatedTitle = (n, page) => `Set the period for ${n} figures on ${page || "this page"}`;
 export const addsUpText = (name) => `These add up to the ${name} total`;
 
 /** The views of the uploaded files that hold a column or a required field waiting for the analyst. */
@@ -38,6 +41,18 @@ export function openQuestions(views, candidates, attention, groups, sales = []) 
     else if (c.status === "pending" || (c.status !== "rejected" && definitionOf(c).open)) claims.push({ key: `claim-${c.id}`, kind: "claim", c });
     else if (c.status !== "rejected" && asked.has(c.id)) claims.push({ key: `set-${c.id}`, kind: "set", c, reason: asked.get(c.id) });
   });
+  // two or more undated figures of one page are one question (the server names the page's key and their number)
+  const undatedBy = new Map((attention || []).filter((a) => a.undated).map((a) => [a.id, a.undated]));
+  const merged = new Map();
+  const single = [];
+  claims.forEach((item) => {
+    const u = item.kind === "set" ? undatedBy.get(item.c.id) : null;
+    if (!u) { single.push(item); return; }
+    if (!merged.has(u.key)) { const card = { key: `undated-${u.key}`, kind: "undated", page: u.page, n: u.n, cs: [], c: item.c, reason: item.reason }; merged.set(u.key, card); single.push(card); }
+    merged.get(u.key).cs.push(item.c);
+  });
+  claims.length = 0;
+  claims.push(...single);
   const place = new Map((attention || []).map((a, i) => [a.id, { i, top: Boolean(a.in_top5) }]));
   const at = (item) => place.get(item.c.id) || { i: Number.MAX_SAFE_INTEGER, top: false };
   claims.sort((a, b) => at(a).i - at(b).i);

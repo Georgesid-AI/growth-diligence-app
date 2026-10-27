@@ -193,7 +193,8 @@ CASES = ("best", "worst")
 BASIS_CONFLICT = "basis conflicts with period"        # a projection for a period on or before the as-of month (claim_matching.flags_of)
 # Flags the analyst only reads: the claim stays in the main list with the note on its row; every other flag lists it under Review
 # (George, 2026-10-23). A new flag is added to checker.REVIEW_FLAGS or here, and the screen's list (informational_flags.json) follows.
-INFORMATIONAL_FLAGS = ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell")
+INFORMATIONAL_FLAGS = ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell",
+                       "source ambiguous, noted")
 # The one informational flag with a part of the page in it: "year label below: 2022" (a four-digit year label; George, 2026-10-23).
 INFORMATIONAL_YEAR_LABEL = re.compile(r"year label below: \d{4}")
 
