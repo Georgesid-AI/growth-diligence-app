@@ -67,7 +67,7 @@ export const DEFAULT_FISCAL_YEAR_END = 12;
 
 // AI-assisted reading (docs/specs/chat-upload.md section 23): one checkbox per audit, ticked by default at creation, in the
 // set-up section at the top of the Upload page. Word for word from the spec.
-export const CONSENT_LABEL = "Use AI to read deck tables, charts and the text of pages that carry a figure, and to suggest column matches. Names, contact details and customer names are masked before anything is sent. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.";
+export const CONSENT_LABEL = "Use AI to read deck tables, charts and the text of pages that carry a figure, and to suggest column matches. Names, contact details and customer names are masked in spreadsheet data before it is sent; deck pages are sent as printed, as text and as an image, with no redaction. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.";
 export const VERIFIED_LINE = "Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.";
 
 // The text above the name field of the creation dialog (chat-upload.md section 23), word for word.

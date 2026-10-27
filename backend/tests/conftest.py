@@ -91,3 +91,21 @@ def claims_for(monkeypatch):
         monkeypatch.setattr(server, "db", db)
         return TestClient(server.app, raise_server_exceptions=False), db
     return build
+
+
+@pytest.fixture(autouse=True)
+def synthetic_page_images(request, monkeypatch):
+    """The page reader draws each page from the stored deck file; the tests have none, so `render` hands out a synthetic PNG instead
+    (tests/page_images.py). The tests of render itself (test_page_render.py) run the real functions, and so does a test marked
+    `real_render` (its own fakes stand in for the converter and for PDFium)."""
+    if request.module.__name__ == "test_page_render" or request.node.get_closest_marker("real_render"):
+        return
+    import page_images
+    from app.decks import render
+    monkeypatch.setattr(render, "prepare", _prepared)
+    monkeypatch.setattr(render, "to_pdf", lambda content, fmt: b"synthetic pdf")
+    monkeypatch.setattr(render, "render_page", lambda pdf, page: page_images.png(page))
+
+
+async def _prepared(db, audit_id, deck_id, fmt, pages):
+    return b"synthetic pdf"

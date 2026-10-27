@@ -3,7 +3,7 @@ import {
   countLine, statusText, STATUS_LABELS, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText, CONSENT_OFF_LINE,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText, INFORMATIONAL_FLAGS,
-  CLAIM_GROUPS, COLLAPSED_BY_DEFAULT, SCENARIO_GROUP, PROMPT_MISSING_LINE, scenarioText, isCase,
+  CLAIM_GROUPS, COLLAPSED_BY_DEFAULT, SCENARIO_GROUP, PROMPT_MISSING_LINE, BLOCKED_LINE, scenarioText, isCase,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -258,6 +258,13 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "reading", ai_message: "restarted" })).toEqual(["AI reading: restarted"]);
   });
 
+  test("a deck whose file was removed with the consent says that images need the file, in place of the general text-only line", () => {
+    const deck = { ai_status: "not_read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, unread_pages: [], images_unavailable: true, images_need_file: true };
+    expect(deckRunLog(deck)).toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected",
+      "Images need the file: re-upload the deck to read pages with images"]);
+    expect(deckRunLog({ ...deck, images_need_file: false }).join(" ")).not.toContain("Images need the file");
+  });
+
   test("the run log names the skipped pages and each page not read, after the deck line (the status wording is the deck line's)", () => {
     expect(deckRunLog({ ai_status: "read", pages: 24, page_unit: "page", figure_pages: 11, pages_read: 9, pages_rejected: 2, skipped_pages: [3, 7, 20], unread_pages: [5, 9] }))
       .toEqual(["24 pages parsed · 11 with figures · AI read: done, 9 read, 2 rejected",
@@ -267,6 +274,13 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     // the last run's unread pages are not shown while a new one reads
     expect(deckRunLog({ ai_status: "reading", pages: 5, page_unit: "page", figure_pages: 5, read_progress: { done: 1, total: 4 }, unread_pages: [4] }))
       .toEqual(["5 pages parsed · 5 with figures · AI read: page 2 of 4"]);
+  });
+
+  test("the run log says when page images were unavailable and the pages went as text only", () => {
+    const deck = { ai_status: "read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, skipped_pages: [], unread_pages: [] };
+    expect(deckRunLog({ ...deck, images_unavailable: true }))
+      .toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected", "page images unavailable for this file; text only"]);
+    expect(deckRunLog({ ...deck, images_unavailable: false }).join()).not.toContain("images unavailable");
   });
 
   test("the run log counts the periods Python corrected from the header cells", () => {
@@ -512,6 +526,11 @@ describe("review of PR #164 (George, 2026-10-23)", () => {
     expect(scenarioText({ scenario: "worst" })).toBe("Worst case");
     expect(scenarioText({ scenario: "none" })).toBe("");
     expect(scenarioText({})).toBe("");
+  });
+  test("a deck whose page reader model is not permitted reads one line, word for word", () => {
+    expect(BLOCKED_LINE).toBe("AI read: blocked – model not permitted");
+    expect(deckRunLog({ ai_status: "blocked", ai_message: BLOCKED_LINE, pages: 8, figure_pages: 5 })).toEqual([BLOCKED_LINE]);
+    expect(deckReadLine({ ai_status: "blocked", pages: 8, page_unit: "slide", figure_pages: 5 })).toBe("8 slides parsed · 5 with figures · AI read: blocked – model not permitted");
   });
   test("a deck whose prompt is missing reads one line, word for word", () => {
     expect(PROMPT_MISSING_LINE).toBe("AI reading not run – deck_reading prompt missing in prompt store");

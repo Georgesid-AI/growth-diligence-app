@@ -12,15 +12,15 @@ labels, KPI panels, roadmaps and timelines, hiring, unit-economics and use-of-fu
 spreadsheet sheet names, title rows and header rows (at most 3 header rows) with, per column, up to 3 sample values (numeric and date
 columns only) or a profile (distinct count, typical length, shape pattern) for text columns. Only
 after redaction, only with the audit's consent, only as extracted text with cell positions; never
-raw files, full pages or prose slides. For the sheet_structure step only (George, 2026-10-18;
+raw files or prose slides (the page_claims step below is the one exception, for pages). For the sheet_structure step only (George, 2026-10-18;
 chat-upload.md section 26): every text cell of one sheet (title rows, headers, row labels, indents,
 num/blank markers), after redaction and the withhold rule, never a figure, at most 400 rows with
 text; checked again here (structures/redact.sheet_text_problem). For the page_claims step only (George, 2026-10-22,
-PR #158, decision 1b; the default path since 2026-10-22, DECK_PIPELINE=ai, docs/design/ai-reads-rules-check.md): the redacted
-text lines of deck pages that carry a figure as digits, prose lines included, as `p<page>r<row>c<col>: <text>` lines, at most 5
-pages per call, read with the `deck_reading` prompt of the store; a page with no figure as digits is
-refused (structures/redact.page_text_problem), and the people-name rule runs over prose lines as well as cells
-(structures/redact.redact_page, run again here). A page call is exempt from the daily spend cap and counted in the tester's
+PR #158, decision 1b; the default path since 2026-10-22, DECK_PIPELINE=ai, docs/design/ai-reads-rules-check.md): the text
+lines of deck pages that carry a figure as digits, prose lines included, as `p<page>r<row>c<col>: <text>` lines, at most 5
+pages per call, with one PNG of each whole page (docs/design/page-image.md; George, 2026-10-27): pages go as printed, with no
+redaction, to a Sonnet or Opus model only (page_reader_problem), read with the `deck_reading` prompt of the store; a page with no
+figure as digits is refused (structures/redact.page_text_problem). A page call is exempt from the daily spend cap and counted in the tester's
 monthly allowance, as a column mapping is (docs/specs/usage-and-allowance.md section 4). A deck structure's text carries, below its cells, the item
 list Python made (docs/specs/structure-labelling.md): one line per figure with its cell, its raw
 text cut from the redacted cell, its values and header cells, and a roadmap's date cells and text
@@ -54,6 +54,7 @@ Order of operations for a generation request:
 Any failure downgrades to `narrative_status="unavailable"` and still returns the
 computed metrics. The dashboard is never blocked by this gateway.
 """
+import hashlib
 import json
 import logging
 import os
@@ -509,6 +510,15 @@ _GAP_FIELDS = {
 # ---------------------------------------------------------------------------
 # Provider adapter - swap this class to change provider
 # ---------------------------------------------------------------------------
+def _user_content(user_payload: str, images: Optional[List[bytes]] = None):
+    """The user message: the text alone, or, for a page read, the page images (PNG) followed by the text in the same request."""
+    if not images:
+        return user_payload
+    import base64
+    return [*({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(png).decode("ascii")}}
+              for png in images), {"type": "text", "text": user_payload}]
+
+
 class AnthropicAdapter:
     """Thin adapter over the Anthropic Messages API.
 
@@ -556,6 +566,7 @@ class AnthropicAdapter:
         temperature: Optional[float],
         json_schema: dict,
         cache_system: bool = False,
+        images: Optional[List[bytes]] = None,
     ) -> Tuple[str, int, int]:
         """One provider call. Returns (text, input_tokens, output_tokens).
 
@@ -572,7 +583,7 @@ class AnthropicAdapter:
             "model": model,
             "max_tokens": max_tokens,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if cache_system else system,
-            "messages": [{"role": "user", "content": user_payload}],
+            "messages": [{"role": "user", "content": _user_content(user_payload, images)}],
             # Structured output is what makes strict parsing viable: the first
             # content block is guaranteed to be schema-valid JSON.
             "output_config": {"format": {"type": "json_schema", "schema": json_schema}},
@@ -606,7 +617,7 @@ class AnthropicAdapter:
 
 
     def count_tokens(self, *, model: str, system: Optional[str], user_payload: str,
-                     json_schema: Optional[dict]) -> int:
+                     json_schema: Optional[dict], images: Optional[List[bytes]] = None) -> int:
         """The input tokens a call would bill, from the provider's token counter (no call is made).
         With no system prompt and no schema it counts `user_payload` alone."""
         client = self._ensure_client()
@@ -617,7 +628,7 @@ class AnthropicAdapter:
             extra["output_config"] = {"format": {"type": "json_schema", "schema": json_schema}}
         try:
             response = client.messages.count_tokens(
-                model=model, messages=[{"role": "user", "content": user_payload}], **extra)
+                model=model, messages=[{"role": "user", "content": _user_content(user_payload, images)}], **extra)
         except Exception as exc:
             raise _classify_provider_error(exc)
         return int(getattr(response, "input_tokens", 0) or 0)
@@ -948,6 +959,7 @@ async def log_call(
     cache_hit: bool, status: str, unmatched_numbers: Optional[List[str]] = None,
     content_hash: Optional[str] = None, deck_id: Optional[str] = None,
     http_status: Optional[int] = None, error_type: Optional[str] = None, structure_type: Optional[str] = None,
+    image_tokens: int = 0, image_cost_usd: float = 0.0,
 ) -> None:
     """Append to llm_calls.
 
@@ -969,6 +981,9 @@ async def log_call(
         "input_tokens": int(input_tokens),
         "output_tokens": int(output_tokens),
         "estimated_cost_usd": round(float(estimated_cost_usd), 6),
+        # The part of the two figures above that the page images account for (page-image.md section 6); 0 for a call with none.
+        "image_tokens": int(image_tokens),
+        "image_cost_usd": round(float(image_cost_usd), 6),
         "cache_hit": bool(cache_hit),
         "status": status,
         "unmatched_numbers": list(unmatched_numbers or []),
@@ -1430,6 +1445,11 @@ async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
 # A constant, separate from NARRATIVE_MODEL: the structure path is pinned to one model. Changing it
 # moves every structure cache key. Temperature stays at the model default and is never sent.
 STRUCTURE_MODEL = "claude-sonnet-5-5"
+# The page reader's model (docs/design/page-image.md section 2, CLAUDE.md rule 31): deck pages go to it as printed, under the API
+# organisation's zero-data-retention arrangement, so only the Sonnet and Opus families may read them. PAGE_READER_MODEL overrides the
+# default (STRUCTURE_MODEL); a name outside the allow-list blocks every page read, at startup (server.py) and before each read.
+PAGE_READER_MODELS = re.compile(r"claude-(?:sonnet|opus)(?:-\d+)+(?:-\d{8})?")
+PAGE_READER_BLOCKED = "AI read: blocked – model not permitted"
 STRUCTURE_PROMPT = "structure_reading"
 PAGE_CLAIMS_PROMPT = "deck_reading"       # the page reader's prompt in the store (docs/specs/prompt-store.md); the repo holds a stub
 FILE_TYPE_PROMPT = "file_type"
@@ -1437,6 +1457,22 @@ SHEET_STRUCTURE_PROMPT = "sheet_structure"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
 PIPELINES = ("rules", "ai")                 # the DECK_PIPELINE switch
 DEFAULT_PIPELINE = "ai"                     # since 2026-10-22 (docs/design/ai-reads-rules-check.md, built): the model reads every page
+
+
+def page_reader_model() -> str:
+    """The model the page reader is configured to use: PAGE_READER_MODEL, else STRUCTURE_MODEL."""
+    return os.environ.get("PAGE_READER_MODEL", "").strip() or STRUCTURE_MODEL
+
+
+def page_reader_problem() -> Optional[str]:
+    """None when the configured page-reader model is on the allow-list (PAGE_READER_MODELS: the Sonnet and Opus families), else the
+    panel line PAGE_READER_BLOCKED, after logging `page reader model <name> not permitted` as an error. Run at startup and before
+    each page read, so a model change that slips past either is stopped by the other."""
+    name = page_reader_model()
+    if PAGE_READER_MODELS.fullmatch(name):
+        return None
+    logger.error("page reader model %s not permitted", name[:80])
+    return PAGE_READER_BLOCKED
 
 
 def deck_pipeline() -> str:
@@ -1496,11 +1532,14 @@ async def load_structure_context(db, audit_id: str) -> dict:
     return doc
 
 
-def structure_key(text: str, structure_type: str, prompt_tag: str, model: str) -> str:
+def structure_key(text: str, structure_type: str, prompt_tag: str, model: str, images: Optional[List[bytes]] = None) -> str:
     """sha256 of the text (with its item list), its type, the prompt cache tag, the model and the hash of the
     output schema its type is sent (structure-labelling.md section 3): a reading stored under another schema is
-    never served."""
-    return cache.cache_key(STRUCTURE_STEP, structure_type, f"{prompt_tag}:{schema_hash(structure_type)}", model, text)
+    never served. A page read adds the hash of its images, so a page read without its image is not served for one with it."""
+    tag = f"{prompt_tag}:{schema_hash(structure_type)}"
+    if images:
+        tag += ":img:" + content_hash("".join(hashlib.sha256(i).hexdigest() for i in images))
+    return cache.cache_key(STRUCTURE_STEP, structure_type, tag, model, text)
 
 
 def schema_hash(structure_type: str) -> str:
@@ -1510,7 +1549,6 @@ def schema_hash(structure_type: str) -> str:
 
 
 def content_hash(text: str) -> str:
-    import hashlib
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -1530,14 +1568,13 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         return "empty"
     if _CONTROL.search(text):
         return "raw_bytes"
-    if _FILE_NAME.search(text):
+    if structure_type != PAGE_CLAIMS and _FILE_NAME.search(text):          # a page goes as printed
         return "file_name"
     company = context.get("company_name")
     if structure_type == PAGE_CLAIMS:
-        # Only while DECK_PIPELINE is "ai" (the default). The redacted lines of pages that carry a figure as digits (the page's own printed
-        # number is none), at most 5 pages, every page with such a figure, no line over 200 characters (as for a structure cell;
-        # George, 2026-10-22, decision 1b on the review of PR #159), the page redaction (structure rules plus the people-name
-        # rule over prose) run again.
+        # Only while DECK_PIPELINE is "ai" (the default). The lines of pages that carry a figure as digits (the page's own printed
+        # number is none), as printed, with no redaction (page-image.md section 2): at most 5 pages, every page with such a figure, no
+        # line over 200 characters (as for a structure cell; George, 2026-10-22, decision 1b on the review of PR #159).
         if deck_pipeline() != "ai":
             return "pipeline_rules"
         problem = structure_redact.page_text_problem(text)
@@ -1546,10 +1583,6 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         pages = structure_redact.parse_page_text(text)
         if any(len(c["text"]) > STRUCTURE_CELL_MAX for cells in pages.values() for c in cells):
             return "cell_too_long"
-        for cells in pages.values():
-            redacted, _ = structure_redact.redact_page(cells, company, mapping)
-            if redacted != cells:
-                return "redaction_changed"
         return None
     if structure_type == SHEET_STRUCTURE:
         # Every text cell of one sheet, never a figure, at most 400 rows with text, the withhold rule and the redaction run again.
@@ -1805,8 +1838,8 @@ async def _count_tokens(adapter, sleep, on_rate_limit=None, **kwargs) -> int:
 
 
 async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep, max_tokens=STRUCTURE_MAX_TOKENS,
-                          on_rate_limit=None):
-    """(reply, input tokens, output tokens) summed over every billed attempt. Network or 5xx: up to
+                          on_rate_limit=None, model=STRUCTURE_MODEL, system=None, images=None):
+    """(reply, input tokens, output tokens, billed calls) summed over every billed attempt. Network or 5xx: up to
     MAX_PROVIDER_RETRIES with backoff. A reply that fails validation: one reask, then GatewayError."""
     schema = schemas.output_schema(structure_type)
     parse_attempts = network_attempts = 0
@@ -1814,11 +1847,14 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
     # A page batch marks the fixed prompt for the provider's prompt cache (design note section 4): the same system text is sent
     # for every batch of an audit, so the later batches read it from the cache. Other steps are unchanged.
     cached = {"cache_system": True} if structure_type == PAGE_CLAIMS else {}
+    if images:
+        cached["images"] = images
+    billed_calls = 0
     while True:
         try:
             try:
                 reply, in_tok, out_tok = await _to_thread(
-                    adapter.complete, model=STRUCTURE_MODEL, system=prompt.text, user_payload=user_payload,
+                    adapter.complete, model=model, system=system if system is not None else prompt.text, user_payload=user_payload,
                     max_tokens=max_tokens, temperature=None, json_schema=schema, **cached)
             except (RetryableProviderError, GatewayError):
                 raise
@@ -1831,20 +1867,23 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
             if network_attempts > MAX_PROVIDER_RETRIES:
                 exc_out = _unreachable(exc)
                 exc_out.billed = (billed_in, billed_out)
+                exc_out.billed_calls = billed_calls
                 raise exc_out
             await sleep(_backoff_seconds(exc, network_attempts))
             continue
         except GatewayError as exc:
             cut = getattr(exc, "tokens", (0, 0))                 # a truncated reply billed its tokens too
             exc.billed = (billed_in + cut[0], billed_out + cut[1])
+            exc.billed_calls = billed_calls + (1 if any(cut) else 0)
             raise
-        billed_in, billed_out = billed_in + in_tok, billed_out + out_tok
+        billed_in, billed_out, billed_calls = billed_in + in_tok, billed_out + out_tok, billed_calls + 1
         try:
-            return parse_structure_reply(reply, structure_type, text), billed_in, billed_out
+            return parse_structure_reply(reply, structure_type, text), billed_in, billed_out, billed_calls
         except GatewayError as exc:
             parse_attempts += 1
             if parse_attempts > MAX_PARSE_RETRIES:
                 exc.billed = (billed_in, billed_out)
+                exc.billed_calls = billed_calls
                 raise
 
 
@@ -1870,7 +1909,7 @@ def _reading(output: dict) -> dict:
 async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
-    on_rate_limit=None,
+    on_rate_limit=None, images: Optional[List[bytes]] = None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -1894,6 +1933,11 @@ async def read_structure(
     tokens of the reads in flight counted at their worst case; a read the cap would refuse only because of them waits for them,
     so the cap stops the same call a one-by-one read would stop. `on_rate_limit` is called at every 429 the provider answers.
 
+    A page read carries `images`, one PNG of each whole page, in the same request as the text (page-image.md); a page the file
+    cannot be drawn for goes as text alone (page-image.md). The configured page-reader model must be on the allow-list (page_reader_problem) before each
+    read, else the result is "blocked" and nothing is sent. The image tokens (the call's count with the images minus its count
+    without) and their cost are reported apart from the text's, and logged beside them.
+
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
     stands. The output is not Verified here: the caller joins each label to Python's item and
     verifies it.
@@ -1910,6 +1954,14 @@ async def read_structure(
     if problem:
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
         return _structure_result("refused", structure_type, f"refused: {problem}")
+    model = STRUCTURE_MODEL
+    if structure_type == PAGE_CLAIMS:
+        blocked = page_reader_problem()
+        if blocked:
+            return _structure_result("blocked", structure_type, blocked)
+        model = page_reader_model()
+    else:
+        images = None
     try:
         prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
                                               PAGE_CLAIMS: PAGE_CLAIMS_PROMPT}.get(structure_type, STRUCTURE_PROMPT))
@@ -1917,23 +1969,25 @@ async def read_structure(
         if structure_type == PAGE_CLAIMS:
             logger.warning("%s prompt missing: run_id=%s step=%s", PAGE_CLAIMS_PROMPT, audit_id, STRUCTURE_STEP)
         return _structure_result("not_read", structure_type, PROMPT_MISSING_TEXT if structure_type == PAGE_CLAIMS else NOT_READ)
-    if STRUCTURE_MODEL not in MODEL_PRICING_USD:
+    if model not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)
-    key = structure_key(text, structure_type, prompt_store.cache_tag(prompt), STRUCTURE_MODEL)
+    key = structure_key(text, structure_type, prompt_store.cache_tag(prompt), model, images)
     digest = content_hash(text)
-    base = {"key": key, "prompt_version": prompt.version, "model": STRUCTURE_MODEL}
+    base = {"key": key, "prompt_version": prompt.version, "model": model}
+    system = prompt.text
 
     if use_cache:
         hit = await cache.get_structure(db, audit_id, key)
         if hit:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
-                           model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
+                           model=model, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
             logger.info("structure cache hit: run_id=%s step=%s hash=%s type=%s", audit_id, STRUCTURE_STEP, digest, structure_type)
             return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
                                      **_reading(hit["output"]), **base)
 
     user_payload = cache.canonical_json({"type": structure_type, "text": text})
+    image_tokens = 0
     adapter = adapter or AnthropicAdapter()
     sheet = structure_type == SHEET_STRUCTURE
     input_cap, max_tokens = (SHEET_INPUT_CAP, SHEET_MAX_TOKENS) if sheet else (STRUCTURE_INPUT_CAP, STRUCTURE_MAX_TOKENS)
@@ -1943,16 +1997,22 @@ async def read_structure(
         input_cap, max_tokens = PAGE_INPUT_CAP, PAGE_MAX_TOKENS
     try:
         # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
-        text_tokens = await _count_tokens(adapter, sleep, on_rate_limit, model=STRUCTURE_MODEL, system=None, user_payload=text,
+        text_tokens = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > input_cap:
             return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
-        counted = await _count_tokens(adapter, sleep, on_rate_limit, model=STRUCTURE_MODEL, system=prompt.text,
+        counted = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=system,
                                       user_payload=user_payload, json_schema=schemas.output_schema(structure_type))
+        if images:
+            # The images are counted apart: the whole call with them minus the same call without. They have no cap of their own
+            # (page-image.md); the audit's token cap counts them with the rest.
+            with_images = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=system, user_payload=user_payload,
+                                              json_schema=schemas.output_schema(structure_type), images=images)
+            image_tokens, counted = max(0, with_images - counted), with_images
     except GatewayError as exc:
         # Codes only: the reason, the HTTP status and the provider's error type; never the exception's message.
         code, status, kind = exc.reason, exc.status, exc.error_type
-        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=STRUCTURE_MODEL,
+        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
                        input_tokens=0, output_tokens=0, estimated_cost_usd=0.0, cache_hit=False, status=code,
                        content_hash=digest, deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
         logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=%s type=%s", audit_id,
@@ -1993,7 +2053,7 @@ async def read_structure(
                 token = None
         except guards.GuardRefusal as refusal:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
-                           model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
+                           model=model, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id, structure_type=structure_type)
             cap = CAP_REASONS.get(refusal.reason, "cap")          # a closed word, never the guard's message
             logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=- type=-", audit_id,
@@ -2002,19 +2062,22 @@ async def read_structure(
             return _structure_result("stopped" if stopped else "not_read", structure_type,
                                      refusal.detail if stopped else NOT_READ, **base)
         try:
-            parsed, in_tok, out_tok = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep, max_tokens,
-                                                            on_rate_limit)
+            parsed, in_tok, out_tok, sent_calls = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep,
+                                                                        max_tokens, on_rate_limit, model=model, system=system, images=images)
         except GatewayError as exc:
             # Codes only: the reason, the HTTP status, the provider's error type and the check a reply failed (issue
             # #64); never the message.
             billed, code, status, kind = getattr(exc, "billed", (0, 0)), exc.reason, exc.status, exc.error_type
             check = exc.check if exc.check in PARSE_CHECKS else "-"
             fields = ",".join(f for f in exc.fields if f in PAGE_FIELDS) or "-"       # schema field names only, never a value
-            cost = estimate_cost_usd(STRUCTURE_MODEL, *billed)
+            cost = estimate_cost_usd(model, *billed)
+            image_billed = min(billed[0], image_tokens * getattr(exc, "billed_calls", 0))
+            image_cost = estimate_cost_usd(model, image_billed, 0)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
-                           model=STRUCTURE_MODEL, input_tokens=billed[0], output_tokens=billed[1],
+                           model=model, input_tokens=billed[0], output_tokens=billed[1],
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
-                           deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
+                           deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type,
+                           image_tokens=image_billed, image_cost_usd=image_cost)
             logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s "
                            "status=%s type=%s fields=%s check=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
                            code, status or "-", kind or "-", fields, check)
@@ -2025,8 +2088,11 @@ async def read_structure(
             if code == "parse_failed" and structure_type == PAGE_CLAIMS:
                 rejected = check if fields == "-" else f"{check}: {fields}"
             return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, NOT_READ,
-                                     input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, rejected=rejected, **base)
-        cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)
+                                     input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, rejected=rejected,
+                                     image_tokens=image_billed, image_cost_usd=image_cost, **base)
+        cost = estimate_cost_usd(model, in_tok, out_tok)
+        image_billed = min(in_tok, image_tokens * sent_calls)           # a reasked call bills its images again
+        image_cost = estimate_cost_usd(model, image_billed, 0)
         model_type = parsed.type if parsed.type != structure_type else None      # a sheet's type is fixed by its schema
         output = parsed.model_dump()
         stored = output
@@ -2034,15 +2100,17 @@ async def read_structure(
             stored = {**output, "revenue_row": {"row": output["revenue_row"]["row"]}}        # the label echo is never kept (5.5)
         await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
                                model_type=model_type, output=stored, prompt_version=prompt.version,
-                               input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page, pages=pages)
-        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=STRUCTURE_MODEL,
+                               input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page, pages=pages, model=model)
+        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
                        input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, cache_hit=False,
-                       status="ok", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
+                       status="ok", content_hash=digest, deck_id=deck_id, structure_type=structure_type,
+                       image_tokens=image_billed, image_cost_usd=image_cost)
         logger.info("structure read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f type_change=%s",
                     audit_id, STRUCTURE_STEP, digest, in_tok, out_tok, cost,
                     f"{structure_type}->{model_type}" if model_type else "none")
         return _structure_result("read", structure_type, model_type=model_type, **_reading(output),
-                                 input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, **base)
+                                 input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost,
+                                 image_tokens=image_billed, image_cost_usd=image_cost, **base)
     except Exception as exc:  # never let structure reading block an upload
         logger.error("unexpected structure failure: run_id=%s step=%s error=%s", audit_id, STRUCTURE_STEP,
                      type(exc).__name__)
@@ -2055,12 +2123,12 @@ async def read_structure(
 
 
 async def _store_structure(db, *, audit_id, key, digest, structure_type, model_type, output, prompt_version,
-                           input_tokens, output_tokens, cost, deck_id, page, pages=None) -> None:
+                           input_tokens, output_tokens, cost, deck_id, page, pages=None, model=STRUCTURE_MODEL) -> None:
     """Store the model's JSON output with its metadata (spec section 9). The text sent is never stored. A page batch keeps the
     numbers of the pages it read."""
     await cache.put_structure(db, audit_id, key, {
         "content_hash": digest, "type": structure_type, "model_type": model_type, "output": output,
-        "prompt_version": prompt_version, "model": STRUCTURE_MODEL,
+        "prompt_version": prompt_version, "model": model,
         "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
         "estimated_cost_usd": round(float(cost), 6), "deck_id": deck_id, "page": page,
         **({"pages": [int(p) for p in pages]} if pages else {})})
@@ -2099,6 +2167,8 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
         deck.input_tokens += int(r.get("input_tokens", 0))
         deck.output_tokens += int(r.get("output_tokens", 0))
         deck.estimated_cost_usd = round(deck.estimated_cost_usd + float(r.get("estimated_cost_usd", 0.0)), 6)
+        deck.image_tokens += int(r.get("image_tokens", 0))
+        deck.image_cost_usd = round(deck.image_cost_usd + float(r.get("image_cost_usd", 0.0)), 6)
     by_step: Dict[str, DeckUsage] = {}
     for r in rows:
         name = r.get("step")
@@ -2111,6 +2181,8 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
         step.input_tokens += int(r.get("input_tokens", 0))
         step.output_tokens += int(r.get("output_tokens", 0))
         step.estimated_cost_usd = round(step.estimated_cost_usd + float(r.get("estimated_cost_usd", 0.0)), 6)
+        step.image_tokens += int(r.get("image_tokens", 0))
+        step.image_cost_usd = round(step.image_cost_usd + float(r.get("image_cost_usd", 0.0)), 6)
     return UsageResponse(
         run_id=run_id,
         by_step=by_step,

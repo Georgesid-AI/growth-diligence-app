@@ -229,14 +229,14 @@ def test_a_cut_reply_is_counted_as_truncated_and_billed_by_the_guard(script):
     class Cutting(script.PageReplayAdapter):
         """The provider cuts the reply of a batch of more than two pages (the first batch of each deck has five)."""
 
-        def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+        def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
             if json.loads(user_payload)["text"].count("\n") > 60:
                 self.calls += 1
                 error = gateway.GatewayError("truncated", "cut")
                 error.tokens = (1000, max_tokens)
                 raise error
             return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
-                                    temperature=temperature, json_schema=json_schema, cache_system=cache_system)
+                                    temperature=temperature, json_schema=json_schema, cache_system=cache_system, images=images)
     report, adapter = _run(script, Cutting(), passes=1, decks=DECKS[1:])
     row, = report["per_deck"][DECKS[1]]["passes"]
     assert row["truncated"] >= 2, "the 5-page batch was cut, then its larger half"
@@ -274,3 +274,14 @@ def test_the_report_is_written_after_every_pass_so_a_crash_keeps_the_figures_pai
     text = path.read_text(encoding="utf-8")
     assert "| 03-buffer.pptx | 1 |" in text and "| 03-buffer.pptx | 2 |" in text, "the passes paid for are in the report"
     assert "| 03-buffer.pptx | 3 |" not in text and "Fake run" in text
+
+
+def test_a_page_reader_model_off_the_allow_list_stops_the_pages_run_before_any_file_is_converted_or_drawn(script, monkeypatch):
+    from app.decks import render
+    monkeypatch.setenv("PAGE_READER_MODEL", "claude-fable-5-1")
+    touched = []
+    monkeypatch.setattr(render, "to_pdf", lambda *a, **k: touched.append("to_pdf"))
+    monkeypatch.setattr(render, "render_page", lambda *a, **k: touched.append("render_page"))
+    with pytest.raises(SystemExit) as stop:
+        _run(script, decks=DECKS[:1])
+    assert "model not permitted" in str(stop.value) and touched == []

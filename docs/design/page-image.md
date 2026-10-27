@@ -1,6 +1,6 @@
 # Addendum: page image for the page reader
 
-**Status:** proposed, 27 October 2026 (George). Addendum to `claim-review-simplified-design.md`, which is not amended. Sections 4 and 5 built 27 October 2026 (engine contract 11); sections 1 to 3, 6 and 7 (the image, the disclosure, the owner page) are not built.
+**Status:** proposed, 27 October 2026 (George). Addendum to `claim-review-simplified-design.md`, which is not amended. Sections 4 and 5 built 27 October 2026 (engine contract 11); sections 1 to 3 and 6 (the image, no masking and the model allow-list, the disclosure, the owner page) built 27 October 2026. Section 7 is an estimate, not a feature.
 The page reader is the `page_claims` step of `ai-reads-rules-check.md`. Check codes (L1, C4, P2, C1, C3, X2) are used as George named them; the repository does not define them by those codes, so the build mapped each to its check in `structures/checker.py` and its helpers (George's definitions, 27 October 2026; codes are handled as the two groups of section 5):
 
 | Code | Group | Check | Function |
@@ -20,7 +20,7 @@ For each page selected for reading, two things: the page's text lines with posit
 
 Customer-name masking is removed entirely. Pages go to the model as printed. Reason: the API organisation runs under an Anthropic zero-data-retention (ZDR) arrangement and the audit terms disclose it.
 
-The page reader runs only on a ZDR-eligible model: Sonnet or Opus, never Fable or Mythos. The gateway refuses the step on any other model. This is recorded as CLAUDE.md rule 31.
+The page reader runs only on a ZDR-eligible model: Sonnet or Opus, never Fable or Mythos. A model off the allow-list is logged as an error at startup and the server stays up; the gateway then blocks every page read, and the pipeline converts, draws and sends nothing (the check runs first). This is recorded as CLAUDE.md rule 31.
 
 Not changed by this addendum: rule 17 (no deck text in logs or MongoDB; model JSON may be stored) and rule 18 (model output is never Verified on its own).
 
@@ -57,7 +57,10 @@ Image tokens and their cost are shown per deck read, separately from text tokens
 
 About 1,000 to 2,500 extra input tokens per page. A deck read roughly doubles (`ai-reads-rules-check.md` §4: about $0.09 for a 20-page deck with batching and caching). A page call stays outside the USD 5 daily cap and inside the tester's monthly allowance, as today.
 
-## Open points for the build
+## Built, 27 October 2026
 
-- Rule 16 still says "after redaction" and the consent explainer still says the AI reads the pages; both are edited when this is built, with `test_gateway_data_boundary.py` (rule 14). Not edited here.
-- The five-pages-per-call batching in rule 16 and an image per page need a decision on image count per call.
+- Rule 16 and the consent text are rewritten (pages go as printed, no redaction), the Upload page explainer carries the disclosure line of section 3, and `test_gateway_data_boundary.py` follows (rule 14). The tester terms are not in the repository and are not edited here.
+- Image count per call: no cap. The audit reads one page per call (eight at a time, 60-second timeout), so one image goes with each call; the scripts' five-page calls carry five.
+- The page images are drawn from the uploaded file, which the app now keeps (collection `deck_files`, removed with the deck and with the audit). A PDF is drawn as it is; a .pptx or .docx is turned into a PDF by LibreOffice first. A deck that cannot be drawn (no LibreOffice, another page count than the parser read, no stored file) goes as text alone, never "not read" for that reason; the panel says "page images unavailable for this file; text only".
+- Allow-list: `gateway.PAGE_READER_MODELS` (Sonnet and Opus families); `PAGE_READER_MODEL` overrides the default model and is checked at startup and before each page read.
+- The instruction of section 1 (printed values only) is in the stored `deck_reading` prompt; the gateway carries no copy of it.

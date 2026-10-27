@@ -11,7 +11,7 @@
     tables) and spreadsheet sheet names, title rows and header rows with, per column, either up to 3 sample values
     (numeric and date columns only) or a profile (distinct count, typical length, shape
     pattern) for text columns — only after redaction, only with per-audit consent, only
-    as extracted text with cell positions. Never raw files, full pages or prose slides.
+    as extracted text with cell positions. Never raw files, full pages or prose slides, except the page_claims step below.
     For the sheet_structure step only (approved by George, 2026-10-18), the model may receive
     every text cell of a sheet (title rows, headers, row labels, indents, num/blank markers),
     after redaction and the withhold rule; never any figure; cap 400 labelled rows per sheet.
@@ -20,15 +20,18 @@
     other sheet's labels go as "Row 1", "Row 2"; on every sheet the 3 sample values of a column come from different rows chosen from the file hash, never the
     same row in two neighbouring columns; never a figure beyond the per-column sample; at most 400 rows with text.
     For the page_claims step only (approved by George, 2026-10-22, PR #158 decision 1b; the default path since 2026-10-22,
-    DECK_PIPELINE=ai, docs/design/ai-reads-rules-check.md), the
-    model may receive the redacted text lines of a deck page that carries a figure written in digits, prose lines included, as
-    extracted text with cell positions, at most 5 pages per call; a page with no such figure never goes, and number-words do not
-    count as figures. Prose lines pass the people-name rule as well as the customer rule before they go.
+    DECK_PIPELINE=ai, docs/design/ai-reads-rules-check.md; rewritten 2026-10-27, docs/design/page-image.md), the model may receive,
+    as printed and with no redaction (no customer-name masking, no people-name, e-mail or phone rule), every deck page that carries
+    a figure written in digits: the page's text lines, prose lines included, as extracted text with cell positions, at most 5 pages
+    per call, and in the same request one PNG of each whole page (1,568 px on the long edge, no crops), with no cap on images per
+    call. The reading instructions say that printed values only are read and that no value is estimated from an unlabelled bar,
+    point or slice. A page with no such figure never goes, and number-words do not count as figures. The consent text says that
+    deck pages go to the model as printed, as text and as an image, with no redaction, and the Upload page explainer carries the
+    disclosure line word for word: "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is
+    retained after the reply and nothing is used for training."
     Amended 2026-10-22 (George, review of PR #159): the gateway refuses the step unless DECK_PIPELINE is "ai"; a line over 200
     characters is left out by the sender and refused by the gateway, as a structure cell is; a line that is only the page's own
-    number ("3", "Slide 3", "3/25") is no figure; the role words of the people-name rule match in any case; with no customer
-    list, a customer-type header blanks the cells under it in its own box or table column and the lines directly under it in
-    its column before the first figure line, not the rest of the page.
+    number ("3", "Slide 3", "3/25") is no figure.
     Amended 2026-10-22 (George, the build of docs/design/ai-reads-rules-check.md): the page read replaces the rules read as the
     source of deck claims (the rules read stays for Add from deck and under DECK_PIPELINE=rules). It uses the `deck_reading`
     prompt of the store (the repository holds a test stub only) and answers claims in the register's fields plus `basis`
@@ -38,13 +41,15 @@
     the document, and the former parser rules (use-of-funds cues, acquisition-channel cues, turnover, the year label under a
     bar, the pipeline column) as post-checks. A failed check flags the claim and never deletes or retypes it; a flagged claim is
     listed in the review tab, not in the main claims list. A page call is outside the USD 5 daily cap and inside the tester's
-    monthly allowance, as a mapping call is. The consent explainer on the Upload page says: "The AI reads every page of uploaded
-    decks to find plan figures." The logging rule (17) is unchanged: no deck text in logs; model JSON output may be stored.
+    monthly allowance, as a mapping call is. The logging rule (17) is unchanged: no deck text, no page image in logs or MongoDB;
+    model JSON output may be stored. The owner page shows image tokens and image cost apart from text tokens and cost.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt
     version, model version, content hash, token counts and cost. Never deck text sent to
-    the model. Delete audit removes model outputs. Rules 16–18: see docs/architecture.md.
+    the model. Delete audit removes model outputs. The one stored copy of client data is the uploaded deck file, collection
+    `deck_files`, kept only while consent is ticked and DECK_PIPELINE is "ai", so that page images can be drawn from it
+    (docs/design/page-image.md); it is deleted with its deck and with the audit (rule 22). Rules 16–18: see docs/architecture.md.
 18. Model output never becomes Verified on its own. Python must match every value to a
     source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
 
@@ -120,4 +125,6 @@
     backend/tests/fixtures/prompts/, which tests load into a fake store. Tests do not assert a prompt's wording.
 31. The page reader (`page_claims`) runs only on a ZDR-eligible model (Sonnet or Opus, never Fable or Mythos), because deck pages go to
     it as printed, without customer-name masking, under the API organisation's zero-data-retention arrangement
-    (docs/design/page-image.md). The gateway refuses the step on any other model.
+    (docs/design/page-image.md). The gateway refuses the step on any model outside the allow-list of Sonnet and Opus families
+    (gateway.PAGE_READER_MODELS). A model off the list is logged as an error at startup and the server stays up; every page read is then
+    blocked before anything is converted, drawn or sent, and the panel says "AI read: blocked – model not permitted".

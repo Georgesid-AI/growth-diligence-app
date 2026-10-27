@@ -125,7 +125,7 @@ async def rows_b(db, blocks, file, adapter, audit_id=None):
     await db["audits"].insert_one({"id": audit_id, "company_name": Path(file).stem, "structure_reading_consent": True})
     grids = page_grids.page_grids(blocks)
     with mock.patch.dict(os.environ, {"DECK_PIPELINE": "ai"}):     # the gateway refuses a page call under the default switch
-        reads = await pipeline.read_pages(db, audit_id, "d1", grids, Path(file).stem, {}, adapter=adapter, sleep=_no_sleep)
+        reads = await pipeline.read_pages(db, audit_id, "d1", grids, _replay_image, adapter=adapter, sleep=_no_sleep)
     out, statuses = [], []
     for batch, result in reads:
         statuses.append(result.status)
@@ -149,12 +149,18 @@ async def rows_b(db, blocks, file, adapter, audit_id=None):
                 out.append({"page": page, "value": item["value"], "value_high": item["value_high"], "unit": item["unit"],
                             "type": item["metric"], "target_date": item["period"], "cell": item["value_cell"],
                             "status": item["status"], "cause": cause(claim, item), "text": texts.get(item["value_cell"])})
-    return out, {"pages": len(grids), "sent": len(pipeline.redacted_pages(grids, Path(file).stem, {})), "batches": len(reads),
+    return out, {"pages": len(grids), "sent": len(pipeline.sendable_pages(grids)), "batches": len(reads),
                  "read": statuses.count("read"), "not_read": len(statuses) - statuses.count("read")}
 
 
 async def _no_sleep(_seconds):
     return None
+
+
+async def _replay_image(_page):
+    """The gateway wants an image with every page; a replay of recorded replies sends nothing, so a 1 x 1 PNG stands in."""
+    import base64
+    return base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==")
 
 
 # ---------------------------------------------------------------------------

@@ -785,7 +785,7 @@ def page_claims_output_schema() -> dict:
     }
 
 
-StructureStatus = Literal["read", "not_read", "too_large", "truncated", "stopped", "no_consent", "refused"]
+StructureStatus = Literal["read", "not_read", "too_large", "truncated", "stopped", "no_consent", "refused", "blocked"]
 
 
 class StructureRead(BaseModel):
@@ -810,6 +810,8 @@ class StructureRead(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     estimated_cost_usd: float = 0.0
+    image_tokens: int = 0                   # the part of input_tokens the page images account for (page-image.md section 6)
+    image_cost_usd: float = 0.0             # ... and of estimated_cost_usd
     prompt_version: Optional[str] = None
     model: Optional[str] = None
 
@@ -820,6 +822,8 @@ class DeckUsage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     estimated_cost_usd: float = 0.0
+    image_tokens: int = 0           # included in input_tokens
+    image_cost_usd: float = 0.0     # included in estimated_cost_usd
 
 
 UsageResponse.model_rebuild()

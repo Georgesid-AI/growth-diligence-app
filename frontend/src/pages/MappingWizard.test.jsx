@@ -416,7 +416,7 @@ describe("the type, the sheet and the miss (2026-10-16)", () => {
     expect(S2_EXPLAINER_CONSENT).toContain("When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.");
     expect(S2_EXPLAINER_CONSENT).not.toMatch(/company name/);
     // George, 2026-10-22 (docs/design/ai-reads-rules-check.md): the page reader is named in the explainer, one sentence, last.
-    expect(S2_EXPLAINER_CONSENT.endsWith(" The AI reads every page of uploaded decks to find plan figures.")).toBe(true);
+    expect(S2_EXPLAINER_CONSENT).toContain(" The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction. ");
   });
 
   test("the bubble shows the detected type with its source and a Change button, the sheet read, and the units note", async () => {

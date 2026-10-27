@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import page_images
 import pytest
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -202,7 +203,7 @@ def test_the_page_read_saves_its_progress_before_and_after_each_batch(reading):
     upload_deck(reading)
     grids = pipeline.page_grids_mod.page_grids(deck_doc(reading)["blocks"])
     import asyncio
-    asyncio.run(pipeline.read_pages(reading.db, AUDIT, "d", grids, "Fixture Target Ltd", {}, adapter=reading.state["adapter"],
+    asyncio.run(pipeline.read_pages(reading.db, AUDIT, "d", grids, page_images.image_for, adapter=reading.state["adapter"],
                                     sleep=t._noop_sleep, progress=progress))
     assert calls == [(0, 1), (1, 1)]
 
@@ -219,3 +220,90 @@ def test_item_3_a_revenue_file_saved_as_a_statement_line_map_has_no_customer_col
     reading.db["datasets"].docs[0].update(mapping={}, sheet_map={"lines": []}, columns_state=None)
     upload_deck(reading)
     assert len(page_calls(reading)) == 1 and deck_doc(reading)["ai_status"] == "read"
+
+
+# ---------------------------------------------------------------------------
+# The stored file the page images are drawn from (docs/design/page-image.md section 1)
+# ---------------------------------------------------------------------------
+def stored_files(client):
+    return client.db["deck_files"].docs
+
+
+def test_the_upload_keeps_the_file_for_the_page_images_and_a_new_upload_of_it_replaces_the_stored_one(reading):
+    upload_deck(reading)
+    first, = stored_files(reading)
+    assert first["deck_id"] == deck_doc(reading)["deck_id"] and first["data"] == DECK and first["format"] == "pdf"
+    second_deck = pdf_page(FIGURE_PAGE + [(50, 440, 12, "97% margins")])
+    reading.post(f"/api/audits/{AUDIT}/decks/upload", files={"file": ("deck.pdf", second_deck)})
+    kept, = stored_files(reading)
+    assert kept["data"] == second_deck and kept["deck_id"] == deck_doc(reading)["deck_id"], "the earlier upload's file is gone"
+
+
+def test_removing_the_deck_or_deleting_the_audit_removes_the_stored_file(reading):
+    upload_deck(reading)
+    other = pdf_page([(50, 560, 20, "Other"), (50, 500, 12, "12 customers")])
+    reading.post(f"/api/audits/{AUDIT}/decks/upload", files={"file": ("other.pdf", other)})
+    assert len(stored_files(reading)) == 2
+    gone = [d["deck_id"] for d in reading.db[decks.TEXT_COLLECTION].docs if d["file"] == "deck.pdf"][0]
+    assert reading.delete(f"/api/audits/{AUDIT}/decks/{gone}").status_code == 200
+    assert [f["data"] for f in stored_files(reading)] == [other]
+    name = reading.db["audits"].docs[0]["company_name"]
+    assert reading.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": name}).status_code == 200
+    assert stored_files(reading) == [], "delete audit removes every stored file (rule 22)"
+
+
+def test_the_file_is_stored_only_when_consent_is_ticked_and_the_page_pipeline_is_on(reading, monkeypatch):
+    """Nothing about a deck is kept for page images unless a page read can happen (rule 17 as amended)."""
+    reading.db["audits"].docs[0]["structure_reading_consent"] = False
+    upload_deck(reading)
+    assert stored_files(reading) == [], "consent unticked: no copy of the file"
+    reading.db["audits"].docs[0]["structure_reading_consent"] = True
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
+    upload_deck(reading)
+    assert stored_files(reading) == [], "DECK_PIPELINE=rules: no page read, no copy of the file"
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    upload_deck(reading)
+    stored, = stored_files(reading)
+    assert stored["data"] == DECK
+
+
+def test_unticking_consent_removes_the_stored_deck_files_and_ticking_again_says_the_images_need_the_file(reading, monkeypatch):
+    from app.decks import render
+
+    async def prepared(db, audit_id, deck_id, fmt, pages):          # the real prepare's first step; the suite's stub always finds a file
+        if await render._load(db, audit_id, deck_id, "original") is None:
+            raise render.PageImageError(render.NO_FILE)
+        return b"synthetic pdf"
+    monkeypatch.setattr(render, "prepare", prepared)
+    upload_file(reading, "revenue.csv")
+    upload_deck(reading)
+    assert len(stored_files(reading)) == 1 and not listed(reading).get("images_need_file")
+    assert reading.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": False}).status_code == 200
+    assert stored_files(reading) == [], "unticked: the stored deck files go with the permission to read"
+    assert reading.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True}).status_code == 200
+    assert listed(reading)["images_need_file"] is True and listed(reading)["images_unavailable"] is True, "ticked again with no file: the panel asks for a re-upload"
+    upload_deck(reading)
+    assert len(stored_files(reading)) == 1 and not listed(reading).get("images_need_file")
+
+
+def test_a_save_that_leaves_consent_ticked_keeps_the_stored_deck_files(reading):
+    upload_deck(reading)
+    reading.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True})
+    reading.put(f"/api/audits/{AUDIT}", json={"company_name": "Renamed"})
+    assert len(stored_files(reading)) == 1
+
+
+def test_reseeding_the_demo_audits_removes_the_stored_deck_files_of_the_old_ones(monkeypatch):
+    import asyncio
+    import server
+    db = t.FakeDB()
+    monkeypatch.setattr(server, "db", db)
+    asyncio.run(server.seed_demo())
+    old = [a["id"] for a in db["audits"].docs if a.get("demo")]
+    assert old
+    db["deck_files"].docs.extend([{"audit_id": old[0], "deck_id": "d", "kind": "original", "part": 0, "data": b"x"},
+                                  {"audit_id": "someone-elses", "deck_id": "d", "kind": "original", "part": 0, "data": b"y"}])
+    for audit in db["audits"].docs:
+        audit.pop("seed_version", None)
+    asyncio.run(server.seed_demo())
+    assert [f["audit_id"] for f in db["deck_files"].docs] == ["someone-elses"]

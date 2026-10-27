@@ -214,6 +214,7 @@ READ, NOT_READ, STOPPED, PYTHON_ONLY = "read", "not_read", "stopped", "python_on
 CONSENT_OFF_LINE = ("Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. "
                     "Tick consent on the Upload page to read it, or use Add claim.")
 PROMPT_MISSING = "prompt_missing"       # the page reader found no deck_reading prompt in the store (review of PR 164, M6)
+BLOCKED = "blocked"                     # the configured page-reader model is not on the allow-list (page-image.md section 2); nothing was sent
 WAITING_TEXT = "waiting for revenue file"
 logger = logging.getLogger("growth.structures")
 _UNITS = {"%", "x", "days", "months", "years"}
@@ -441,6 +442,17 @@ async def queue_prompt_missing(db, audit_id: str) -> List[str]:
     try:
         await prompt_store.load(db, gateway.PAGE_CLAIMS_PROMPT)
     except prompt_store.PromptMissing:
+        return []
+    for d in found:
+        await _deck_status(db, audit_id, d["deck_id"], "reading")
+    return [d["deck_id"] for d in found]
+
+
+async def queue_blocked(db, audit_id: str) -> List[str]:
+    """Run audit reads again every deck whose page read was blocked (the page-reader model was not permitted) once the configured model
+    is on the allow-list. While it is not, nothing is queued."""
+    found = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": BLOCKED}, {"_id": 0, "deck_id": 1}).to_list(1000)
+    if not found or gateway.page_reader_problem():
         return []
     for d in found:
         await _deck_status(db, audit_id, d["deck_id"], "reading")
