@@ -252,6 +252,21 @@ def test_removing_the_deck_or_deleting_the_audit_removes_the_stored_file(reading
     assert stored_files(reading) == [], "delete audit removes every stored file (rule 22)"
 
 
+def test_the_file_is_stored_only_when_consent_is_ticked_and_the_page_pipeline_is_on(reading, monkeypatch):
+    """Nothing about a deck is kept for page images unless a page read can happen (rule 17 as amended)."""
+    reading.db["audits"].docs[0]["structure_reading_consent"] = False
+    upload_deck(reading)
+    assert stored_files(reading) == [], "consent unticked: no copy of the file"
+    reading.db["audits"].docs[0]["structure_reading_consent"] = True
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
+    upload_deck(reading)
+    assert stored_files(reading) == [], "DECK_PIPELINE=rules: no page read, no copy of the file"
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    upload_deck(reading)
+    stored, = stored_files(reading)
+    assert stored["data"] == DECK
+
+
 def test_unticking_consent_removes_the_stored_deck_files_and_ticking_again_says_the_images_need_the_file(reading, monkeypatch):
     from app.decks import render
 
@@ -262,13 +277,13 @@ def test_unticking_consent_removes_the_stored_deck_files_and_ticking_again_says_
     monkeypatch.setattr(render, "prepare", prepared)
     upload_file(reading, "revenue.csv")
     upload_deck(reading)
-    assert len(stored_files(reading)) == 1 and listed(reading)["images_need_file"] is False
+    assert len(stored_files(reading)) == 1 and not listed(reading).get("images_need_file")
     assert reading.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": False}).status_code == 200
     assert stored_files(reading) == [], "unticked: the stored deck files go with the permission to read"
     assert reading.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True}).status_code == 200
-    assert listed(reading)["images_need_file"] is True, "ticked again with no file: the panel asks for a re-upload"
+    assert listed(reading)["images_need_file"] is True and listed(reading)["images_unavailable"] is True, "ticked again with no file: the panel asks for a re-upload"
     upload_deck(reading)
-    assert len(stored_files(reading)) == 1 and listed(reading)["images_need_file"] is False
+    assert len(stored_files(reading)) == 1 and not listed(reading).get("images_need_file")
 
 
 def test_a_save_that_leaves_consent_ticked_keeps_the_stored_deck_files(reading):

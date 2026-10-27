@@ -258,9 +258,9 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "reading", ai_message: "restarted" })).toEqual(["AI reading: restarted"]);
   });
 
-  test("a deck whose file was removed with the consent says that images need the file, after the deck line", () => {
-    const deck = { ai_status: "not_read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 0, pages_rejected: 5, unread_pages: [], images_need_file: true };
-    expect(deckRunLog(deck)).toEqual(["5 pages parsed · 5 with figures · AI read: done, 0 read, 5 rejected",
+  test("a deck whose file was removed with the consent says that images need the file, in place of the general text-only line", () => {
+    const deck = { ai_status: "not_read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, unread_pages: [], images_unavailable: true, images_need_file: true };
+    expect(deckRunLog(deck)).toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected",
       "Images need the file: re-upload the deck to read pages with images"]);
     expect(deckRunLog({ ...deck, images_need_file: false }).join(" ")).not.toContain("Images need the file");
   });
@@ -274,6 +274,13 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     // the last run's unread pages are not shown while a new one reads
     expect(deckRunLog({ ai_status: "reading", pages: 5, page_unit: "page", figure_pages: 5, read_progress: { done: 1, total: 4 }, unread_pages: [4] }))
       .toEqual(["5 pages parsed · 5 with figures · AI read: page 2 of 4"]);
+  });
+
+  test("the run log says when page images were unavailable and the pages went as text only", () => {
+    const deck = { ai_status: "read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, skipped_pages: [], unread_pages: [] };
+    expect(deckRunLog({ ...deck, images_unavailable: true }))
+      .toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected", "page images unavailable for this file; text only"]);
+    expect(deckRunLog({ ...deck, images_unavailable: false }).join()).not.toContain("images unavailable");
   });
 
   test("the run log counts the periods Python corrected from the header cells", () => {

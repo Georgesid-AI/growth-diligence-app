@@ -755,15 +755,15 @@ with `structure_reading_consent` true, logged in `consent_log` as before (the cr
 `structure_reading_consent`; the dialog sends none.
 
 **Upload page.** The consent tick moves into the set-up section at the top (both the Map and the Run audit pages use it).
-Label, word for word (amended 2026-10-22, George, PR #158 decision 1b, with the page_claims step of docs/design/ai-reads-rules-check.md;
+Label, word for word (amended 2026-10-22, George, PR #158 decision 1b, with the page_claims step of docs/design/ai-reads-rules-check.md, and 2026-10-27, docs/design/page-image.md: deck pages as printed, as text and as an image;
 until 2026-10-22 it read "Use AI to read deck tables and charts and to suggest column matches. Untick if the client requires
 code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way."): "Use AI to read deck
 tables, charts and the text of pages that carry a figure, and to suggest column matches. Names, contact details and customer names
-are masked before anything is sent. Untick if the client requires code-based extraction only; this may find fewer figures.
-Narratives use AI on computed results either way." Under the set-up
+are masked in spreadsheet data before it is sent; deck pages are sent as printed, as text and as an image, with no redaction. Untick
+if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way." Under the set-up
 fields, one line: "Every extracted number is checked by code against its source cell. Numbers that don't match are marked
 unverified for review." Amended 2026-10-22 (George, docs/design/ai-reads-rules-check.md, §28): the consent explainer (S2, `S2_EXPLAINER_CONSENT`)
-gains one last sentence, word for word: "The AI reads every page of uploaded decks to find plan figures." The old explainer (`CONSENT_EXPLAINER` and its "What is sent" toggle) is removed with the dialog block that
+ends, since 2026-10-27 (docs/design/page-image.md sections 1 to 3), with these sentences, word for word: "The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction. Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training. Uploaded files are stored for this audit and deleted with it." (earlier: "The AI reads every page of uploaded decks to find plan figures.") The old explainer (`CONSENT_EXPLAINER` and its "What is sent" toggle) is removed with the dialog block that
 used it. The consent change is saved like the other set-up fields (PUT /audits/{id}) and logged in `consent_log` as today.
 
 **Client name removed.** The field is gone from the dialog, `AuditCreate`/`AuditUpdate` (a body that still sends it is ignored),
@@ -778,8 +778,7 @@ monthly allowance and the daily caps), in the background after the response. A d
 upload. A structure already read is served from the cache, and a candidate already listed is not listed twice. Data files already
 mapped are not re-mapped. Unticking stops new AI calls only (`process_deck` and the mapping path check the flag) and keeps every
 result already read; it also deletes the audit's stored deck files (`deck_files`), because the file is kept only for the page images. A consent ticked
-again finds no file for a deck uploaded before: its pages are "not read" with the reason "page image unavailable: file not stored", and the deck panel
-adds the line "Images need the file: re-upload the deck to read pages with images" (`images_need_file` in the deck list). A re-upload stores the file and reads the deck. The line "Uploaded before AI reading was enabled; re-upload to read." and the field `uploaded_before_consent`
+again finds no file for a deck uploaded before: its pages go as text alone (never "not read" for that), and the deck panel says "Images need the file: re-upload the deck to read pages with images" in place of the general text-only line (`images_need_file` in the deck list). A re-upload stores the file and reads the deck with images. The line "Uploaded before AI reading was enabled; re-upload to read." and the field `uploaded_before_consent`
 are removed.
 
 **Decided (engineering, rule 19).** The re-read touches no allowance counter of files (no file is uploaded); the allowance

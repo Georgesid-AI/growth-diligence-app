@@ -8,7 +8,8 @@ export const S2_EXPLAINER_CONSENT =
   "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. "
   + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name. "
   + "The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction. "
-  + "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.";
+  + "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training. "
+  + "Uploaded files are stored for this audit and deleted with it.";
   // George, 2026-10-22 (docs/design/ai-reads-rules-check.md); 2026-10-27 (docs/design/page-image.md sections 2 and 3: as printed, the image, the disclosure line word for word)
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";

@@ -1,6 +1,6 @@
-2026-10-27 · claude/page-image-reading-impl-y3u3iy (four Medium fixes from the Opus re-check of PR 194)
-Deleted: nothing; the stored deck file was kept for page images only, so it now goes when the permission to read goes.
-Decided: unticking consent deletes the audit's deck_files (spec chat-upload.md section 23 reworded, it was silent); a demo reseed deletes them with the demo audits; a deck ticked again with no file shows "Images need the file: re-upload the deck to read pages with images" from a deck-list flag read off the NO_FILE page reason; the consistency script checks the model allow-list before any conversion or drawing.
-Slow or unclear: the suite's autouse stub of render.prepare always finds a file, so a missing-file test has to put the real first step back; full backend suite 3.5 minutes.
-Root cause and rule: a new store (deck_files) was added with delete paths for deck and audit only, not for the other two ways data leaves the app (consent withdrawn, demo reseed); rule to add: every new collection lists its delete paths against the unticking, reseed, deck, audit and re-upload events in the same PR.
-Process change to propose: a checklist line in the PR template, "new collection: which events delete it?".
+Date and branch: 2026-10-27, claude/page-image-reading-impl-y3u3iy (review findings on PR 194).
+Deleted: nothing; the "not read" wording in the render.py docstring, the old consent label and the old explainer sentence in the spec.
+Decided: the deck's format is read from its record and reaches render.prepare; PDFium calls (page_count, render_page) run behind one lock in render.py while the model calls stay parallel; the allow-list check runs first in process_deck_pages, so a blocked model converts, draws and sends nothing; the deck file is stored only when consent is ticked and DECK_PIPELINE is "ai"; rule 17, architecture.md, rule 31, page-image.md and chat-upload.md follow; the consent label says "as printed, as text and as an image, with no redaction".
+Slow or unclear: nothing; a test marked real_render turns off conftest's synthetic render for that test only.
+Root cause and rule: the first build projected deck fields without "format", so every deck went to the renderer as a PDF, and the render tests never ran the page pipeline with a real prepare; a field read from a record needs a test that stores a non-default value and sees it arrive.
+Process change to propose: when a change adds a field to a collection read in a projection, list the projections in the PR description so a missing field shows up in review.

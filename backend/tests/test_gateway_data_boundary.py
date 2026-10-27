@@ -3149,7 +3149,7 @@ def test_a_sheet_step_keeps_its_header_text_the_customer_header_rule_is_for_deck
 # `p<page>r<row>c<col>: <text>` lines through one builder (structures.pages.batch_text) with one PNG of each whole page in the same
 # request, at most 5 pages per call, only while DECK_PIPELINE is "ai" and only to a Sonnet or Opus model. A page with no figure as
 # digits never goes (a number-word is no figure; a line that is only the page's own number is none); a line over 200 characters is
-# left out by the sender and refused by the gateway; a figure outside a cell line is refused; a page with no image is refused. The
+# left out by the sender and refused by the gateway; a figure outside a cell line is refused; a page that cannot be drawn goes as text alone (the deck's `images_unavailable`, a flag). The
 # reply holds closed words, numbers and cell ids only; nothing sent, the label cell's text included, is stored or logged.
 # ---------------------------------------------------------------------------
 from unittest import mock  # noqa: E402
@@ -3194,7 +3194,6 @@ def test_a_page_text_with_a_figure_as_digits_reaches_the_provider_as_printed_wit
     assert all(re.match(r"^p\d+r\d+c\d+( title)?: ", line) for line in sent["text"].splitlines())
     assert adapter.requests[-1]["cache_system"] is True, "the fixed prompt is marked for the provider's prompt cache"
     assert adapter.requests[-1]["images"] == [page_images.png(1)], "the page image goes in the same request as the text"
-    assert gateway.PAGE_IMAGE_RULE in adapter.requests[-1]["system"], "the reading instructions carry the printed-values-only rule"
     assert [c["value_cell"] for c in result.claims] == ["p5r2c1", "p5r3c1"]
 
 
@@ -3264,11 +3263,12 @@ def test_a_page_goes_as_printed_names_customers_emails_phones_and_file_names_inc
     assert "Northwind" not in " ".join(c["text"] for c in out)
 
 
-def test_a_page_read_without_its_image_is_refused_and_sends_nothing():
+def test_a_page_read_without_its_image_goes_as_text_alone():
     adapter = t.FakeAdapter(replies=[PAGE_REPLY])
     result = asyncio.run(gateway.read_structure(_structure_db(), STRUCTURE_AUDIT["id"], GOOD_PAGE, PAGE_CLAIMS, adapter=adapter,
                                                 sleep=t._noop_sleep))
-    assert (result.status, result.reason, adapter.calls, getattr(adapter, "counted", 0)) == ("refused", "refused: no_image", 0, 0)
+    assert result.status == "read" and adapter.calls == 1 and not adapter.requests[-1].get("images")
+    assert json.loads(adapter.payloads[0]) == {"type": PAGE_CLAIMS, "text": GOOD_PAGE}
 
 
 def test_the_image_goes_only_with_a_page_read():
@@ -3711,6 +3711,65 @@ def test_deck_page_reads_log_and_store_page_numbers_and_counts_only(monkeypatch,
     assert lines == [f"page 3 not read: run_id={AUDIT} deck_id=d1 status=not_read reason=-"]
     for needle in ("Traction", "Paying Users", "150,000", "Zero2Hero"):
         assert needle not in json.dumps({k: doc[k] for k in ("skipped_pages", "unread_pages", "retry_pages")}) + " ".join(lines)
+
+
+@pytest.mark.real_render
+def test_the_page_image_fallback_and_the_blocked_read_log_codes_only_and_store_flags_and_closed_words(monkeypatch, caplog):
+    """Page images (2026-10-27): `images_unavailable` is a flag the gateway never reads; a deck read blocked by the model allow-list is
+    status "blocked" with the panel line PAGE_READER_BLOCKED; the log lines of the drawing are run id, deck id, page, a format
+    word and counts, never a file name or a line of the deck."""
+    import logging
+    from app.decks import render
+    from test_page_reads_speed import Gauge, _page_db, _run_deck, many_pages
+    from test_structure_reading import AUDIT
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    caplog.set_level(logging.INFO)
+    assert "images_unavailable" not in decks.GATEWAY_READABLE_FIELDS and "images_unavailable" not in gateway.OUTBOUND_FIELDS
+    assert "images_need_file" not in decks.GATEWAY_READABLE_FIELDS and "images_need_file" not in gateway.OUTBOUND_FIELDS
+    # 1. a deck that cannot be drawn, then a page that cannot: the two lines of pages.py
+    monkeypatch.setattr(render, "prepare", lambda *a: (_ for _ in ()).throw(render.PageImageError(render.NOT_RENDERED)))
+    db = _page_db(many_pages(2))
+    _run_deck(db, Gauge(hold=0.0))
+    doc, = db[decks.TEXT_COLLECTION].docs
+    assert doc["images_unavailable"] is True and [r["status"] for r in doc["page_reads"]] == ["read", "read"]
+
+    async def prepared(*args):
+        return b"pdf"
+    monkeypatch.setattr(render, "prepare", prepared)
+    monkeypatch.setattr(render, "render_page", lambda pdf, page: (_ for _ in ()).throw(render.PageImageError(render.NOT_RENDERED)))
+    _run_deck(_page_db(many_pages(1)), Gauge(hold=0.0))
+    # 2. the three lines of render.py: no converter, a conversion that fails, a page count that differs
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    with pytest.raises(render.PageImageError):
+        render.to_pdf(b"x", "pptx")
+    monkeypatch.undo()
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    monkeypatch.setattr(render, "to_pdf", lambda content, fmt: b"pdf")
+    monkeypatch.setattr(render, "page_count", lambda pdf: 7)
+    stored = _page_db(many_pages(1))
+    asyncio.run(render.save(stored, AUDIT, "d1", b"x", "pdf"))
+    with pytest.raises(render.PageImageError):
+        asyncio.run(render.prepare(stored, AUDIT, "d1", "pdf", 3))
+    lines = [r.getMessage() for r in caplog.records if r.name in ("growth.structures", "growth.decks") and r.getMessage().startswith("page image")]
+    shapes = (rf"page images unavailable: run_id={AUDIT} deck_id=d1", rf"page image unavailable: run_id={AUDIT} deck_id=d1 page=\d+",
+              r"page images: no converter for format=pptx", r"page images: format=pdf rendered 7 pages, parsed 3")
+    for shape in shapes:
+        assert [line for line in lines if re.fullmatch(shape, line)], f"no log line like {shape!r}: {lines}"
+    assert all(any(re.fullmatch(shape, line) for shape in shapes) for line in lines), lines
+    for needle in ("Traction", "Paying Users", "150,000", "deck.pdf", "Zero2Hero"):
+        assert needle not in caplog.text, f"{needle!r} in the log"
+    # 3. the model allow-list: status "blocked", the panel line, nothing sent, a code-only log line
+    caplog.clear()
+    monkeypatch.setenv("PAGE_READER_MODEL", "claude-fable-5-1")
+    blocked, adapter = _page_db(many_pages(2)), Gauge(hold=0.0)
+    _run_deck(blocked, adapter)
+    doc, = blocked[decks.TEXT_COLLECTION].docs
+    assert adapter.calls == 0 and doc["ai_status"] == "blocked" and doc["ai_message"] == gateway.PAGE_READER_BLOCKED
+    assert [r["status"] for r in doc["page_reads"]] == ["blocked", "blocked"] and doc["images_unavailable"] is False
+    assert all(r["reason"] == gateway.PAGE_READER_BLOCKED for r in doc["page_reads"]), "a closed text, no deck line"
+    page_lines = [r.getMessage() for r in caplog.records if re.match(r"page \d+ ", r.getMessage())]
+    assert page_lines and all(re.fullmatch(rf"page \d+ not read: run_id={AUDIT} deck_id=d1 status=blocked reason=-", line) for line in page_lines)
+    assert "page reader model claude-fable-5-1 not permitted" in caplog.text and "Traction" not in caplog.text
 
 
 # --- 2026-10-23 (engine contract 8): the monthly gross revenue churn series is the register's, not the narrative's --------------

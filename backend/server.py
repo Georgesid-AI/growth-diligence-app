@@ -1892,7 +1892,7 @@ async def _upload_ai_status(audit_id: str) -> Optional[str]:
 
 @api.post("/audits/{audit_id}/decks/upload")
 async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...)):
-    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1})
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1, "structure_reading_consent": 1})
     if not audit:
         raise HTTPException(404, "Audit not found")
     content = await file.read(deck_parser.MAX_BYTES + 1)
@@ -1926,7 +1926,10 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
         "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"], "layout": deck.get("layout") or [],
         "structures": deck["structures"], "ai_status": "reading", "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "figure_pages": figure_pages})
-    await deck_render.save(db, audit_id, deck_id, content, deck["format"])        # the page reader draws each page from it (page-image.md)
+    # The page reader draws each page from the file (page-image.md), so it is kept only when a page read can happen: consent ticked and
+    # the page pipeline on. A deck uploaded under any other setting leaves no copy of the file behind.
+    if audit.get("structure_reading_consent") is True and structures.deck_pipeline() == "ai":
+        await deck_render.save(db, audit_id, deck_id, content, deck["format"])
     for order, c in enumerate(candidates):
         await db[decks.CANDIDATES_COLLECTION].insert_one(
             {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
@@ -1950,7 +1953,7 @@ async def list_deck_candidates(audit_id: str):
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
-                   "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "diagnostics": 1}
+                   "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "images_unavailable": 1, "images_need_file": 1, "diagnostics": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     for d in found:
@@ -1960,7 +1963,6 @@ async def list_deck_candidates(audit_id: str):
         reads = d.pop("page_reads", None) or []
         d["pages_read"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") == "read")
         d["pages_rejected"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") not in ("read", "stopped"))
-        d["images_need_file"] = any(r.get("reason") == deck_render.NO_FILE for r in reads)     # consent ticked after the file was removed
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
     # The claims Python enters on its own read as approved ("auto"), the ones a check asks about as pending (simplified-flow.md section 2).

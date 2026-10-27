@@ -299,8 +299,9 @@ describe("wording", () => {
 
   test("the consent explainer says deck pages go as printed with an image of the page and no redaction, and carries the disclosure line word for word", () => {
     expect(S2_EXPLAINER_CONSENT).toContain("The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction.");
-    expect(S2_EXPLAINER_CONSENT.endsWith(
-      "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.")).toBe(true);
+    expect(S2_EXPLAINER_CONSENT).toContain(
+      "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.");
+    expect(S2_EXPLAINER_CONSENT.endsWith("Uploaded files are stored for this audit and deleted with it.")).toBe(true);
   });
 });
 

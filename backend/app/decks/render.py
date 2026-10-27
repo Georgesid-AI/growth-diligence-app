@@ -3,14 +3,19 @@
 The upload keeps the file's bytes (collection `deck_files`, in parts under the 16 MB document limit; removed with the deck and with
 the audit). A PDF is rendered as it is; a .pptx or .docx is first turned into a PDF by LibreOffice (headless), once per read. Each
 page is rendered whole, 1,568 px on the long edge, no crops. A deck whose rendering does not have as many pages as the parser read is
-not drawn at all (hidden slides, or a Word page break that falls elsewhere): a wrong page image is worse than none, so the pages are
-"not read" with the reason word below.
+not drawn at all (hidden slides, or a Word page break that falls elsewhere): a wrong page image is worse than none, so its pages go to
+the model as text alone and the deck panel says "page images unavailable for this file; text only" (structures.pages). The reason
+words below are for the log and for that choice; no page is "not read" because of them.
+
+PDFium is not thread safe: every call into it (page_count, render_page) runs behind the one lock PDFIUM_LOCK, so pages are drawn one
+at a time whatever the number of threads asking; the model calls around them stay parallel.
 """
 import io
 import logging
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from typing import List, Optional
 
@@ -20,6 +25,7 @@ COLLECTION = "deck_files"
 LONG_EDGE = 1568                    # px of the page's long side
 PART_BYTES = 8 * 1024 * 1024        # a part of the stored file, well under MongoDB's 16 MB document limit
 CONVERT_TIMEOUT_SECONDS = 120
+PDFIUM_LOCK = threading.Lock()      # PDFium is not thread safe: one document is opened, drawn and closed at a time
 NO_FILE = "page image unavailable: file not stored"
 NOT_RENDERED = "page image unavailable: file not rendered"
 PAGE_COUNT_DIFFERS = "page image unavailable: page count differs"
@@ -76,29 +82,31 @@ def to_pdf(content: bytes, fmt: str) -> bytes:
 
 def page_count(pdf: bytes) -> int:
     import pypdfium2 as pdfium
-    document = pdfium.PdfDocument(pdf)
-    try:
-        return len(document)
-    finally:
-        document.close()
+    with PDFIUM_LOCK:
+        document = pdfium.PdfDocument(pdf)
+        try:
+            return len(document)
+        finally:
+            document.close()
 
 
 def render_page(pdf: bytes, page: int) -> bytes:
     """The PNG of page `page` (1-based) of a PDF, whole, with its long edge at LONG_EDGE px."""
     import pypdfium2 as pdfium
-    document = pdfium.PdfDocument(pdf)
-    try:
-        if not 1 <= page <= len(document):
-            raise PageImageError(PAGE_COUNT_DIFFERS)
-        sheet = document[page - 1]
-        width, height = sheet.get_size()
-        image = sheet.render(scale=LONG_EDGE / max(width, height)).to_pil().convert("RGB")
-    except PageImageError:
-        raise
-    except Exception:
-        raise PageImageError(NOT_RENDERED)
-    finally:
-        document.close()
+    with PDFIUM_LOCK:
+        document = pdfium.PdfDocument(pdf)
+        try:
+            if not 1 <= page <= len(document):
+                raise PageImageError(PAGE_COUNT_DIFFERS)
+            sheet = document[page - 1]
+            width, height = sheet.get_size()
+            image = sheet.render(scale=LONG_EDGE / max(width, height)).to_pil().convert("RGB")
+        except PageImageError:
+            raise
+        except Exception:
+            raise PageImageError(NOT_RENDERED)
+        finally:
+            document.close()
     target = (LONG_EDGE, max(1, round(height * LONG_EDGE / width))) if width >= height else (max(1, round(width * LONG_EDGE / height)), LONG_EDGE)
     if image.size != target:
         image = image.resize(target)

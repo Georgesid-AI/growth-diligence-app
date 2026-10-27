@@ -1450,8 +1450,6 @@ STRUCTURE_MODEL = "claude-sonnet-5-5"
 # default (STRUCTURE_MODEL); a name outside the allow-list blocks every page read, at startup (server.py) and before each read.
 PAGE_READER_MODELS = re.compile(r"claude-(?:sonnet|opus)(?:-\d+)+(?:-\d{8})?")
 PAGE_READER_BLOCKED = "AI read: blocked – model not permitted"
-# Added to the reading instructions of every page read (page-image.md section 1); sent with the page image in the same request.
-PAGE_IMAGE_RULE = "Read printed values only. Never estimate a value from an unlabelled bar, point or slice; such a figure is not a claim."
 STRUCTURE_PROMPT = "structure_reading"
 PAGE_CLAIMS_PROMPT = "deck_reading"       # the page reader's prompt in the store (docs/specs/prompt-store.md); the repo holds a stub
 FILE_TYPE_PROMPT = "file_type"
@@ -1537,11 +1535,10 @@ async def load_structure_context(db, audit_id: str) -> dict:
 def structure_key(text: str, structure_type: str, prompt_tag: str, model: str, images: Optional[List[bytes]] = None) -> str:
     """sha256 of the text (with its item list), its type, the prompt cache tag, the model and the hash of the
     output schema its type is sent (structure-labelling.md section 3): a reading stored under another schema is
-    never served. A page read adds the hash of its images and of the image rule, so a page read without its image, or under
-    another rule, is not served for one with it."""
+    never served. A page read adds the hash of its images, so a page read without its image is not served for one with it."""
     tag = f"{prompt_tag}:{schema_hash(structure_type)}"
     if images:
-        tag += ":img:" + content_hash(PAGE_IMAGE_RULE + "".join(hashlib.sha256(i).hexdigest() for i in images))
+        tag += ":img:" + content_hash("".join(hashlib.sha256(i).hexdigest() for i in images))
     return cache.cache_key(STRUCTURE_STEP, structure_type, tag, model, text)
 
 
@@ -1936,8 +1933,8 @@ async def read_structure(
     tokens of the reads in flight counted at their worst case; a read the cap would refuse only because of them waits for them,
     so the cap stops the same call a one-by-one read would stop. `on_rate_limit` is called at every 429 the provider answers.
 
-    A page read carries `images`, one PNG of each whole page, in the same request as the text (page-image.md); a page read with no
-    image is refused ("no_image"). The configured page-reader model must be on the allow-list (page_reader_problem) before each
+    A page read carries `images`, one PNG of each whole page, in the same request as the text (page-image.md); a page the file
+    cannot be drawn for goes as text alone (page-image.md). The configured page-reader model must be on the allow-list (page_reader_problem) before each
     read, else the result is "blocked" and nothing is sent. The image tokens (the call's count with the images minus its count
     without) and their cost are reported apart from the text's, and logged beside them.
 
@@ -1962,9 +1959,6 @@ async def read_structure(
         blocked = page_reader_problem()
         if blocked:
             return _structure_result("blocked", structure_type, blocked)
-        if not images:
-            logger.warning("structure refused: run_id=%s step=%s reason=no_image", audit_id, STRUCTURE_STEP)
-            return _structure_result("refused", structure_type, "refused: no_image")
         model = page_reader_model()
     else:
         images = None
@@ -1980,7 +1974,7 @@ async def read_structure(
     key = structure_key(text, structure_type, prompt_store.cache_tag(prompt), model, images)
     digest = content_hash(text)
     base = {"key": key, "prompt_version": prompt.version, "model": model}
-    system = prompt.text + "\n\n" + PAGE_IMAGE_RULE if images else prompt.text
+    system = prompt.text
 
     if use_cache:
         hit = await cache.get_structure(db, audit_id, key)

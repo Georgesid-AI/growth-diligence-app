@@ -1,0 +1,6 @@
+2026-10-27 · claude/page-image-reading-impl-y3u3iy (four Medium fixes from the Opus re-check of PR 194)
+Deleted: nothing; the stored deck file was kept for page images only, so it now goes when the permission to read goes.
+Decided: unticking consent deletes the audit's deck_files (chat-upload.md section 23 reworded, it was silent); a demo reseed deletes them with the demo audits; a deck ticked again with no file goes as text alone and its panel says "Images need the file: re-upload the deck to read pages with images" (flag images_need_file, set when the file is missing, shown in place of the general text-only line, after merging the text-only fallback of the other fix commit); the consistency script checks the model allow-list before any conversion or drawing.
+Slow or unclear: the suite's autouse stub of render.prepare always finds a file, so a missing-file test has to put the real first step back; full backend suite 3.5 minutes.
+Root cause and rule: a new store (deck_files) was added with delete paths for deck and audit only, not for the other two ways data leaves the app (consent withdrawn, demo reseed); rule to add: every new collection lists its delete paths against the unticking, reseed, deck, audit and re-upload events in the same PR.
+Process change to propose: a checklist line in the PR template, "new collection: which events delete it?".
