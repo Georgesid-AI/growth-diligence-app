@@ -110,6 +110,7 @@ NO_PRINTED_SOURCE = "no printed source"
 LABEL_MISMATCH = "label mismatch"        # the reason of a label correction, and the review flag of a cited label with no candidate cell (hotfix of PR 182)
 DERIVED_FIGURE = corrections.DERIVED_FIGURE
 LAUNCH_NO_PRODUCT = corrections.LAUNCH_NO_PRODUCT
+QUOTED_FIGURE = "quoted figure, not a company claim"      # a drop kind: the model set is_quote true (docs/design/page-image.md section 4)
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL,
@@ -361,7 +362,10 @@ def drop_reason(claim: Dict, cell: Dict, label: Optional[Dict], flags: List[str]
     """Why the claim never enters the register though the model read it (George, 2026-10-26): DERIVED_FIGURE, a value on no cell that the
     figures of the page compute; LAUNCH_NO_PRODUCT, a launch date whose text names no product; NO_PRINTED_SOURCE, a value on no cell of a page whose
     extraction is measured and complete (`complete` True: nothing on the page was left unread, so the absence is established). None otherwise;
-    with `complete` False the claim is kept and flagged EXTRACTION_INCOMPLETE, with None (not measured) it stays as before."""
+    with `complete` False the claim is kept and flagged EXTRACTION_INCOMPLETE, with None (not measured) it stays as before.
+    QUOTED_FIGURE comes first: a claim the model marked is_quote true is no company claim whatever else the checks say (George, 2026-10-27)."""
+    if claim.get("is_quote") is True:
+        return QUOTED_FIGURE
     if VALUE_NOT_ON_PAGE in flags and corrections.computable(claim.get("value"), corrections.page_figures(listed, furniture)):
         return DERIVED_FIGURE
     if corrections.launch_without_product(claim, cell["text"], claim.get("label_text") or (label["text"] if label else None)):

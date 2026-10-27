@@ -3624,8 +3624,8 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
                              "cell corrected", "sign not on page", "period from page heading", "period from another cell",
                              "period is a range", "growth dated to start year", "label mismatch", "sources disagree", "source ambiguous",
                              "source not associated", "extraction incomplete")
-    assert (checker.DERIVED_FIGURE, checker.LAUNCH_NO_PRODUCT, checker.NO_PRINTED_SOURCE) == \
-        ("derived figure, not a claim", "launch date without product name", "no printed source"), \
+    assert (checker.DERIVED_FIGURE, checker.LAUNCH_NO_PRODUCT, checker.NO_PRINTED_SOURCE, checker.QUOTED_FIGURE) == \
+        ("derived figure, not a claim", "launch date without product name", "no printed source", "quoted figure, not a company claim"), \
         "the Diagnostics kinds of a dropped claim are closed words (George, 2026-10-26; no printed source, source association 2026-10-26)"
     assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"), \
         "the flags that leave a claim in the main list (George, 2026-10-23: the unit and the period only flag)"

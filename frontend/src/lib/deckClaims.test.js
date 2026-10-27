@@ -243,6 +243,13 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "waiting", pages: 5 })).toEqual(["AI reading: waiting for revenue file"]);
   });
 
+  test("the run log counts the quoted figures the page read skipped, and says nothing without one", () => {
+    const quoted = { page: 3, kind: "quoted figure, not a company claim", metric: "revenue", value: 150000 };
+    const other = { page: 4, kind: "derived figure, not a claim", metric: "revenue", value: 5 };
+    expect(deckRunLog({ ai_status: "read", diagnostics: [quoted, { ...quoted, page: 5 }, other] })).toContain("Quoted figures skipped: 2");
+    expect(deckRunLog({ ai_status: "read", diagnostics: [other] }).join(" ")).not.toMatch(/Quoted/);
+  });
+
   test("a deck restarted after 10 minutes reads 'restarted' until its first page is read", () => {
     const deck = { ai_status: "reading", ai_message: "restarted", pages: 24, page_unit: "page", figure_pages: 9 };
     expect(deckRunLog(deck)).toEqual(["24 pages parsed · 9 with figures · AI read: restarted"]);

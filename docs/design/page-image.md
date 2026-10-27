@@ -34,6 +34,14 @@ Shown on the Upload page and in the tester terms, in these words:
 
 Four nullable fields are added to each claim: `label_text`, `segment`, `share_of`, `is_quote`. `label_text` is the label as printed; `label_cell` only locates it. Null means the model did not read one. Any field that is a closed word, number or cell id keeps today's validation; `label_text`, `segment` and `share_of` are short printed text, validated for length and stored as model JSON output under rule 17. `is_quote` is a boolean.
 
+What each field does (George, 2026-10-27, PR #193):
+
+- `is_quote` true: the figure is a quotation, not a company claim. It is not entered as a claim. The pipeline writes one Diagnostics line, "page n: quoted figure, not a company claim", and the deck panel counts it ("Quoted figures skipped: n"). Null or false changes nothing.
+- `segment`: shown on the claim row after the label ("Label from: <label> · <segment>"; "Segment: <segment>" when no label was read). Display only; it is not the register's segment and sets nothing.
+- `share_of`: shown in the Why column (the reasons under Extraction confidence) as "Share of: <text>". Display only.
+
+No other behaviour. The row keeps `segment` and `share_of` as `page_segment` and `page_share_of`; the stored read still keeps neither (rule 17).
+
 ## 5. Rule changes
 
 - **Label corrections (L1, C4):** run only when `label_text` is empty. When `label_text` is present and the cell text disagrees, the claim is flagged, not corrected.

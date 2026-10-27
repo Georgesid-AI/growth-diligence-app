@@ -16,7 +16,7 @@ import {
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, scenarioText,
-  UNDO_ACCEPT_ALL_LABEL, UNDO_LABEL, appliedCorrections, correctionText,
+  UNDO_ACCEPT_ALL_LABEL, UNDO_LABEL, appliedCorrections, correctionText, labelLine, shareOfLine,
 } from "@/lib/deckClaims";
 
 // The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
@@ -750,7 +750,7 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
       <td className="py-2 pr-3 text-slate-700 break-words">
         <div>{c.snippet}</div>
         {c.origin === "deck_analyst" && <div className="text-slate-400 mt-0.5" data-testid="candidate-added-from-deck">{ADDED_FROM_DECK_TAG}</div>}
-        {c.label_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-label">Label from: {c.label_from}</div>}
+        {labelLine(c) && <div className="text-slate-400 mt-0.5" data-testid="candidate-label">{labelLine(c)}</div>}
         {c.date_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-date-from">Date from: {c.date_from}</div>}
       </td>
       <td className="py-2 pr-3 font-mono text-[11px] text-slate-600 break-words" data-testid="candidate-source">
@@ -758,9 +758,10 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
       </td>
       <td className="py-2 pr-3" data-testid="candidate-confidence">
         <span className={CONFIDENCE_STYLE[c.confidence?.level] || "text-slate-500"} title={CONFIDENCE_HOVER} data-testid="candidate-confidence-text">{confidenceText(c)}</span>
-        {reasons.length > 0 && (
+        {(reasons.length > 0 || shareOfLine(c)) && (
           <div className="text-[10px] text-slate-500 whitespace-normal space-y-0.5" data-testid="candidate-confidence-reason">
             {reasons.map((line) => <div key={line}>{line}</div>)}
+            {shareOfLine(c) && <div data-testid="candidate-share-of">{shareOfLine(c)}</div>}
           </div>
         )}
       </td>

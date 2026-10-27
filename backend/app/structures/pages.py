@@ -169,6 +169,7 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
         "ai_status": item["status"], "ai_label": page_check.label(item["status"]), "ai_checks": item.get("checks"),
         "period_cells": list(item.get("period_cells") or []), "basis": item.get("basis"), "scenario": item.get("scenario") or checker.NO_SCENARIO,
         "flags": list(item.get("flags") or []), "proposed_flags": [],
+        "page_segment": item.get("segment"), "page_share_of": item.get("share_of"),      # as printed, shown on the row (page-image.md section 4)
         "heading_metric": association.Layout(grid).heading_metric(cell),      # the one metric word of the title over the figure; a closed word, no text
     }
     claims.recurring_year_end(candidate)             # "MRR in 2021" is Dec 2021 (issue #151)
@@ -327,7 +328,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                     counts[k] += checked[k]
                 checked_all += [{**c, "page": page} for c in checked["items"]]
                 for item in checked["items"]:
-                    if item["drop"]:            # a derived figure, a launch date with no product: no row, one Diagnostics line (George, 2026-10-26)
+                    if item["drop"]:            # a derived figure, a launch date with no product, a quoted figure: no row, one Diagnostics line (George, 2026-10-26)
                         counts["dropped"] += 1
                         diagnostics_new.append({"page": page, "kind": item["drop"], "metric": item["metric"], "value": item.get("value"),
                                                 "period": item.get("period")})

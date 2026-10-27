@@ -421,6 +421,8 @@ export function deckRunLog(deck) {
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
   if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);
+  const quoted = (deck.diagnostics || []).filter((x) => x.kind === QUOTED_FIGURE_KIND).length;
+  if (quoted) lines.push(`Quoted figures skipped: ${quoted}`);
   return lines;
 }
 
@@ -475,6 +477,10 @@ export const appliedCorrections = (c) => withIndex(c, "applied");
 export const waitingCorrections = (c) => withIndex(c, "choose");
 export const correctionText = (e) => `Corrected: ${e.field} ${e.original ?? "none"} → ${e.corrected}`;
 export const UNDO_LABEL = "Undo";
+export const QUOTED_FIGURE_KIND = "quoted figure, not a company claim";        // the Diagnostics kind of a claim the model marked is_quote (page-image.md section 4)
+/** The label line of a claim row: the label, then the segment the page prints after it; the segment alone when no label was read. */
+export const labelLine = (c) => (c?.label_from ? `Label from: ${c.label_from}${c.page_segment ? ` · ${c.page_segment}` : ""}` : c?.page_segment ? `Segment: ${c.page_segment}` : null);
+export const shareOfLine = (c) => (c?.page_share_of ? `Share of: ${c.page_share_of}` : null);
 export const DIAGNOSTICS_DECK_HEADING = "Deck reading";
 /** The Diagnostics lines of the decks' page reads (claim-matching.md section 33): what a check corrected, with the original and the corrected
  *  value, and the claims that never entered the register ("derived figure, not a claim", "launch date without product name"). */

@@ -147,6 +147,25 @@ test("Label from shows the one heading the server found", async () => {
   expect(q("candidate-label").textContent).toBe("Label from: MARKET SIZE");
 });
 
+test("the segment follows the label and share of sits in the reasons column; neither shows when the page printed none", async () => {
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [
+    claim("s", "d2", 1, { group: 1, label_from: "Revenue", page_segment: "EMEA", page_share_of: "Total revenue" }),
+    claim("t", "d2", 2, { group: 1, page_segment: "APAC" }),
+    claim("u", "d2", 3, { group: 1 }),
+  ] });
+  await act(async () => { root.unmount(); });
+  root = createRoot(host);
+  await act(async () => { root.render(<DeckPanel auditId="a1" />); });
+  await act(async () => { q("deck-tab-d2").click(); });
+  const [withBoth, segmentOnly, neither] = rows();
+  expect(withBoth.querySelector("[data-testid='candidate-label']").textContent).toBe("Label from: Revenue · EMEA");
+  expect(withBoth.querySelector("[data-testid='candidate-share-of']").textContent).toBe("Share of: Total revenue");
+  expect(withBoth.querySelector("[data-testid='candidate-confidence']").contains(withBoth.querySelector("[data-testid='candidate-share-of']"))).toBe(true);
+  expect(segmentOnly.querySelector("[data-testid='candidate-label']").textContent).toBe("Segment: APAC");
+  expect(neither.querySelector("[data-testid='candidate-label']")).toBeNull();
+  expect(neither.querySelector("[data-testid='candidate-share-of']")).toBeNull();
+});
+
 describe("the AI reading poll", () => {
   const notFound = Object.assign(new Error("404"), { response: { status: 404 } });
   const reading = { decks: [{ ...DECKS[0], ai_status: "reading" }], candidates: [] };

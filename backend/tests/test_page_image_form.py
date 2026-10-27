@@ -187,6 +187,31 @@ def test_a_figure_inside_a_quoted_sentence_keeps_is_quote_true_and_is_checked_li
     assert tc.one(parsed, form(tc.claim(cell, 150_000)))["is_quote"] is None, "null stays null: the model did not say"
 
 
+def test_a_quoted_figure_is_no_claim_one_diagnostics_line_and_the_same_figure_unquoted_is_a_row():
+    parsed = tc.deck([tc.TITLE, (50, 480, 12, '"We reached $150,000 annual revenue run rate," says our founder')])
+    cell = cc.at(parsed, '"We reached $150,000 annual revenue run rate," says our founder')
+    quoted = form(tc.claim(cell, 150_000), is_quote=True)
+    assert tc.one(parsed, quoted)["drop"] == checker.QUOTED_FIGURE == "quoted figure, not a company claim"
+    rows, deck = cc.read(parsed, quoted)
+    assert rows == [], "a quoted figure is not entered"
+    line, = deck["diagnostics"]
+    assert (line["page"], line["kind"]) == (1, "quoted figure, not a company claim")
+    assert deck["page_reads"][0]["dropped"] == 1
+    for kept in (form(tc.claim(cell, 150_000)), form(tc.claim(cell, 150_000), is_quote=False)):
+        assert tc.one(parsed, kept)["drop"] is None
+        rows, deck = cc.read(parsed, kept)
+        assert len(rows) == 1 and not deck.get("diagnostics")
+
+
+def test_a_row_carries_the_segment_and_share_of_the_page_prints():
+    parsed = tc.deck([tc.TITLE, (50, 480, 12, "$150,000 annual revenue run rate")])
+    cell = cc.at(parsed, "$150,000 annual revenue run rate")
+    row, = cc.read(parsed, form(tc.claim(cell, 150_000), segment="EMEA", share_of="Total revenue"))[0]
+    assert (row["page_segment"], row["page_share_of"]) == ("EMEA", "Total revenue")
+    row, = cc.read(parsed, form(tc.claim(cell, 150_000)))[0]
+    assert row["page_segment"] is None and row["page_share_of"] is None
+
+
 def test_a_negative_value_with_no_minus_keeps_its_value_and_sets_the_flag():
     parsed = tc.deck([tc.TITLE, (50, 500, 12, "(71%) annually")])
     cell = cc.at(parsed, "(71%) annually")
