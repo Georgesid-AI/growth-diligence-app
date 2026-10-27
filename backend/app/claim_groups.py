@@ -507,3 +507,50 @@ def counts(rows: List[dict]) -> dict:
     """Items shown against the claims underneath: a reconciled group is one item."""
     return {"items": sum(1 for r in rows if not is_subordinate(r)), "claims": len(rows),
             "groups": sum(1 for r in rows if r.get("group_role") == TOTAL)}
+
+
+# --- what the claims list shows of a row, and the sum of figures waiting for a segment --------------------------------------------
+
+PART_OF = "part of {total} total"
+PARTS_OF = (PART, SEGMENT_PART, ALSO)        # the roles that are a part of a group's total; a repeat is the same figure, not a part
+
+
+def total_name(row: dict) -> str:
+    """A total as a sentence names it: its metric (or claim type) and its period, "ARR 2025"."""
+    from .decks.claims import TYPE_NAMES
+    name = row.get("metric") or TYPE_NAMES.get(row.get("claim_type")) or str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
+    return f"{name} {row['period']}" if row.get("period") else name
+
+
+def made_of(row: dict, rows: List[dict]) -> dict:
+    """What the app made of a register row, for the claims list (George, 2026-10-26): its segment when one is set, and "part of <metric> <period>
+    total" when it is a part of a group. Read from the rows; nothing is stored."""
+    segment = row.get("segment")
+    segment = None if segment in (None, "", cm.WHOLE, cm.NOT_IN_DATA) else segment
+    part_of = None
+    if row.get("group_role") in PARTS_OF and row.get("group_id"):
+        total = next((r for r in rows if r.get("group_id") == row["group_id"] and r.get("group_role") == TOTAL), None)
+        part_of = PART_OF.format(total=total_name(total)) if total else None
+    return {"segment": segment, "part_of": part_of}
+
+
+def adds_up_to(parts: List[dict], rows: List[dict]) -> Optional[str]:
+    """The name of the stated total ("Revenue FY2024") that the figures `parts` add up to within the tolerance, or None. The total is a whole-company
+    row of `rows` outside `parts` with the parts' scope and period; a segment is the one thing the parts do not share with it. The figures stay
+    independent claims: this only names the relationship for the card."""
+    if not parts:
+        return None
+    keys = {scope_period(p) for p in parts}
+    if len(keys) != 1 or None in keys:
+        return None
+    (key, start, end), = keys
+    added = sum((_decimal(p["claimed_value"]) for p in parts), Decimal(0))
+    ids = {p["claim_id"] for p in parts}
+    for total in rows:
+        if total["claim_id"] in ids or total.get("segment") not in (None, "", cm.WHOLE):
+            continue
+        found = scope_period(total)
+        if found is not None and found == (key, start, end) and within(added, _decimal(total["claimed_value"])):
+            return total_name(total)
+    return None
+

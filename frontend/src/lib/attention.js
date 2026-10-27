@@ -13,13 +13,17 @@ export const SHOWN_QUESTIONS = 3;
 export const attentionCount = (n) => (n === 1 ? "1 question needs a word from you" : `${n} questions need a word from you`);
 export const moreLabel = (n) => `${n} more`;
 export const lessLabel = "Show fewer";
+export const SALES_QUESTION = "Is 'Sales' in this deck revenue or bookings?";
+export const SALES_ANSWERS = [["revenue", "Revenue"], ["bookings", "Bookings"]];
+export const salesCount = (n) => (n === 1 ? "1 claim in this deck is labelled Sales." : `${n} claims in this deck are labelled Sales.`);
+export const addsUpText = (name) => `These add up to the ${name} total`;
 
 /** The views of the uploaded files that hold a column or a required field waiting for the analyst. */
 export const openViews = (views) => (views || []).filter((v) => v.pending > 0 || v.missing_required.length > 0);
 
 /** The questions: the five's claim questions first, then the columns that wait, then the other claim questions; the claims keep the server's
  *  ranking (`attention`: [{id, in_top5}], best first). An Other figure is never a task. */
-export function openQuestions(views, candidates, attention, groups) {
+export function openQuestions(views, candidates, attention, groups, sales = []) {
   const columns = [];
   openViews(views).forEach((view) => {
     const rows = view.missing_required.length ? view.columns : view.columns.filter((c) => c.pending);
@@ -39,5 +43,6 @@ export function openQuestions(views, candidates, attention, groups) {
   claims.sort((a, b) => at(a).i - at(b).i);
   // the questions the groups raise (which annual figure, which parts) and the conflicts that stay unresolved: after the claims that wait
   const related = groupQuestions(groups).map((q) => ({ key: `group-${q.id}`, kind: "group", q }));
-  return [...claims.filter((x) => at(x).top), ...columns, ...claims.filter((x) => !at(x).top), ...related];
+  const asks = (sales || []).map((q) => ({ key: `sales-${q.deck_id}`, kind: "sales", q }));       // one per deck
+  return [...claims.filter((x) => at(x).top), ...columns, ...claims.filter((x) => !at(x).top), ...asks, ...related];
 }

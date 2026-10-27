@@ -14,7 +14,7 @@ claim-review-conclusion → access-links).
 ## 1. Two columns, each with a hover explainer
 | Column | Values | Explainer (hover on the header, word for word) |
 |---|---|---|
-| Extraction confidence | High · Medium · Low · Analyst-entered | How well the app read this figure from the deck. Not a statement about whether it is true. |
+| Extraction confidence | High · Medium · Low · Analyst-entered | How confidently the app extracted and linked the figure to its source. This does not verify the company’s claim. |
 | Evidence status (within the supplied evidence) | Verified · Contradicted · Inconclusive · Unverified · Unsupported | How this claim compares with the company data supplied for this audit. Agreement is not independent verification. |
 
 - Claim register (Dashboard, claim-matching.md §8): the columns become `#`, `Claim`, `Segment`, `Observed`, `Gap`,

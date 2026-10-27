@@ -18,7 +18,7 @@ from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
 
 SHARED = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "evidence_labels.json"
-EXTRACTION_EXPLAINER = "How well the app read this figure from the deck. Not a statement about whether it is true."
+EXTRACTION_EXPLAINER = "How confidently the app extracted and linked the figure to its source. This does not verify the company’s claim."
 EVIDENCE_EXPLAINER = "How this claim compares with the company data supplied for this audit. Agreement is not independent verification."
 QUALIFIED = {"claim_type": "users", "value": 40, "unit": "trial accounts", "currency": None, "target_date": "2024-02",
              "snippet": "40 trial accounts in Feb 2024", "qualifier": "trial"}

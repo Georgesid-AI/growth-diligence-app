@@ -1968,6 +1968,9 @@ async def list_deck_candidates(audit_id: str):
     definition = claim_matching.definition_views(candidates, current.get("results"), settings)
     # A claim Run audit approved on its own reads "Auto-approved – matches revenue file (Δ x.x%)" with the figure's citation (issue #155).
     auto = claim_matching.auto_views(candidates, current.get("results"), settings)
+    # What the app made of a registered row: its segment and the total it is a part of (George, 2026-10-26); read from the register's own rows.
+    made = _made_of(candidates, current.get("results"), settings)
+    sales = claim_matching.sales_questions(candidates, current.get("results"), settings)
     # By the group of the claim type (revenue, P&L, customers and sales, market size, Unknown, Other), then ascending by
     # slide or page across all decks (a tie goes to the more recent deck), then reading order on the page: top to bottom
     # in bands of 2% of the height, then left to right, then the order the parser found them in.
@@ -1985,6 +1988,7 @@ async def list_deck_candidates(audit_id: str):
         if c["fx"] and not as_of and current.get("results_stale"):
             c["fx"]["date_stale"] = True        # the date would come from stale results: the screen reads "Stale – re-run audit"
         c["turnover"] = turnover.get(c["id"])
+        c["made_of"] = made.get(c["id"])
         c["definition"] = definition.get(c["id"])
         c.update(auto.get(c["id"]) or {"auto_approval": None, "auto_citation": None})
         # the figure type, population and growth basis as the register reads them, for the editor (claim-types-and-correction.md 3)
@@ -1994,7 +1998,20 @@ async def list_deck_candidates(audit_id: str):
         peers.setdefault(c.get("deck_id"), []).append(c)
     for c in candidates:
         c["confidence"] = deck_claims.confidence(c, peers[c.get("deck_id")])
-    return sanitize({"decks": found, "candidates": candidates, "attention": await _attention_order(audit_id, audit, current, candidates, settings)})
+    return sanitize({"decks": found, "candidates": candidates, "sales_questions": sales,
+                     "attention": await _attention_order(audit_id, audit, current, candidates, settings)})
+
+
+def _made_of(candidates: list, results: Optional[dict], settings: dict) -> dict:
+    """{candidate id: {segment, part_of}} for the candidates in the register, from the rows the register builds (claim_groups.made_of)."""
+    registered = [c for c in candidates if c.get("status") in REGISTER_STATUSES]
+    if not results or not registered:
+        return {}
+    rows = claim_matching.build_register(sorted(registered, key=lambda c: (c.get("file") or "", c.get("order", 0))), results, settings, peers=candidates)
+    out: dict = {}
+    for r in rows:
+        out.setdefault(str(r["claim_id"]).split("#")[0], claim_groups.made_of(r, rows))
+    return out
 
 
 async def _attention_order(audit_id: str, audit: dict, current: dict, candidates: list, settings: dict) -> list:
@@ -2024,7 +2041,19 @@ async def _attention_order(audit_id: str, audit: dict, current: dict, candidates
     in_five = {str(r["claim_id"]).split("#")[0] for r in rows if r["claim_id"] in five} & asking
     last = (True, True, True, 0, 0, 0, 0)            # a claim with no row of its own (not testable) ranks after the others
     ordered = sorted(asking, key=lambda cid: (cid not in in_five, keys.get(cid, last)))
-    return [{"id": cid, "in_top5": cid in in_five, **({"set": to_set[cid]} if cid in to_set else {})} for cid in ordered]
+    # figures waiting for a legend item that add up to a stated total (George, 2026-10-26): the card names the total
+    waiting = {c["id"] for c in live if c.get("status") == "pending" and any(
+        e.get("field") == "segment" and e.get("state") == "choose" for e in c.get("corrections") or ())}
+    pages: dict = {}
+    for r in rows:
+        if str(r["claim_id"]).split("#")[0] in waiting and r.get("claimed_value") is not None:
+            pages.setdefault((r["deck_file"], r["page_ref"]), []).append(r)
+    adds_up = {}
+    for parts in pages.values():
+        name = claim_groups.adds_up_to(parts, rows)
+        adds_up.update({str(r["claim_id"]).split("#")[0]: name for r in parts} if name else {})
+    return [{"id": cid, "in_top5": cid in in_five, **({"set": to_set[cid]} if cid in to_set else {}),
+             **({"adds_up_to": adds_up[cid]} if cid in adds_up else {})} for cid in ordered]
 
 
 def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
@@ -2305,6 +2334,30 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
 
+class SalesAnswer(BaseModel):
+    """Is "Sales" in this deck revenue or bookings (George, 2026-10-26): one closed word for the deck."""
+    model_config = {"extra": "forbid"}
+    answer: Literal[claim_matching.SALES_CHOICES] = Field(alias="as")
+
+
+@api.put("/audits/{audit_id}/decks/{deck_id}/sales")
+async def answer_sales(audit_id: str, deck_id: str, payload: SalesAnswer):
+    """Save the answer for every Sales claim of the deck, on the audit under the deck id (no deck text). Revenue: the claims are tested against the
+    revenue data as revenue. Bookings: they stay Unverified, "bookings not in the data". Gives the questions still open back."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    if not await db[decks.TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 1}):
+        raise HTTPException(404, "Deck not found")
+    await db.audits.update_one({"id": audit_id}, {"$set": {f"sales_choices.{deck_id}": {"as": payload.answer, "saved_at": usage_mod.now()}}})
+    logger.info("sales answer: run_id=%s as=%s", audit_id, payload.answer)
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    current = await _current_audit(audit_id, audit, strict=False)
+    settings = _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id))
+    return sanitize({"sales_questions": claim_matching.sales_questions(found, current.get("results"), settings)})
+
+
 @api.post("/audits/{audit_id}/decks/candidates/{candidate_id}/correction")
 async def answer_correction(audit_id: str, candidate_id: str, payload: CorrectionAnswer):
     """Undo a correction a check applied before the register (the field goes back to what the model read), or choose one of the candidates
@@ -2323,6 +2376,14 @@ async def answer_correction(audit_id: str, candidate_id: str, payload: Correctio
             raise _rejected("action", "only an applied correction can be undone")
         changes.update(entry["undo"])
         entry["state"] = "undone"
+        if entry.get("field") == "segment":       # the card comes back: no segment, the flag asks again, the claim waits
+            inputs = {**(current.get("claim_inputs") or {})}
+            kept = {k: v for k, v in inputs.get(candidate_id, {}).items() if k != "segment"}
+            inputs.pop(candidate_id, None)
+            if kept:
+                inputs[candidate_id] = kept
+            changes.update(claim_inputs=inputs, status="pending", auto_accepted=False, flags=[*(current.get("flags") or []), entry["reason"]])
+            entry["state"] = "choose"
     else:
         options = entry.get("options") or []
         if entry.get("state") != "choose" or payload.option is None or payload.option >= len(options):
@@ -2331,8 +2392,13 @@ async def answer_correction(audit_id: str, candidate_id: str, payload: Correctio
         changes.update(chosen["set"])
         changes.update(status="approved", auto_accepted=False, auto_note=None)
         changes["flags"] = [f for f in current.get("flags") or [] if f != entry["reason"]]
+        if entry.get("field") == "segment":       # a legend item the analyst clicked is the claim's segment: its input, set by the analyst
+            inputs = {**(current.get("claim_inputs") or {})}
+            inputs[candidate_id] = {**inputs.get(candidate_id, {}), "segment": chosen["segment"]}
+            changes["claim_inputs"] = inputs
         entry.update(state="applied", corrected=chosen["value"])
-        entry.pop("options", None)
+        if entry.get("field") != "segment":       # a segment keeps its options: Undo brings the card back
+            entry.pop("options", None)
     entries[payload.index] = entry
     changes["corrections"] = entries
     await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
@@ -2565,6 +2631,7 @@ def _register_settings(audit: dict, fx: dict, deck_take_rate: bool = False) -> d
     return {"fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
             "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx,
             "turnover_choices": audit.get("turnover_choices") or {}, "deck_take_rate": deck_take_rate,
+            "sales_choices": audit.get("sales_choices") or {},
             "group_choices": audit.get("group_choices") or {},
             "target_arr": audit.get("target_arr") or None, "target_date": audit.get("target_date") or None,
             "first_quarterly_review": verdict_mod.with_review(audit, audit.get("ic_inputs")).get("first_quarterly_review")}
@@ -2649,7 +2716,9 @@ async def _open_claim_questions(audit_id: str, audit: dict, rows: list) -> int:
     to_set = {str(r["claim_id"]).split("#")[0] for r in rows if claim_matching.asks_analyst(r)} - asked      # one card per claim
     related = _relations(audit, rows)
     # a card for each question about a total or a set of parts, and for each conflict that stays unresolved after a figure was chosen
-    return waiting + len(definitions) + len(to_set) + len({q["id"] for q in [*related["reviews"], *related["conflicts"]]})
+    current = await _current_audit(audit_id, audit, strict=False)
+    sales = claim_matching.sales_questions(found, current.get("results"), _register_settings(audit, await _fx(audit_id, audit), False))      # one per deck
+    return waiting + len(definitions) + len(to_set) + len({q["id"] for q in [*related["reviews"], *related["conflicts"]]}) + len(sales)
 
 
 async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict:

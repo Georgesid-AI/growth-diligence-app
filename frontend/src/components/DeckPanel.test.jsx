@@ -51,8 +51,8 @@ test("the table has an Extraction confidence column between Period and the claim
   await act(async () => { q("deck-tab-all").click(); });
   await open(9);
   const heads = [...document.body.querySelectorAll("[data-testid='deck-candidates'] thead th")].map((th) => th.textContent);
-  expect(heads).toEqual(["Type", "Value", "Period", "Extraction confidence", "Claim in the deck", "Source", "Status", "Action"]);
-  const cells = rows().map((tr) => tr.querySelector("[data-testid='candidate-confidence']").textContent);
+  expect(heads).toEqual(["Type", "Value", "Period", "Claim in the deck", "Source", "Extraction confidence", "Status", "Action"]);
+  const cells = rows().map((tr) => tr.querySelector("[data-testid='candidate-confidence-text']").textContent);
   expect(cells.sort()).toEqual(["High", "Low – no date, no heading", "Medium – not corroborated", "Medium – not corroborated"].sort());
 });
 
@@ -123,7 +123,7 @@ test("a figure in another currency shows both figures, and a direction with no f
   expect(rows()[0].querySelector("[data-testid='candidate-value']").getAttribute("title")).toBe("Rate used: 1 GBP = 1.14 EUR on 30 Jun 2026");
   expect(rows()[0].textContent).not.toMatch(/1\.14|30 Jun 2026/);
   expect(rows()[2].querySelectorAll("td")[2].textContent).toBe("Q2 2024");
-  expect(rows()[2].querySelector("[data-testid='candidate-confidence']").textContent).toBe("Medium – no figure");
+  expect(rows()[2].querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Medium – no figure");
 });
 
 test("a figure with no type reads Other, has no Keep, and saves only once a claim type is chosen; Market size is a choice", async () => {
@@ -273,14 +273,14 @@ test("after the analyst edits a claim its confidence reads Analyst-edited, not a
     confidence: { level: "Low", failed: ["no unit", "not corroborated"], text: "Low – no unit, not corroborated" } });
   await reload([parsed]);
   await open(8);
-  expect(q("candidate-row-c").querySelector("[data-testid='candidate-confidence']").textContent).toBe("Low – no unit, not corroborated");
+  expect(q("candidate-row-c").querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Low – no unit, not corroborated");
   api.updateCandidate.mockResolvedValue({ id: "c", status: "edited" });
   api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [{ ...parsed, status: "edited", currency: "EUR",
     confidence: { level: null, failed: [], text: "Analyst-edited" } }] });
   await act(async () => { q("candidate-row-c").querySelector("[data-testid='candidate-edit']").click(); });
   await act(async () => { q("edit-save").click(); });
   const shown = q("candidate-row-c").querySelector("[data-testid='candidate-confidence']");
-  expect(shown.textContent).toBe("Analyst-edited");
+  expect(shown.querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Analyst-edited");
   expect(shown.querySelector("[data-testid='candidate-confidence-text']").className).toBe("text-slate-500");
 });
 
@@ -465,7 +465,7 @@ test("Needs your attention is a status label, not a control: plain text with no 
 test("the upload help, the Extraction confidence hover are shown word for word", async () => {
   await reload([claim("c", "d1", 2, { group: 1 })]);
   expect(q("deck-upload-help").textContent).toMatch(/^Board deck or growth plan: the company's board decks, investor updates.* Up to 8 documents per audit\./);
-  expect(q("candidate-confidence-text").title).toBe("How well the app read this figure from the deck. Not a statement about whether it is true.");
+  expect(q("candidate-confidence-text").title).toBe("How confidently the app extracted and linked the figure to its source. This does not verify the company’s claim.");
 });
 
 test("a tag never shows without its explanation", async () => {
@@ -735,7 +735,7 @@ describe("Add claim", () => {
     await act(async () => { q("deck-tab-all").click(); });
     await act(async () => { root.render(<DeckPanel auditId="a1" reloadKey={1} />); });
     const tr = rows()[0];
-    expect(tr.querySelector("[data-testid='candidate-confidence']").textContent).toBe("Analyst-entered");
+    expect(tr.querySelector("[data-testid='candidate-confidence-text']").textContent).toBe("Analyst-entered");
     expect(tr.textContent).toContain("Added by analyst");
   });
 });
@@ -1042,5 +1042,31 @@ describe("corrections, Keep all and Undo on a rejected row (George, 2026-10-26)"
     expect(q("candidate-row-p").querySelector("[data-testid='candidate-undo-reject']")).toBeNull();
     await act(async () => { q("candidate-row-r").querySelector("[data-testid='candidate-undo-reject']").click(); });
     expect(api.updateCandidate).toHaveBeenCalledWith("a1", "r", { undo: true });
+  });
+});
+
+describe("column headings and confidence reasons", () => {
+  const heads = () => [...document.body.querySelectorAll("[data-testid='deck-candidates'] thead th")];
+  test("hover and tap open the heading's pop-up; the confidence cell carries its reason line", async () => {
+    await act(async () => { q("deck-tab-all").click(); });
+    await open(9);
+    const th = heads().find((h) => h.textContent.startsWith("Source"));
+    expect(th.querySelector("[role='tooltip']")).toBeNull();
+    await act(async () => { th.querySelector("button").click(); });
+    expect(th.querySelector("[role='tooltip']").textContent).toMatch(/slide|page/i);
+    await act(async () => { th.querySelector("button").click(); });
+    expect(th.querySelector("[role='tooltip']")).toBeNull();
+    await act(async () => { th.querySelector("button").dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); });
+    expect(th.querySelector("[role='tooltip']")).not.toBeNull();
+    const reason = rows()[0].querySelector("[data-testid='candidate-confidence-reason']");
+    expect(reason.textContent.length).toBeGreaterThan(10);
+  });
+  test("the type cell shows the segment and the part-of line", async () => {
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [claim("s", "d1", 1, { group: 1, made_of: { segment: "Platform Subscriptions", part_of: "part of ARR 2025 total" } })] });
+    await act(async () => { root.render(<DeckPanel auditId="a2" />); });
+    await act(async () => { q("deck-tab-all").click(); });
+    const cell = document.body.querySelector("[data-testid='candidate-type']");
+    expect(cell.textContent).toContain("Revenue · Platform Subscriptions");
+    expect(cell.querySelector("[data-testid='candidate-part-of']").textContent).toBe("part of ARR 2025 total");
   });
 });

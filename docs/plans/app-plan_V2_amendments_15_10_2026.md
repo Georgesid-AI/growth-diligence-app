@@ -115,7 +115,7 @@ Four separate fields, always shown separately, never merged into one date:
 
 Two labels, shown as two separate columns, each with a hover explainer.
 
-**Extraction confidence: High / Medium / Low.** How reliably the parser read the figure, label and date from the deck. Says nothing about whether the claim is true. Explainer text: "How well the app read this figure from the deck. Not a statement about whether it is true."
+**Extraction confidence: High / Medium / Low.** How reliably the parser read the figure, label and date from the deck. Says nothing about whether the claim is true. Explainer text: "How confidently the app extracted and linked the figure to its source. This does not verify the company’s claim."
 
 **Evidence status (within the supplied evidence).** Explainer text: "How this claim compares with the company data supplied for this audit. Agreement is not independent verification."
 

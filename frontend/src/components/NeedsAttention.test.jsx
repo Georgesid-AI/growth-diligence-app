@@ -8,16 +8,16 @@ import * as api from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
   getDatasets: jest.fn(), getDecks: jest.fn(), updateCandidate: jest.fn(), decideColumns: jest.fn(), answerDefinitionCheck: jest.fn(), answerTurnover: jest.fn(),
-  getBlockers: jest.fn(), runStage: jest.fn(), answerCorrection: jest.fn(),
+  getBlockers: jest.fn(), runStage: jest.fn(), answerCorrection: jest.fn(), answerSales: jest.fn(),
 }));
 jest.mock("react-router-dom", () => ({ Link: ({ to, children }) => <a href={to}>{children}</a>, useNavigate: () => jest.fn() }), { virtual: true });
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const claim = (id, extra = {}) => ({ id, claim_type: "revenue", status: "pending", value: 100, unit: "EUR", currency: "EUR", sources: [{ file: "deck.pptx", page: 3 }], group: 1, ...extra });
-const mount = async (candidates, views = [], props = {}, attention = []) => {
+const mount = async (candidates, views = [], props = {}, attention = [], sales_questions = []) => {
   api.getDatasets.mockResolvedValue(views);
-  api.getDecks.mockResolvedValue({ decks: [], candidates, attention });
+  api.getDecks.mockResolvedValue({ decks: [], candidates, attention, sales_questions });
   const onChanged = jest.fn();
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -190,5 +190,46 @@ test("a reason that asks for more than the population keeps the claims list's ed
   try {
     expect(q(host, "attention-population-paying")).toBeNull();
     expect(q(host, "candidate-row-u1")).not.toBeNull();
+  } finally { await done(); }
+});
+
+// --- legend labels on charts, and the Sales question (George, 2026-10-26) ---------------------------------------------------------------------
+const LEGEND = (extra = {}) => claim("L1", { flags: ["label mismatch"], corrections: [{ field: "segment", reason: "label mismatch", original: null, state: "choose",
+  options: [{ value: "Platform Subscriptions", segment: "Platform Subscriptions" }, { value: "Services", segment: "Services" }] }], ...extra });
+
+test("the label-mismatch card asks the question, offers each legend item as a button and has no Keep", async () => {
+  api.answerCorrection.mockResolvedValue({});
+  const { host, done } = await mount([LEGEND()]);
+  try {
+    expect(q(host, "attention-claim-flags").textContent).toBe("The app could not confidently link this figure to its label. Which label describes it?");
+    const buttons = [...host.querySelectorAll('[data-testid="attention-correction"]')].map((b) => b.textContent);
+    expect(buttons).toEqual(["Platform Subscriptions", "Services"]);
+    expect(q(host, "attention-keep")).toBeNull();
+    expect(q(host, "attention-reject")).not.toBeNull();
+    await act(async () => { host.querySelectorAll('[data-testid="attention-correction"]')[1].click(); });
+    expect(api.answerCorrection).toHaveBeenCalledWith("a1", "L1", { index: 0, action: "choose", option: 1 });
+  } finally { await done(); }
+});
+
+test("the card names the total the figures add up to; with no total it says nothing", async () => {
+  const { host, done } = await mount([LEGEND()], [], {}, [{ id: "L1", in_top5: false, adds_up_to: "Revenue FY2024" }]);
+  try { expect(q(host, "attention-adds-up").textContent).toBe("These add up to the Revenue FY2024 total"); } finally { await done(); }
+  const none = await mount([LEGEND()]);
+  try { expect(q(none.host, "attention-adds-up")).toBeNull(); } finally { await none.done(); }
+});
+
+test("a mismatch with no legend item keeps Keep as before", async () => {
+  const { host, done } = await mount([claim("k1", { flags: ["label mismatch"] })]);
+  try { expect(q(host, "attention-keep")).not.toBeNull(); } finally { await done(); }
+});
+
+test("one Sales card per deck asks revenue or bookings and the answer is sent for the deck", async () => {
+  api.answerSales.mockResolvedValue({ sales_questions: [] });
+  const { host, done } = await mount([], [], {}, [], [{ deck_id: "d1", file: "board.pptx", claims: 3 }]);
+  try {
+    expect(q(host, "attention-sales-title").textContent).toBe("Is 'Sales' in this deck revenue or bookings?");
+    expect(q(host, "attention-sales").textContent).toContain("board.pptx");
+    await act(async () => { q(host, "attention-sales-bookings").click(); });
+    expect(api.answerSales).toHaveBeenCalledWith("a1", "d1", "bookings");
   } finally { await done(); }
 });

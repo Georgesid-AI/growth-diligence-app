@@ -11,7 +11,7 @@ import { describeRequestError } from "@/lib/requestError";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog, uploadLineText,
-  confidenceText, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
+  confidenceText, confidenceReason, columnText, typeCellLines, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText, scenarioText,
@@ -26,6 +26,28 @@ const STATUS_STYLE = {
   rejected: "text-rose-700",
   edited: "text-sky-700",
 };
+/** A heading of the claims list with its pop-up: shown on hover or focus, and on a tap or click (a phone has no hover). The text is
+ *  columnText(name), from claims_list_texts.json. */
+function ColumnHeading({ name }) {
+  const [hover, setHover] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const shown = hover || pinned;
+  return (
+    <th className="py-2 pr-3 relative" data-testid={`column-${name}`}>
+      <button type="button" aria-expanded={shown} aria-describedby={shown ? `column-tip-${name}` : undefined}
+        className="uppercase tracking-wider font-mono cursor-help underline decoration-dotted underline-offset-2"
+        onMouseOver={() => setHover(true)} onMouseOut={() => setHover(false)} onFocus={() => setHover(true)} onBlur={() => setHover(false)}
+        onClick={() => setPinned((p) => !p)}>{name}</button>
+      {shown && (
+        <div role="tooltip" id={`column-tip-${name}`} data-testid={`column-tip-${name}`}
+          className="absolute left-0 top-full z-20 mt-1 w-72 max-w-[80vw] rounded-md border border-[#D1D5DB] bg-white p-2 text-[11px] normal-case tracking-normal font-sans font-normal text-slate-800 shadow-md whitespace-normal">
+          {columnText(name)}
+        </div>
+      )}
+    </th>
+  );
+}
+
 const CONFIDENCE_STYLE = { High: "text-emerald-700", Medium: "text-amber-800", Low: "text-rose-700" };
 export const MOVE_NOTICE_MS = 4000;
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
@@ -336,7 +358,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-[10px] font-mono uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
-                  {COLUMNS.map((name) => <th key={name} className="py-2 pr-3" title={name === "Extraction confidence" ? CONFIDENCE_HOVER : undefined}>{name}</th>)}
+                  {COLUMNS.map((name) => <ColumnHeading key={name} name={name} />)}
                 </tr>
               </thead>
               <tbody>
@@ -643,7 +665,8 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
           <td className={`py-2 pr-3 text-slate-800 ${turnover.views.length ? "min-w-[14rem]" : "whitespace-nowrap"}`} data-testid="candidate-type">
             {turnover.views.length ? turnover.views.map((v) => (
               <TurnoverCell key={v.claim_id} row={v} onAnswer={onAnswer} heading={turnoverHeading(v, isRow)} />
-            )) : typeLabel(c.claim_type)}
+            )) : typeCellLines(c).title}
+            {typeCellLines(c).partOf && <div className="text-[10px] text-slate-500" data-testid="candidate-part-of">{typeCellLines(c).partOf}</div>}
             {scenarioText(c) && <div className="text-[10px] font-mono text-slate-500" data-testid="candidate-scenario">{scenarioText(c)}</div>}
             {c.channel && <div className="text-[10px] text-slate-500 mt-0.5" data-testid="candidate-channel">{c.channel}</div>}
           </td>
@@ -662,9 +685,6 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
           </td>
         </>
       )}
-      <td className="py-2 pr-3 whitespace-nowrap" data-testid="candidate-confidence">
-        <span className={CONFIDENCE_STYLE[c.confidence?.level] || "text-slate-500"} title={CONFIDENCE_HOVER} data-testid="candidate-confidence-text">{confidenceText(c)}</span>
-      </td>
       <td className="py-2 pr-3 text-slate-700 max-w-md">
         <div>{c.snippet}</div>
         {c.origin === "deck_analyst" && <div className="text-slate-400 mt-0.5" data-testid="candidate-added-from-deck">{ADDED_FROM_DECK_TAG}</div>}
@@ -673,6 +693,10 @@ export function CandidateRow({ candidate: c, onSave, onAnswer, onCorrect, highli
       </td>
       <td className="py-2 pr-3 font-mono text-[11px] text-slate-600" data-testid="candidate-source">
         {c.sources.map((s, i) => <div key={i}>{sourceRef(s)}</div>)}
+      </td>
+      <td className="py-2 pr-3 max-w-[14rem]" data-testid="candidate-confidence">
+        <span className={CONFIDENCE_STYLE[c.confidence?.level] || "text-slate-500"} title={CONFIDENCE_HOVER} data-testid="candidate-confidence-text">{confidenceText(c)}</span>
+        {confidenceReason(c) && <div className="text-[10px] text-slate-500 whitespace-normal" data-testid="candidate-confidence-reason">{confidenceReason(c)}</div>}
       </td>
       <td className="py-2 pr-3">
         <span className={`text-[10px] font-mono whitespace-nowrap cursor-default ${STATUS_STYLE[c.status] || ""}`} title={[editLogText(c), c.auto_approval && c.auto_citation].filter(Boolean).join("\n") || undefined}

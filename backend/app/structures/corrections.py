@@ -43,7 +43,8 @@ COMPARABLE_SHARE = 0.05            # the smallest part of a sum, against the lar
 DERIVED_TOLERANCE = 5e-3            # a displayed figure is rounded: "1.2M" + "0.8M" against "2M"
 MAX_DERIVED_FIGURES = 30            # triples of more figures than this are not tried
 _PAGE_FIELDS = {"period": ("target_date", "period_text", "date_from", "period_start", "period_end", "period_cells", "period_read_note"),
-                "label": ("label_from", "type_from")}
+                "label": ("label_from", "type_from"),
+                "segment": ()}          # a legend item the analyst clicks becomes the claim's segment (its input); no page field changes
 FIELDS = tuple(_PAGE_FIELDS)
 HEADING_ROW = 1                    # the row of the cell ids ("r1c1") a label is never corrected to
 _WORDS = re.compile(r"[^\W\d_]{3,}")
@@ -190,6 +191,13 @@ def plan(grid: Dict, grid_views: Dict, claim: Dict, item: Dict, cell: Dict, flag
         if len(options) > 1:
             out.append({"flag": flag, "field": "period", "original": claim.get("period"), "original_text": claim.get("period"), "options": options})
     options = label_options(grid_views, claim, item, cell)
+    if options == []:
+        legend = association.Layout(grid)
+        by_id = {page_check._id(c): c for c in grid["cells"]}
+        items_ = [i for i in legend.legend_items(cell) if i in by_id]
+        if items_:
+            out.append({"flag": label_mismatch, "field": "segment", "original": claim["label_cell"], "original_text": None,
+                        "options": [{"label_cell": i, "value": by_id[i]["text"].strip(), "ref": i, "segment": by_id[i]["text"].strip()} for i in items_]})
     if options is not None:
         if len(options) == 1:
             cited = next((c["text"] for c in grid["cells"] if page_check._id(c) == claim["label_cell"]), None)
@@ -201,6 +209,8 @@ def apply_option(item: Dict, field: str, option: Dict) -> Dict:
     """The item with one option applied (a copy)."""
     if field == "period":
         return {**item, "period": option["period"], "period_cells": list(option.get("period_cells") or [])}
+    if field == "segment":
+        return dict(item)
     return {**item, "label_cell": option["label_cell"]}
 
 
@@ -208,6 +218,8 @@ def restore_original(item: Dict, plan_: Dict) -> Dict:
     """The item as the model read it, for the field of one plan entry (a copy)."""
     if plan_["field"] == "period":
         return {**item, "period": plan_["original"], "period_cells": []}
+    if plan_["field"] == "segment":
+        return dict(item)
     return {**item, "label_cell": None}
 
 
