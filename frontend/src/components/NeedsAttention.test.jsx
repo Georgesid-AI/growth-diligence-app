@@ -201,7 +201,7 @@ test("the label-mismatch card asks the question, offers each legend item as a bu
   api.answerCorrection.mockResolvedValue({});
   const { host, done } = await mount([LEGEND()]);
   try {
-    expect(q(host, "attention-claim-flags").textContent).toBe("The name of this figure isn't next to it on the page. Which is it?");
+    expect(q(host, "attention-claim-flags").textContent).toBe("The app could not confidently link this figure to its label. Which label describes it?");
     const buttons = [...host.querySelectorAll('[data-testid="attention-correction"]')].map((b) => b.textContent);
     expect(buttons).toEqual(["Platform Subscriptions", "Services"]);
     expect(q(host, "attention-keep")).toBeNull();

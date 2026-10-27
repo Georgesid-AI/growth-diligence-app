@@ -465,7 +465,7 @@ test("Needs your attention is a status label, not a control: plain text with no 
 test("the upload help, the Extraction confidence hover are shown word for word", async () => {
   await reload([claim("c", "d1", 2, { group: 1 })]);
   expect(q("deck-upload-help").textContent).toMatch(/^Board deck or growth plan: the company's board decks, investor updates.* Up to 8 documents per audit\./);
-  expect(q("candidate-confidence-text").title).toBe("How well the app read this figure from the deck. Not a statement about whether it is true.");
+  expect(q("candidate-confidence-text").title).toBe("How confidently the app extracted and linked the figure to its source. This does not verify the company’s claim.");
 });
 
 test("a tag never shows without its explanation", async () => {

@@ -3,7 +3,7 @@
   "statuses": ["Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported"],
   "memo_groups": { "Unverified": ["Unverified", "Inconclusive"] },
   "explainers": {
-    "extraction_confidence": "How well the app read this figure from the deck. Not a statement about whether it is true.",
+    "extraction_confidence": "How confidently the app extracted and linked the figure to its source. This does not verify the company’s claim.",
     "evidence_status": "How this claim compares with the company data supplied for this audit. Agreement is not independent verification."
   },
   "definitions": {

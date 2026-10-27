@@ -100,7 +100,7 @@ POPULATION_PREFIX = "population differs: "
 EVIDENCE_STATUSES = ("Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported")
 INCONCLUSIVE = "Inconclusive"
 MEMO_GROUPS = {"Unverified": ["Unverified", "Inconclusive"]}
-EXTRACTION_EXPLAINER = "How well the app read this figure from the deck. Not a statement about whether it is true."
+EXTRACTION_EXPLAINER = "How confidently the app extracted and linked the figure to its source. This does not verify the company’s claim."
 EVIDENCE_EXPLAINER = "How this claim compares with the company data supplied for this audit. Agreement is not independent verification."
 NOT_VERIFIED = ("Unverified", "Inconclusive", "Unsupported", "Contradicted")      # the labels whose row needs a gate
 # docs/specs/dates-and-periods.md section 4: claim-period coverage, measured on the months the observed figure reads.

@@ -33,8 +33,8 @@ describe("claims list texts", () => {
     expect(confidenceReason({})).toBe("");
   });
   test("a label mismatch reads as the question on screen, never as the closed word", () => {
-    expect(flagsText({ flags: ["label mismatch"] })).toBe("The name of this figure isn't next to it on the page. Which is it?");
-    expect(flagsText({ flags: ["currency assumed", "label mismatch"] })).toBe("currency assumed · The name of this figure isn't next to it on the page. Which is it?");
+    expect(flagsText({ flags: ["label mismatch"] })).toBe("The app could not confidently link this figure to its label. Which label describes it?");
+    expect(flagsText({ flags: ["currency assumed", "label mismatch"] })).toBe("currency assumed · The app could not confidently link this figure to its label. Which label describes it?");
   });
   test("the type cell: segment after the type, a part-of line for a part of a group", () => {
     expect(typeCellLines({ claim_type: "revenue" })).toEqual({ title: "Revenue", partOf: null });

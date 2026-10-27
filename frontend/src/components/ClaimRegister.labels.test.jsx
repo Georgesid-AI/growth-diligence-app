@@ -20,7 +20,7 @@ beforeEach(() => { api.getBlockers.mockResolvedValue([]); });
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const EXTRACTION = "How well the app read this figure from the deck. Not a statement about whether it is true.";
+const EXTRACTION = "How confidently the app extracted and linked the figure to its source. This does not verify the company’s claim.";
 const EVIDENCE = "How this claim compares with the company data supplied for this audit. Agreement is not independent verification.";
 
 // ARR €240,000 for FY2023 against 198,142.68 in the revenue file: read well (High), and wrong (Contradicted).
