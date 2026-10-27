@@ -21,6 +21,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 from app.llm import gateway, prompt_store, redaction  # noqa: E402
 import contract_fixtures as cf  # noqa: E402
+import page_images  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 
 RUN_ID = t.RUN_ID
@@ -791,8 +792,9 @@ def _structure_db(mapping=None, **audit):
 
 def _send(db, text, kind="table", reply=STRUCTURE_REPLY):
     adapter = t.FakeAdapter(replies=[reply])
+    images = [page_images.png(1)] if kind == "page_claims" else None          # a page goes with its image (page-image.md)
     result = asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], text, kind, adapter=adapter,
-                                                sleep=t._noop_sleep))
+                                                sleep=t._noop_sleep, images=images))
     return result, adapter
 
 
@@ -1147,8 +1149,8 @@ def test_unit_other_carries_an_iso_code_only_so_no_cell_text_is_stored_or_logged
 # http_status and error_type describe a provider error: the HTTP status and the provider's error code (or, when it
 # sends none that reads as a code, the exception's class name), never its message.
 LLM_CALLS_KEYS = frozenset({"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens",
-                            "estimated_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp",
-                            "content_hash", "deck_id", "http_status", "error_type", "structure_type"})
+                            "estimated_cost_usd", "image_tokens", "image_cost_usd", "cache_hit", "status", "unmatched_numbers",
+                            "timestamp", "content_hash", "deck_id", "http_status", "error_type", "structure_type"})
 
 
 def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_code_only(caplog):
@@ -1246,9 +1248,10 @@ def test_the_owner_audit_cost_rows_hold_a_closed_key_set_and_the_tester_filter_c
     db["llm_calls"].docs.append({"run_id": "a1", "cache_hit": False, "input_tokens": 5, "output_tokens": 5, "estimated_cost_usd": 0.1,
                                  "file": "deck_zed.pptx"})
     rows = asyncio.run(allowance.audit_costs(db))["audits"]
-    assert rows == [{"tester": "Label One", "created_at": "2026-10-18T12:32:00+00:00", "calls": 1, "tokens": 10, "cost_usd": 0.1}]
+    assert rows == [{"tester": "Label One", "created_at": "2026-10-18T12:32:00+00:00", "calls": 1, "tokens": 10, "cost_usd": 0.1,
+                     "image_tokens": 0, "image_cost_usd": 0.0}]
     assert "Acme Zed" not in json.dumps(rows) and "deck_zed" not in json.dumps(rows)
-    assert {"input_tokens", "output_tokens", "estimated_cost_usd"} <= tester_view.HIDDEN_KEYS
+    assert {"input_tokens", "output_tokens", "estimated_cost_usd", "image_tokens", "image_cost_usd"} <= tester_view.HIDDEN_KEYS
 
 
 # The check a "structure not read" line names for a reply that fails validation (issue #64): a closed word, never the
@@ -2040,7 +2043,7 @@ def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api
         assert all(text not in blob for blob in stored.values())
     calls = api.db["llm_calls"].docs
     assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd",
-                          "cache_hit", "status", "unmatched_numbers", "timestamp", "content_hash", "deck_id", "http_status",
+                          "image_tokens", "image_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp", "content_hash", "deck_id", "http_status",
                           "error_type", "structure_type"} for c in calls)
 
 
@@ -2434,7 +2437,8 @@ def test_a_rejected_or_failed_step_logs_closed_reasons_and_stores_no_payload_tex
             assert secret not in text, f"{secret!r} reached a log line, a reason or a collection"
     assert db["llm_narratives"].docs == [], "a rejected narrative is not stored"
     assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd",
-                          "cache_hit", "status", "unmatched_numbers", "timestamp", "http_status", "error_type"}
+                          "image_tokens", "image_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp", "http_status",
+                          "error_type"}
                for c in db["llm_calls"].docs)
 
 
@@ -3140,15 +3144,13 @@ def test_a_sheet_step_keeps_its_header_text_the_customer_header_rule_is_for_deck
 
 
 # ---------------------------------------------------------------------------
-# The page_claims step (docs/design/ai-reads-rules-check.md; CLAUDE.md rule 16 as amended 2026-10-22, George, PR #158, decision
-# 1b): the redacted text lines of deck pages that carry a figure as digits may reach the provider, prose lines included, as
-# `p<page>r<row>c<col>: <text>` lines through one builder (structures.pages.batch_text), at most 5 pages per call, and only while
-# DECK_PIPELINE is "ai" (the gateway refuses the step under any other value; review of PR #159, 2026-10-22). A page with no
-# figure as digits never goes (a number-word is no figure; a line that is only the page's own number is none); a line over 200
-# characters is left out by the sender and refused by the gateway (George, 2026-10-22, decision 1b on the review of PR #159); a
-# file name, an unredacted name (the people-name rule runs over prose too, its role words in any case) or a figure outside a cell
-# line is refused. The reply holds closed words, numbers and cell ids only; nothing sent, the label cell's text included, is
-# stored or logged.
+# The page_claims step (docs/design/ai-reads-rules-check.md, docs/design/page-image.md; CLAUDE.md rules 16 and 31): the text lines of
+# deck pages that carry a figure as digits, as printed with no redaction, may reach the provider, prose lines included, as
+# `p<page>r<row>c<col>: <text>` lines through one builder (structures.pages.batch_text) with one PNG of each whole page in the same
+# request, at most 5 pages per call, only while DECK_PIPELINE is "ai" and only to a Sonnet or Opus model. A page with no figure as
+# digits never goes (a number-word is no figure; a line that is only the page's own number is none); a line over 200 characters is
+# left out by the sender and refused by the gateway; a figure outside a cell line is refused; a page with no image is refused. The
+# reply holds closed words, numbers and cell ids only; nothing sent, the label cell's text included, is stored or logged.
 # ---------------------------------------------------------------------------
 from unittest import mock  # noqa: E402
 
@@ -3183,7 +3185,7 @@ def _send_page(db, text, reply=NO_CLAIMS, pipeline="ai"):
         return _send(db, text, PAGE_CLAIMS, reply)
 
 
-def test_a_page_text_of_redacted_lines_with_a_figure_as_digits_reaches_the_provider_as_sent():
+def test_a_page_text_with_a_figure_as_digits_reaches_the_provider_as_printed_with_its_image():
     assert len(SHORT_PROSE) <= 200 < len(PROSE_LINE)
     result, adapter = _send_page(_structure_db(), GOOD_PAGE, PAGE_REPLY)
     assert result.status == "read" and adapter.calls == 1, result.reason
@@ -3191,6 +3193,8 @@ def test_a_page_text_of_redacted_lines_with_a_figure_as_digits_reaches_the_provi
     assert sent == {"type": PAGE_CLAIMS, "text": GOOD_PAGE}
     assert all(re.match(r"^p\d+r\d+c\d+( title)?: ", line) for line in sent["text"].splitlines())
     assert adapter.requests[-1]["cache_system"] is True, "the fixed prompt is marked for the provider's prompt cache"
+    assert adapter.requests[-1]["images"] == [page_images.png(1)], "the page image goes in the same request as the text"
+    assert gateway.PAGE_IMAGE_RULE in adapter.requests[-1]["system"], "the reading instructions carry the printed-values-only rule"
     assert [c["value_cell"] for c in result.claims] == ["p5r2c1", "p5r3c1"]
 
 
@@ -3211,53 +3215,68 @@ def test_a_page_line_over_200_characters_is_left_out_by_the_sender_and_refused_b
     long_line = ("Our CEO Michael Smith and our CTO Desmond Okafor founded the company with Northwind Trading as the first "
                  "customer; Jane Doe (jane.doe@northwind.com, +44 20 7946 0958) leads sales across three regions and the team of 12 "
                  "keeps growing with every product line launched since the spring")
-    assert len(long_line) > 200, "and still over 200 once the names, the email and the phone number are placeholders"
+    assert len(long_line) > 200
     cells = [{"row": 1, "col": 1, "text": "Team", "box": 1}, {"row": 2, "col": 1, "text": long_line, "box": 1},
              {"row": 3, "col": 1, "text": "12 engineers", "box": 2}]
     grid = {"type": "page", "page": 3, "header_rows": 0, "cells": cells, "tables": [], "figure": True}
-    sent, = page_pipeline.redacted_pages([grid], "Target Co", {"Northwind Trading": "Customer_01"})
+    sent, = page_pipeline.sendable_pages([grid])
     assert [c["text"] for c in sent["cells"]] == ["Team", "12 engineers"], "the sender leaves the long line out"
     text = page_pipeline.batch_text([sent])
-    result, adapter = _send_page(_structure_db({"Northwind Trading": "Customer_01"}), text)
-    assert result.status == "read" and adapter.calls == 1, result.reason
-    redacted, _ = structure_redact.redact_page(cells, "Target Co", {"Northwind Trading": "Customer_01"})
-    with_long = structure_redact.page_text([(3, redacted)])
-    assert "Michael Smith" not in with_long and len(redacted[1]["text"]) > 200
-    result, adapter = _send_page(_structure_db({"Northwind Trading": "Customer_01"}), with_long)
-    assert (result.status, result.reason, adapter.calls) == ("refused", "refused: cell_too_long", 0)
-    grid_only_long = {**grid, "cells": cells[:2]}
-    assert page_pipeline.redacted_pages([grid_only_long], "Target Co", {}) == [], "a page whose only figure sat in the long line has none"
-
-
-def test_without_a_customer_list_the_customer_header_blanks_its_own_box_or_table_column_only():
-    """L2 of the review of PR #159: the cells under a customer-type header in its text box or its table column become [redacted],
-    and the lines directly under it in its column up to the first figure line (the part the gateway can re-run on the text as
-    sent, which carries no box); a figure elsewhere on the page survives, so the page still goes, and the gateway accepts it."""
-    cells = [{"row": 1, "col": 1, "text": "Traction", "box": 1, "title": True},
-             {"row": 2, "col": 1, "text": "Customers", "box": 2}, {"row": 3, "col": 1, "text": "Acme Widgets (12 seats)", "box": 2},
-             {"row": 4, "col": 1, "text": "Globex Corp", "box": 2},
-             {"row": 5, "col": 1, "text": "800 Paying Users", "box": 3}, {"row": 6, "col": 1, "text": "Strong growth", "box": 3},
-             {"row": 7, "col": 1, "text": "Clients", "table": 1, "trow": 1, "tcol": 1}, {"row": 7, "col": 2, "text": "ARR", "table": 1, "trow": 1, "tcol": 2},
-             {"row": 8, "col": 1, "text": "Northwind Trading", "table": 1, "trow": 2, "tcol": 1},
-             {"row": 8, "col": 2, "text": "€1.5M", "table": 1, "trow": 2, "tcol": 2},
-             {"row": 9, "col": 1, "text": "Initech Ltd", "table": 2, "trow": 1, "tcol": 1},
-             {"row": 9, "col": 2, "text": "Growing fast", "box": 4}]
-    redacted, counts = structure_redact.redact_page(cells, "Target Co", {})
-    assert [c["text"] for c in redacted] == ["Traction", "Customers", "[redacted]", "[redacted]", "800 Paying Users", "Strong growth",
-                                             "Clients", "ARR", "[redacted]", "€1.5M", "[redacted]", "Growing fast"]
-    assert counts["customer_blanked"] == 4, "Initech Ltd stands directly under the Clients column with no figure line between"
-    grid = {"type": "page", "page": 5, "header_rows": 0, "cells": cells, "tables": [{"table": 1, "header_rows": 1}, {"table": 2, "header_rows": 0}],
-            "figure": True}
-    sent, = page_pipeline.redacted_pages([grid], "Target Co", {})
-    text = page_pipeline.batch_text([sent])
-    assert "800 Paying Users" in text and "Strong growth" in text and "Growing fast" in text
     result, adapter = _send_page(_structure_db(), text)
     assert result.status == "read" and adapter.calls == 1, result.reason
-    # A deck structure keeps today's rule: the whole column under the header.
-    panel = [{"row": 1, "col": 1, "text": "Customers"}, {"row": 2, "col": 1, "text": "Acme Widgets"}, {"row": 3, "col": 1, "text": "12 logos"},
-             {"row": 4, "col": 1, "text": "Globex Corp"}]
-    out, _ = structure_redact.redact_structure(panel, "Target Co", {}, deck=True)
-    assert [c["text"] for c in out] == ["Customers", "[redacted]", "[redacted]", "[redacted]"], "a figure in a sentence is no figure cell"
+    with_long = structure_redact.page_text([(3, cells)])
+    result, adapter = _send_page(_structure_db(), with_long)
+    assert (result.status, result.reason, adapter.calls) == ("refused", "refused: cell_too_long", 0)
+    grid_only_long = {**grid, "cells": cells[:2]}
+    assert page_pipeline.sendable_pages([grid_only_long]) == [], "a page whose only figure sat in the long line has none"
+
+
+def test_a_page_goes_as_printed_names_customers_emails_phones_and_file_names_included():
+    """page-image.md section 2: no redaction on a page. The customer rules (the pseudonym swap, the customer-type header blanking), the
+    people-name rule and the e-mail and phone rules do not run on it: sender and gateway both leave every printed line as it is."""
+    cells = [{"row": 1, "col": 1, "text": "Traction", "box": 1, "title": True},
+             {"row": 2, "col": 1, "text": "Customers", "box": 2}, {"row": 3, "col": 1, "text": "Northwind Trading (12 seats)", "box": 2},
+             {"row": 4, "col": 1, "text": "Globex Corp", "box": 2},
+             {"row": 5, "col": 1, "text": "800 Paying Users", "box": 3},
+             {"row": 6, "col": 1, "text": "Rohan Mehta, Co-Founder", "box": 4}, {"row": 7, "col": 1, "text": "Jane Doe", "box": 4},
+             {"row": 8, "col": 1, "text": "jane.doe@northwind.com +44 20 7946 0958", "box": 4},
+             {"row": 9, "col": 1, "text": "See Acme_Board_Q3.pptx", "box": 4},
+             {"row": 10, "col": 1, "text": "Clients", "table": 1, "trow": 1, "tcol": 1},
+             {"row": 10, "col": 2, "text": "ARR", "table": 1, "trow": 1, "tcol": 2},
+             {"row": 11, "col": 1, "text": "Initech Ltd", "table": 1, "trow": 2, "tcol": 1},
+             {"row": 11, "col": 2, "text": "€1.5M", "table": 1, "trow": 2, "tcol": 2}]
+    grid = {"type": "page", "page": 5, "header_rows": 0, "cells": cells, "tables": [{"table": 1, "header_rows": 1}], "figure": True}
+    sent, = page_pipeline.sendable_pages([grid])
+    assert [c["text"] for c in sent["cells"]] == [c["text"] for c in cells], "the sender changes no line"
+    text = page_pipeline.batch_text([sent])
+    mapping = {"Northwind Trading": "Customer_01"}              # a customer list the page no longer reads
+    result, adapter = _send_page(_structure_db(mapping), text)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    seen = json.loads(adapter.payloads[0])["text"]
+    for printed in ("Northwind Trading (12 seats)", "Globex Corp", "Rohan Mehta, Co-Founder", "Jane Doe", "jane.doe@northwind.com",
+                    "+44 20 7946 0958", "Acme_Board_Q3.pptx", "Initech Ltd"):
+        assert printed in seen, f"{printed!r} is printed on the page and goes as printed"
+    for placeholder in ("[redacted]", "[person]", "[email]", "[phone]", "Customer_01"):
+        assert placeholder not in seen
+    # The page rules are gone from the code, not only unused; a deck structure keeps its own.
+    assert not hasattr(structure_redact, "redact_page") and not hasattr(structure_redact, "redact_role_names")
+    out, _ = structure_redact.redact_structure(cells[:5], "Target Co", mapping, deck=True)
+    assert "Northwind" not in " ".join(c["text"] for c in out)
+
+
+def test_a_page_read_without_its_image_is_refused_and_sends_nothing():
+    adapter = t.FakeAdapter(replies=[PAGE_REPLY])
+    result = asyncio.run(gateway.read_structure(_structure_db(), STRUCTURE_AUDIT["id"], GOOD_PAGE, PAGE_CLAIMS, adapter=adapter,
+                                                sleep=t._noop_sleep))
+    assert (result.status, result.reason, adapter.calls, getattr(adapter, "counted", 0)) == ("refused", "refused: no_image", 0, 0)
+
+
+def test_the_image_goes_only_with_a_page_read():
+    """A structure, a sheet or a column mapping is text alone, whatever the caller passes."""
+    adapter = t.FakeAdapter(replies=[STRUCTURE_REPLY])
+    result = asyncio.run(gateway.read_structure(_structure_db(), STRUCTURE_AUDIT["id"], GOOD_ITEMS, "table", adapter=adapter,
+                                                sleep=t._noop_sleep, images=[page_images.png(1)]))
+    assert result.status == "read" and adapter.calls == 1 and adapter.requests[-1]["images"] is None
 
 
 @pytest.mark.parametrize("name, text, reason", [
@@ -3276,22 +3295,9 @@ def test_without_a_customer_list_the_customer_header_blanks_its_own_box_or_table
     ("a prose line with no cell id", GOOD_PAGE + "\nRevenue grew from £1.2m to £1.5m between FY2025 and FY2026.", "not_cells"),
     ("structure lines with no page", "r1c1: Revenue\nr1c2: £1,200,000", "not_cells"),
     ("pages out of order", _page(6, "Revenue €1.5M") + "\n" + _page(5, "Costs €1M"), "not_cells"),
-    ("a file name", GOOD_PAGE + "\np5r6c1: See Acme_Board_Q3.pptx", "file_name"),
-    ("an unredacted name", GOOD_PAGE + "\np5r6c1: Michael Smith", "redaction_changed"),
-    ("an unredacted name beside a role word in prose", GOOD_PAGE + "\np5r6c1: Our CEO Petar Petrov built the sales team", "redaction_changed"),
-    ("a name before a capitalised role word", GOOD_PAGE + "\np5r6c1: Rohan Mehta, Co-Founder", "redaction_changed"),
-    ("a name before a dash and Founder", GOOD_PAGE + "\np5r6c1: Rohan Mehta – Founder", "redaction_changed"),
-    ("a name before Director of Sales", GOOD_PAGE + "\np5r6c1: Rohan Mehta, Director of Sales", "redaction_changed"),
-    ("a name before Advisor", GOOD_PAGE + "\np5r6c1: Rohan Mehta, Advisor", "redaction_changed"),
-    ("a name before a bracketed Partner", GOOD_PAGE + "\np5r6c1: Rohan Mehta (Partner)", "redaction_changed"),
-    ("a name before Head of Product", GOOD_PAGE + "\np5r6c1: Rohan Mehta, Head of Product", "redaction_changed"),
-    ("a name before President", GOOD_PAGE + "\np5r6c1: Rohan Mehta, President", "redaction_changed"),
-    ("a name after a role word in capitals", GOOD_PAGE + "\np5r6c1: CO-FOUNDER Rohan Mehta", "redaction_changed"),
-    ("an unredacted customer name in prose", GOOD_PAGE + "\np5r6c1: Northwind Trading renewed for three more years", "redaction_changed"),
-    ("an unredacted email", GOOD_PAGE + "\np5r6c1: jane.doe@northwind.com", "redaction_changed"),
     ("raw bytes", "p5r1c1: x\x00\x01", "raw_bytes"),
 ])
-def test_the_page_step_refuses_what_the_amended_rule_16_does_not_allow(name, text, reason):
+def test_the_page_step_refuses_what_rule_16_does_not_allow(name, text, reason):
     assert reason in STRUCTURE_REFUSALS
     result, adapter = _send_page(_structure_db({"Northwind Trading": "Customer_01"}), text)
     assert adapter.calls == 0 and getattr(adapter, "counted", 0) == 0, f"{name} reached the provider"
@@ -3306,13 +3312,14 @@ def test_the_page_step_reads_no_deck_text_and_the_page_cells_come_through_the_on
     db, reads = _recording_db()
     db["audits"].docs[0].update({"company_name": "Target Co", "structure_reading_consent": True})
     adapter = t.FakeAdapter(replies=[PAGE_REPLY])
-    asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_PAGE, PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_PAGE, PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep,
+                                       images=[page_images.png(1)]))
     assert adapter.calls == 1
     touched = {name for name, _, _ in reads}
     assert not touched & {decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION}, touched
     assert DECK_SENTINEL not in adapter.payloads[0] and DECK_FILE not in adapter.payloads[0]
-    source = inspect.getsource(page_pipeline.redacted_pages) + inspect.getsource(page_pipeline.batch_text)
-    assert "redact_page" in source and "page_text" in source
+    source = inspect.getsource(page_pipeline.sendable_pages) + inspect.getsource(page_pipeline.batch_text)
+    assert "redact_page" not in source and "page_text" in source
     assert "page_text" not in inspect.getsource(gateway.read_structure), "the gateway builds no page text"
 
 
@@ -3453,7 +3460,7 @@ def test_a_page_reply_cut_at_the_output_limit_is_logged_as_truncated_with_its_to
     adapter = t.FakeAdapter(raise_with=cut)
     with caplog.at_level(logging.DEBUG), mock.patch.dict(os.environ, {"DECK_PIPELINE": "ai"}):
         result = asyncio.run(gateway.read_structure(_structure_db(), STRUCTURE_AUDIT["id"], GOOD_PAGE, PAGE_CLAIMS, adapter=adapter,
-                                                    sleep=t._noop_sleep))
+                                                    sleep=t._noop_sleep, images=[page_images.png(1)]))
     assert (result.status, result.reason, adapter.calls) == ("truncated", gateway.NOT_READ, 1), "no reask: the same batch would be cut again"
     assert (result.input_tokens, result.output_tokens) == (3000, 4000)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
@@ -3473,7 +3480,7 @@ def test_the_page_grid_layout_fields_are_kept_with_the_grid_and_never_sent():
     texts += [(x, 340, 12, year) for year, x in zip(("2022", "2023", "2024"), (150, 300, 450))]
     grid, = page_grids.page_grids(parse_deck(pdf_page(texts, []), "deck.pdf")["blocks"])
     assert sorted(c["bar_year"] for c in grid["cells"] if "bar_year" in c) == ["2022", "2023", "2024"]
-    text = page_pipeline.batch_text(page_pipeline.batches([grid], "Target Co", {})[0])
+    text = page_pipeline.batch_text(page_pipeline.batches([grid])[0])
     for word in ("next_to", "bar_year", "tick", "box", "table"):
         assert word not in text
     assert set(structure_redact.parse_page_text(text)) == {1}
@@ -3497,7 +3504,7 @@ def test_the_layout_evidence_is_python_only_stored_without_text_and_never_sent_o
                                  fills=[(100, 100, 60, 340, (0.12, 0.47, 0.71)), (560, 68, 22, 18, (0.12, 0.47, 0.71))],
                                  rotated=[(60, 150, 12, "Revenue (EUR M)", "up")], pictures=[(10, 10, 400, 300)]), "deck.pdf")
     grid, = page_grids.page_grids(parsed["blocks"], parsed["layout"])
-    text = page_pipeline.batch_text(page_pipeline.batches([grid], "Target Co", {})[0])
+    text = page_pipeline.batch_text(page_pipeline.batches([grid])[0])
     assert all(re.fullmatch(r"p1r\d+c\d+(?: title)?: .*", line) for line in text.split("\n")), "one id and one text per line, nothing else"
     assert [line.split(": ", 1)[1] for line in text.split("\n")] == [c["text"] for c in sorted(grid["cells"], key=lambda c: (c["row"], c["col"]))], \
         "after the id, each line is the cell's text and nothing the layout adds"

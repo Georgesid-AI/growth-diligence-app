@@ -229,14 +229,14 @@ def test_a_cut_reply_is_counted_as_truncated_and_billed_by_the_guard(script):
     class Cutting(script.PageReplayAdapter):
         """The provider cuts the reply of a batch of more than two pages (the first batch of each deck has five)."""
 
-        def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+        def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
             if json.loads(user_payload)["text"].count("\n") > 60:
                 self.calls += 1
                 error = gateway.GatewayError("truncated", "cut")
                 error.tokens = (1000, max_tokens)
                 raise error
             return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
-                                    temperature=temperature, json_schema=json_schema, cache_system=cache_system)
+                                    temperature=temperature, json_schema=json_schema, cache_system=cache_system, images=images)
     report, adapter = _run(script, Cutting(), passes=1, decks=DECKS[1:])
     row, = report["per_deck"][DECKS[1]]["passes"]
     assert row["truncated"] >= 2, "the 5-page batch was cut, then its larger half"

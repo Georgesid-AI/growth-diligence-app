@@ -8,10 +8,11 @@ scenario) and `scenario` (best, realistic, worst, none); the gateway caches a ba
 function of the file), so a deck uploaded again costs nothing.
 
 Order for one deck: consent and the revenue-file gate as today -> the page grids (app/decks/pages.py) -> the pages that may go
-(a figure as digits, not a dropped page; decision 1b) in batches of PAGES_PER_CALL -> each batch redacted (redact.redact_page: the
-structure rules plus the people-name rule over prose), its lines over 200 characters left out (as for a structure cell; George,
-2026-10-22, decision 1b on the review of PR #159) and written by the one builder (redact.page_text) -> gateway.read_structure
-with the type page_claims (consent, boundary and redaction checked again, cache, token caps, lock, spend caps, prompt caching) -> a
+(a figure as digits, not a dropped page; decision 1b) in batches of PAGES_PER_CALL -> each batch as printed, with no redaction
+(page-image.md section 2), its lines over 200 characters left out (as for a structure cell; George, 2026-10-22, decision 1b on the
+review of PR #159) and written by the one builder (redact.page_text), with one PNG of each whole page (decks/render.py) ->
+gateway.read_structure with the type page_claims (consent, boundary and page-reader model checked again, cache, token caps, lock,
+spend caps, prompt caching) -> a
 batch too large for the cap, or whose reply was cut at the output limit, is split, a single page too large or cut is skipped
 -> checker.check per page (page_check at cell level, then the flags) -> one approval row per claim,
 "Matched to page" or "AI suggestion, not matched", with its `flags` (a flagged row is listed in the review tab, never deleted or
@@ -26,8 +27,8 @@ from typing import Dict, List, Optional, Tuple
 
 from ..decks import CANDIDATES_COLLECTION, TEXT_COLLECTION, claims
 from ..decks import pages as page_grids_mod
+from ..decks import render
 from ..llm import gateway
-from ..llm import redaction as llm_redaction
 from ..llm.schemas import PAGE_CLAIMS
 from . import association
 from . import checker, page_check, redact
@@ -39,51 +40,47 @@ deck_pipeline = gateway.deck_pipeline          # the switch is read by the gatew
 PAGES_PER_CALL = redact.PAGES_PER_CALL
 PARALLEL_PAGES = 8                             # pages read at a time (George, 2026-10-23, deck page reads: speed)
 PARALLEL_AFTER_RATE_LIMIT = 4                  # ... for the rest of the deck after the provider answers 429
-RETRY_STATUSES = ("not_read", "stopped")       # a later Run audit reads these pages again
+RETRY_STATUSES = ("not_read", "stopped", "blocked")       # a later Run audit reads these pages again
 PAGE_TIMEOUT_SECONDS = 60.0                    # one page: the call, its retries and its checks; then "page n not read"
 LINE_MAX = gateway.STRUCTURE_CELL_MAX          # a longer line is left out, as a structure cell is (decision 1b, review of PR #159)
 _UNITS = {"%", "x", "days", "months", "years"}
 
 
-def redacted_pages(grids: List[Dict], company_name: Optional[str], mapping: Dict[str, str]) -> List[Dict]:
+def sendable_pages(grids: List[Dict]) -> List[Dict]:
     """[{"grid", "cells"}] for the pages that may go: a sendable grid (a figure as digits by the parser's reader, not a dropped
-    page) whose redacted cells (redact.redact_page: the structure rules plus the people-name rule over prose), the lines over
-    LINE_MAX characters left out, still hold a figure as digits by the gateway's own floor (redact.page_figure: not a year, a
-    date or the page's own number), so a page whose only digits were a phone number or its page number never goes."""
+    page) whose lines, as printed, with the lines over LINE_MAX characters left out, still hold a figure as digits by the gateway's
+    own floor (redact.page_figure: not a year, a date or the page's own number), so a page whose only digits were a phone number or
+    its page number never goes."""
     out = []
     for grid in page_grids_mod.sendable(grids):
         page = page_grids_mod.page_number(grid)
-        cells, _ = redact.redact_page(grid["cells"], company_name, mapping)
-        kept = [c for c in cells if len(c["text"]) <= LINE_MAX]
-        if len(kept) < len(cells):
-            # The rules run once more on the lines as sent, so the gateway's re-run (which sees no dropped line) finds nothing to change.
-            kept, _ = redact.redact_page(kept, company_name, mapping)
+        kept = [c for c in grid["cells"] if len(c["text"]) <= LINE_MAX]
         if any(redact.page_figure(c["text"], page) for c in kept):
             out.append({"grid": grid, "cells": kept})
     return out
 
 
-def batches(grids: List[Dict], company_name: Optional[str], mapping: Dict[str, str], per_call: int = PAGES_PER_CALL) -> List[List[Dict]]:
-    """The redacted sendable pages in consecutive groups of at most per_call pages."""
-    pages = redacted_pages(grids, company_name, mapping)
+def batches(grids: List[Dict], per_call: int = PAGES_PER_CALL) -> List[List[Dict]]:
+    """The sendable pages in consecutive groups of at most per_call pages."""
+    pages = sendable_pages(grids)
     return [pages[i:i + per_call] for i in range(0, len(pages), per_call)]
 
 
 def batch_text(batch: List[Dict]) -> str:
-    """The text the model reads for a batch of redacted pages, written by redact.page_text. The one builder of page text; nothing
+    """The text the model reads for a batch of pages, written by redact.page_text. The one builder of page text; nothing
     else of a deck reaches the gateway."""
     return redact.page_text([(page_grids_mod.page_number(p["grid"]), p["cells"]) for p in batch])
 
 
-def skipped_pages(grids: List[Dict], company_name: Optional[str], mapping: Dict[str, str], page_count: Optional[int] = None) -> List[int]:
+def skipped_pages(grids: List[Dict], page_count: Optional[int] = None) -> List[int]:
     """The pages of a deck that no call is made for: those the figure rules do not let go (no digits, or only a year, a date, a phone
     number or the page's own number), decided before any call, so the panel can name them. Nothing about what the model sees changes."""
-    going = {page_grids_mod.page_number(p["grid"]) for p in redacted_pages(grids, company_name, mapping)}
+    going = {page_grids_mod.page_number(p["grid"]) for p in sendable_pages(grids)}
     numbers = {page_grids_mod.page_number(g) for g in grids}
     return sorted((set(range(1, page_count + 1)) if page_count else numbers) - going)
 
 
-async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
+async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_for=None,
                      adapter=None, sleep=None, use_cache: bool = True, per_call: int = PAGES_PER_CALL, skip=(), parallel: int = 1,
                      page_timeout: float = PAGE_TIMEOUT_SECONDS, progress=None) -> List[Tuple[List[Dict], object]]:
     """[(grids of the call, StructureRead)] in page order, for every page of a deck that may go, `per_call` pages to a call and up to
@@ -94,8 +91,10 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company
     asked again. A call the token cap refuses as too large, or whose reply the provider cut at the output limit ("truncated"), is
     split in two when it holds more than one page; a single page too large or cut is kept with its status. After the audit's token
     cap stops reading, the calls not yet started are marked stopped without a call. `use_cache=False` (a consistency pass) asks the
-    model again for pages this audit already read. `progress(done, total)` is awaited after each call."""
-    queue = [b for b in batches(grids, company_name, mapping, per_call)
+    model again for pages this audit already read. `progress(done, total)` is awaited after each call. `image_for(page)` is an async
+    function giving the PNG of a page (a render.PageImageError leaves the page "not_read" with its reason); every page goes with its
+    image, and a read without `image_for` is refused by the gateway."""
+    queue = [b for b in batches(grids, per_call)
              if not all(page_grids_mod.page_number(p["grid"]) in set(skip) for p in b)]
     total = len(queue)
     results: Dict[int, Tuple[List[Dict], object]] = {}
@@ -104,15 +103,22 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company
     def lower():
         state["limit"] = min(state["limit"], PARALLEL_AFTER_RATE_LIMIT)
 
+    async def read_one(batch, numbers):
+        images = [await image_for(n) for n in numbers] if image_for else None
+        return await gateway.read_structure(
+            db, audit_id, batch_text(batch), PAGE_CLAIMS, deck_id=deck_id, pages=numbers, adapter=adapter, sleep=sleep,
+            use_cache=use_cache, on_rate_limit=lower, images=images)
+
     async def one(batch):
         grids_of = [p["grid"] for p in batch]
         numbers = [page_grids_mod.page_number(g) for g in grids_of]
         if state["stopped"] is not None:
             return [(grids_of, gateway._structure_result("stopped", PAGE_CLAIMS, state["stopped"]))]
         try:
-            result = await asyncio.wait_for(gateway.read_structure(
-                db, audit_id, batch_text(batch), PAGE_CLAIMS, deck_id=deck_id, pages=numbers, adapter=adapter, sleep=sleep,
-                use_cache=use_cache, on_rate_limit=lower), page_timeout)
+            result = await asyncio.wait_for(read_one(batch, numbers), page_timeout)
+        except render.PageImageError as exc:
+            logger.warning("page not read: run_id=%s deck_id=%s pages=%s reason=no_image", audit_id, deck_id, numbers)
+            return [(grids_of, gateway._structure_result("not_read", PAGE_CLAIMS, exc.reason))]
         except asyncio.TimeoutError:
             logger.warning("page not read: run_id=%s deck_id=%s pages=%s reason=timeout", audit_id, deck_id, numbers)
             return [(grids_of, gateway._structure_result("not_read", PAGE_CLAIMS, "timeout"))]
@@ -271,9 +277,8 @@ def _without_text(item: Dict) -> Dict:
 
 async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
     """Read one deck page by page with the model and check every claim against its page; returns the deck's AI status (the
-    words of process_deck). Unticked consent: no call. Ticked but the revenue file not yet mapped: the deck waits, so no customer
-    name goes out unmapped."""
-    from . import (CANDIDATES_COLLECTION as _c, NOT_READ, PYTHON_ONLY, READ, STOPPED, WAITING, WAITING_TEXT, _cell_key,  # noqa: F401
+    words of process_deck). Unticked consent: no call. Ticked but the revenue file not yet mapped: the deck waits."""
+    from . import (CANDIDATES_COLLECTION as _c, BLOCKED, NOT_READ, PYTHON_ONLY, READ, STOPPED, WAITING, WAITING_TEXT, _cell_key,  # noqa: F401
                    CONSENT_OFF_LINE, PROMPT_MISSING, _deck_status, _python_cells, analyst_copy, revenue_ready, rules_copy, value_match)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
@@ -286,7 +291,6 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY, CONSENT_OFF_LINE)
     if not await revenue_ready(db, audit_id):
         return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
-    mapping = await llm_redaction.get_map(db, audit_id)
     year_end = int(audit.get("fiscal_year_end") or 12)
     grids = page_grids_mod.page_grids(deck.get("blocks") or [], deck.get("layout"))
     by_page = {page_grids_mod.page_number(g): g for g in grids}
@@ -301,13 +305,24 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     # the pages already read).
     kept = [r for r in deck.get("page_reads") or [] if r.get("status") == "read"] if deck.get("retry_pages") else []
     done_before = {n for r in kept for n in r.get("pages") or ()}
-    skipped = skipped_pages(grids, audit.get("company_name"), mapping, page_count)
+    skipped = skipped_pages(grids, page_count)
 
     async def progress(done: int, total: int) -> None:
         await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"read_progress": {"done": done, "total": total}}})
 
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"skipped_pages": skipped}})
-    for batch, result in await read_pages(db, audit_id, deck_id, grids, audit.get("company_name"), mapping, adapter, sleep,
+    # The deck's pages are drawn once from the stored file; a deck that cannot be drawn leaves every page "not read" with the reason.
+    try:
+        pdf, drawn = await render.prepare(db, audit_id, deck_id, deck.get("format") or "pdf", deck.get("pages")), None
+    except render.PageImageError as exc:
+        pdf, drawn = None, exc
+
+    async def image_for(page: int) -> bytes:
+        if drawn is not None:
+            raise drawn
+        return await asyncio.to_thread(render.render_page, pdf, page)
+
+    for batch, result in await read_pages(db, audit_id, deck_id, grids, image_for, adapter, sleep,
                                           per_call=1, skip=done_before, parallel=PARALLEL_PAGES, progress=progress):
         numbers = [page_grids_mod.page_number(g) for g in batch]
         entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
@@ -406,7 +421,9 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                 logger.warning("page %d not read: run_id=%s deck_id=%s status=%s reason=%s", n, audit_id, deck_id, entry["status"],
                                entry["reason"] if entry["reason"] in ("timeout", "stopped") else "-")
     missing = any(r["reason"] == gateway.PROMPT_MISSING_TEXT for r in reads)
-    overall = STOPPED if stopped_message else READ if any(r["status"] == "read" for r in kept + reads) else PROMPT_MISSING if missing else NOT_READ
+    blocked = any(r["status"] == "blocked" for r in reads)
+    overall = STOPPED if stopped_message else READ if any(r["status"] == "read" for r in kept + reads) else BLOCKED if blocked else \
+        PROMPT_MISSING if missing else NOT_READ
     previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1})
     unread = sorted({n for r in reads if r["status"] != "read" for n in r["pages"]})
     # Run audit asks again for the pages a failure left unread, not for a page the cap, the size or a refusal will refuse again.
@@ -414,4 +431,5 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {
         "page_reads": kept + reads, "sent": list((previous or {}).get("sent") or []) + sent, "unread_pages": unread, "retry_pages": retry,
         "diagnostics": diagnostics}})
-    return await _deck_status(db, audit_id, deck_id, overall, stopped_message or (gateway.PROMPT_MISSING_TEXT if overall == PROMPT_MISSING else None))
+    return await _deck_status(db, audit_id, deck_id, overall, stopped_message or (gateway.PROMPT_MISSING_TEXT if overall == PROMPT_MISSING else
+                                                                                gateway.PAGE_READER_BLOCKED if overall == BLOCKED else None))

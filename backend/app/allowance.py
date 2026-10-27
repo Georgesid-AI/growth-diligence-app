@@ -95,25 +95,32 @@ async def report(db, now: Optional[datetime] = None) -> dict:
     return {"month": month, "totals": totals, "testers": rows}
 
 
+EMPTY_COSTS = {"calls": 0, "tokens": 0, "cost_usd": 0.0, "image_tokens": 0, "image_cost_usd": 0.0}
+
+
 async def audit_costs(db) -> dict:
     """The owner's cost per audit (usage-and-allowance.md section 9): the tester link label, the audit's creation time and its billed
-    calls, tokens and USD, newest first. Billed means the same as in the ledger: no cache hit, no refusal. No audit id, company or
+    calls, tokens and USD, newest first. Billed means the same as in the ledger: no cache hit, no refusal. The tokens and USD are
+    split into text and image (page-image.md section 6): the page images of the deck reads are counted apart. No audit id, company or
     file name is read into the answer."""
     audits = await db.audits.find({}, {"_id": 0, "id": 1, "owner": 1, "created_at": 1}).to_list(100000)
     labels = {d["id"]: d.get("label") for d in await db[access.COLLECTION].find({}, {"_id": 0, "id": 1, "label": 1}).to_list(1000)}
     sums = {}
     for c in await db["llm_calls"].find({}, {"_id": 0, "run_id": 1, "cache_hit": 1, "input_tokens": 1, "output_tokens": 1,
-                                             "estimated_cost_usd": 1}).to_list(1000000):
+                                             "estimated_cost_usd": 1, "image_tokens": 1, "image_cost_usd": 1}).to_list(1000000):
         tokens = int(c.get("input_tokens", 0)) + int(c.get("output_tokens", 0))
         if c.get("cache_hit") or not tokens:
             continue
-        row = sums.setdefault(c.get("run_id"), {"calls": 0, "tokens": 0, "cost_usd": 0.0})
+        row = sums.setdefault(c.get("run_id"), dict(EMPTY_COSTS))
+        image_tokens, image_cost = min(tokens, int(c.get("image_tokens", 0))), float(c.get("image_cost_usd", 0.0))
         row["calls"] += 1
-        row["tokens"] += tokens
-        row["cost_usd"] += float(c.get("estimated_cost_usd", 0.0))
+        row["tokens"] += tokens - image_tokens
+        row["cost_usd"] += float(c.get("estimated_cost_usd", 0.0)) - image_cost
+        row["image_tokens"] += image_tokens
+        row["image_cost_usd"] += image_cost
     rows = [{"tester": labels.get(a.get("owner")), "created_at": a.get("created_at"),
-             **{**{"calls": 0, "tokens": 0, "cost_usd": 0.0}, **sums.get(a["id"], {})}} for a in audits]
+             **{**EMPTY_COSTS, **sums.get(a["id"], {})}} for a in audits]
     for r in rows:
-        r["cost_usd"] = round(r["cost_usd"], 6)
+        r["cost_usd"], r["image_cost_usd"] = round(r["cost_usd"], 6), round(r["image_cost_usd"], 6)
     rows.sort(key=lambda r: r["created_at"] or "", reverse=True)
     return {"audits": rows}

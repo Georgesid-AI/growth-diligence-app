@@ -375,6 +375,9 @@ export const DECK_AI_STATUS = {
 // Consent unticked (George, 2026-10-22, chat-upload.md section 28): since the page read replaced the rules read, such a deck lists no
 // claim at all, so the one line says so and where to go. It stands alone, without the "AI reading:" prefix.
 // A deck whose deck_reading prompt is not in the store (George, 2026-10-23, review of PR 164, M6): the one line, standing alone; the next Run audit reads the deck.
+// A deck whose page reader model is not on the allow-list (page-image.md section 2): nothing is sent, and the one line says so.
+export const BLOCKED_STATUS = "blocked – model not permitted";
+export const BLOCKED_LINE = `AI read: ${BLOCKED_STATUS}`;
 export const PROMPT_MISSING_LINE = "AI reading not run – deck_reading prompt missing in prompt store";
 export const CONSENT_OFF_LINE = "Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.";
 
@@ -389,6 +392,7 @@ export function aiReadStatus(deck) {
       return p && p.total ? `page ${Math.min(p.done + 1, p.total)} of ${p.total}` : deck.ai_message === "restarted" ? "restarted" : "queued";
     }
     case "python_only": return "not run (AI-assisted reading is off)";
+    case "blocked": return BLOCKED_STATUS;
     case "read": case "not_read": case "stopped": case "prompt_missing":
       return `done, ${deck.pages_read || 0} read, ${deck.pages_rejected || 0} rejected`;
     default: return deck?.ai_status || "";
@@ -415,6 +419,7 @@ export function deckRunLog(deck) {
   // The server sends the S26 line with a deck the page read left unread; under DECK_PIPELINE=rules the rules read still lists claims, so the old line stands (L5).
   if (deck.ai_status === "python_only" && deck.ai_message) return [deck.ai_message];
   if (deck.ai_status === "prompt_missing") return [deck.ai_message || PROMPT_MISSING_LINE];
+  if (deck.ai_status === "blocked") return [BLOCKED_LINE];
   const lines = [deck.figure_pages != null && deck.pages ? deckReadLine(deck) : `AI reading: ${deck.ai_status === "reading" && deck.ai_message === "restarted" ? "restarted" : DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
   if (deck.skipped_pages?.length) lines.push(`Skipped pages ${deck.skipped_pages.join(", ")}: no numbers in the page text.`);
   if (deck.ai_status !== "reading") for (const n of deck.unread_pages || []) lines.push(`page ${n} not read`);

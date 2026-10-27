@@ -3,7 +3,7 @@ import {
   countLine, statusText, STATUS_LABELS, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText, CONSENT_OFF_LINE,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText, INFORMATIONAL_FLAGS,
-  CLAIM_GROUPS, COLLAPSED_BY_DEFAULT, SCENARIO_GROUP, PROMPT_MISSING_LINE, scenarioText, isCase,
+  CLAIM_GROUPS, COLLAPSED_BY_DEFAULT, SCENARIO_GROUP, PROMPT_MISSING_LINE, BLOCKED_LINE, scenarioText, isCase,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -512,6 +512,11 @@ describe("review of PR #164 (George, 2026-10-23)", () => {
     expect(scenarioText({ scenario: "worst" })).toBe("Worst case");
     expect(scenarioText({ scenario: "none" })).toBe("");
     expect(scenarioText({})).toBe("");
+  });
+  test("a deck whose page reader model is not permitted reads one line, word for word", () => {
+    expect(BLOCKED_LINE).toBe("AI read: blocked – model not permitted");
+    expect(deckRunLog({ ai_status: "blocked", ai_message: BLOCKED_LINE, pages: 8, figure_pages: 5 })).toEqual([BLOCKED_LINE]);
+    expect(deckReadLine({ ai_status: "blocked", pages: 8, page_unit: "slide", figure_pages: 5 })).toBe("8 slides parsed · 5 with figures · AI read: blocked – model not permitted");
   });
   test("a deck whose prompt is missing reads one line, word for word", () => {
     expect(PROMPT_MISSING_LINE).toBe("AI reading not run – deck_reading prompt missing in prompt store");

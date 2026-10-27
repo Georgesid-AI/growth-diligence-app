@@ -34,8 +34,8 @@ const USAGE = { month: "2026-10", totals: { this_month: T(3, 4, 1500, 1.75), all
 
 // the shape of GET /api/admin/audit-costs (usage-and-allowance.md section 9): no audit id, company or file name
 const COSTS = { audits: [
-  { tester: "Tester One", created_at: "2026-10-18T14:32:00", calls: 3, tokens: 1500, cost_usd: 1.25 },
-  { tester: null, created_at: "2026-01-05T09:07:00", calls: 0, tokens: 0, cost_usd: 0 }] };
+  { tester: "Tester One", created_at: "2026-10-18T14:32:00", calls: 3, tokens: 1500, cost_usd: 1.25, image_tokens: 4200, image_cost_usd: 0.0084 },
+  { tester: null, created_at: "2026-01-05T09:07:00", calls: 0, tokens: 0, cost_usd: 0, image_tokens: 0, image_cost_usd: 0 }] };
 
 function setValue(el, value) {
   const proto = { TEXTAREA: window.HTMLTextAreaElement, SELECT: window.HTMLSelectElement }[el.tagName] || window.HTMLInputElement;
@@ -236,15 +236,18 @@ test("an allowance is saved per link, only when it is a valid changed USD amount
   expect(api.ownerUsage).toHaveBeenCalledTimes(2);
 });
 
-test("Cost per audit lists tester label, creation time, AI calls, tokens and USD, and never an audit, company or file name", async () => {
+test("Cost per audit lists tester label, creation time, AI calls, text tokens and USD, image tokens and USD apart, and never an audit, company or file name", async () => {
   await enter();
   expect(api.ownerAuditCosts).toHaveBeenCalledWith("owner-secret");
   const rows = qa("owner-audit-cost-row").map((tr) => [...tr.children].map((c) => c.textContent));
   expect(rows).toEqual([
-    ["Tester One", "18 Oct 2026, 14:32", "3", "1,500", "USD 1.25"],
-    ["no tester", "5 Jan 2026, 09:07", "0", "0", "USD 0.00"],
+    ["Tester One", "18 Oct 2026, 14:32", "3", "1,500", "USD 1.25", "4,200", "USD 0.01"],
+    ["no tester", "5 Jan 2026, 09:07", "0", "0", "USD 0.00", "0", "USD 0.00"],
   ]);
-  expect([...q("owner-audit-costs-table").querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Tester", "Audit created", "AI calls", "Tokens", "Cost"]);
+  expect([...q("owner-audit-costs-table").querySelectorAll("th")].map((th) => th.textContent))
+    .toEqual(["Tester", "Audit created", "AI calls", "Text tokens", "Text cost", "Image tokens", "Image cost"]);
+  expect(qa("owner-audit-image-tokens").map((c) => c.textContent)).toEqual(["4,200", "0"]);
+  expect(qa("owner-audit-image-cost").map((c) => c.textContent)).toEqual(["USD 0.01", "USD 0.00"]);
   expect(q("owner-audit-costs").textContent).not.toMatch(/\.xlsx|\.pptx|\.csv|company/i);
 });
 

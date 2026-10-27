@@ -1,6 +1,6 @@
 """The page pipeline behind DECK_PIPELINE (docs/design/ai-reads-rules-check.md, PR A): the page grid gives every line of a page a
 cell id; only a page with a figure as digits may go (decision 1b; number-words do not count); the page text comes through one
-builder, redacted, in batches of five; a batch too large is split; under the switch "ai" process_deck reads the pages and lists
+builder, as printed, in batches of five; a batch too large is split; under the switch "ai" process_deck reads the pages and lists
 each claim as "Matched to page" or "AI suggestion, not matched"; under the default "rules" nothing changes."""
 import asyncio
 import copy
@@ -8,6 +8,7 @@ import json
 import sys
 from pathlib import Path
 
+import page_images
 import pytest
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -88,7 +89,7 @@ def test_a_page_carries_a_figure_only_when_one_is_written_in_digits(line, figure
     g = grid_of([TITLE, (50, 500, 12, line)])
     assert pages.has_digit_figure(g) is figure
     assert bool(pages.sendable([g])) is figure
-    assert bool(pipeline.redacted_pages([g], "Target Co", {})) is figure, "the sender's floor agrees"
+    assert bool(pipeline.sendable_pages([g])) is figure, "the sender's floor agrees"
     problem = redact.page_text_problem(redact.page_text([(1, g["cells"])]))
     assert (problem is None) is figure, "the gateway's floor agrees"
 
@@ -103,10 +104,10 @@ def test_a_page_whose_only_digits_are_its_page_number_is_not_sent():
     grids = pages.page_grids(parse_deck(deck_path.read_bytes(), deck_path.name)["blocks"])
     by_page = {pages.page_number(g): g for g in grids}
     assert [c["text"] for c in by_page[4]["cells"] if redact.digit_figure(c["text"])] == ["4"], "fixture: the only digit line"
-    assert pages.has_digit_figure(by_page[4]) is False and pipeline.redacted_pages([by_page[4]], "Uber", {}) == []
-    assert pages.has_digit_figure(by_page[2]) is True and len(pipeline.redacted_pages([by_page[2]], "Uber", {})) == 1
+    assert pages.has_digit_figure(by_page[4]) is False and pipeline.sendable_pages([by_page[4]]) == []
+    assert pages.has_digit_figure(by_page[2]) is True and len(pipeline.sendable_pages([by_page[2]])) == 1
     synthetic = grid_of([(50, 560, 20, "Our mission"), (50, 500, 12, "We help teams ship faster"), (500, 30, 8, "1")])
-    assert pipeline.redacted_pages([synthetic], "Target Co", {}) == []
+    assert pipeline.sendable_pages([synthetic]) == []
 
 
 def test_a_background_or_cited_research_page_is_never_sent():
@@ -114,21 +115,20 @@ def test_a_background_or_cited_research_page_is_never_sent():
     assert g.get("excluded") is True and pages.sendable([g]) == []
 
 
-def test_batches_hold_five_pages_and_the_text_comes_through_the_one_builder_redacted():
+def test_batches_hold_five_pages_and_the_text_comes_through_the_one_builder_as_printed():
     grids = [{**grid_of([TITLE, *LINES, PROSE, LONG]), "page": n} for n in range(1, 8)]
-    batched = pipeline.batches(grids, "Target Co", {"Northwind Trading": "Customer_01"})
+    batched = pipeline.batches(grids)
     assert [[p["grid"]["page"] for p in b] for b in batched] == [[1, 2, 3, 4, 5], [6, 7]]
     text = pipeline.batch_text(batched[1])
     assert redact.page_text_problem(text) is None
     assert text.startswith("p6r1c1 title: Traction\np6r2c1: 800 Paying Users")
     for needle in ("Jane Doe", "Max Mustermann", "Northwind Trading"):
-        assert needle not in text, f"{needle!r} in the page text"
-    assert "[person]" in text and "Customer_01" in text
+        assert needle in text, f"{needle!r} is printed on the page and goes as printed (page-image.md section 2)"
+    assert "[person]" not in text and "Customer_01" not in text and "[redacted]" not in text
     cells = redact.parse_page_text(text)
     assert set(cells) == {6, 7}
     assert not [c for page in cells.values() for c in page if len(c["text"]) > 200], "a line over 200 characters is left out (1b)"
-    assert "the team grew. Our" not in text and PROSE[3].replace("Jane Doe", "[person]").replace("Max Mustermann", "[person]") \
-        .replace("Northwind Trading", "Customer_01") in text
+    assert "the team grew. Our" not in text and PROSE[3] in text
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ def test_with_the_switch_at_ai_the_pages_are_read_and_each_claim_is_a_row_matche
     status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     assert status == "read" and adapter.calls == 1
     sent = json.loads(adapter.payloads[0])
-    assert sent["type"] == PAGE_CLAIMS and sent["text"] == pipeline.batch_text(pipeline.batches(pages.page_grids(parsed["blocks"]), "Zero2Hero", {})[0])
+    assert sent["type"] == PAGE_CLAIMS and sent["text"] == pipeline.batch_text(pipeline.batches(pages.page_grids(parsed["blocks"]))[0])
     assert adapter.requests[-1]["cache_system"] is True, "the fixed prompt is marked for the prompt cache"
     rows = sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"])
     assert [(r["claim_type"], r["value"], r["ai_label"]) for r in rows] == [
@@ -197,7 +197,7 @@ def test_a_batch_too_large_for_the_cap_is_split_and_a_single_page_too_large_is_s
     db = _page_db({"blocks": blocks, "structures": []})
 
     class Counting(t.FakeAdapter):
-        def count_tokens(self, *, model, system, user_payload, json_schema):
+        def count_tokens(self, *, model, system, user_payload, json_schema, images=None):
             self.counted = getattr(self, "counted", 0) + 1
             if system is None:
                 return 100 * user_payload.count("Traction")          # a page counts 100 tokens; the cap is 150 below
@@ -253,14 +253,13 @@ def test_an_axis_tick_is_marked_on_its_own_cell_and_a_bar_value_in_the_same_colu
     assert got["dropped"] == 0 and got["items"][0]["status"] == page_check.MATCHED
 
 
-def test_a_page_whose_only_digits_are_a_phone_number_is_not_sent_after_redaction():
-    """The page grid does not count the digits of "+44 20 7946 0958" (claims.page_figures, George, 2026-10-23), and redaction turns them
-    into [phone] besides, so the page carries no figure and never goes (the gateway would refuse it as no_figure, and would refuse the
-    whole batch with it)."""
+def test_a_page_whose_only_digits_are_a_phone_number_is_not_sent():
+    """The page grid does not count the digits of "+44 20 7946 0958" (claims.page_figures, George, 2026-10-23), so the page carries no
+    figure and never goes (the gateway would refuse it as no_figure, and would refuse the whole batch with it)."""
     g = grid_of([(50, 560, 20, "Contact"), (50, 500, 12, "Call us on +44 20 7946 0958 or write to the team")])
     assert pages.has_digit_figure(g) is False
-    assert pipeline.redacted_pages([g], "Target Co", {}) == []
-    assert pipeline.batches([g, grid_of([TITLE, *LINES])], "Target Co", {})[0][0]["grid"]["cells"][0]["text"] == "Traction"
+    assert pipeline.sendable_pages([g]) == []
+    assert pipeline.batches([g, grid_of([TITLE, *LINES])])[0][0]["grid"]["cells"][0]["text"] == "Traction"
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +274,7 @@ class Truncating(t.FakeAdapter):
         self.limit = limit
         self.truncated = 0
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
         if json.loads(user_payload)["text"].count("Traction") > self.limit:
             self.calls += 1
             self.truncated += 1
@@ -283,7 +282,7 @@ class Truncating(t.FakeAdapter):
             error.tokens = (self.input_tokens, max_tokens)
             raise error
         return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
-                                temperature=temperature, json_schema=json_schema, cache_system=cache_system)
+                                temperature=temperature, json_schema=json_schema, cache_system=cache_system, images=images)
 
 
 def test_a_batch_whose_reply_is_cut_at_the_output_limit_is_split_and_read_again(monkeypatch):
@@ -295,7 +294,7 @@ def test_a_batch_whose_reply_is_cut_at_the_output_limit_is_split_and_read_again(
     blocks = [dict(b, page=n) for n in range(1, 6) for b in parsed["blocks"]]
     db = _page_db({"blocks": blocks, "structures": []})
     adapter = Truncating(replies=[json.dumps({"type": "page_claims", "claims": []})])
-    read = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", pages.page_grids(blocks), "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep))
+    read = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", pages.page_grids(blocks), page_images.image_for, adapter=adapter, sleep=t._noop_sleep))
     assert [([pages.page_number(g) for g in grids], r.status) for grids, r in read] == \
         [([1, 2], "read"), ([3], "read"), ([4, 5], "read")], "halves of 2 and 3, the 3 split again"
     assert adapter.truncated == 2 and adapter.calls == 5, "the 5-page batch and its 3-page half were cut once each, no reask"
@@ -342,10 +341,10 @@ def test_the_consistency_passes_bypass_the_cache_and_measure_the_model(monkeypat
     db = _page_db(parsed)
     grids = pages.page_grids(parsed["blocks"])
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    first = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep))
-    again = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep))
+    first = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, page_images.image_for, adapter=adapter, sleep=t._noop_sleep))
+    again = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, page_images.image_for, adapter=adapter, sleep=t._noop_sleep))
     assert adapter.calls == 1 and again[0][1].cache_hit is True and again[0][1].input_tokens == 0
-    bypassed = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep,
+    bypassed = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, page_images.image_for, adapter=adapter, sleep=t._noop_sleep,
                                                use_cache=False))
     assert adapter.calls == 2 and bypassed[0][1].cache_hit is False and bypassed[0][1].input_tokens > 0
     assert bypassed[0][1].claims == first[0][1].claims

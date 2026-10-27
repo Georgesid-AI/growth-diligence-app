@@ -37,6 +37,7 @@ from app import integrity as integrity_mod
 from app import verdict as verdict_mod
 from app import decks
 from app.decks import pages as deck_pages
+from app.decks import render as deck_render
 from app import structures
 from app.structures import sheet as sheet_mod
 from app import column_rules as cr
@@ -606,6 +607,7 @@ async def delete_audit(audit_id: str, payload: Optional[DeleteConfirm] = Body(de
     # Parsed deck text and claim candidates belong to the audit and go with it.
     deck_text = await db[decks.TEXT_COLLECTION].delete_many({"audit_id": audit_id})
     deck_candidates = await db[decks.CANDIDATES_COLLECTION].delete_many({"audit_id": audit_id})
+    await deck_render.remove(db, audit_id)             # the stored deck files the page images are drawn from (rule 22)
     # Narratives, call log and pseudonym mapping are scoped to the run and must
     # not outlive it.
     purged = await llm_gateway.purge_run(db, audit_id)
@@ -1907,6 +1909,8 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
     # A file uploaded again replaces its earlier parse and its unreviewed candidates. Approved,
     # edited and rejected candidates stay on record; the same claim found again is not re-added.
     where = {"audit_id": audit_id, "file": deck["file"]}
+    earlier = [d["deck_id"] for d in await db[decks.TEXT_COLLECTION].find(where, {"_id": 0, "deck_id": 1}).to_list(1000)]
+    await deck_render.remove(db, audit_id, earlier)
     await db[decks.TEXT_COLLECTION].delete_many(where)
     await db[decks.CANDIDATES_COLLECTION].delete_many({**where, "status": "pending"})
     reviewed = await db[decks.CANDIDATES_COLLECTION].find(where, {"_id": 0}).to_list(10000)
@@ -1920,6 +1924,7 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
         "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"], "layout": deck.get("layout") or [],
         "structures": deck["structures"], "ai_status": "reading", "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "figure_pages": figure_pages})
+    await deck_render.save(db, audit_id, deck_id, content, deck["format"])        # the page reader draws each page from it (page-image.md)
     for order, c in enumerate(candidates):
         await db[decks.CANDIDATES_COLLECTION].insert_one(
             {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
@@ -2092,6 +2097,7 @@ async def remove_deck(audit_id: str, deck_id: str):
     if not deck:
         raise HTTPException(404, "Deck not found")
     text = await db[decks.TEXT_COLLECTION].delete_many({"audit_id": audit_id, "deck_id": deck_id})
+    await deck_render.remove(db, audit_id, [deck_id])
     candidates = await db[decks.CANDIDATES_COLLECTION].delete_many(
         {"audit_id": audit_id, "$or": [{"deck_id": deck_id}, {"file": deck["file"]}]})
     return {"removed": deck_id, "deck_text": text.deleted_count, "deck_candidates": candidates.deleted_count}
@@ -2534,7 +2540,7 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
                 # A deck the page reader could not read for want of the deck_reading prompt is read again, with no new upload, once the
                 # store holds it (George, 2026-10-23, review of PR 164, M6).
                 # A deck still waiting for the revenue file is read again then too, once the audit has it (George, 2026-10-23, decision 2c).
-                for deck_id in await structures.queue_prompt_missing(db, audit_id) + await structures.queue_waiting(db, audit_id):
+                for deck_id in await structures.queue_prompt_missing(db, audit_id) + await structures.queue_blocked(db, audit_id) + await structures.queue_waiting(db, audit_id):
                     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
                 # A deck with pages a timeout or an error left unread is read again for those pages only (deck page reads, 2026-10-23).
                 for deck_id in await structures.queue_unread_pages(db, audit_id) + await structures.queue_stale_reading(db, audit_id):
@@ -2548,7 +2554,8 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
                         stage, run_audit.NEEDS_REVIEW if waiting else run_audit.RUNNING,
                         structures.WAITING_TEXT if waiting else run_audit.DECKS_READING)
                 else:
-                    missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in deck_docs) else None
+                    missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in deck_docs) else \
+                        llm_gateway.PAGE_READER_BLOCKED if any(d.get("ai_status") == structures.BLOCKED for d in deck_docs) else None
                     result = run_audit.stage_result(stage, run_audit.DONE, missing, **(await _enter_matched_claims(audit_id, audit)))
     except Exception as exc:          # plain English to the analyst; the log has the stage and the error type, never the message
         logger.error("run audit stage failed: run_id=%s stage=%s error=%s", audit_id, stage, type(exc).__name__)
@@ -3995,6 +4002,13 @@ async def seed_demo():
 @app.on_event("startup")
 async def mark_stale_label_corrections():
     await structures.mark_label_corrections_stale(db)      # hotfix of PR 182: label corrections to the page title are read again
+
+
+@app.on_event("startup")
+async def check_page_reader_model():
+    """Log an error when the configured page-reader model is not on the allow-list (page-image.md section 2); every page read is then
+    blocked, and the check runs again before each read."""
+    llm_gateway.page_reader_problem()
 
 
 @app.on_event("startup")

@@ -271,25 +271,26 @@ class FakeAdapter:
 
     input_tokens = 1200           # what count_tokens reports for a whole call and complete bills
     text_tokens = None            # what count_tokens reports for the structure text alone (None: input_tokens)
+    image_tokens = 0              # what the page images add to a call's count and bill (a call with images only)
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
         self.calls += 1
         self.payloads.append(user_payload)
         self.requests = getattr(self, "requests", []) + [
             {"model": model, "max_tokens": max_tokens, "temperature": temperature, "json_schema": json_schema,
-             "cache_system": cache_system}]
+             "cache_system": cache_system, "system": system, "images": images}]
         if self._raise_with is not None:
             raise self._raise_with
         reply = self._replies[min(self.calls - 1, len(self._replies) - 1)]
-        return reply, self.input_tokens, 300
+        return reply, self.input_tokens + (self.image_tokens if images else 0), 300
 
-    def count_tokens(self, *, model, system, user_payload, json_schema):
+    def count_tokens(self, *, model, system, user_payload, json_schema, images=None):
         self.counted = getattr(self, "counted", 0) + 1
         self.count_requests = getattr(self, "count_requests", []) + [
             {"system": system, "user_payload": user_payload, "json_schema": json_schema}]
         if system is None and self.text_tokens is not None:
             return self.text_tokens
-        return self.input_tokens
+        return self.input_tokens + (self.image_tokens if images else 0)
 
 
 async def _noop_sleep(_seconds):
@@ -859,7 +860,7 @@ def test_llm_calls_log_holds_no_prompt_or_payload_text():
     row = rows[0]
     assert set(row) == {
         "run_id", "step", "prompt_version", "model", "input_tokens",
-        "output_tokens", "estimated_cost_usd", "cache_hit", "status",
+        "output_tokens", "estimated_cost_usd", "image_tokens", "image_cost_usd", "cache_hit", "status",
         "unmatched_numbers", "timestamp",
     }
     blob = json.dumps(row)

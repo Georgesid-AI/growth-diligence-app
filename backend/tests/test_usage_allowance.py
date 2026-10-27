@@ -9,6 +9,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
+import page_images  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from app import allowance, access  # noqa: E402
 from app.llm import gateway, guards  # noqa: E402
@@ -126,7 +127,8 @@ def test_a_page_read_is_outside_the_daily_cap_and_inside_the_monthly_allowance(m
                                  "timestamp": datetime.now(timezone.utc).isoformat()})
     assert gateway.SPEND_CAP_EXEMPT == {"column_mapping", gateway.PAGE_CLAIMS}
     adapter = t.FakeAdapter(replies=[PAGE_REPLY])
-    read = asyncio.run(gateway.read_structure(db, t.RUN_ID, PAGE_TEXT, gateway.PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep))
+    read = asyncio.run(gateway.read_structure(db, t.RUN_ID, PAGE_TEXT, gateway.PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep,
+                                              images=[page_images.png(1)]))
     assert read.status == "read" and adapter.calls == 1, read.reason
     assert db["llm_calls"].docs[-1]["status"] == "ok" and db["llm_calls"].docs[-1]["structure_type"] == gateway.PAGE_CLAIMS
     before = ledger(db)[allowance.month_key()]
@@ -136,7 +138,8 @@ def test_a_page_read_is_outside_the_daily_cap_and_inside_the_monthly_allowance(m
     blocked = own(t.make_db(), **spent(10))
     blocked["audits"].docs[0]["structure_reading_consent"] = True
     adapter = t.FakeAdapter(replies=[PAGE_REPLY])
-    read = asyncio.run(gateway.read_structure(blocked, t.RUN_ID, PAGE_TEXT, gateway.PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep))
+    read = asyncio.run(gateway.read_structure(blocked, t.RUN_ID, PAGE_TEXT, gateway.PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep,
+                                              images=[page_images.png(1)]))
     assert read.status == "not_read" and adapter.calls == 0 and blocked["llm_calls"].docs[-1]["status"] == "monthly_allowance_reached"
 
 
@@ -221,6 +224,8 @@ def test_the_owner_audit_costs_list_one_row_per_audit_with_label_time_calls_toke
                "estimated_cost_usd": 0.25, "status": "ok", "file": "secret_deck.pptx"},
               {"run_id": first["id"], "step": "data_inventory", "cache_hit": False, "input_tokens": 300, "output_tokens": 100,
                "estimated_cost_usd": 0.5, "status": "ok"},
+              {"run_id": first["id"], "step": "structures", "cache_hit": False, "input_tokens": 1500, "output_tokens": 100,
+               "estimated_cost_usd": 0.2, "image_tokens": 500, "image_cost_usd": 0.05, "status": "ok"},
               {"run_id": first["id"], "step": "growth_engine", "cache_hit": True, "input_tokens": 0, "output_tokens": 0,
                "estimated_cost_usd": 0.0, "status": "ok"},
               {"run_id": first["id"], "step": "growth_engine", "cache_hit": False, "input_tokens": 0, "output_tokens": 0,
@@ -228,9 +233,13 @@ def test_the_owner_audit_costs_list_one_row_per_audit_with_label_time_calls_toke
     res = owner.get("/api/admin/audit-costs", headers=owner.headers_owner)
     assert res.status_code == 200 and set(res.json()) == {"audits"}
     rows = {r["tester"]: r for r in res.json()["audits"]}
-    assert set(rows) == {"Alpha", "Beta"} and all(set(r) == {"tester", "created_at", "calls", "tokens", "cost_usd"} for r in rows.values())
-    assert (rows["Alpha"]["calls"], rows["Alpha"]["tokens"], rows["Alpha"]["cost_usd"]) == (2, 1600, 0.75), "billed calls only"
+    assert set(rows) == {"Alpha", "Beta"} and all(
+        set(r) == {"tester", "created_at", "calls", "tokens", "cost_usd", "image_tokens", "image_cost_usd"} for r in rows.values())
+    # Billed calls only; the tokens and USD are the text's, and the page images' are apart (page-image.md section 6).
+    assert (rows["Alpha"]["calls"], rows["Alpha"]["tokens"], rows["Alpha"]["cost_usd"]) == (3, 2700, 0.9)
+    assert (rows["Alpha"]["image_tokens"], rows["Alpha"]["image_cost_usd"]) == (500, 0.05)
     assert (rows["Beta"]["calls"], rows["Beta"]["tokens"], rows["Beta"]["cost_usd"]) == (0, 0, 0.0)
+    assert (rows["Beta"]["image_tokens"], rows["Beta"]["image_cost_usd"]) == (0, 0.0)
     assert rows["Alpha"]["created_at"] == owner.db["audits"].docs[0]["created_at"]
     for needle in ("Zorblax", "Quuxfund", "secret_deck", first["id"], second["id"]):
         assert needle not in res.text

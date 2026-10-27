@@ -509,7 +509,7 @@ def test_no_layout_field_reaches_the_page_text_and_the_turned_line_goes_as_any_o
                                  rotated=[(60, 150, 12, "Revenue (EUR M)", "up")]), "deck.pdf")
     g, = pages.page_grids(parsed["blocks"], parsed["layout"])
     assert g["layout"]["rects"] and any(c.get("rot") for c in g["cells"]) and all(c.get("at") for c in g["cells"])
-    text = pipeline.batch_text(pipeline.batches([g], "Target Co", {})[0])
+    text = pipeline.batch_text(pipeline.batches([g])[0])
     assert all(re.fullmatch(r"p1r\d+c\d+(?: title)?: .*", line) for line in text.split("\n")), "one line per cell: an id and a text"
     assert "1F78B5" not in text and "0.0" not in text and "scope" not in text
     cells = redact.parse_page_text(text)[1]

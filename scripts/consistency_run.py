@@ -209,12 +209,12 @@ class FakeAdapter:
         folder = BACKEND / "tests" / "fixtures" / "structure_replies"
         self.fixtures = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(folder.glob("*.json"))]
 
-    def count_tokens(self, *, model, system, user_payload, json_schema):
+    def count_tokens(self, *, model, system, user_payload, json_schema, images=None):
         """A stand-in for the provider's counter: one token per CHARS_PER_TOKEN characters of what would be sent."""
         sent = len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)
         return sent // self.CHARS_PER_TOKEN
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
         from app.structures import redact
         sent = json.loads(user_payload)
         reply = next((f["reply"] for f in self.fixtures if f["type"] == sent["type"] and f["match"] in sent["text"]),
@@ -258,11 +258,11 @@ class PageReplayAdapter:
         self.fixtures = [f for f in fixtures if "match" in f]
         self.calls = 0
 
-    def count_tokens(self, *, model, system, user_payload, json_schema):
+    def count_tokens(self, *, model, system, user_payload, json_schema, images=None):
         sent = len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)
         return sent // self.CHARS_PER_TOKEN
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
         self.calls += 1
         sent = json.loads(user_payload)
         claims = claims_as_read([c for f in self.fixtures if f["match"] in sent["text"] for c in f["claims"]])
@@ -283,13 +283,14 @@ class SpendGuard:
         self.spent, self.calls, self.stopped = 0.0, 0, False
         self._counted = None
 
-    def count_tokens(self, *, model, system, user_payload, json_schema):
-        counted = self.inner.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema)
+    def count_tokens(self, *, model, system, user_payload, json_schema, images=None):
+        extra = {"images": images} if images else {}
+        counted = self.inner.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema, **extra)
         if system:
             self._counted = counted             # the whole call's count, which the gateway takes last, just before the call
         return counted
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
         from app.llm import gateway
         counted = self._counted if self._counted is not None else (len(system or "") + len(user_payload)) // 2 + 1
         self._counted = None
@@ -302,7 +303,7 @@ class SpendGuard:
         try:
             reply, tokens_in, tokens_out = self.inner.complete(
                 model=model, system=system, user_payload=user_payload, max_tokens=max_tokens, temperature=temperature,
-                json_schema=json_schema, cache_system=cache_system)
+                json_schema=json_schema, cache_system=cache_system, **({"images": images} if images else {}))
         except gateway.GatewayError as exc:
             cut = getattr(exc, "tokens", None)                  # a reply cut at max_tokens ("truncated") is billed too
             if cut:
@@ -1027,6 +1028,7 @@ async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0
     from app.decks import pages as page_grids
     from app.decks import parser
     from app.llm import gateway, prompt_store
+    from app.decks import render
     from app.structures import page_check, redact
     from app.structures import pages as pipeline
 
@@ -1044,8 +1046,13 @@ async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0
             if guard.stopped:
                 break
             stem = Path(file).stem
-            grids = page_grids.page_grids(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"])
-            sent = pipeline.redacted_pages(grids, stem, {})
+            content = (DECKS / file).read_bytes()
+            grids = page_grids.page_grids(parser.parse_deck(content, file)["blocks"])
+            pdf = await asyncio.to_thread(render.to_pdf, content, parser.deck_format(file))
+
+            async def image_for(page, pdf=pdf):
+                return await asyncio.to_thread(render.render_page, pdf, page)
+            sent = pipeline.sendable_pages(grids)
             lines = {page_grids.page_number(p["grid"]): redact.page_text([(page_grids.page_number(p["grid"]), p["cells"])]).split("\n")[0]
                      for p in sent}
             deck = per_deck[file] = {"pages": len(grids), "sent": len(sent), "passes": [], "agreement_pct": None, "complete": False}
@@ -1056,7 +1063,7 @@ async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0
                 audit_id = f"pages-{stem}-pass{n}"
                 await db["audits"].insert_one({"id": audit_id, "company_name": stem, "structure_reading_consent": True})
                 calls_before = guard.calls
-                reads = await pipeline.read_pages(db, audit_id, file, grids, stem, {}, adapter=guard, sleep=sleep, use_cache=n == 1)
+                reads = await pipeline.read_pages(db, audit_id, file, grids, image_for, adapter=guard, sleep=sleep, use_cache=n == 1)
                 row = dict.fromkeys(PASS_COUNTS, 0)
                 row.update(batches=len(reads), read=0, calls=guard.calls - calls_before, cost_usd=0.0)
                 claims = []

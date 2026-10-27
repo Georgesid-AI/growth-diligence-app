@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 
+import page_images
 import pytest
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -53,7 +54,7 @@ class Gauge(t.FakeAdapter):
         self.limited = False
         self.lock = threading.Lock()
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
         page = page_of(user_payload)
         with self.lock:
             self.running += 1
@@ -71,7 +72,7 @@ class Gauge(t.FakeAdapter):
             if page in self.failing:
                 raise gateway.GatewayError("provider_error", "no", 500, "api_error")
             return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
-                                    temperature=temperature, json_schema=json_schema, cache_system=cache_system)
+                                    temperature=temperature, json_schema=json_schema, cache_system=cache_system, images=images)
         finally:
             with self.lock:
                 self.running -= 1
@@ -81,7 +82,7 @@ class Gauge(t.FakeAdapter):
 
 def read(db, parsed, adapter, **kwargs):
     grids = pages.page_grids(parsed["blocks"])
-    return asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep,
+    return asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, page_images.image_for, adapter=adapter, sleep=t._noop_sleep,
                                            per_call=1, **kwargs))
 
 
@@ -101,7 +102,7 @@ def test_one_by_one_is_still_what_the_scripts_get_by_default():
     parsed = many_pages(4)
     adapter = Gauge(hold=0.01)
     grids = pages.page_grids(parsed["blocks"])
-    asyncio.run(pipeline.read_pages(_page_db(parsed), AUDIT, "d1", grids, "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(pipeline.read_pages(_page_db(parsed), AUDIT, "d1", grids, page_images.image_for, adapter=adapter, sleep=t._noop_sleep))
     assert adapter.peak == 1 and len(adapter.seen) == 1, "five pages to a call, one call after another"
 
 
@@ -140,7 +141,7 @@ def test_a_page_with_no_digit_is_skipped_before_any_call_and_named():
     parsed = many_pages(8, plain={3, 7})
     db = _page_db(parsed)
     grids = pages.page_grids(parsed["blocks"])
-    assert pipeline.skipped_pages(grids, "Zero2Hero", {}, 8) == [3, 7]
+    assert pipeline.skipped_pages(grids, 8) == [3, 7]
     adapter = Gauge(hold=0.01)
     reads = read(db, parsed, adapter, parallel=8)
     assert sorted(adapter.seen) == [1, 2, 4, 5, 6, 8] and len(reads) == 6, "pages 3 and 7 never reach the gateway"
@@ -150,8 +151,8 @@ def test_a_page_with_no_digit_is_skipped_before_any_call_and_named():
 def test_pages_the_document_has_but_the_parser_found_no_text_on_are_skipped_too():
     parsed = many_pages(4)
     grids = pages.page_grids(parsed["blocks"])
-    assert pipeline.skipped_pages(grids, "Zero2Hero", {}, 6) == [5, 6]
-    assert pipeline.skipped_pages(grids, "Zero2Hero", {}) == []
+    assert pipeline.skipped_pages(grids, 6) == [5, 6]
+    assert pipeline.skipped_pages(grids) == []
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +310,7 @@ def test_grids_and_text_sent_are_those_of_the_one_by_one_read():
     grids = pages.page_grids(parsed["blocks"])
     read(_page_db(parsed), parsed, adapter, parallel=8)
     sent = sorted(json.loads(p)["text"] for p in adapter.payloads)
-    want = sorted(pipeline.batch_text(b) for b in pipeline.batches(grids, "Zero2Hero", {}, 1))
+    want = sorted(pipeline.batch_text(b) for b in pipeline.batches(grids, 1))
     assert sent == want and all(len(redact_pages(text)) == 1 for text in sent)
 
 
