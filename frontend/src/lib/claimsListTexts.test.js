@@ -6,7 +6,7 @@ const FLAGS = ["value not on page", "currency assumed", "unit assumed", "scenari
   "use-of-funds share", "acquisition channel", "turnover not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line",
   "matches analyst claim", "basis and scenario disagree", "basis conflicts with period", "cell corrected", "sign not on page", "period from page heading",
   "period from another cell", "period is a range", "growth dated to start year", "label mismatch", "sources disagree", "source ambiguous",
-  "source not associated", "extraction incomplete"];
+  "source not associated", "extraction incomplete", "source ambiguous, noted", "no label read"];
 
 describe("claims list texts", () => {
   test("the columns are in the agreed order: confidence after Source, before Status", () => {

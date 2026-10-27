@@ -436,7 +436,7 @@ def test_a_contradicted_part_of_a_group_outside_the_five_is_listed_with_the_othe
 def test_the_conclusion_lists_a_contradicted_part_of_a_group_the_analyst_left_out_of_the_five():
     group = [annual(1_000_000), *quarters([240_000, 250_000, 250_000, 260_000])]
     group[3].update(evidence_label="Contradicted", reason="outside ±5%: a miss", gloss="€4,000 lower (miss)", observed_source={"file": "rev.xlsx"})
-    others = [row(f"x{60 + i}", 10_000 + i, "2022", segment=f"S{i}") for i in range(1, 6)]
+    others = [row(f"x{60 + i}", 10_000 + i, str(2010 + i)) for i in range(1, 6)]
     rows = group + others
     related(rows)
     stored = {"claim_ids": [r["claim_id"] for r in others], "set_at": "2026-10-26"}

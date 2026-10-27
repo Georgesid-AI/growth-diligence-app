@@ -46,6 +46,8 @@
     "label mismatch": "the name of the figure is not next to it on the page",
     "sources disagree": "The linked sources assign different periods to this figure. Check whether they describe the same claim.",
     "source ambiguous": "more than one label or period fits this figure",
+    "source ambiguous, noted": "more than one label or period fits this figure; the reading of the page is kept",
+    "no label read": "the only label on the page is its title, so no label was read for this figure",
     "source not associated": "no label or period on the page can be tied to this figure",
     "extraction incomplete": "part of the page could not be read, so the figure may be elsewhere"
   },

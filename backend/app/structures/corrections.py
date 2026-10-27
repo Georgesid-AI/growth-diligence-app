@@ -127,15 +127,7 @@ def period_option(period: str, cells: List[str], marker_text: Optional[str] = No
 
 def heading_periods(grid: Dict, grid_views: Dict, fiscal_year_end: int) -> List[Dict]:
     """The distinct periods the page's heading cells (title cell or top 20%) state, in reading order."""
-    out, spans = [], []
-    for cell in grid["cells"]:
-        if not (cell.get("title") or cell.get("top_band")) or verify.figures(cell["text"]) and not claims.period_cell(cell["text"]):
-            continue
-        found = page_check._from_source(page_check.view_of(grid_views, cell), cell, fiscal_year_end)
-        if found and found[1] not in spans:
-            spans.append(found[1])
-            out.append(period_option(found[0], found[2], cell["text"]))
-    return out
+    return [period_option(label, cells, text) for label, _, cells, text in page_check.page_headings(grid, grid_views, fiscal_year_end)]
 
 
 def _text_of(grid: Dict, cells: List[str]) -> Optional[str]:

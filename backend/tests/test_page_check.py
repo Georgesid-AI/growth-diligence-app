@@ -256,7 +256,7 @@ def test_a_label_not_adjacent_to_the_value_is_dropped_and_the_match_stands():
     near = one(TRACTION, claim("r6c1", 1500000, unit="EUR", label_cell="r5c1"))
     assert near["label_cell"] == "r5c1" and near["checks"]["label"] is True
     title = one(TRACTION, claim("r2c1", 800, metric="customers", unit="count", label_cell="r1c1"))
-    assert title["label_cell"] == "r1c1", "the title directly next to the line"
+    assert title["label_cell"] is None and title["label_is_title"] is True, "a page title names the page, not the figure: no label (George, 2026-10-27)"
 
 
 def test_an_other_metric_is_matched_like_any_other():

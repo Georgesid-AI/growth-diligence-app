@@ -1485,6 +1485,9 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             # docs/design/segment-partitions.md: the segment a label names, the segment parts and their notes
                             "label_segment", "SEGMENT_PART", "SEGMENT_LIMIT", "NOTE_SEGMENTS", "NOTE_SEGMENT_PART", "NOTE_SEGMENTS_DIFFER",
                             "segment_parts", "segment_set_by",
+                            # George, 2026-10-27: the segment slices, the oversize card, the page reader's segment, the undated figures of a page
+                            "SLICE", "KIND_SIZE", "NOTE_SLICE", "NOTE_OVERSIZE", "REASON_SIZE", "page_segment", "undated_kept", "undated_by_page",
+                            "keep_undated", "SOURCE_AMBIGUOUS_NOTED", "label_is_title",
                             # docs/specs/crm-dedup-clustering.md: the won-deal counts, the repeated rows and the clustering bands
                             "won_deal_closes", "rows_list", "CLUSTERING_DAYS", "CLUSTERING_MIN_DEALS", "CLUSTERING_FEW",
                             "CLUSTERING_AMBER_PCT", "CLUSTERING_RED_PCT", "CLUSTERING_FINDING",
@@ -3356,11 +3359,12 @@ def test_no_sent_page_text_and_no_label_text_in_a_log_llm_calls_or_llm_structure
         assert needle not in stored, f"{needle!r} was stored"
         assert needle not in logs, f"{needle!r} was logged"
     record, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert record["items"]["claims"][0]["label_cell"] == "r1c1" and record["items"]["claims"][0]["period_cells"] == ["r4c1"]
+    assert record["items"]["claims"][0]["label_cell"] is None and record["items"]["claims"][0]["label_is_title"] is True \
+        and record["items"]["claims"][0]["period_cells"] == ["r4c1"], "the page title is no label (George, 2026-10-27): the cell id of a title is not stored as one"
     assert record["statuses"] == ["matched"]
-    assert "pages checked: run_id=audit-boundary deck_id=d1 pages=1 matched=1 unmatched=0 dropped=0 flagged=0" in caplog.text
+    assert "pages checked: run_id=audit-boundary deck_id=d1 pages=1 matched=1 unmatched=0 dropped=0 flagged=1" in caplog.text
     row, = db[decks.CANDIDATES_COLLECTION].docs
-    assert row["label_from"] == "Traction" and row["ai_label"] == "Matched to page", "the row, for the analyst, reads the page"
+    assert row["label_from"] is None and row["ai_label"] == "Matched to page", "the row, for the analyst, reads the page"
 
 
 def test_every_page_reply_field_is_a_closed_word_a_number_or_a_cell_id():
@@ -3630,11 +3634,12 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
                              "matches analyst claim", "basis and scenario disagree", "basis conflicts with period",
                              "cell corrected", "sign not on page", "period from page heading", "period from another cell",
                              "period is a range", "growth dated to start year", "label mismatch", "sources disagree", "source ambiguous",
-                             "source not associated", "extraction incomplete")
+                             "source not associated", "extraction incomplete", "source ambiguous, noted", "no label read")
     assert (checker.DERIVED_FIGURE, checker.LAUNCH_NO_PRODUCT, checker.NO_PRINTED_SOURCE, checker.QUOTED_FIGURE) == \
         ("derived figure, not a claim", "launch date without product name", "no printed source", "quoted figure, not a company claim"), \
         "the Diagnostics kinds of a dropped claim are closed words (George, 2026-10-26; no printed source, source association 2026-10-26)"
-    assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"), \
+    assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell",
+                                       "source ambiguous, noted"), \
         "the flags that leave a claim in the main list (George, 2026-10-23: the unit and the period only flag)"
     assert set(checker.REVIEW_FLAGS) == set(checker.FLAGS) - set(checker.INFORMATIONAL_FLAGS)
     assert checker.RAISE_CUES == ("use of funds", "use of proceeds", "funding ask", "investment opportunity", "equity investment", "round size", "our ask")

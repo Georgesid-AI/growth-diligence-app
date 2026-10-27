@@ -22,3 +22,13 @@ Figures of one scope (metric, population, period, currency, unit, scenario, basi
 ## 3. The conflict card
 
 A card offers the candidates of one scope only (the server relates by scope, so a candidate of another segment never appears). With more than four candidates it offers none: it shows one line ("n annual figures are stated for this period; too many to choose from here. Review them in the claims list.") and a button that opens the claims list.
+
+## 4. Changed 2026-10-27 (George): the page reader's segment, slices with no total, an oversize slice
+
+No architecture change; nothing new reaches a model or is stored beyond one flag (`undated_kept`).
+- **Segment source.** A named segment of the data wins, then the page reader's `segment` (candidate key `page_segment`), then the label (section 1). A page segment that is only a period (Q1, H2, a month, a year), the company or the metric ("Total"), a dimension word or, for a customer or user count, a population (paying, registered, active, free, trial, all) is no segment: the population sets the population.
+- **Slices with no total.** Figures of one metric, period and deck with two or more different segments and no whole-company figure of that deck form a group of their own (role `slice`, note "no company total stated"): out of the top five, not a conflict. Slices sit under a total only when the total is of the same deck.
+- **A slice larger than its total.** The slices are no independent claims: all take role `slice`, out of the top five, and one card (kind `segment_size`) says "Segment larger than the company total; check what this figure is". The card offers no figure to choose.
+- **Period slices** (quarters, halves, months of a year whose total is stated) already sit under the total when the set is complete and reconciles; they read no run-rate value at stake, and a segment that is a period word is dropped, so they never read "segment not in the data".
+- **Page-read flags.** With `label_text` and a period from the page reader, "source ambiguous" becomes the informational "source ambiguous, noted" (no card, no choice). A blank period is filled from the page's one dated heading without a figure in it ("period from page heading"). A page or chart title cited as the label is no label: the flag "no label read" (a card) and the row says "(no label read)".
+- **Undated figures.** Two or more "Period not read" figures on one page are one card: one date applied to all, or "Keep undated" (`PUT /audits/{id}/undated-periods`).

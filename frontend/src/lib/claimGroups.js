@@ -19,7 +19,7 @@ export const MAX_CANDIDATES = 4;       // a card lists at most this many candida
 export const TOO_MANY_NOTE = (n) => `${n} annual figures are stated for this period; too many to choose from here. Review them in the claims list.`;
 export const OPEN_CLAIMS = "Open the claims list";
 export const CLAIMS_LIST_ID = "claim-register";
-export const QUESTION_HEADINGS = { total: "Which annual figure should the audit use?" };
+export const QUESTION_HEADINGS = { total: "Which annual figure should the audit use?", segment_size: "A segment is larger than the company total." };
 
 /** The rows the claims list shows as items: a part of a reconciled total is shown under its total. */
 export const visibleRows = (rows) => (rows || []).filter((r) => !PART_ROLES.includes(r.group_role));

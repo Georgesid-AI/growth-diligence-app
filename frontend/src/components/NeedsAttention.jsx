@@ -2,17 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ColumnRow } from "@/components/UploadChat";
+import DateField from "@/components/DateField";
 import { DefinitionCell, TurnoverCell } from "@/components/ClaimRegister";
 import { CandidateRow } from "@/components/DeckPanel";
 import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
 import * as apiModule from "@/lib/api";
-import { answerCorrection, answerDefinitionCheck, answerSales, answerTurnover, chooseGroup, decideColumns, getClaimRegister, getDatasets, getDecks, undoGroupChoice, updateCandidate } from "@/lib/api";
+import { answerCorrection, answerDefinitionCheck, answerSales, answerTurnover, chooseGroup, decideColumns, getClaimRegister, getDatasets, getDecks, keepUndated, undoGroupChoice, updateCandidate } from "@/lib/api";
 import { CHOOSE_FIGURE, CHOSEN, CLAIMS_LIST_ID, EXCLUDE, EXCLUDE_REASON, KEPT_NOTE, OPEN_CLAIMS, TOO_MANY_NOTE, UNDO_CHOICE, figureText, questionTitle, sourceText, tooMany } from "@/lib/claimGroups";
 import { EDIT_REASONS } from "@/lib/deckClaims";
 import { POPULATION_ANSWERS, POPULATION_QUESTION, asksPopulationOnly, claimPeriod, claimValue, flagsText, scenarioText, sourceRef, typeLabel, waitingCorrections } from "@/lib/deckClaims";
 import { definitionOf, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
 import { MAPPING_HEADERS, S13_status } from "@/lib/chatUpload";
-import { ATTENTION_HEADING, SALES_ANSWERS, SALES_QUESTION, SHOWN_QUESTIONS, addsUpText, attentionCount, salesCount, lessLabel, moreLabel, openQuestions, openViews } from "@/lib/attention";
+import { ATTENTION_HEADING, KEEP_UNDATED, SALES_ANSWERS, UNDATED_ACTION, undatedTitle, SALES_QUESTION, SHOWN_QUESTIONS, addsUpText, attentionCount, salesCount, lessLabel, moreLabel, openQuestions, openViews } from "@/lib/attention";
 import { describeRequestError } from "@/lib/requestError";
 import { runAudit } from "@/lib/runAudit";
 
@@ -77,6 +78,25 @@ function GroupCard({ item, busy, act, auditId }) {
   const q = item.q;
   const [reason, setReason] = useState("");
   const chosen = q.candidates.some((c) => c.chosen);
+  if (q.kind === "segment_size") {         // a slice larger than the company total: nothing to choose, the figures are listed and the claims list is where they are corrected
+    return (
+      <div className="text-xs" data-testid="attention-group">
+        <div className="text-slate-900 font-medium" data-testid="attention-group-title">{questionTitle(q)}</div>
+        <div className="text-amber-800 mb-1" data-testid="attention-group-reason">{q.reason}</div>
+        <ul className="space-y-1">
+          {q.candidates.map((c) => (
+            <li key={c.identity} data-testid="attention-group-candidate">
+              <span className="font-mono text-slate-900">{figureText(c)}</span>
+              {c.hint && <span className="text-slate-700"> · {c.hint}</span>}
+              <span className="font-mono text-slate-500"> · {sourceText(c)}</span>
+            </li>
+          ))}
+        </ul>
+        <Button size="sm" variant="outline" className="h-7 mt-1" data-testid="attention-group-open-claims"
+          onClick={() => document.getElementById(CLAIMS_LIST_ID)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{OPEN_CLAIMS}</Button>
+      </div>
+    );
+  }
   return (
     <div className="text-xs" data-testid="attention-group">
       <div className="text-slate-900 font-medium" data-testid="attention-group-title">{questionTitle(q)}</div>
@@ -120,6 +140,24 @@ function GroupCard({ item, busy, act, auditId }) {
         <Button size="sm" variant="ghost" className="h-7 mt-1" disabled={busy !== null} data-testid="attention-group-undo"
           onClick={() => act(q.id, () => undoGroupChoice(auditId, q.id))}>{UNDO_CHOICE}</Button>
       )}
+    </div>
+  );
+}
+
+/** The undated figures of one page (George, 2026-10-27): one card, one date applied to every one of them, or all kept without a period. */
+function UndatedCard({ item, busy, act, auditId }) {
+  const [date, setDate] = useState("");
+  const ids = item.cs.map((c) => c.id);
+  return (
+    <div className="text-xs" data-testid="attention-undated">
+      <div className="text-slate-900 font-medium" data-testid="attention-undated-title">{undatedTitle(item.n, item.page)}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="w-48"><DateField value={date} onChange={setDate} testId="attention-undated-date" clearable /></div>
+        <Button size="sm" variant="outline" className="h-7" disabled={busy !== null || !date} data-testid="attention-undated-set"
+          onClick={() => act(item.key, () => Promise.all(ids.map((id) => updateCandidate(auditId, id, { target_date: date }))))}>{UNDATED_ACTION}</Button>
+        <Button size="sm" variant="ghost" className="h-7" disabled={busy !== null} data-testid="attention-undated-keep"
+          onClick={() => act(item.key, () => keepUndated(auditId, ids))}>{KEEP_UNDATED}</Button>
+      </div>
     </div>
   );
 }
@@ -239,6 +277,7 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
             {item.kind === "claim" && <ClaimCard item={item} busy={busy} act={act} auditId={auditId} addsUp={attention.find((a) => a.id === item.c.id)?.adds_up_to} />}
             {item.kind === "sales" && <SalesCard item={item} busy={busy} act={act} auditId={auditId} />}
             {item.kind === "turnover" && <TurnoverCard item={item} answer={answer} />}
+            {item.kind === "undated" && <UndatedCard item={item} busy={busy} act={act} auditId={auditId} />}
             {item.kind === "set" && <SetCard item={item} save={save} answer={answer} />}
             {item.kind === "group" && <GroupCard item={item} busy={busy} act={act} auditId={auditId} />}
           </li>

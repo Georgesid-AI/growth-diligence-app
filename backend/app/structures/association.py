@@ -266,6 +266,14 @@ class Layout:
                 return word
         return heading_word([c["text"] for c in self.cells if c.get("title") or c.get("top_band")])
 
+    def is_title(self, label: Dict, cell: Dict) -> bool:
+        """Whether a cell is a page title or the title of the chart the figure is printed in (the line over its bars, centred on them): a heading
+        names the page or the chart, never one figure."""
+        if label.get("title"):
+            return True
+        ext, at = self._chart_extent(cell), _box(label.get("at"))
+        return bool(ext is not None and at and not label.get("rot") and label.get("table") is None and self._over(at, ext))
+
     def legend_items(self, cell: Dict) -> List[str]:
         """The ids of the short lines of words a figure printed in a chart may be named by, for a card that asks the analyst which one it is
         (never paired automatically): lines of words with no figure, at most LABEL_MAX long, standing within LEGEND_ZONE of the chart's bars,
