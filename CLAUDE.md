@@ -118,3 +118,6 @@
     in the server-side prompt store (MongoDB `prompts`, docs/specs/prompt-store.md), uploaded on the owner page; the gateway
     reads them from there only. The repository holds stubs only: short texts marked "test only" in
     backend/tests/fixtures/prompts/, which tests load into a fake store. Tests do not assert a prompt's wording.
+31. The page reader (`page_claims`) runs only on a ZDR-eligible model (Sonnet or Opus, never Fable or Mythos), because deck pages go to
+    it as printed, without customer-name masking, under the API organisation's zero-data-retention arrangement
+    (docs/design/page-image.md). The gateway refuses the step on any other model.
