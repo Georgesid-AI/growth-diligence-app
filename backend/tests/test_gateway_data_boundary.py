@@ -3368,8 +3368,10 @@ def test_every_page_reply_field_is_a_closed_word_a_number_or_a_cell_id():
         kinds = {o.get("type") for o in options if "enum" not in o}
         if "string" in kinds:
             free.add(name)
-        assert kinds <= {"number", "null", "string"}, (name, prop)
-    assert free == {"value_cell", "label_cell", "period_cell", "unit_other", "period"}, "cell ids, an ISO code and a closed period form"
+        assert kinds <= {"number", "null", "string", "boolean"}, (name, prop)
+    # label_text, segment and share_of (docs/design/page-image.md section 4) are short printed text: model JSON output, stored under rule 17,
+    # at most PAGE_TEXT_MAX characters, never written to a log (the next test); is_quote is a boolean.
+    assert free == {"value_cell", "label_cell", "period_cell", "unit_other", "period", "label_text", "segment", "share_of"}
     base = {"metric": "revenue", "value": 1.0, "value_high": None, "unit": "EUR", "unit_other": None, "period": None,
             "basis": "actual", "scenario": "none", "value_cell": "p5r2c1", "label_cell": None, "period_cell": None}
     assert PageClaim.model_validate(base).value_cell == "p5r2c1"
@@ -3398,7 +3400,9 @@ def test_a_page_reply_not_json_is_rejected_a_claim_citing_a_cell_not_sent_or_car
         # George, 2026-10-23: a schema failure or a cell not sent inside one claim drops that claim only, the reply is read
         for sent in (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "value_cell": "p9r9c9"}]}),
                      json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "label_cell": "p5r1c1 Traction"}]}),
-                     json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "metric": "Revenue at Target Co"}]})):
+                     json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "metric": "Revenue at Target Co"}]}),
+                     json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "segment": "Target Co " * 20}]}),
+                     json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "is_quote": "Target Co"}]})):
             result, adapter = _send_page(_structure_db(), GOOD_PAGE, sent)
             assert (result.status, adapter.calls) == ("read", 1)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
@@ -3409,12 +3413,35 @@ def test_a_page_reply_not_json_is_rejected_a_claim_citing_a_cell_not_sent_or_car
     rejected = [r.getMessage() for r in caplog.records if "claim rejected" in r.getMessage()]
     assert [re.sub(r"page \d+", "page n", line) for line in rejected] == ["page n: claim rejected (cell not in batch)",
                                                                             "page n: claim rejected (label_cell)",
-                                                                            "page n: claim rejected (metric)"]
+                                                                            "page n: claim rejected (metric)",
+                                                                            "page n: claim rejected (segment)",
+                                                                            "page n: claim rejected (is_quote)"]
     assert set(gateway.PAGE_FIELDS) == {"type", "claims", "metric", "value", "value_high", "unit", "unit_other", "period",
-                                        "basis", "scenario", "value_cell", "label_cell", "period_cell"}
+                                        "basis", "scenario", "value_cell", "label_cell", "period_cell", "label_text", "segment",
+                                        "share_of", "is_quote"}
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Traction", "Paying Users", "Target Co", "p9r9c9", "Input should"):
         assert needle not in logs, f"{needle!r} was logged"
+
+
+def test_label_text_segment_and_share_of_reach_the_approval_row_only_never_a_log_or_the_stored_read(caplog):
+    """docs/design/page-image.md section 4 with rule 17: the three short printed texts of a page claim label the row the analyst sees; no log line,
+    llm_calls or llm_structures document holds them (the stored read keeps cell ids, values and is_quote)."""
+    import test_checker as tc
+    import test_claim_corrections as cc
+    parsed = tc.deck([tc.TITLE, (50, 480, 12, "800")])
+    db = tc._page_db(parsed)
+    claim_ = {**tc.claim(cc.at(parsed, "800"), 800, metric="customers", unit="count"), "label_text": "Zebra subscribers",
+              "segment": "Zebra EMEA", "share_of": "Zebra total", "is_quote": False}
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": PAGE_CLAIMS, "claims": [claim_]})])
+    with caplog.at_level(logging.DEBUG):
+        assert asyncio.run(structures.process_deck(db, cc.AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep)) == "read"
+    assert "Zebra" not in caplog.text + "".join(r.getMessage() for r in caplog.records)
+    assert "Zebra" not in json.dumps(db["llm_calls"].docs, default=str)
+    doc, = db["llm_structures"].docs
+    assert "Zebra" in json.dumps({k: v for k, v in doc.items() if k != "items"}, default=str), "the model's reply is kept as it came (rule 17: model JSON output)"
+    assert "Zebra" not in json.dumps(doc["items"], default=str) and doc["items"]["claims"][0]["is_quote"] is False
+    assert [r["label_from"] for r in db[decks.CANDIDATES_COLLECTION].docs] == ["Zebra subscribers"]
 
 
 def test_a_page_reply_cut_at_the_output_limit_is_logged_as_truncated_with_its_tokens_and_no_text(caplog):

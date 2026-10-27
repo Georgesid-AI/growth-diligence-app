@@ -356,21 +356,23 @@ def read_with_layout(parsed, *claims_):
     return db, sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"]), deck_doc
 
 
-def test_a_heading_correction_keeps_the_token_the_cells_and_the_marker_and_no_heading_prose():
-    parsed = tc.deck([(50, 560, 20, "Plan 2025E strategy for Northwind"), (50, 480, 12, "$150,000 annual revenue run rate")])
+def test_a_blank_period_filled_from_another_cell_keeps_the_token_the_cells_and_the_marker_and_no_heading_prose():
+    """A heading or another cell fills a blank period only (page-image.md section 5): the correction record keeps the token, the cell and the marker."""
+    parsed = tc.deck([tc.TITLE, (50, 480, 12, "$150,000 annual revenue run rate"), (400, 300, 12, "Plan year 2025E strategy for Northwind")])
     cell_ = f"p1{tc.cell_of(parsed, '$150,000 annual revenue run rate')}"
-    db, rows, deck_doc = read_with_layout(parsed, claim(cell_, 150_000, unit="USD", period="2027"))
+    other = f"p1{tc.cell_of(parsed, 'Plan year 2025E strategy for Northwind')}"
+    db, rows, deck_doc = read_with_layout(parsed, claim(cell_, 150_000, unit="USD", period=None, period_cell=other))
     row, = rows
     entry, = row["corrections"]
-    assert (entry["state"], entry["reason"], entry["original"], entry["corrected"]) == ("applied", checker.PERIOD_NOT_ON_PAGE, "2027", "2025")
-    assert (entry["cells"], entry["marker"]) == (["r1c1"], "forecast")
+    assert (entry["state"], entry["reason"], entry["original"], entry["corrected"]) == ("applied", checker.PERIOD_FROM_OTHER_CELL, None, "2025")
+    assert (entry["cells"], entry["marker"]) == ([other[2:]], "forecast")
     line, = [d for d in deck_doc["diagnostics"] if d["kind"] == "corrected"]
-    assert (line["corrected"], line["cells"], line["marker"]) == ("2025", ["r1c1"], "forecast")
+    assert (line["corrected"], line["cells"], line["marker"]) == ("2025", [other[2:]], "forecast")
     stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs[0]["items"]) + json.dumps(deck_doc["diagnostics"])
-    for prose in ("strategy", "Northwind", "Plan 2025E"):
+    for prose in ("strategy", "Northwind", "Plan year 2025E"):
         assert prose not in stored, f"{prose!r} in a diagnostics line or a stored item"
     kept, = db[gateway.STRUCTURES_COLLECTION].docs[0]["items"]["claims"][0]["corrections"]
-    assert kept["options"] == ["2025"] and kept["sources"] == [{"cells": ["r1c1"], "marker": "forecast"}]
+    assert kept["options"] == ["2025"] and kept["sources"] == [{"cells": [other[2:]], "marker": "forecast"}]
 
 
 def test_the_marker_is_kept_apart_from_the_period_token():

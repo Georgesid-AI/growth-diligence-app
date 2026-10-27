@@ -42,10 +42,11 @@ def test_three_figures_of_one_cell_are_each_stored_matched(monkeypatch):
     assert all(r["flags"] == [] and r["cell"] == "r2c1" for r in rows)
 
 
-def test_a_bracketed_figure_cited_negative_is_stored_positive_with_the_sign_flag(monkeypatch):
+def test_a_bracketed_figure_cited_negative_keeps_the_models_value_with_the_sign_flag(monkeypatch):
+    """page-image.md section 5 (X2): the flag replaces the change; the value stays as the model read it."""
     rows = _run(monkeypatch, [(50, 500, 12, "(71%) annually")], [claim("p1r2c1", -71, metric="other", unit="%")])
     row, = rows
-    assert row["value"] == 71 and "sign not on page" in row["flags"]
+    assert row["value"] == -71 and "sign not on page" in row["flags"]
 
 
 def test_a_row_stored_by_an_earlier_run_is_checked_again_when_the_page_is_read_again(monkeypatch):

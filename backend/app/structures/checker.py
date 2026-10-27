@@ -65,6 +65,13 @@ flags and one drop kind, all closed words.
 - NO_PRINTED_SOURCE (a drop kind, like DERIVED_FIGURE): the same claim on a page whose extraction is measured and complete: no row, one Diagnostics line.
 A page without the deck's layout (stored before this field) is not measured: nothing is dropped and no extraction flag is set.
 
+Changed 2026-10-27 (George, docs/design/page-image.md sections 4 and 5): a claim carries label_text, segment, share_of and is_quote (nullable).
+The label is label_text when present and label_cell only locates it: the label corrections (page_check.check swapping in a legend or axis label,
+corrections.plan's one-option label) run only without label_text, and with it a cited cell that says another thing sets LABEL_MISMATCH and changes
+nothing. A heading or another cell fills a blank period only (page_check.period_check; corrections.plan no longer applies a heading's period when the
+model's is not on the page): a model period that conflicts with a cited heading is kept with SOURCES_DISAGREE, PERIOD_NOT_ON_PAGE only flags.
+SIGN_NOT_ON_PAGE no longer changes the value.
+
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.
 """
 import re
@@ -217,6 +224,12 @@ def sign_shown(text: str, metric: Optional[str] = None) -> bool:
             or (metric in BRACKET_NEGATIVE_METRICS and bool(_BRACKETED.search(text))))
 
 
+def label_agrees(label_text: str, cell_text: str) -> bool:
+    """Whether the cell a claim cites for its label says what label_text says: the same words in any case, either holding the other."""
+    a, b = " ".join(label_text.casefold().split()), " ".join((cell_text or "").casefold().split())
+    return bool(a) and bool(b) and (a in b or b in a)
+
+
 def basis_disagrees(basis: Optional[str], scenario: Optional[str]) -> bool:
     """The model's two words contradict each other: basis "actual" with a case named, or basis "scenario" with none (L8)."""
     case = bool(scenario) and scenario != NO_SCENARIO
@@ -259,7 +272,7 @@ def rule_flags(grid: Dict, grid_views: Dict, cell: Dict, claim: Dict, lines: Dic
         out.append(USE_OF_FUNDS)
     if text in lines["channels"]:
         out.append(ACQUISITION_CHANNEL)
-    if claim["metric"] == "revenue" and claims._TURNOVER_TERM.search(f"{text} {_cell_text(grid, claim.get('label_cell'))}"):
+    if claim["metric"] == "revenue" and claims._TURNOVER_TERM.search(f"{text} {claim.get('label_text') or _cell_text(grid, claim.get('label_cell'))}"):
         out.append(TURNOVER)
     if cell.get("bar_year") and claim.get("period"):
         bar = (claims.period_cell(str(cell["bar_year"])) or {}).get("label")
@@ -306,11 +319,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
             elif unit in ("%", "x", *_TIME_UNITS):
                 flags.append(UNIT_ASSUMED)
         if claim.get("value") is not None and claim["value"] < 0 and not sign_shown(cell["text"], claim.get("metric")):
-            flags.append(SIGN_NOT_ON_PAGE)
-            # The page shows no sign, so the row states the figure as the page writes it: positive (the model's minus is flagged, never kept).
-            if item["value"] is not None and item["value"] < 0:
-                item["value"] = abs(item["value"])
-                item["values"] = sorted(item["values"], key=lambda v: v["value"] < 0)
+            flags.append(SIGN_NOT_ON_PAGE)          # a flag only: the value stays as the model read it (docs/design/page-image.md section 5)
         if not scenario_near(page_check.view_of(grid_views, cell), cell, claim.get("scenario")):
             flags.append(SCENARIO_NOT_ON_PAGE)
         if basis_disagrees(claim.get("basis"), claim.get("scenario")):
@@ -326,7 +335,10 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
         if claim.get("metric") in claims.GROWTH_TYPES and starts_at_period(cell["text"], claim.get("period"), fiscal_year_end):
             flags.append(GROWTH_START_YEAR)
         flags += [f for f in rule_flags(grid, grid_views, cell, claim, lines, fiscal_year_end) if f not in flags]
-        if corrections.label_options(grid_views, claim, item, cell) == []:
+        if claim.get("label_text"):
+            if claim.get("label_cell") and not label_agrees(claim["label_text"], _cell_text(grid, claim["label_cell"])):
+                flags.append(LABEL_MISMATCH)        # label_text is the label; a cited cell that says another thing is flagged, never corrected
+        elif corrections.label_options(grid_views, claim, item, cell) == []:
             flags.append(LABEL_MISMATCH)            # a cited label no cell of the figure's row or column can replace: a card, no correction
         found = item.get("association") or {}
         flags += [f for f in found.get("flags") or () if f not in flags]
@@ -352,7 +364,7 @@ def drop_reason(claim: Dict, cell: Dict, label: Optional[Dict], flags: List[str]
     with `complete` False the claim is kept and flagged EXTRACTION_INCOMPLETE, with None (not measured) it stays as before."""
     if VALUE_NOT_ON_PAGE in flags and corrections.computable(claim.get("value"), corrections.page_figures(listed, furniture)):
         return DERIVED_FIGURE
-    if corrections.launch_without_product(claim, cell["text"], label["text"] if label else None):
+    if corrections.launch_without_product(claim, cell["text"], claim.get("label_text") or (label["text"] if label else None)):
         return LAUNCH_NO_PRODUCT
     if VALUE_NOT_ON_PAGE in flags and claim.get("value") is not None and complete is True:
         return NO_PRINTED_SOURCE

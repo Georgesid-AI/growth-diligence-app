@@ -254,7 +254,7 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
   test("the run log names the skipped pages and each page not read, after the deck line (the status wording is the deck line's)", () => {
     expect(deckRunLog({ ai_status: "read", pages: 24, page_unit: "page", figure_pages: 11, pages_read: 9, pages_rejected: 2, skipped_pages: [3, 7, 20], unread_pages: [5, 9] }))
       .toEqual(["24 pages parsed · 11 with figures · AI read: done, 9 read, 2 rejected",
-        "Skipped the following pages (3, 7, 20) – no figures relevant for the audit", "page 5 not read", "page 9 not read"]);
+        "Skipped pages 3, 7, 20: no numbers in the page text.", "page 5 not read", "page 9 not read"]);
     expect(deckRunLog({ ai_status: "read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, skipped_pages: [], unread_pages: [] }))
       .toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected"]);
     // the last run's unread pages are not shown while a new one reads

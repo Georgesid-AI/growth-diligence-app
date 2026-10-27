@@ -639,6 +639,7 @@ PAGE_METRICS = CLAIM_METRICS + ("arr", "mrr", "churn", "nrr", "cac_payback", "ma
 PAGE_BASES = ("actual", "projection", "scenario")
 PAGE_SCENARIOS = ("best", "realistic", "worst", "none")
 _PAGE_CELL_ID = re.compile(r"^p[1-9]\d*r[1-9]\d*c[1-9]\d*$")
+PAGE_TEXT_MAX = 120         # the longest label_text, segment or share_of: short printed text (docs/design/page-image.md section 4)
 
 
 def _page_cell(v, field):
@@ -663,6 +664,31 @@ class PageClaim(BaseModel):
     value_cell: str
     label_cell: Optional[str]
     period_cell: Optional[str]
+    # Page image form (docs/design/page-image.md section 4); null means the model did not read one. A reply cached before these fields existed
+    # has none, so they default to null. label_text is the claim's label as printed; label_cell only locates it.
+    label_text: Optional[str] = None
+    segment: Optional[str] = None
+    share_of: Optional[str] = None
+    is_quote: Optional[bool] = None
+
+    @field_validator("label_text", "segment", "share_of", mode="before")
+    @classmethod
+    def _short_text(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("must be short printed text")
+        v = " ".join(v.split())
+        if len(v) > PAGE_TEXT_MAX:
+            raise ValueError(f"must be at most {PAGE_TEXT_MAX} characters")
+        return v or None
+
+    @field_validator("is_quote", mode="before")
+    @classmethod
+    def _quote_flag(cls, v):
+        if v is not None and not isinstance(v, bool):
+            raise ValueError("must be true, false or null")
+        return v
 
     @field_validator("period", mode="before")
     @classmethod
@@ -741,9 +767,13 @@ def page_claims_output_schema() -> dict:
             "value_cell": {"type": "string"},
             "label_cell": nullable({"type": "string"}),
             "period_cell": nullable({"type": "string"}),
+            "label_text": nullable({"type": "string"}),
+            "segment": nullable({"type": "string"}),
+            "share_of": nullable({"type": "string"}),
+            "is_quote": nullable({"type": "boolean"}),
         },
         "required": ["metric", "value", "value_high", "unit", "unit_other", "period", "basis", "scenario", "value_cell",
-                     "label_cell", "period_cell"],
+                     "label_cell", "period_cell", "label_text", "segment", "share_of", "is_quote"],
         "additionalProperties": False,
     }
     return {

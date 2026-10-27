@@ -141,12 +141,12 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company
 
 def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> Dict:
     """One approval-list row for a checked page claim, citing its cell on its page. The snippet is the cell's own text; the period
-    keeps the text of its period cells; "Label from" is the label cell's text when it is adjacent and not the cell itself."""
+    keeps the text of its period cells; "Label from" is label_text when the model read one, else the label cell's text when it is adjacent and not the cell itself."""
     from . import _reading, _target_date, _where         # the orchestrator's helpers, shared with the structure read
     by_id = {redact.cell_id(c): c for c in grid["cells"]}
     cell = by_id[item["value_cell"]]
     period_cells = [by_id[c]["text"] for c in item.get("period_cells") or () if c in by_id]
-    label = by_id[item["label_cell"]]["text"] if item.get("label_cell") in by_id else None
+    label = item.get("label_text") or (by_id[item["label_cell"]]["text"] if item.get("label_cell") in by_id else None)     # label_cell only locates label_text
     unit = item.get("unit_other") if item.get("unit") == "other" else item.get("unit")
     target, stated = _target_date(item.get("period")), (" ".join(period_cells) or item.get("period"))
     source = {"file": deck["file"], **_where(grid), "kind": "page", "cell": item["value_cell"]}
@@ -250,6 +250,8 @@ def _without_text(item: Dict) -> Dict:
     """A checked claim as it is stored: the corrections keep their cell ids and period labels, never the text of a label cell (rule 17); a
     period option keeps its token, the cells it was read from and its marker (section 4 of docs/design/claim-review-simplified-design.md)."""
     out = dict(item)
+    for key in ("label_text", "segment", "share_of"):       # printed text of the page: on the approval-list row, never in the stored read
+        out.pop(key, None)
     if out.get("corrections"):
         out["corrections"] = [{"flag": p["flag"], "field": p["field"], "original": p["original"],
                                "options": [o["ref"] for o in p["options"]],

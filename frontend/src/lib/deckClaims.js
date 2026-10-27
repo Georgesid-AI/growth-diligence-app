@@ -416,7 +416,7 @@ export function deckRunLog(deck) {
   if (deck.ai_status === "python_only" && deck.ai_message) return [deck.ai_message];
   if (deck.ai_status === "prompt_missing") return [deck.ai_message || PROMPT_MISSING_LINE];
   const lines = [deck.figure_pages != null && deck.pages ? deckReadLine(deck) : `AI reading: ${deck.ai_status === "reading" && deck.ai_message === "restarted" ? "restarted" : DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
-  if (deck.skipped_pages?.length) lines.push(`Skipped the following pages (${deck.skipped_pages.join(", ")}) – no figures relevant for the audit`);
+  if (deck.skipped_pages?.length) lines.push(`Skipped pages ${deck.skipped_pages.join(", ")}: no numbers in the page text.`);
   if (deck.ai_status !== "reading") for (const n of deck.unread_pages || []) lines.push(`page ${n} not read`);
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);

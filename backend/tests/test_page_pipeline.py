@@ -172,7 +172,7 @@ def test_with_the_switch_at_ai_the_pages_are_read_and_each_claim_is_a_row_matche
     assert deck_doc["ai_status"] == "read" and deck_doc["page_reads"][0]["pages"] == [1]
     assert {k: deck_doc["page_reads"][0][k] for k in ("matched", "unmatched", "dropped")} == {"matched": 2, "unmatched": 1, "dropped": 0}
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert stored["type"] == PAGE_CLAIMS and stored["pages"] == [1] and stored["output"]["claims"] == REPLY["claims"]
+    assert stored["type"] == PAGE_CLAIMS and stored["pages"] == [1] and stored["output"]["claims"] == [{**dict.fromkeys(("label_text", "segment", "share_of", "is_quote")), **c} for c in REPLY["claims"]]
     assert stored["statuses"] == ["matched", "matched", "unmatched"]
 
 

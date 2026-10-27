@@ -5,16 +5,16 @@ Pure: no I/O, no model, no database. checker.check calls this after its flags ar
 - `corrections`: one entry per flag that names a correction, {"flag", "field" ("period" or "label"), "original", "options": [...]}. The
   options are the candidates the page offers: one option is applied before the register (pages.corrected_row), more than one go to
   "Needs your attention" with a button each. The page-read checker never changes the item itself.
-  * PERIOD_FROM_OTHER_CELL: the period Python rebuilt from a cell outside the figure's block differs from the model's; the one candidate is
-    the rebuilt period.
+  * PERIOD_FROM_OTHER_CELL: the model gave no period and Python rebuilt one from a cell outside the figure's block; the one candidate is
+    the rebuilt period. A period the model set is never replaced by a heading or another cell (docs/design/page-image.md section 5): the
+    sources disagree and the analyst sees both (association.SOURCES_DISAGREE), and PERIOD_NOT_ON_PAGE only flags.
   * BAR_YEAR: the year label under the bar is the one candidate.
-  * PERIOD_NOT_ON_PAGE: the model's period stands on no cell; the candidates are the periods the page's heading cells (title cell, top 20%)
-    state, one option each.
-  * LABEL_MISMATCH: the label cell the model cited is not next to the figure and the page offers exactly one cell where a label may stand
+  * LABEL_MISMATCH: only when the claim has no label_text. The label cell the model cited is not next to the figure and the page offers exactly one cell where a label may stand
     (page_check.label_cells) that holds words and no figure, in the figure's row or column, outside the heading row (r1) and never a title
     cell (hotfix of PR 182, 2026-10-26: the title was picked as the label). With several candidates nothing changes: the label is left out
     and the confidence reads "no heading" (a card per such claim would swamp the page, George to decide). With none, nothing is corrected
-    and the row carries the review flag LABEL_MISMATCH, for a card.
+    and the row carries the review flag LABEL_MISMATCH, for a card. With label_text the label is that text, the cited cell only locates it,
+    and a cell that says another thing is flagged by checker.check, never corrected.
 - `drop`: DERIVED_FIGURE (the value is on no cell but can be computed from figures of the same page) or LAUNCH_NO_PRODUCT (a launch date
   whose text names no product). Such a claim never enters the register; the pipeline writes a Diagnostics line.
 
@@ -157,8 +157,9 @@ def label_candidates(structure: Dict, cell: Dict) -> List[Dict]:
 
 
 def label_options(grid_views: Dict, claim: Dict, item: Dict, cell: Dict) -> Optional[List[Dict]]:
-    """The candidates for a label the model cited from a cell the figure is not next to; None when the label stands."""
-    if claim.get("label_cell") and item.get("label_cell") is None:
+    """The candidates for a label the model cited from a cell the figure is not next to; None when the label stands, and always None when
+    the claim has label_text: that is the label, nothing is offered in its place (docs/design/page-image.md section 5)."""
+    if claim.get("label_cell") and item.get("label_cell") is None and not claim.get("label_text"):
         return label_candidates(page_check.view_of(grid_views, cell), cell)
     return None
 
@@ -178,10 +179,6 @@ def plan(grid: Dict, grid_views: Dict, claim: Dict, item: Dict, cell: Dict, flag
         if bar:
             out.append({"flag": checker.BAR_YEAR, "field": "period", "original": claim.get("period"), "original_text": claim.get("period"),
                         "options": [period_option(bar, [], str(cell["bar_year"]))]})
-    if checker.PERIOD_NOT_ON_PAGE in flags:
-        options = heading_periods(grid, grid_views, fiscal_year_end)
-        if options:
-            out.append({"flag": checker.PERIOD_NOT_ON_PAGE, "field": "period", "original": claim.get("period"), "original_text": claim.get("period"), "options": options})
     found = item.get("association") or {}
     for flag in (checker.SOURCES_DISAGREE, checker.SOURCE_AMBIGUOUS):
         if flag not in flags:

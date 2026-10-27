@@ -250,6 +250,12 @@ def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optio
                 {"period": chosen["period"], "period_cells": chosen["cells"], "source": chosen["source"]},
                 {"period": label, "period_cells": cells, "source": note["source"]}])
             return chosen["period"], chosen["cells"], True, wanted != chosen["span"], "disagree", note
+    if heading and model is not None and wanted != span:
+        # A heading or another cell fills a blank period only (docs/design/page-image.md section 5): the model's period stays, the sources
+        # disagree, and the analyst sees both.
+        note.update(source=None, flags=[association.SOURCES_DISAGREE], options=[
+            {"period": model, "period_cells": [], "source": None}, {"period": label, "period_cells": cells, "source": note["source"]}])
+        return model, [], False, False, False, note
     return label, cells, True, wanted != span, heading, note
 
 
@@ -462,10 +468,11 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
         label = by_id.get(claim["label_cell"]) if claim.get("label_cell") else None
         local = lay.local_label(cell)
         label_ok = label is None or any(_id(label) == _id(c) for c in label_cells(structure, cell)) or _id(label) in local["cells"]
-        if local["ambiguous"]:
+        label_text = bool(claim.get("label_text"))        # the label is the text the model read; the cell only locates it: no swap, no drop (page-image.md section 5)
+        if local["ambiguous"] and not label_text:
             label, label_ok = None, True        # several candidate labels (a reused colour, two axis titles): none is chosen
             notes["flags"].append(association.SOURCE_AMBIGUOUS)
-        elif local["cells"]:
+        elif local["cells"] and not label_text:
             chosen = by_id[local["cells"][0]]   # the explicit local association takes precedence over a broader heading
             beside = label is not None and not label.get("title") and any(_id(label) == _id(c) for c in label_cells(structure, cell))
             if label is not None and _id(label) != _id(chosen) and _id(label) in {s["label"] for s in lay.swatches}:
@@ -490,7 +497,9 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
                "value_high": (span["high"] if span and item["id"] == span["items"][0] else None) if value_ok else claim.get("value_high"),
                "value_cell": _id(cell), "position": item["position"] if item else None,
                "period": period, "period_cells": period_cells,
-               "label_cell": _id(label) if label is not None and label_ok else None,
+               "label_cell": _id(label) if label is not None and (label_ok or label_text) else None,
+               "label_text": claim.get("label_text"), "segment": claim.get("segment"), "share_of": claim.get("share_of"),
+               "is_quote": claim.get("is_quote"),
                "status": MATCHED if ok else UNMATCHED,
                "checks": _checks(value_ok, unit_ok, period_ok, label_ok, corrected, values, heading)}
         if corrected:

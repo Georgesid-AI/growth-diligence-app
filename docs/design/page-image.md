@@ -1,7 +1,16 @@
 # Addendum: page image for the page reader
 
-**Status:** proposed, 27 October 2026 (George). Addendum to `claim-review-simplified-design.md`, which is not amended. Not built.
-The page reader is the `page_claims` step of `ai-reads-rules-check.md`. Check codes (L1, C4, P2, C1, C3, X2) are used as George named them; the repository does not define them by those codes, so the build maps each to its check in `structures/checker.py` before coding.
+**Status:** proposed, 27 October 2026 (George). Addendum to `claim-review-simplified-design.md`, which is not amended. Sections 4 and 5 built 27 October 2026 (engine contract 11); sections 1 to 3, 6 and 7 (the image, the disclosure, the owner page) are not built.
+The page reader is the `page_claims` step of `ai-reads-rules-check.md`. Check codes (L1, C4, P2, C1, C3, X2) are used as George named them; the repository does not define them by those codes, so the build mapped each to its check in `structures/checker.py` and its helpers (George's definitions, 27 October 2026; codes are handled as the two groups of section 5):
+
+| Code | Group | Check | Function |
+|---|---|---|---|
+| L1 | Label correction | the legend or axis label found by position replaces the cited one | `page_check.check` (local label) |
+| C4 | Label correction | one-candidate label correction | `corrections.plan` (flag `label mismatch`, field `label`) |
+| P2 | Period fill | the period from the page heading or another cell | `page_check.period_check` |
+| C1 | Period fill | the one-option "period from another cell" | `corrections.plan` (`PERIOD_FROM_OTHER_CELL`) |
+| C3 | Period fill | the heading's period when the model's is not on the page | `corrections.plan` (`PERIOD_NOT_ON_PAGE`), removed: it only ever applied to a model period |
+| X2 | Sign | rewrite of the value to its absolute value | `checker.check`, now only sets `sign not on page` |
 
 ## 1. What the reader sends
 

@@ -64,31 +64,33 @@ def test_the_year_under_a_bar_is_applied_when_the_model_dated_the_bar_otherwise(
                     "cells": [], "marker": None}
 
 
-def test_a_period_rebuilt_from_another_cell_is_applied_and_logged():
+def test_a_blank_period_rebuilt_from_another_cell_is_applied_and_logged_and_a_period_the_model_set_stays():
     parsed = tc.deck([tc.TITLE, (50, 480, 12, "$150,000 annual revenue run rate"), (400, 300, 12, "Plan year 2024")])
     cell = at(parsed, "$150,000 annual revenue run rate")
     other = at(parsed, "Plan year 2024")
-    rows, deck = read(parsed, tc.claim(cell, 150_000, period="2023", period_cell=other))
+    rows, deck = read(parsed, tc.claim(cell, 150_000, period=None, period_cell=other))
     row, = rows
     assert row["target_date"] == "2024" and row["corrections"][0]["reason"] == checker.PERIOD_FROM_OTHER_CELL
-    assert (row["corrections"][0]["original"], row["corrections"][0]["corrected"]) == ("2023", "2024")
-    assert deck["diagnostics"][0]["original"] == "2023" and deck["diagnostics"][0]["corrected"] == "2024"
-
-
-def test_a_period_on_no_cell_with_one_heading_period_is_applied_and_with_two_it_waits_with_a_button_each():
-    one_heading = tc.deck([(50, 560, 20, "Plan 2025"), (50, 480, 12, "$150,000 annual revenue run rate")])
-    cell = at(one_heading, "$150,000 annual revenue run rate")
-    row, = read(one_heading, tc.claim(cell, 150_000, period="2027"))[0]
-    assert checker.PERIOD_NOT_ON_PAGE not in row["flags"] and row["target_date"] == "2025" and row["corrections"][0]["state"] == "applied"
-    two = tc.deck([(50, 560, 20, "Plan 2025"), (300, 540, 12, "Actuals 2024"), (50, 480, 12, "$150,000 annual revenue run rate")])
-    cell = at(two, "$150,000 annual revenue run rate")
-    rows, deck = read(two, tc.claim(cell, 150_000, period="2027"))
+    assert (row["corrections"][0]["original"], row["corrections"][0]["corrected"]) == (None, "2024")
+    assert deck["diagnostics"][0]["original"] is None and deck["diagnostics"][0]["corrected"] == "2024"
+    # page-image.md section 5: a heading or another cell fills a blank period only, never replaces the model's
+    rows, deck = read(parsed, tc.claim(cell, 150_000, period="2023", period_cell=other))
     row, = rows
-    assert checker.PERIOD_NOT_ON_PAGE in row["flags"], "stays a card"
-    entry, = row["corrections"]
-    assert entry["state"] == "choose" and [o["value"] for o in entry["options"]] == ["2025", "2024"]
-    assert entry["options"][1]["set"]["target_date"] == "2024"
-    assert "diagnostics" not in deck or deck["diagnostics"] == [], "nothing applied, nothing logged"
+    assert row["target_date"] == "2023" and all(e["state"] != "applied" for e in row.get("corrections", ()))
+    assert not deck.get("diagnostics"), "nothing was applied, nothing logged"
+
+
+def test_a_period_on_no_cell_stays_flagged_whatever_the_page_headings_say():
+    """C3 no longer applies the heading's period: with one heading period or two, the model's period stays and the row is flagged for the analyst."""
+    for texts in ([(50, 560, 20, "Plan 2025")], [(50, 560, 20, "Plan 2025"), (300, 540, 12, "Actuals 2024")]):
+        parsed = tc.deck([*texts, (50, 480, 12, "$150,000 annual revenue run rate")])
+        cell = at(parsed, "$150,000 annual revenue run rate")
+        item = tc.one(parsed, tc.claim(cell, 150_000, period="2027"))
+        assert item["corrections"] == [] and item["period"] == "2027"
+        rows, deck = read(parsed, tc.claim(cell, 150_000, period="2027"))
+        row, = rows
+        assert checker.PERIOD_NOT_ON_PAGE in row["flags"] and row["target_date"] == "2027" and "corrections" not in row
+        assert not deck.get("diagnostics")
 
 
 def test_a_label_cell_the_figure_is_not_next_to_is_applied_with_one_candidate_and_left_alone_with_several():
