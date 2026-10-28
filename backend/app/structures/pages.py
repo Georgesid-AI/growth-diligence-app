@@ -278,7 +278,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     """Read one deck page by page with the model and check every claim against its page; returns the deck's AI status (the
     words of process_deck). Unticked consent: no call. Ticked but the revenue file not yet mapped: the deck waits."""
     from . import (CANDIDATES_COLLECTION as _c, BLOCKED, NOT_READ, PYTHON_ONLY, READ, STOPPED, WAITING, WAITING_TEXT, _cell_key,  # noqa: F401
-                   CONSENT_OFF_LINE, PROMPT_MISSING, _deck_status, _python_cells, analyst_copy, revenue_ready, rules_copy, value_match)
+                   CONSENT_OFF_LINE, PROMPT_MISSING, _deck_status, _python_cells, analyst_copy, revenue_ready, rules_copy, store_candidate, value_match)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
@@ -416,7 +416,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                     row_order = order = order + 1
                 row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
                        "id": str(uuid.uuid4()), "order": row_order, "status": "pending", "structure_key": result.key}
-                await db[CANDIDATES_COLLECTION].insert_one(row)
+                await store_candidate(db, row)
                 reviewed.append(row)
                 fresh.add(row["id"])
             await gateway.record_verification(db, audit_id, result.key, [c["status"] for c in checked_all], counts["dropped"],

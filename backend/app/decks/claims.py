@@ -1662,6 +1662,30 @@ def growth_basis(text: str) -> str:
     return found[0] if len(found) == 1 else "unknown"
 
 
+def fold_twins(candidates: List[Dict]) -> List[Dict]:
+    """The stored copies of one candidate shown once: two documents of the same deck, page reply (`structure_key`), order and cell are one
+    figure written twice (two reads of a deck at once; live bug, 2026-10-28). The copy the analyst has answered stands, else the first;
+    it takes the other's sources, so both page references stay. Candidates with no structure key (the parser's, the analyst's) are left alone."""
+    kept: Dict[tuple, Dict] = {}
+    out: List[Dict] = []
+    for c in candidates:
+        if not c.get("structure_key") or c.get("order") is None:
+            out.append(c)
+            continue
+        key = (c.get("deck_id"), c["structure_key"], c["order"], c.get("cell"))
+        first = kept.get(key)
+        if first is None:
+            kept[key] = c
+            out.append(c)
+            continue
+        sources = list(first.get("sources") or []) + [s for s in c.get("sources") or [] if s not in (first.get("sources") or [])]
+        winner = c if first.get("status") == "pending" and c.get("status") != "pending" else first
+        winner = {**winner, "sources": sources}
+        kept[key] = winner
+        out[out.index(first)] = winner
+    return out
+
+
 def same_claim(a: Dict, b: Dict) -> Optional[Dict]:
     """The value of `a` that `b` states again: the same type, value, currency and period, and the same kind of unit when it is
     a rate (docs/specs/deck-parser.md section 2). Used to merge what the parser and the model read twice. A claim with no

@@ -5,6 +5,7 @@ import {
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText, INFORMATIONAL_FLAGS,
   CLAIM_GROUPS, COLLAPSED_BY_DEFAULT, SCENARIO_GROUP, PROMPT_MISSING_LINE, BLOCKED_LINE, scenarioText, isCase,
 } from "./deckClaims";
+import { acceptAllSplit } from "./deckClaims";
 
 describe("source reference", () => {
   test("slide, page, notes and table cell", () => {
@@ -535,5 +536,14 @@ describe("review of PR #164 (George, 2026-10-23)", () => {
   test("a deck whose prompt is missing reads one line, word for word", () => {
     expect(PROMPT_MISSING_LINE).toBe("AI reading not run – deck_reading prompt missing in prompt store");
     expect(deckRunLog({ ai_status: "prompt_missing", ai_message: PROMPT_MISSING_LINE })).toEqual([PROMPT_MISSING_LINE]);
+  });
+});
+
+describe("Accept all counts what waits (George, 2026-10-28)", () => {
+  test("a High confidence row is accepted by the server, so it is no row of the count; Medium and Low are", () => {
+    const row = (id, status, level) => ({ id, status, claim_type: "revenue", confidence: { level } });
+    const split = acceptAllSplit([row("a", "approved", "High"), row("b", "pending", "Medium"), row("c", "pending", "Low")]);
+    expect(split.rows.map((c) => c.id)).toEqual(["b", "c"]);
+    expect(statusCounts([row("a", "approved", "High"), row("b", "pending", "Medium")]).pending).toBe(1);
   });
 });
