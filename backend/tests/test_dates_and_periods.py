@@ -22,6 +22,7 @@ from test_claim_matching import run_claim  # noqa: E402
 from test_claim_register_api import AUDIT, _get, _put  # noqa: E402
 from test_ic_memo import _ready  # noqa: E402
 
+from app import as_of  # noqa: E402
 from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
 from app import ic_memo as im  # noqa: E402
@@ -59,31 +60,35 @@ def _upload(dtype, name, content):
             "mapping": server.suggest_mapping(dtype, list(df.columns))}
 
 
-def run_engine(uploads: dict, as_of_month=None, last_month_complete=False) -> dict:
+def run_engine(uploads: dict, as_of_month=None) -> dict:
+    """compute_all as the server calls it: the as-of month as given, else detected from the uploads as Map detects it (as_of.detect);
+    the engine itself never picks one."""
     norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
     empty = server.pd.DataFrame()
+    if as_of_month is None and (found := as_of.detect(uploads)):
+        as_of_month = as_of.month_end(found["month"])
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0}, "billing_terms": {},
-              "default_l": 1, "as_of_month": as_of_month, "last_month_complete": last_month_complete}
+              "default_l": 1, "as_of_month": as_of_month}
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
     return server.sanitize(ge.compute_all(norm["revenue"], norm.get("crm", empty), norm.get("pnl", empty), config, sources,
                                           files=server.candidate_views(uploads)))
 
 
-def synthetic_run(as_of_month="2026-06-30", last_month_complete=False, **kw) -> dict:
-    return run_engine({"revenue": _upload("revenue", "revenue.csv", synthetic_revenue(**kw))}, as_of_month, last_month_complete)
+def synthetic_run(as_of_month="2026-06-30", **kw) -> dict:
+    return run_engine({"revenue": _upload("revenue", "revenue.csv", synthetic_revenue(**kw))}, as_of_month)
 
 
 @lru_cache(maxsize=None)
-def _testco(last_month_complete: bool) -> str:
+def _testco() -> str:
     uploads = {d: _upload(d, FILES[d], (SAMPLE / FILES[d]).read_bytes()) for d in ("revenue", "pnl", "crm")}
     import json
-    return json.dumps(run_engine(uploads, None, last_month_complete))
+    return json.dumps(run_engine(uploads, None))
 
 
-def sample_run(last_month_complete=False) -> dict:
-    """TestCo of sample_data/: as-of 2024-02 defaulted from the last P&L month, revenue to 2024-02."""
+def sample_run() -> dict:
+    """TestCo of sample_data/: as-of 2024-02 detected from the last revenue month, revenue to 2024-02."""
     import json
-    return json.loads(_testco(last_month_complete))
+    return json.loads(_testco())
 
 
 def _claim(**fields) -> dict:
@@ -95,15 +100,16 @@ def _claim(**fields) -> dict:
 
 # --- plan section 3: the regression (required in Release 1) -----------------------------------------------------------------
 
-REGRESSION = [pytest.param({"as_of_month": "2026-06-30", "last_month_complete": False}, "as_of", id="as-of-2026-06-set"),
-              pytest.param({"as_of_month": None, "last_month_complete": True}, "analyst", id="as-of-defaulted-last-month-ticked")]
+REGRESSION = [pytest.param({"as_of_month": "2026-06-30"}, id="as-of-2026-06-typed"),
+              pytest.param({"as_of_month": None}, id="as-of-detected")]
 
 
-@pytest.mark.parametrize("setting, complete_by", REGRESSION)
-def test_plan_3_regression_revenue_to_june_2019_on_an_october_2026_machine_is_labelled_june_2019_everywhere(setting, complete_by):
+@pytest.mark.parametrize("setting", REGRESSION)
+def test_plan_3_regression_revenue_to_june_2019_on_an_october_2026_machine_is_labelled_june_2019_everywhere(setting):
     results = synthetic_run(**setting)
-    assert results["source_period"] == {"month": "2019-06", "status": "Complete", "complete_by": complete_by,
-                                        "evidence_to": "2019-06"}
+    assert results["source_period"] == {"month": "2019-06", "status": "Complete", "complete_by": "as_of", "evidence_to": "2019-06"}
+    if setting["as_of_month"] is None:
+        assert results["as_of_month"] == "2019-06", "detected: June 2019 is the as-of month and metrics run to it inclusive"
     assert results["arr"]["month"] == "2019-06"
     periods = results["metric_periods"]
     assert periods and all(p["last"] == "2019-06" for p in periods.values()), periods
@@ -111,7 +117,7 @@ def test_plan_3_regression_revenue_to_june_2019_on_an_october_2026_machine_is_la
     # the memo: built on the frozen machine date with no requested analysis date, so its date is that day
     arr = results["arr"]["value"]
     audit = {"company_name": "SynthCo", "target_arr": 0, "target_date": None, "as_of_month": setting["as_of_month"],
-             "analysis_date": None, "last_month_complete": setting["last_month_complete"]}
+             "analysis_date": None}
     sets = {"fiscal_year_end": 12, "as_of_month": setting["as_of_month"], "reporting_currency": "EUR", "fx": {"EUR": 1.0}}
     rows = cm.build_register([_claim(value=round(arr), target_date="2019-06", period_text="Jun 2019",
                                      snippet=f"ARR of EUR {round(arr):,} in June 2019")], results, sets)
@@ -130,19 +136,13 @@ def test_plan_3_regression_revenue_to_june_2019_on_an_october_2026_machine_is_la
         "2026 appears only as the requested analysis date, which is the memo date"
 
 
-def test_the_latest_valid_source_period_is_possibly_partial_until_the_as_of_month_is_later_or_the_box_is_ticked():
-    partial = sample_run()
-    assert partial["source_period"] == {"month": "2024-02", "status": "Possibly partial", "complete_by": None,
-                                        "evidence_to": "2024-02"}
-    assert partial["arr"]["month"] == "2024-02", "shown: ARR still reads the last month"
-    assert partial["mrr_series"]["months"][-1] == "2024-02", "shown: the series keep it"
-    assert [d["month"] for d in partial["nrr"]["series"]][-1] == "2024-01", "not used: NRR ends the month before"
-    assert [d["month"] for d in partial["gross_churn"]["series"]][-1] == "2024-01", "not used: gross churn ends the month before"
-    assert partial["gross_churn"]["month"] == "2024-01" and partial["metric_periods"]["gross_churn"]["last"] == "2024-01"
-    complete = sample_run(last_month_complete=True)
-    assert complete["source_period"]["status"] == "Complete" and complete["source_period"]["complete_by"] == "analyst"
-    assert [d["month"] for d in complete["nrr"]["series"]][-1] == "2024-02"
-    assert [d["month"] for d in complete["gross_churn"]["series"]][-1] == "2024-02"
+def test_the_as_of_month_always_counts_as_complete_and_nrr_and_churn_read_it():
+    results = sample_run()
+    assert results["source_period"] == {"month": "2024-02", "status": "Complete", "complete_by": "as_of", "evidence_to": "2024-02"}
+    assert results["arr"]["month"] == "2024-02" and results["mrr_series"]["months"][-1] == "2024-02"
+    assert [d["month"] for d in results["nrr"]["series"]][-1] == "2024-02", "the last month is used, not left out"
+    assert [d["month"] for d in results["gross_churn"]["series"]][-1] == "2024-02"
+    assert results["gross_churn"]["month"] == "2024-02" and results["metric_periods"]["gross_churn"]["last"] == "2024-02"
 
 
 def test_metric_periods_list_the_missing_months_not_a_count():
@@ -171,22 +171,20 @@ def test_a_claim_period_before_the_data_is_not_covered_and_unverified():
     assert row["reason"] == "claim period not in supplied data: before Customer count's first month, 2023-01"
 
 
-def test_an_nrr_claim_for_a_possibly_partial_month_is_not_covered():
+def test_an_nrr_claim_for_the_as_of_month_is_covered():
     results = sample_run()
     sets = {"fiscal_year_end": 12, "as_of_month": None, "reporting_currency": "EUR", "fx": {"EUR": 1.0}}
     row = cm.build_register([_claim(claim_type="retention", value=112, unit="%", currency=None, target_date="2024-02",
                                     period_text="Feb 2024", snippet="NRR 112% in Feb 2024")], results, sets)[0]
-    assert (row["evidence_label"], row["period_coverage"]) == ("Unverified", "Not covered")
-    assert row["reason"] == "claim period not in supplied data: 2024-02 is possibly partial (tick 'Last month is complete' to use it)"
+    assert row["period_coverage"] == "Covered" and row["observed_at"] == "2024-02"
 
 
-def test_a_gross_churn_claim_for_a_possibly_partial_month_is_not_covered():
+def test_a_gross_churn_claim_for_the_as_of_month_is_covered():
     results = sample_run()
     sets = {"fiscal_year_end": 12, "as_of_month": None, "reporting_currency": "EUR", "fx": {"EUR": 1.0}}
     row = cm.build_register([_claim(claim_type="retention", value=8, unit="%", currency=None, target_date="2024-02",
                                     period_text="Feb 2024", snippet="Gross revenue churn 8% in Feb 2024")], results, sets)[0]
-    assert (row["metric"], row["evidence_label"], row["period_coverage"]) == ("Gross revenue churn", "Unverified", "Not covered")
-    assert row["reason"] == "claim period not in supplied data: 2024-02 is possibly partial (tick 'Last month is complete' to use it)"
+    assert (row["metric"], row["period_coverage"]) == ("Gross revenue churn", "Covered")
 
 
 def test_a_claim_between_the_evidence_end_and_the_as_of_month_is_not_covered_and_never_a_forecast():
@@ -240,13 +238,12 @@ def test_a_growth_claim_with_a_compared_month_outside_the_data_is_not_covered_an
     assert row["reason"].startswith("claim period not in supplied data: ")
 
 
-def test_a_mom_growth_claim_for_the_possibly_partial_default_month_is_unverified():
+def test_a_mom_growth_claim_for_the_as_of_month_is_covered():
     results = sample_run()
     sets = {"fiscal_year_end": 12, "as_of_month": None, "reporting_currency": "EUR", "fx": {"EUR": 1.0}}
     row = cm.build_register([_claim(claim_type="revenue_growth", value=2, unit="%", currency=None, target_date="2024-02",
                                     period_text="Feb 2024", snippet="Revenue grew 2% MoM in Feb 2024")], results, sets)[0]
-    assert (row["evidence_label"], row["period_coverage"]) == ("Unverified", "Not covered")
-    assert "possibly partial" in row["reason"]
+    assert row["period_coverage"] == "Covered"
 
 
 def test_cagr_or_annualised_wins_over_since_and_over():
@@ -287,7 +284,7 @@ def test_set_growth_basis_is_one_click_and_the_claim_is_then_matched(register_ap
 
 def test_the_requested_analysis_date_changes_the_memo_date_and_nothing_else(register_api):
     client, db = register_api
-    assert "analysis_date" not in server.STALE_ON_CHANGE_FIELDS and "last_month_complete" in server.STALE_ON_CHANGE_FIELDS
+    assert "analysis_date" not in server.STALE_ON_CHANGE_FIELDS
     _ready(client)
     before = copy.deepcopy(db["audits"].docs[0]["results"])
     register = _get(client)["register"]

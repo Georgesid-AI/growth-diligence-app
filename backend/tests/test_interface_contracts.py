@@ -34,6 +34,7 @@ import demo_data  # noqa: E402
 import growth_engine as ge  # noqa: E402
 import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
+from app import as_of  # noqa: E402
 from app import formatting as fmt  # noqa: E402
 from app.llm import gateway  # noqa: E402
 from schemas import metrics  # noqa: E402
@@ -47,9 +48,13 @@ FIXED_SENTENCE = "Narrative could not be generated. The computed metrics below a
 # ---------------------------------------------------------------------------
 # Real engine runs: the sample files, and the demo companies in their sparse variants
 # ---------------------------------------------------------------------------
-def _config(ccy="EUR", target_arr=1_000_000, target_date="2026-12-31", fx=None):
+def _config(ccy="EUR", target_arr=1_000_000, target_date="2026-12-31", fx=None, uploads=None):
+    """The engine config as the server builds it: the as-of month detected from the files as Map detects it (as_of.detect), never
+    by the engine."""
+    found = as_of.detect(uploads or {})
     return {"reporting_currency": ccy, "target_arr": target_arr, "target_date": target_date,
-            "fx": fx or {ccy: 1.0}, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+            "fx": fx or {ccy: 1.0}, "billing_terms": {}, "default_l": 1,
+            "as_of_month": as_of.month_end(found["month"]) if found else None}
 
 
 @lru_cache(maxsize=None)
@@ -61,7 +66,7 @@ def _sample_raw() -> dict:
                           "mapping": server.suggest_mapping(dtype, list(df.columns))}
     norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
-    return ge.compute_all_raw(norm["revenue"], norm["crm"], norm["pnl"], _config(), sources,
+    return ge.compute_all_raw(norm["revenue"], norm["crm"], norm["pnl"], _config(uploads=uploads), sources,
                               files=server.candidate_views(uploads))
 
 
@@ -80,7 +85,8 @@ def _demo_raws() -> dict:
             norm = {d: server.normalize(server.df_to_records(df), d, m) for d, (df, m) in datasets.items()}
             for d in drop:
                 norm[d] = pd.DataFrame()
-            cfg = _config(spec["reporting_currency"], spec["target_arr"], target_date or spec["target_date"], fx)
+            uploads = {d: {"rows": server.df_to_records(df), "mapping": m} for d, (df, m) in datasets.items() if d not in drop}
+            cfg = _config(spec["reporting_currency"], spec["target_arr"], target_date or spec["target_date"], fx, uploads)
             return ge.compute_all_raw(norm["revenue"], norm["crm"], norm["pnl"], cfg, sources)
 
         out[f"demo{i}"] = run()
@@ -105,9 +111,10 @@ def _yearly_raw() -> dict:
     norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
     name = "yearly_pnl_by_product.csv"
     s = cr.read_workbook((BACKEND / "tests" / "fixtures" / "mapping" / name).read_bytes(), name)[0]
-    yearly = sh.feed(sh.build(sh.read(s.grid, s.fmt, 12)), 12, 1000, {"file": name, "sheet": "CSV"})["yearly"]
+    cfg = _config(uploads=uploads)
+    yearly = sh.feed(sh.build(sh.read(s.grid, s.fmt, 12)), 12, 1000, {"file": name, "sheet": "CSV"}, cfg["as_of_month"])["yearly"]
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
-    return ge.compute_all_raw(norm["revenue"], norm["crm"], pd.DataFrame(), _config(), sources,
+    return ge.compute_all_raw(norm["revenue"], norm["crm"], pd.DataFrame(), cfg, sources,
                               files=server.candidate_views(uploads), yearly=yearly)
 
 
@@ -203,7 +210,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 11 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 12 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -543,7 +550,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 11 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 12 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"

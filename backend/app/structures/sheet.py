@@ -908,11 +908,22 @@ def sm_scope(labels: List[str]) -> str:
     return "unknown"
 
 
-def yearly_input(lines: List[Dict], periods: List[Dict], scale: float, meta: Dict) -> Optional[Dict]:
-    """The engine's yearly input (26.8): every actual year with its fields and cells, the forecast and budget years of the same
-    lines (the track record) and the actual years, halves and quarters with a revenue line (against the revenue file). None
-    without an actual year."""
-    years = [k for k, p in enumerate(periods) if p["grain"] == "year" and p["tag"] == "actual"]
+PLAN_TAGS = ("forecast", "budget")
+
+
+def is_actual(period: Dict, as_of: Optional[str]) -> bool:
+    """The statement feed's rule for a dated column (docs/specs/dates-and-periods.md section 2): actual when its header is not marked
+    forecast or budget and its period ends on or before the audit's as-of month; every column after that month is plan, whatever
+    its tag. With no as-of month, every unmarked column."""
+    return bool(period.get("end")) and period["tag"] not in PLAN_TAGS and (as_of is None or period["end"] <= as_of[:7])
+
+
+def yearly_input(lines: List[Dict], periods: List[Dict], scale: float, meta: Dict, as_of: Optional[str] = None) -> Optional[Dict]:
+    """The engine's yearly input (26.8): every actual year with its fields and cells, the plan years of the same lines (the
+    forecast and budget years, and every year after the as-of month: the track record) and the actual years, halves and quarters
+    with a revenue line (against the revenue file). Actual and plan are read from the as-of month (`is_actual`), never from the
+    tag alone. None without an actual year."""
+    years = [k for k, p in enumerate(periods) if p["grain"] == "year" and is_actual(p, as_of)]
     if not years:
         return None
     chosen = {f: pick(lines, f) for f in TRACK_FIELDS}
@@ -929,10 +940,10 @@ def yearly_input(lines: List[Dict], periods: List[Dict], scale: float, meta: Dic
     actual = [{"period": periods[k]["header"], "year": periods[k]["year"], "start": periods[k]["start"], "end": periods[k]["end"],
                "fields": fields(k)} for k in years]
     planned = [{"period": periods[k]["header"], "year": periods[k]["year"], "tag": periods[k]["tag"], "fields": fields(k)}
-               for k, p in enumerate(periods) if p["grain"] == "year" and p["tag"] in ("forecast", "budget")]
+               for k, p in enumerate(periods) if p["grain"] == "year" and k not in years]
     reported = [{"period": periods[k]["header"], "start": periods[k]["start"], "end": periods[k]["end"],
                  "revenue": fields(k).get("revenue")} for k, p in enumerate(periods)
-                if p["grain"] in ("year", "half", "quarter") and p["tag"] == "actual"]
+                if p["grain"] in ("year", "half", "quarter") and is_actual(p, as_of)]
     rows = sorted({x["row"] for f in TRACK_FIELDS for x in chosen[f]})
     return {"file": meta.get("file"), "sheet": meta.get("sheet"), "rows": rows, "actual": actual, "planned": planned,
             "reported": [r for r in reported if r["revenue"]]}
@@ -1078,16 +1089,17 @@ def view(sheet_map: Dict, fiscal_year_end: int, scale: float) -> Dict:
             "series": len(series)}
 
 
-def feed(sheet_map: Dict, fiscal_year_end: int, scale: float, meta: Dict) -> Dict:
+def feed(sheet_map: Dict, fiscal_year_end: int, scale: float, meta: Dict, as_of: Optional[str] = None) -> Dict:
     """What compute reads from the stored map: {"pnl": monthly P&L rows or None, "rows": the P&L lines' rows, "yearly": the yearly
-    input or None}. Never a split of a year or a quarter into months."""
+    input or None}. Never a split of a year or a quarter into months. `as_of` is the audit's one as-of month (YYYY-MM-DD or YYYY-MM):
+    the yearly input's actual columns end on or before it, the columns after it are plan."""
     periods = with_periods(sheet_map["periods"], fiscal_year_end)
     lines = sheet_map["lines"]
     pnl = monthly_pnl(lines, periods, scale)
     return {"pnl": pnl["rows"] if pnl else None,
             "rows": sorted({r for rows in (pnl or {}).get("lines", {}).values() for r in rows}),
             "revenue_row": ((pnl or {}).get("lines", {}).get("revenue") or [None])[0],
-            "yearly": None if pnl else yearly_input(lines, periods, scale, meta)}
+            "yearly": None if pnl else yearly_input(lines, periods, scale, meta, as_of)}
 
 
 def claims(sheet_map: Dict, ds: Dict, fiscal_year_end: int) -> Optional[Dict]:

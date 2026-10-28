@@ -25,6 +25,7 @@ from starlette.concurrency import run_in_threadpool
 import growth_engine as ge
 import demo_data
 from schemas import metrics as contract
+from app import as_of as as_of_mod
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
@@ -295,10 +296,8 @@ class AuditCreate(BaseModel):
     target_arr: float = 0
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
-    # The analyst's date: dates the memo and the analyst's own text, never a figure (null: today). The box "Last month is
-    # complete" marks the revenue file's last month Complete (dates-and-periods.md section 2).
+    # The analyst's date: dates the memo and the analyst's own text, never a figure (null: today).
     analysis_date: Optional[str] = None
-    last_month_complete: bool = False
     # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
     # that ends in 2025; with December it is the calendar year.
     fiscal_year_end: int = Field(default=12, ge=1, le=12)
@@ -317,7 +316,6 @@ class AuditUpdate(BaseModel):
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
     analysis_date: Optional[str] = None
-    last_month_complete: Optional[bool] = None
     fiscal_year_end: Optional[int] = Field(default=None, ge=1, le=12)
     structure_reading_consent: Optional[bool] = None
 
@@ -353,6 +351,7 @@ def sanitize(obj):
 async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
+    a["as_of_by"] = _as_of_by(a)
     a["results_stale"] = run_audit.results_stale(a)
     if a["results_stale"]:
         a["results"] = None       # figures of an older engine contract never reach the browser (George, 2026-10-20)
@@ -385,7 +384,6 @@ async def create_audit(payload: AuditCreate, request: Request):
         "target_date": payload.target_date,
         "as_of_month": payload.as_of_month,
         "analysis_date": payload.analysis_date,
-        "last_month_complete": payload.last_month_complete,
         "fiscal_year_end": payload.fiscal_year_end,
         "structure_reading_consent": payload.structure_reading_consent,
         "consent_log": [_consent_entry(payload.structure_reading_consent)],
@@ -521,8 +519,11 @@ async def update_audit(audit_id: str, payload: AuditUpdate, background: Backgrou
     if not a:
         raise HTTPException(404, "Audit not found")
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
-    if "as_of_month" in payload.model_fields_set and payload.as_of_month is None:
-        updates["as_of_month"] = None       # an explicit null clears the as-of month back to the default (last P&L month)
+    if "as_of_month" in payload.model_fields_set:
+        # One as-of month (dates-and-periods.md section 2): a typed month is the analyst's and detection leaves it; an explicit null
+        # hands it back to detection on Map.
+        updates["as_of_by"] = as_of_mod.ANALYST if payload.as_of_month else as_of_mod.DETECTED
+        updates["as_of_month"] = payload.as_of_month or None
     if "analysis_date" in payload.model_fields_set and payload.analysis_date is None:
         updates["analysis_date"] = None     # an explicit null returns the requested analysis date to today
     consent = updates.get("structure_reading_consent")
@@ -536,6 +537,8 @@ async def update_audit(audit_id: str, payload: AuditUpdate, background: Backgrou
         await db.audits.update_one({"id": audit_id}, {"$set": {**updates, **({"setup_stale": True} if changed and a.get("results") else {})}})
         if "fiscal_year_end" in updates and updates["fiscal_year_end"] != _fiscal_year_end(a):
             await _remap_periods(audit_id, updates["fiscal_year_end"])
+        if "as_of_month" in payload.model_fields_set and not payload.as_of_month or "fiscal_year_end" in updates:
+            await _refresh_as_of(audit_id)
     if consent is False and a.get("structure_reading_consent") is True:
         await deck_render.remove(db, audit_id)      # unticked: the stored deck files go (re-upload to read pages with images after ticking again)
     if ticked_later:
@@ -554,7 +557,7 @@ def _setup_value(field: str, value):
     """A set-up value as compared for a change: the target as a number, the dates as text, an empty date as none."""
     if field == "target_arr":
         return float(value or 0)
-    return bool(value) if field == "last_month_complete" else value or None
+    return value or None
 
 
 def _fiscal_year_end(audit: Optional[dict]) -> int:
@@ -831,17 +834,33 @@ async def _counted(audit_id: str, datasets: list) -> list:
     return [d for d in datasets if d.get("file_hash") not in read or d.get("sheet_map")]
 
 
+def _as_of_by(audit: Optional[dict]) -> str:
+    """"analyst" when the as-of month was typed, else "detected". An audit stored before the field existed with an as-of month set
+    keeps it as the analyst's."""
+    a = audit or {}
+    return a.get("as_of_by") or (as_of_mod.ANALYST if a.get("as_of_month") else as_of_mod.DETECTED)
+
+
+async def _refresh_as_of(audit_id: str) -> None:
+    """Detect the audit's one as-of month when a file is mapped (docs/specs/dates-and-periods.md section 2) and store it on the audit,
+    unless the analyst typed one. A changed month marks computed results stale; nothing recomputes on its own."""
+    a = await db.audits.find_one({"id": audit_id})
+    if not a or _as_of_by(a) == as_of_mod.ANALYST:
+        return
+    docs = await db.datasets.find({"audit_id": audit_id, "dtype": {"$in": ["revenue", "pnl"]}}).to_list(4)
+    found = as_of_mod.detect({d["dtype"]: d for d in docs}, _fiscal_year_end(a))
+    month = as_of_mod.month_end(found["month"]) if found else None
+    fields = {"as_of_month": month, "as_of_by": as_of_mod.DETECTED, "as_of_file": found["file"] if found else None}
+    if all(a.get(k) == v for k, v in fields.items()):
+        return
+    stale = {"setup_stale": True} if month != a.get("as_of_month") and a.get("results") else {}
+    await db.audits.update_one({"id": audit_id}, {"$set": {**fields, **stale}})
+
+
 async def _effective_as_of(audit_id: str, audit: Optional[dict]) -> Optional[str]:
-    """The as-of month recognition reads the boundary against (revenue-file-recognition.md section 6.2): the audit's, else its default,
-    the last month of the mapped revenue file, else the last month of the P&L (chat-upload.md sections 2 and 29); None when there is
-    none of them."""
-    if (audit or {}).get("as_of_month"):
-        return audit["as_of_month"]
-    for dtype in ("revenue", "pnl"):
-        found = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "months": 1})
-        if ((found or {}).get("months") or {}).get("last"):
-            return found["months"]["last"]
-    return None
+    """The audit's one as-of month, as stored (detected on Map or typed by the analyst); None before any file is mapped. No other
+    source: an audit stored before the field existed gets its month at its next Map or Run audit (_refresh_as_of)."""
+    return (audit or {}).get("as_of_month") or None
 
 
 _RECOGNITION_CACHE: "OrderedDict[str, dict]" = OrderedDict()
@@ -1201,6 +1220,7 @@ async def _settle_recognition(audit_id: str, dtype: str, background: Optional[Ba
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
     if not ds or not ds.get("recognition_only"):
         return
+    await _refresh_as_of(audit_id)          # the file's own series may set the as-of month its boundary is read from
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     result = await _recognition_of(audit_id, audit, ds)
     done = bool(result and result["recognised"] and not result["needs_click"])
@@ -1358,7 +1378,7 @@ class RecognitionDecision(BaseModel):
     the lists the server offers. No typed text: a sheet name, a currency and a type are checked against the file's own lists."""
     model_config = {"extra": "forbid"}
     action: Literal["confirm", "change"]
-    part: Literal["revenue_row", "last_actual", "file_type", "currency", "pending", "money_kind", "sheet", "series_source"]
+    part: Literal["revenue_row", "file_type", "currency", "pending", "money_kind", "sheet", "series_source"]
     row: Optional[int] = None
     column: Optional[int] = None
     file_type: Optional[str] = None
@@ -1370,23 +1390,17 @@ class RecognitionDecision(BaseModel):
 
 def _recognition_decision(current: dict, body: RecognitionDecision, decisions: dict) -> dict:
     """The analyst's decisions after this one, or a 400. The server re-checks every choice against the lists of the current
-    recognition: a row must be a candidate, a column a period up to the as-of month, a type one of the six."""
+    recognition: a row must be a candidate, a type one of the six. The last actual column is no choice: the audit's as-of month sets it."""
     row = current.get("revenue_row") or current.get("revenue_column")
     key = "column" if current.get("revenue_column") else "row"
-    last = current.get("last_actual")
-    last_key = "row" if "row" in (last or {}) else "column"          # dates down the rows: a row; periods across: a column (review M3)
     out = dict(decisions)
     bad = HTTPException(400, "That choice is not one of the options offered")
     if body.action == "confirm":
         if body.part == "pending":
             if row and row["state"] == "click" and row["reason"] in rec.CONFIRM_ONLY and row.get(key) is not None:
                 out["revenue_row"] = row[key]
-            if last and last["state"] == "click" and last["reason"] in rec.CONFIRM_ONLY and last.get(last_key) is not None:
-                out["last_actual"] = last[last_key]
         elif body.part == "revenue_row" and row and row.get(key) is not None:
             out["revenue_row"] = row[key]
-        elif body.part == "last_actual" and last and last.get(last_key) is not None:
-            out["last_actual"] = last[last_key]
         elif body.part == "file_type" and current.get("file_type"):
             out["file_type"] = current["file_type"]
         elif body.part == "currency" and (current.get("currency") or {}).get("code"):
@@ -1396,8 +1410,6 @@ def _recognition_decision(current: dict, body: RecognitionDecision, decisions: d
         return out
     if body.part == "revenue_row" and row and body.row in [c.get(key) for c in row["candidates"]]:
         out["revenue_row"] = body.row
-    elif body.part == "last_actual" and last and body.column in [c.get(last_key) for c in last["candidates"]]:
-        out["last_actual"] = body.column
     elif body.part == "file_type" and body.file_type in rec.RECOGNITION_TYPES:
         out["file_type"] = body.file_type
     elif body.part == "currency" and body.currency in rec.ISO_CURRENCIES and not (current.get("currency") or {}).get("mixed"):
@@ -2663,7 +2675,7 @@ async def save_fx(audit_id: str, payload: FxPayload):
 
 def _register_settings(audit: dict, fx: dict, deck_take_rate: bool = False) -> dict:
     return {"fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
-            "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx,
+            "as_of_by": _as_of_by(audit), "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx,
             "turnover_choices": audit.get("turnover_choices") or {}, "deck_take_rate": deck_take_rate,
             "sales_choices": audit.get("sales_choices") or {},
             "group_choices": audit.get("group_choices") or {},
@@ -3288,10 +3300,11 @@ async def export_memo(audit_id: str):
 # ---------------------------------------------------------------------------
 # Setup inputs that change what a computed audit's metrics should be. A change to any of these on a computed audit marks the stored
 # results "Stale – re-run audit" (George, 2026-10-24, PR 177); nothing recomputes until Run audit. The FX rates do the same through save_fx.
-STALE_ON_CHANGE_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month", "fiscal_year_end", "last_month_complete"}
+STALE_ON_CHANGE_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month", "fiscal_year_end"}
 
 
 async def _run_compute(audit_id: str) -> dict:
+    await _refresh_as_of(audit_id)
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
@@ -3336,7 +3349,8 @@ async def _run_compute(audit_id: str) -> dict:
     rev = pd.DataFrame() if revenue_ds.get("recognition_only") or "revenue" not in ds else read("revenue")
     crm = read("crm") if "crm" in ds else pd.DataFrame()
     statement = sheet_mod.feed(ds["pnl"]["sheet_map"], _fiscal_year_end(a), ds["pnl"].get("unit_scale") or 1,
-                               {"file": ds["pnl"]["file"], "sheet": ds["pnl"]["sheet"]}) if ds.get("pnl", {}).get("sheet_map") else None
+                               {"file": ds["pnl"]["file"], "sheet": ds["pnl"]["sheet"]}, a.get("as_of_month")) \
+        if ds.get("pnl", {}).get("sheet_map") else None
     if statement:                  # a statement: its monthly P&L, never a split of a year or a quarter (section 26.6)
         pnl = statement_pnl(statement)
     else:
@@ -3348,7 +3362,6 @@ async def _run_compute(audit_id: str) -> dict:
         "target_date": a["target_date"], "fx": fx,
         "billing_terms": revenue_ds.get("billing_terms", {}), "default_l": 1,
         "as_of_month": a.get("as_of_month"),
-        "last_month_complete": bool(a.get("last_month_complete")),
     }
     if recognised is not None:     # the series of a recognised file with no customer rows, read to its confirmed boundary
         best = next((x for x in rec.unpack_sheets(recognised_ds["recognition_sheets"]) if x.sheet == recognised["sheet"]), None)
@@ -3404,6 +3417,7 @@ async def _mark_stale_and_maybe_recompute(audit_id: str):
     never silently shows stale results. If recompute isn't possible right now
     (e.g. a required mapping was cleared), leave metrics_stale set so the UI can
     show a warning instead of outdated numbers."""
+    await _refresh_as_of(audit_id)
     a = await db.audits.find_one({"id": audit_id})
     if not a or a.get("status") != "computed":
         return
@@ -3965,7 +3979,8 @@ app.add_middleware(
 # 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
 # 11: demo audits carry no client name (the field is gone).
 # 12: results carry contract_version 5 (demo audits seeded under 11 held version 4 and opened as Stale).
-SEED_VERSION = 18          # 18: engine contract 11 (the page reader's answer form): demo audits held under contract 10 are reseeded
+SEED_VERSION = 19          # 19: engine contract 12 (one as-of month): demo audits held under contract 11 are reseeded
+                          # 18: engine contract 11 (the page reader's answer form): demo audits held under contract 10 are reseeded
                           # 17: engine contract 10 (the yearly-basis block names two annual payback proxies and the S&M scope): demo audits held under contract 9 are reseeded
                           # 16: engine contract 9 (the simplified flow): demo audits held under contract 8 are reseeded
                           # 15: engine contract 8 (ARR, MRR, Churn, NRR and CAC payback claim types): demo audits held under contract 7 are reseeded
@@ -4005,9 +4020,11 @@ async def seed_demo():
                               "rows": recs, "mapping": mapping}
         fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
         fx[spec["reporting_currency"].upper()] = 1.0
+        found = as_of_mod.detect(uploads, spec["fiscal_year_end"])          # detected as on Map, stored once on the audit
+        as_of_month = as_of_mod.month_end(found["month"]) if found else None
         config = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
                   "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1,
-                  "as_of_month": None}
+                  "as_of_month": as_of_month}
         sources = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
         results = ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], config, sources,
                                  files=candidate_views(uploads),
@@ -4021,6 +4038,7 @@ async def seed_demo():
             "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",
             "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True,
             "seed_version": SEED_VERSION, "usage": usage_mod.empty(),
+            "as_of_month": as_of_month, "as_of_by": as_of_mod.DETECTED, "as_of_file": found["file"] if found else None,
         })
     logger.info("Seeded demo audits")
 

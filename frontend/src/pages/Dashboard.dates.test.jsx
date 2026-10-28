@@ -79,12 +79,12 @@ test("a metric with months missing shows the list of months beside its period", 
   } finally { await done(); }
 });
 
-test("a possibly partial last month says so beside the latest valid source period", async () => {
+test("the as-of month always counts as complete beside the latest valid source period", async () => {
   const data = regressionResults();
-  data.results.source_period = { month: "2019-06", status: "Possibly partial", complete_by: null, evidence_to: "2019-06" };
+  data.results.source_period = { month: "2019-06", status: "Complete", complete_by: "as_of", evidence_to: "2019-06" };
   const { host, done } = await mountDashboard(data);
   try {
-    expect(host.querySelector('[data-testid="dates-line"]').textContent).toContain("Latest valid source period: June 2019 (Possibly partial)");
+    expect(host.querySelector('[data-testid="dates-line"]').textContent).toContain("Latest valid source period: June 2019 (Complete)");
   } finally { await done(); }
 });
 

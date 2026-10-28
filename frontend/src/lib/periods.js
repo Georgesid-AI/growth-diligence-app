@@ -24,7 +24,7 @@ export function shortMonth(month) {
   return p ? `${MONTHS[p[1] - 1].slice(0, 3)} ${p[0]}` : "—";
 }
 
-/** "June 2019 (Complete)" / "June 2019 (Possibly partial)"; "—" with no revenue file. */
+/** "June 2019 (Complete)": the as-of month always counts as complete; "—" with no revenue file. */
 export const sourcePeriodText = (source) => (source?.month ? `${monthName(source.month)} (${source.status})` : "—");
 
 /** "June 2019": the last month any revenue figure reads (the evidence end), else the as-of month. */

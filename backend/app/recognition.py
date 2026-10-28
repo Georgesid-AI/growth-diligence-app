@@ -24,7 +24,7 @@ from .structures import redact
 from .structures import sheet as sheet_mod
 
 REASONS = ("no_candidate", "tie", "confidence_80", "row_missing", "label_mismatch", "marked_not_revenue", "not_numeric_enough",
-           "no_revenue_word", "rules_and_model_disagree", "no_as_of_month", "after_as_of", "not_a_period", "turnover_question",
+           "no_revenue_word", "rules_and_model_disagree", "after_as_of", "not_a_period", "turnover_question",
            "type_unsure")
 MISSING = ("revenue_measure", "reference", "numbers")
 METRIC_LABEL_SHARE = 0.5            # above this share of label rows holding a metric word, and at least MIN_METRIC_HITS of them
@@ -545,44 +545,22 @@ def _currency(info: Dict, ftype: Optional[str], reporting_currency: Optional[str
     return {"code": None, "state": "confirm"}
 
 
-def _boundary(info: Dict, row_values: Optional[List[Optional[float]]], as_of: Optional[str], proposed: Optional[int],
-              decided: Optional[int]) -> Dict:
-    """The last actual column and the columns after it (section 6.2); `row_values` are the revenue row's values by period."""
-    periods = info["periods"]
-    dated = [p for p in periods if p["end"]]
+def _boundary(info: Dict, as_of: Optional[str]) -> Dict:
+    """The last actual column and the columns after it (section 6.2, amended 2026-10-28): read from the audit's one as-of month, never
+    chosen. It is the last column not marked forecast or budget that ends on or before the as-of month; the columns after it are plan.
+    With no column up to the as-of month the file starts after it and waits ("after_as_of"). `label` is the column's header and
+    `as_of` the month it was read from, for the read-only line."""
+    dated = [p for p in info["periods"] if p["end"]]
     usable = [p for p in dated if p["tag"] not in EXCLUDED_TAGS]      # a forecast or budget column is never the last actual column
-    by_col = {p["col"]: p for p in dated}
+    base = {"candidates": [], "as_of": as_of}
     if not usable:
-        return {"column": None, "month": None, "state": "click", "reason": "not_a_period", "candidates": []}
-    readable = {p["col"] for p in usable}
-    actual = [p for p in usable if p["tag"] == "actual"]
-    if actual:
-        rules = actual[-1]["col"]
-    else:
-        have = [p["col"] for k, p in enumerate(periods) if p in usable and row_values is not None and row_values[k] is not None]
-        rules = have[-1] if have else usable[-1]["col"]
-    candidates = [{"column": p["col"], "month": p["end"]} for p in usable if as_of is None or p["end"] <= as_of]
-    column, state, reason = rules, "auto", None
-    if decided in readable:
-        column, state = decided, "you"
-        if as_of is not None and by_col[decided]["end"] > as_of:
-            state, reason = "click", "after_as_of"
-    else:
-        if proposed is not None:
-            if proposed in by_col:
-                column = proposed
-                if proposed not in readable and (as_of is None or by_col[proposed]["end"] <= as_of):
-                    column, reason = rules, "not_a_period"
-            else:
-                reason = "not_a_period"
-        if reason is None and as_of is None:
-            reason = "no_as_of_month"
-        if reason is None and by_col[column]["end"] > as_of:
-            reason = "after_as_of"
-        if reason is None and proposed is not None and proposed != rules:
-            reason = "rules_and_model_disagree"
-        state = "click" if reason else "auto"
-    return {"column": column, "month": by_col[column]["end"], "state": state, "reason": reason, "candidates": candidates}
+        return {**base, "column": None, "month": None, "label": None, "state": "click", "reason": "not_a_period"}
+    within = [p for p in usable if as_of is None or p["end"] <= as_of]
+    if not within:
+        return {**base, "column": usable[0]["col"], "month": usable[0]["end"], "label": usable[0].get("header"), "state": "click",
+                "reason": "after_as_of"}
+    return {**base, "column": within[-1]["col"], "month": within[-1]["end"], "label": within[-1].get("header"), "state": "auto",
+            "reason": None}
 
 
 def _row_decision(cands: List[Dict], info: Dict, prop_row: Optional[Dict], marked: Dict[int, str], periods: int, volume: Set[int],
@@ -735,7 +713,7 @@ def _finalize_labels(info: Dict, ctx: Dict) -> Dict:
                                     volume, dec.get("revenue_row"), money)
         if revenue_row["row"] is not None:
             row_values = next(ln["values"] for ln in info["lines"] if ln["row"] == revenue_row["row"])
-    last = _boundary(info, row_values, ctx.get("as_of"), (prop or {}).get("last_actual_column"), dec.get("last_actual"))
+    last = _boundary(info, ctx.get("as_of"))
     last_col = last["column"]
     read = {p["col"] for _, p in read_periods(info, last_col)}
     excluded = [p["col"] for p in info["periods"] if p["end"] and p["col"] not in read]
@@ -894,20 +872,11 @@ def _finalize_columns(info: Dict, ctx: Dict) -> Dict:
     idx = chosen["idx"]
     usable = [(n, r, mth) for n, r, mth in dated if _num(r[idx]) is not None]
     upto = [d for d in usable if as_of is None or d[2] <= as_of]
-    candidates = [{"row": n, "month": mth} for n, _, mth in upto]
     last_row = upto[-1] if upto else (usable[-1] if usable else None)
-    if as_of is None:
-        last_state, last_reason = "click", "no_as_of_month"
-    elif not upto:
-        last_state, last_reason = "click", "after_as_of"
-    else:
-        last_state, last_reason = "auto", None
-    if dec.get("last_actual") in [n for n, _, _ in usable] and not (as_of and next(m for n, _, m in usable if n == dec["last_actual"]) > as_of):
-        last_row = next(d for d in usable if d[0] == dec["last_actual"])
-        last_state, last_reason = "you", None
-    last = {"row": last_row[0] if last_row else None, "month": last_row[2] if last_row else None, "state": last_state,
-            "reason": last_reason, "candidates": candidates}
-    limit = last["month"]                    # the analyst's last actual month ends the series too (review H4)
+    last_state, last_reason = ("auto", None) if upto or not usable else ("click", "after_as_of")
+    last = {"row": last_row[0] if last_row else None, "month": last_row[2] if last_row else None, "label": None, "state": last_state,
+            "reason": last_reason, "candidates": [], "as_of": as_of}
+    limit = last["month"]                    # the as-of month ends the series too
     series = [{"row": n, "month": mth, "grain": "month", "value": _round(_num(r[idx]))}
               for n, r, mth in (upto if as_of is not None else usable) if limit is None or mth <= limit]
     ftype = dec["file_type"] if dec.get("file_type") in RECOGNITION_TYPES else \
@@ -1052,7 +1021,7 @@ def model_text(sheets, company_name: Optional[str], mapping: Dict[str, str], wit
 # ---------------------------------------------------------------------------
 NO_MAPPING_TYPES = ("monthly_revenue_report", "revenue_summary", "financial_statements", "arr_mrr_snapshot")
 SAME_SOURCE = "Not applicable – same source"
-CONFIRM_ONLY = ("confidence_80", "no_as_of_month")          # the reasons that wait for a confirmation only (section 7)
+CONFIRM_ONLY = ("confidence_80",)          # the reasons that wait for a confirmation only (section 7)
 SERIES_RULES = {
     "row": "Revenue = the confirmed revenue row, one value per month up to the last actual month",
     "recurring": "Revenue series read from an MRR or ARR line, not computed from customers, one value per month up to the last actual month",
@@ -1149,7 +1118,7 @@ def proposal_from(reply: Dict, sheets, company_name: Optional[str], mapping: Dic
     the label of that row (as written, or as the model was sent it) and dropped; only `label_matches` stays (section 5.5)."""
     if not reply or not 1 <= reply.get("sheet", 0) <= len(sheets):
         return None
-    out = {k: reply.get(k) for k in ("sheet", "file_type", "last_actual_column", "currency")}
+    out = {k: reply.get(k) for k in ("sheet", "file_type", "currency")}
     out["non_revenue_rows"] = [{"row": x["row"], "kind": x["kind"]} for x in reply.get("non_revenue_rows") or []]
     row = reply.get("revenue_row")
     out["revenue_row"] = None

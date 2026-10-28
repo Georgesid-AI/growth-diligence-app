@@ -368,7 +368,6 @@ class FileRecognitionReply(BaseModel):
     sheet: int = Field(ge=1, le=RECOGNITION_MAX_SHEETS)
     file_type: Literal[RECOGNITION_REPLY_TYPES]
     revenue_row: Optional[RecognitionRow]
-    last_actual_column: Optional[int] = Field(ge=1)
     currency: Optional[str] = Field(pattern=r"^[A-Z]{3}$")
     non_revenue_rows: List[RecognitionNonRevenue] = Field(max_length=RECOGNITION_MAX_ROWS)
 
@@ -570,13 +569,12 @@ def file_recognition_output_schema() -> dict:
             "file_type": {"type": "string", "enum": list(RECOGNITION_REPLY_TYPES)},
             "revenue_row": nullable({"type": "object", "properties": {"row": {"type": "integer"}, "label": {"type": "string"}},
                                      "required": ["row", "label"], "additionalProperties": False}),
-            "last_actual_column": nullable({"type": "integer"}),
             "currency": nullable({"type": "string"}),
             "non_revenue_rows": {"type": "array", "items": {
                 "type": "object", "properties": {"row": {"type": "integer"}, "kind": {"type": "string", "enum": list(NON_REVENUE_KINDS)}},
                 "required": ["row", "kind"], "additionalProperties": False}},
         },
-        "required": ["type", "sheet", "file_type", "revenue_row", "last_actual_column", "currency", "non_revenue_rows"],
+        "required": ["type", "sheet", "file_type", "revenue_row", "currency", "non_revenue_rows"],
         "additionalProperties": False,
     }
 

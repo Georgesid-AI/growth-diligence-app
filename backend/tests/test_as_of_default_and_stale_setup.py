@@ -59,13 +59,19 @@ def test_an_as_of_month_the_analyst_set_is_kept_before_and_after_the_revenue_fil
     assert later["as_of_month"] == "2026-06" and later["source_period"]["month"] == "2019-06"
 
 
-def test_with_no_revenue_month_the_default_falls_back_to_the_last_pnl_month_then_the_last_mrr_month():
-    import pandas as pd
-    pnl = pd.DataFrame({"month": ["2019-01-01", "2019-02-01"]})
-    mrr = pd.DataFrame([[1.0]], columns=[pd.Period("2019-05", "M")])
-    assert str(ge._resolve_as_of(None, pnl, mrr, pd.DataFrame())) == "2019-02"
-    assert str(ge._resolve_as_of(None, pd.DataFrame(), mrr, pd.DataFrame())) == "2019-05"
-    assert ge._resolve_as_of(None, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()) is None
+def test_the_engine_takes_the_stored_month_only_and_never_picks_one_from_the_data():
+    """PR 196 review, finding 1: the old fallback chain (last revenue month, last P&L month, last MRR month) is gone."""
+    import inspect
+    assert str(ge._resolve_as_of("2019-03-31")) == "2019-03" and ge._resolve_as_of(None) is None
+    assert ge._resolve_as_of.__code__.co_argcount == 1, "the engine reads no frame for it"
+    source = inspect.getsource(ge._resolve_as_of)
+    assert "revenue_months" not in source and "mrr" not in source and "pnl" not in source
+    uploads = {"revenue": _upload("revenue", "revenue.csv", synthetic_revenue("2017-07", "2019-06"))}
+    norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
+    config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0}, "billing_terms": {},
+              "default_l": 1, "as_of_month": None}
+    results = server.sanitize(ge.compute_all(norm["revenue"], server.pd.DataFrame(), server.pd.DataFrame(), config, {}))
+    assert results["as_of_month"] is None, "no as-of month passed: none in the results, nothing cut (the server always passes one)"
 
 
 def _fake_db(*datasets, audit=None):
@@ -75,17 +81,12 @@ def _fake_db(*datasets, audit=None):
     return db
 
 
-def test_recognition_reads_the_default_as_of_month_from_the_mapped_revenue_file_before_the_pnl(monkeypatch):
+def test_recognition_reads_the_stored_as_of_month_and_never_the_files_months(monkeypatch):
+    """One stored field (dates-and-periods.md section 2): no fallback to a dataset's months (PR 196 review, finding 1)."""
     monkeypatch.setattr(server, "db", _fake_db({"dtype": "revenue", "months": {"count": 24, "first": "2017-07", "last": "2019-06"}},
                                               {"dtype": "pnl", "months": {"count": 24, "first": "2018-01", "last": "2019-12"}}))
-    assert asyncio.run(server._effective_as_of("aud-1", {})) == "2019-06"
+    assert asyncio.run(server._effective_as_of("aud-1", {})) is None
     assert asyncio.run(server._effective_as_of("aud-1", {"as_of_month": "2019-03-31"})) == "2019-03-31"
-
-
-def test_recognition_falls_back_to_the_pnl_when_the_revenue_file_has_no_months_yet(monkeypatch):
-    monkeypatch.setattr(server, "db", _fake_db({"dtype": "revenue", "months": None},
-                                              {"dtype": "pnl", "months": {"count": 24, "first": "2018-01", "last": "2019-12"}}))
-    assert asyncio.run(server._effective_as_of("aud-1", {})) == "2019-12"
 
 
 def test_the_screen_gets_the_months_of_the_revenue_file(monkeypatch):
@@ -135,7 +136,7 @@ def assert_current(api):
 
 
 @pytest.mark.parametrize("patch", [{"target_arr": 5_000_000}, {"target_date": "2028-12-31"}, {"as_of_month": "2024-03-31"},
-                                   {"fiscal_year_end": 6}, {"reporting_currency": "USD"}, {"last_month_complete": True}])
+                                   {"fiscal_year_end": 6}, {"reporting_currency": "USD"}])
 def test_a_change_of_a_set_up_field_marks_the_stored_results_stale(api, patch):
     assert_current(api)
     assert api.put("/api/audits/aud-1", json=patch).status_code == 200
@@ -156,7 +157,7 @@ def test_a_change_of_the_fx_rates_marks_the_stored_results_stale(api):
 
 
 @pytest.mark.parametrize("patch", [{"target_arr": 1_000_000}, {"target_date": "2027-12-31"}, {"as_of_month": "2024-02-29"},
-                                   {"fiscal_year_end": 12}, {"reporting_currency": "EUR"}, {"last_month_complete": False}, {"company_name": "Acme Ltd"}, {"analysis_date": "2026-10-24"}])
+                                   {"fiscal_year_end": 12}, {"reporting_currency": "EUR"}, {"company_name": "Acme Ltd"}, {"analysis_date": "2026-10-24"}])
 def test_the_same_value_or_another_field_leaves_the_results_current(api, patch):
     assert api.put("/api/audits/aud-1", json=patch).status_code == 200
     assert_current(api)
@@ -174,8 +175,8 @@ def test_an_audit_with_no_results_has_nothing_to_mark(api):
 
 
 def test_no_set_up_change_recomputes_on_its_own(api):
-    """George, 2026-10-24 (PR 177): reporting currency and the last-month tick mark the results stale like the rest; nothing recomputes."""
-    for patch in ({"reporting_currency": "USD"}, {"last_month_complete": True}, {"target_arr": 5_000_000}):
+    """George, 2026-10-24 (PR 177): reporting currency and the as-of month mark the results stale like the rest; nothing recomputes."""
+    for patch in ({"reporting_currency": "USD"}, {"as_of_month": "2024-03-31"}, {"target_arr": 5_000_000}):
         assert api.put("/api/audits/aud-1", json=patch).status_code == 200
     assert api.calls == []
 

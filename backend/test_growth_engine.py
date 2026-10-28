@@ -1050,9 +1050,9 @@ def _source_scenario():
         {"month": month(i), "sm_expense": 1000, "revenue": 500, "cost_of_revenue": 100} for i in range(13)
     ])
     pnl.insert(0, "_row", range(2, len(pnl) + 2))
-    # the scenario's last month is complete by construction (docs/specs/dates-and-periods.md section 2: else NRR stops a month early)
+    # the as-of month always counts as complete (docs/specs/dates-and-periods.md section 2)
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2027-01-01",
-              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1, "last_month_complete": True}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1}
     sources = {"revenue": {"file": "rev.xlsx", "sheet": "S1"}, "pnl": {"file": "pnl.xlsx", "sheet": "P1"}}
     return ge.compute_all(rev, pd.DataFrame(), pnl, config, sources)
 
@@ -1087,7 +1087,7 @@ def _missing_data():
     pnl = pd.DataFrame([{"month": month(i), "sm_expense": 1000, "revenue": 500, "cost_of_revenue": 100} for i in range(13)])
     pnl.insert(0, "_row", range(2, len(pnl) + 2))
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2027-01-01",
-              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1, "last_month_complete": True}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1}
     sources = {"revenue": {"file": "r"}, "crm": {"file": "c"}, "pnl": {"file": "p"}}
     res = ge.compute_all(rev, crm, pnl, config, sources)
     metrics = {m["metric"] for m in res["missing_data"]}
@@ -1115,15 +1115,15 @@ def _asof_series_end():
     return ("2024-01", 13), (res["mrr_series"]["months"][-1], len(res["mrr_series"]["months"]))
 
 
-@case("As-of month defaults to the last revenue month, not the P&L's")
-def _asof_default_revenue():
+@case("No as-of month passed: the engine picks none from the data (the server passes the stored one)")
+def _asof_none_is_none():
     rows = monthly_lines("A", {i: 100 for i in range(16)})
     pnl = pd.DataFrame([{"month": month(i), "sm_expense": 100, "revenue": 100, "cost_of_revenue": 20, "_row": i + 2}
                         for i in range(10)])  # P&L only through index 9; the revenue file runs to index 15
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None,
               "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1, "as_of_month": None}
     res = ge.compute_all(rev_df(rows), pd.DataFrame(), pnl, config, {})
-    return str(month(15).to_period("M")), res["as_of_month"]
+    return (None, 16), (res["as_of_month"], len(res["mrr_series"]["months"]))
 
 
 # --- Win rate excludes invalid deals (item 2) -------------------------------

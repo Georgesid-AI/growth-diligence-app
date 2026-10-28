@@ -129,7 +129,7 @@ def fmt_month_name(month: Optional[str]) -> str:
 
 
 def source_period_text(source: Optional[dict]) -> str:
-    """'June 2019 (Complete)' / 'June 2019 (Possibly partial)': the latest valid source period; '—' when none."""
+    """'June 2019 (Complete)': the latest valid source period; '—' when none."""
     if not source or not source.get("month"):
         return PLACEHOLDER
     return f"{fmt_month_name(source['month'])} ({source.get('status')})"

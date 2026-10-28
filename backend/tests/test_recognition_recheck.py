@@ -253,7 +253,7 @@ INVOICE_FIXTURE = (FIXTURES / "invoice_transactions.csv").read_bytes()
 
 
 def invoice_reply():
-    return recognition_reply(file_type="invoice_transactions", revenue_row=None, last_actual_column=None, currency="EUR", non_revenue_rows=[])
+    return recognition_reply(file_type="invoice_transactions", revenue_row=None, currency="EUR", non_revenue_rows=[])
 
 
 def test_n1_the_invoice_fixture_with_consent_is_stored_as_the_revenue_file_with_the_models_type(api):
@@ -281,7 +281,6 @@ def test_n1_the_invoice_fixture_after_a_failed_call_goes_to_the_type_picker(api)
 
 def test_n1_a_snapshot_the_model_names_still_goes_to_the_type_picker(api):
     api.db["audits"].docs[0]["as_of_month"] = "2025-06-30"
-    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(file_type="arr_mrr_snapshot", revenue_row=None, last_actual_column=None,
-                                                                   currency="EUR", non_revenue_rows=[])])
+    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(file_type="arr_mrr_snapshot", revenue_row=None, currency="EUR", non_revenue_rows=[])])
     body = upload(api, "arr_snapshot.csv", (FIXTURES / "arr_snapshot.csv").read_bytes()).json()
     assert body["status"] == "unknown_type"

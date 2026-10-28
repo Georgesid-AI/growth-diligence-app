@@ -30,20 +30,31 @@ source period: June 2019 (Complete)". The two never share a cell or a sentence.
   your own text; it never changes the period of a figure." Not a recompute trigger. Used only for the memo date line and the
   "as of" label of the analyst's own text (a line under the "Deal thesis" heading: "Analyst's text, as of {date}."; the
   analyst judgment of claim-review-conclusion.md). It is never printed next to a value.
+- One as-of month (amended 2026-10-28, "Dates foundation"): the audit holds one as-of month field (`as_of_month`, with `as_of_by`
+  "detected" or "analyst" and `as_of_file`, the file it was detected from). Every place that read the set-up "As-of month" or the
+  P&L "Last actual month" reads this field.
+  - Detected on Map: the last period with a non-zero revenue value across the revenue file and the P&L. The revenue file gives its
+    last month with a valid invoice date and a non-zero amount. A P&L gives the end month of its last actual column with non-zero
+    revenue: a column is actual when its header is not marked budget, plan or forecast and its period ends on or before the
+    revenue file's month (with no revenue file, when it is not marked); with no such column, its last unmarked column with
+    non-zero revenue. A yearly column ends in the fiscal year-end month of its year, so a yearly P&L with a June year-end gives
+    June. The later of the two files' months is the as-of month.
+  - Stored once on the audit. A month typed by the analyst (a month-and-year input in the set-up section, "Jun 2021") is kept
+    and Map never overwrites it; clearing it hands it back to detection. The input shows "(detected from <file>)" or "(set by
+    analyst)". A changed month marks computed results stale; nothing recomputes on its own.
+  - The P&L's last actual column is read from this field, never chosen: the last column not marked forecast or budget that ends on
+    or before the as-of month; the columns after it are plan. The P&L screen shows it read-only: "Last actual column: FY 2021
+    (from as-of month Dec 2021)". The 36-period confirmation list is removed.
+- Completeness: the as-of month always counts as complete; the months after it are plan. There is no completeness tick, no help
+  text for one and no partial status. NRR, gross churn, growth and smoothness read the as-of month.
 - Latest valid source period: engine output block `source_period`:
   `{"month", "status", "complete_by", "evidence_to"}`.
   - `month`: the last month of the revenue file, as uploaded (before the as-of cut), that has a row with a valid invoice
     date and a non-zero amount. Null with no revenue file (the block is then null, its reason in `missing_data` as today).
-  - `status`: "Complete" when the audit's as-of month (stored, or defaulted: the revenue file's last month, else the last P&L month, else the last MRR month; chat-upload.md §30) is
-    later than `month`, or the analyst ticked "Last month is complete" (audit field `last_month_complete`, a recompute
-    trigger, a checkbox under the as-of month on the set-up fields); else "Possibly partial". `complete_by`: "as_of",
-    "analyst" or null.
-  - A Possibly partial month is shown in every series and figure, and excluded from the NRR (series, overall, by segment)
-    and from growth (§5), and from gross revenue churn: NRR and churn are computed as if the matrix ended the month before.
-    Shown, not used.
+  - `status`: always "Complete"; `complete_by`: always "as_of" (kept in the block so the screen and the memo read as before).
   - `evidence_to`: the last month any revenue figure reads, `min(as-of month, month)`. Screen and memo text: "Evidence to
     June 2019".
-  - Text: "June 2019 (Complete)" / "June 2019 (Possibly partial)", month name and year, never a day.
+  - Text: "June 2019 (Complete)", month name and year, never a day.
 - The as-of month keeps its meaning for the engine (the cut-off, and the forecast test of claim-matching.md table 2b). It
   is a setting, shown in the set-up fields only, never as the period of a figure.
 
@@ -53,7 +64,7 @@ Engine output `metric_periods`: one entry per computed block, `{"first": "YYYY-M
 | Blocks | Months read | Missing |
 |---|---|---|
 | `arr`, `mrr_series`, `revenue_series`, `customers_series`, `acv_path`, `segment_paths`, `cohort_retention`, `new_mrr_by_quarter` | revenue file months up to `evidence_to` | a month inside the range with no valid revenue row (valid invoice date, non-zero amount) |
-| `nrr`, `gross_churn` | the months of their series (NRR without a Possibly partial month) | revenue-file missing months inside the range |
+| `nrr`, `gross_churn` | the months of their series | revenue-file missing months inside the range |
 | `revenue_reconciliation`, `cac_payback` | P&L months up to the as-of month | a month inside the range absent from the P&L |
 | `sales_cycle`, `win_rate`, `founder_win_rate` | close months of the deals the block used | none: a month without a closed deal is not a data gap |
 
@@ -76,8 +87,7 @@ Coverage is measured on the months the observed figure reads:
 | as-of (ACV, sales cycle, win rate, NRR by segment) | the as-of figure; covered when it exists (unchanged) |
 | growth (§5) | the months the basis compares |
 
-A month is in the data when it lies inside its block's first..last and is not in its `missing` (a Possibly partial month is
-not in the data for NRR and growth).
+A month is in the data when it lies inside its block's first..last and is not in its `missing`.
 | Coverage | Rule | Label and reason |
 |---|---|---|
 | Covered | every month read is in the data | the normal rules (claim-matching.md §4, §4.1): only a Covered claim can be Verified or Contradicted |
@@ -85,8 +95,7 @@ not in the data for NRR and growth).
 | Not covered | no month read is in the data | Unverified, reason `claim period not in supplied data: {detail}` |
 
 Details of Not covered: `before {metric}'s first month, {first}`; `after the latest valid source period, {evidence_to}`;
-`after {metric}'s last month, {last}` (a P&L metric); `months missing: {list}`; `{month} is possibly partial (tick 'Last
-month is complete' to use it)`. A forecast (a claim classified a target whose period ends after the as-of month, claim-matching.md table 2b, amended 2026-10-26) stays a forecast,
+`after {metric}'s last month, {last}` (a P&L metric); `months missing: {list}`; there is no partial-month detail any more (2026-10-28). A forecast (a claim classified a target whose period ends after the as-of month, claim-matching.md table 2b, amended 2026-10-26) stays a forecast,
 so a claim for a month between `evidence_to` and the as-of month is Not covered, never a forecast, and a claim of an actual type for a period after the data is Not covered too.
 
 Replaced reasons: "before {metric}'s first month, {month}" and "months missing from the data: {months}" (claim-matching.md
@@ -107,8 +116,7 @@ table 2b, Q2) now read through this table.
   one-click task below). Measured on the 10 public test decks on this branch (`python -I` over `detect_candidates`, no
   network): 225 candidates, 8 growth claims; 2 get `mom` (buffer slide 5 "growing 40% per month", clevergig page 2 "growing
   15% MoM"), 6 stay `unknown` (front slide 15, moz page 35 twice, clevergig page 7, uber pages 17 and 24).
-- A growth claim with a compared month outside the data (the base month before the first month, or after the last, or a
-  Possibly partial month) is Not covered: Unverified, "claim period not in supplied data", the months outside the data listed.
+- A growth claim with a compared month outside the data (the base month before the first month, or after the last) is Not covered: Unverified, "claim period not in supplied data", the months outside the data listed.
   It is never Inconclusive on the months present, which would compare other months than the claim's.
 - Unknown basis: the claim is Unverified, reason `growth basis unknown: set the growth basis`, and the register row offers
   the one-click task "Set growth basis" with four buttons (MoM · YoY · Annualised · Cumulative). The answer is stored on the
@@ -128,7 +136,7 @@ table 2b, Q2) now read through this table.
   | annualised | (v(e) ÷ v(s))^(12 ÷ (e − s)) − 1; needs e > s | s, e |
   Shown as a percent with the comparison in `observed_at` ("2024-02 vs 2023-02"). A base of 0 or below gives no figure:
   Unsupported, `growth base is not positive`. A period of one month with basis cumulative or annualised: Unverified,
-  `growth window not stated`. Coverage by §4 on the months read; a Possibly partial month is not read. Source: the series'
+  `growth window not stated`. Coverage by §4 on the months read. Source: the series'
   citation with the basis's rule ("YoY growth = v(e) ÷ v(e−12) − 1").
 
 ## 6. Override rule
@@ -140,15 +148,15 @@ period the data does not cover (§4).
 - `backend/schemas/metrics.py` gains `source_period` and `metric_periods` (text months, no figure), and
   `contract_version` becomes 3, so stored results are recomputed on first read (interface-contracts.md §7, no model, no
   cost). `test_interface_contracts.py` pins both blocks (rule 23).
-- Both blocks are server-only (not in the gateway allowlist); `analysis_date`, `last_month_complete`, `period_coverage`,
+- Both blocks are server-only (not in the gateway allowlist); `analysis_date`, `as_of_by`, `as_of_file`, `period_coverage`,
   `months_missing`, `growth_basis` and the new reasons join the boundary lists of `test_gateway_data_boundary.py` (rule 14).
 
 ## 8. Regression test (required in Release 1, plan 3)
 Artefact (CLAUDE.md rule 13): a synthetic revenue file, monthly invoices July 2017 to June 2019 for five customers (built
 by the test, no client data); no P&L, no CRM; the audit's as-of month set by the analyst to 2026-06-30 (not defaulted); no
 target date; requested analysis date not set; machine date frozen at 2026-10-15. Observed failure: June 2026 shown against
-June 2019 data. Variant: as-of month not set (defaulted to June 2019) with "Last month is complete" ticked.
-Expected: `source_period` = June 2019, Complete (`complete_by` "as_of"; variant "analyst"); every `metric_periods` entry and
+June 2019 data. Variant: as-of month not set (detected: June 2019). Amended 2026-10-28: "June 2019" is the as-of month and metrics run to
+June 2019 inclusive. Expected: `source_period` = June 2019, Complete (`complete_by` "as_of"); every `metric_periods` entry and
 `arr.month` end 2019-06; the memo carries "Evidence to June 2019" under its date line; in the memo the string "2026" appears
 only on the date line (the requested analysis date, which is the memo date); on the Dashboard "2026" appears only in the
 requested analysis date; no register row's `observed_at` holds 2026.
@@ -160,7 +168,8 @@ expected failures.
 |---|---|
 | Plan 3 regression (§8), both variants, engine, memo and Dashboard | `test_dates_and_periods.py`; `Dashboard.test.jsx` |
 | Plan 7.1: "15% growth" with no cue is Unverified with "Set growth basis"; with a "YoY" cue it is matched on the year-on-year figure only | `test_dates_and_periods.py`; `ClaimRegister.test.jsx` |
-| Possibly partial: the last month is excluded from NRR and growth and kept in ARR and the series; ticking the box makes it Complete | `test_dates_and_periods.py` |
+| The as-of month always counts as complete: NRR, gross churn and growth read the last month; no completeness-tick or partial-status string anywhere | `test_dates_and_periods.py`, `test_one_as_of_month.py` |
+| One as-of month: detection from a monthly revenue file and a yearly P&L (December and June year-ends), the typed override, a June year-end's FY column months, deck 2021 against a June-year-end FY 2021 ("period not covered"), fiscal-year-to-fiscal-year growth | `test_one_as_of_month.py` |
 | Coverage: Covered, Partly covered (Inconclusive with the figure over the months present), Not covered (each detail) | `test_dates_and_periods.py`, `test_claim_matching.py` (fixture rows 10, 19, 33, 35 updated) |
 | Override: a new analysis date changes the memo date only | `test_dates_and_periods.py` |
 | `metric_periods` lists missing months, not a count | `test_dates_and_periods.py` |
@@ -176,12 +185,8 @@ expected failures.
 - Cumulative growth reads the window's first and last month (v(e) ÷ v(s) − 1); the formula is printed with each figure.
 
 ## 11. Consequences to know
-- TestCo (as-of 2024-02 defaulted from the last revenue month, revenue to 2024-02): the latest valid source period is "February 2024
-  (Possibly partial)" until the box is ticked, so NRR reads January 2024 and the NRR claims for February 2024 are Not
-  covered. The claim-matching fixture ticks the box so its rows keep their meaning; the measured default is pinned in
-  `test_dates_and_periods.py`.
-- Gross revenue churn ends the month before a Possibly partial month, like NRR (decision 6, 15 Oct 2026): series, overall and the
-  metric period; a gross churn claim for that month is Not covered.
+- TestCo (as-of 2024-02 detected from the last revenue month, revenue to 2024-02): the latest valid source period is "February 2024
+  (Complete)", NRR and gross churn read February 2024, and the NRR claims for February 2024 are Covered (amended 2026-10-28).
 - The narrative payload carries `evidence_to` and `last_month_status` (from `source_period`) in place of `as_of_month`
   (decision 7, 15 Oct 2026). The cache key moves, so a stored narrative is no longer found under the new key; the dashboard
   read path falls back to the key of the earlier payload (as-of setting restored) while the numbers still match, so it stays
@@ -197,5 +202,7 @@ expected failures.
 ## Done when
 §9 passes with the full suite, and the §8 artefact shows June 2019 everywhere a figure is labelled.
 
-Amended 2026-10-24 (George, chat-upload.md §30): the default as-of month is the revenue file's last actual month (a valid invoice date and a non-zero amount), so with no as-of month set `evidence_to` equals
-`month` and the status is Possibly partial unless the analyst ticked "Last month is complete". The warning line under the set-up field names an as-of month later than `month`.
+Amended 2026-10-24 (George, chat-upload.md §30): the default as-of month is the revenue file's last actual month (a valid invoice date and a non-zero amount). Superseded 2026-10-28 by §2: the as-of month is detected on Map across the revenue file and the P&L, stored once on the audit and always complete.
+The warning line under the set-up field names an as-of month later than `month`.
+
+Amended 2026-10-28 (George, "Dates foundation"): §2 (one as-of month, completeness), §3 and the §8 regression as written above. Fiscal year-end (§3 of the task): a column "FY 2021" or "2021" in a yearly file is the twelve months ending at the fiscal year-end month of that year (`sheet.period_of`); a deck figure for "2021" matches a yearly column only when both periods end in the same month, else the claim reads "period not covered", never a mismatch; year-on-year growth compares the twelve months of a fiscal year with the twelve before it, so it runs fiscal year to fiscal year when the year-end is not December; plan columns start the month after the as-of month. Engine contract 12; results stored under 11 read "Stale – re-run audit".

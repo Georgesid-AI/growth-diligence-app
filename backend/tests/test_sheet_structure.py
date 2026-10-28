@@ -522,8 +522,7 @@ def test_a_sheet_of_kpi_lines_is_a_kpi_sheet_and_a_pnl_is_not():
 
 def test_one_audit_keeps_a_pnl_and_a_kpi_sheet(api):
     """A KPI sheet with no revenue, invoiced or MRR/ARR row keeps chat-upload.md 26.14 (one with such a row is a monthly revenue report)."""
-    file_type = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "pnl", "revenue_row": None, "last_actual_column": None,
-                            "currency": None, "non_revenue_rows": []})
+    file_type = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "pnl", "revenue_row": None, "currency": None, "non_revenue_rows": []})
     api.state["adapter"] = t.FakeAdapter(replies=[YEARLY_REPLY, file_type, "{}"])
     assert put(api, YEARLY, dtype="pnl").json()["dtype"] == "pnl"
     out = put(api, KPI_NO_REVENUE).json()
@@ -536,8 +535,7 @@ def test_one_audit_keeps_a_pnl_and_a_kpi_sheet(api):
 
 
 def test_a_kpi_sheet_with_an_mrr_row_is_a_monthly_revenue_report_and_the_revenue_file(api):
-    file_type = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "pnl", "revenue_row": None, "last_actual_column": None,
-                            "currency": None, "non_revenue_rows": []})
+    file_type = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "pnl", "revenue_row": None, "currency": None, "non_revenue_rows": []})
     api.state["adapter"] = t.FakeAdapter(replies=[file_type])
     out = put(api, KPI).json()
     assert out["dtype"] == "revenue" and out["recognition"]["file_type"] == "monthly_revenue_report"

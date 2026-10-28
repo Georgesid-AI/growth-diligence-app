@@ -1464,8 +1464,8 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "extraction_confidence", "with_confidence", "confidence_level", "EVIDENCE_STATUSES", "MEMO_GROUPS", "QUALIFIED_NO_FIGURE",
                             "EXTRACTION_EXPLAINER", "EVIDENCE_EXPLAINER", "POPULATION_PREFIX", "NOT_VERIFIED",
                             # docs/specs/dates-and-periods.md: coverage, the growth basis and their reasons
-                            "period_coverage", "months_missing", "growth_basis", "analysis_date", "last_month_complete",
-                            "NOT_COVERED_REASON", "PARTLY_REASON", "PARTIAL_DETAIL", "AFTER_SOURCE_DETAIL", "GROWTH_UNKNOWN_REASON",
+                            "period_coverage", "months_missing", "growth_basis", "analysis_date", "as_of_by", "as_of_file",
+                            "NOT_COVERED_REASON", "PARTLY_REASON", "PERIOD_NOT_COVERED", "AFTER_SOURCE_DETAIL", "GROWTH_UNKNOWN_REASON",
                             "GROWTH_WINDOW_REASON", "GROWTH_BASE_REASON", "GROWTH_RULES", "GROWTH_CUES",
                             # docs/specs/claim-types-and-correction.md: the claim fields, the edit log, Add from deck and their reasons
                             "population", "figure_type", "required_unknown", "edit_log", "deck_analyst", "claim_fields",
@@ -2545,13 +2545,14 @@ def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):
 
 
 def test_the_period_the_model_is_told_is_two_closed_values_and_never_the_as_of_setting():
-    """Decision 7 (15 Oct 2026): evidence_to is a month and last_month_status is one of two words. The as-of setting and
-    the requested analysis date are not outbound fields."""
+    """Decision 7 (15 Oct 2026): evidence_to is a month and last_month_status is one closed word (always Complete since 2026-10-28,
+    when the as-of month always counts as complete). The as-of setting, who set it and the requested analysis date are not outbound
+    fields."""
     assert {"evidence_to", "last_month_status"} <= gateway.OUTBOUND_TOP_LEVEL
-    assert not ({"as_of_month", "requested_analysis_date", "last_month_complete"} & (gateway.OUTBOUND_TOP_LEVEL | gateway.OUTBOUND_FIELDS))
-    out = gateway.period_fields({"source_period": {"month": "2019-06", "status": "Possibly partial", "complete_by": "analyst",
+    assert not ({"as_of_month", "as_of_by", "as_of_file", "requested_analysis_date"} & (gateway.OUTBOUND_TOP_LEVEL | gateway.OUTBOUND_FIELDS))
+    out = gateway.period_fields({"source_period": {"month": "2019-06", "status": "Complete", "complete_by": "as_of",
                                                    "evidence_to": "2019-06"}, "as_of_month": "2026-06"})
-    assert out == {"evidence_to": "2019-06", "last_month_status": "Possibly partial"}
+    assert out == {"evidence_to": "2019-06", "last_month_status": "Complete"}
     assert gateway.period_fields({}) == {"evidence_to": None, "last_month_status": None}
 
 
@@ -2695,8 +2696,7 @@ def test_chat_the_file_type_reply_is_one_closed_word():
 
 def _recognition_word(word):
     """The reply of the file_type prompt v2 (revenue-file-recognition.md 5.7) that names only the file's type."""
-    return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": word, "revenue_row": None, "last_actual_column": None,
-                       "currency": None, "non_revenue_rows": []})
+    return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": word, "revenue_row": None, "currency": None, "non_revenue_rows": []})
 
 
 def _file_type_upload(api):
@@ -2726,8 +2726,8 @@ def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_ha
             assert title not in stored.get(name, ""), (title, name)
     kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
     assert len(kept) == 1 and set(kept[0]) <= {"audit_id", "kind", "file_hash", "prompt_tag", "reply", "saved_at"}
-    assert kept[0]["reply"]["file_type"] == "crm" and set(kept[0]["reply"]) <= {"sheet", "file_type", "revenue_row", "last_actual_column", "currency",
-                                                                              "non_revenue_rows"}
+    assert kept[0]["reply"]["file_type"] == "crm" and set(kept[0]["reply"]) <= {"sheet", "file_type", "revenue_row", "currency", "non_revenue_rows"}
+    assert "last_actual_column" not in kept[0]["reply"], "the as-of month sets the boundary: the model names no column (PR 196 review)"
     log = "\n".join(r.getMessage() for r in caplog.records)
     for title in FILE_TYPE_TITLES + ("Source inputs", "Annual tracker", "Funnel and evidence", "Account ID", "CRM_Anonymous", chat.COMPANY):
         assert title not in log, f"{title!r} reached a log line"
@@ -3064,17 +3064,17 @@ def test_recognition_the_gateway_refuses_a_row_label_on_a_masked_sheet_a_figure_
 
 def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_text():
     good = {"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report",
-            "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"}, "last_actual_column": 7, "currency": "EUR",
+            "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"}, "currency": "EUR",
             "non_revenue_rows": [{"row": 9, "kind": "forecast"}]}
     parse = lambda body: gateway.parse_structure_reply(json.dumps(body), "file_recognition", "")  # noqa: E731
     assert parse(good).file_type == "monthly_revenue_report"
-    assert parse({**good, "file_type": "not_revenue", "revenue_row": None, "last_actual_column": None, "currency": None,
+    assert parse({**good, "file_type": "not_revenue", "revenue_row": None, "currency": None,
                   "non_revenue_rows": []}).file_type == "not_revenue"
     for other in ("crm", "pnl"):                           # the same call answers the file type of chat-upload.md section 19 (spec 5.6)
-        assert parse({**good, "file_type": other, "revenue_row": None, "last_actual_column": None, "currency": None, "non_revenue_rows": []})
+        assert parse({**good, "file_type": other, "revenue_row": None, "currency": None, "non_revenue_rows": []})
     for bad in ({**good, "confidence": 90}, {**good, "note": "x"}, {**good, "file_type": "deck"}, {**good, "currency": "EURO"},
                 {**good, "non_revenue_rows": [{"row": 9, "kind": "maybe"}]}, {**good, "non_revenue_rows": [{"row": 9, "kind": "forecast", "why": "x"}]},
-                {**good, "last_actual_column": 0}, {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
+                {**good, "last_actual_column": 7}, {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
         with pytest.raises(gateway.GatewayError):
             parse(bad)
     kinds = ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
@@ -3089,7 +3089,7 @@ def test_recognition_the_words_a_result_can_carry_are_closed_lists_and_hold_no_t
                                      "financial_statements", "arr_mrr_snapshot")
     assert rec.NON_REVENUE_KINDS == ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
     assert set(rec.REASONS) == {"no_candidate", "tie", "confidence_80", "row_missing", "label_mismatch", "marked_not_revenue",
-                                "not_numeric_enough", "no_revenue_word", "rules_and_model_disagree", "no_as_of_month", "after_as_of",
+                                "not_numeric_enough", "no_revenue_word", "rules_and_model_disagree", "after_as_of",
                                 "not_a_period", "turnover_question", "type_unsure"}
     assert all(re.fullmatch(r"[a-z0-9_]+", w) for w in rec.REASONS + rec.RECOGNITION_TYPES + rec.NON_REVENUE_KINDS)
     for name in MASKED_FIXTURES + METRIC_FIXTURES + ("arr_snapshot.csv", "invoice_transactions.csv", "pnl_single_period.csv"):

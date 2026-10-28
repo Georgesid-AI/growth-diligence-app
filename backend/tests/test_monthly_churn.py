@@ -1,6 +1,6 @@
 """Monthly gross revenue churn (George, 2026-10-23, decision on PR 171; engine contract 8; docs/specs/claim-matching.md, interface-contracts.md).
 The engine holds a monthly rate per month beside the trailing-12-month one: MRR lost in the month (churn and contraction, expansion not netted)
-over the MRR at the start of the month, the Possibly partial last month skipped as for NRR. A churn claim worded monthly is tested against that
+over the MRR at the start of the month, the as-of month read as for NRR (it always counts as complete). A churn claim worded monthly is tested against that
 month's rate; a year period against the trailing-12-month rate at year end; no wording and no period is Unverified naming both."""
 import copy
 import io

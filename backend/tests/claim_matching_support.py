@@ -28,12 +28,12 @@ def answer_definition(candidates: list, rows: list, claim_id: str, answer: str) 
 
 
 @lru_cache(maxsize=None)
-def engine_results(files: tuple = ("revenue", "pnl", "crm"), as_of_month=None, last_month_complete=True) -> dict:
-    """compute_all over the chosen sample files, EUR, no other currency, the as-of month as given. The fixture ticks "Last month
-    is complete" (docs/specs/dates-and-periods.md section 11), so its rows keep their meaning; test_dates_and_periods.py pins
-    the default (February 2024 Possibly partial)."""
+def engine_results(files: tuple = ("revenue", "pnl", "crm"), as_of_month=None) -> dict:
+    """compute_all over the chosen sample files, EUR, no other currency, the as-of month as given, else detected from the files as
+    Map detects it (as_of.detect; the as-of month always counts as complete, docs/specs/dates-and-periods.md section 2)."""
     import growth_engine as ge
     import server
+    from app import as_of
 
     uploads = {}
     for dtype in files:
@@ -42,8 +42,10 @@ def engine_results(files: tuple = ("revenue", "pnl", "crm"), as_of_month=None, l
                           "rows": server.df_to_records(df), "mapping": server.suggest_mapping(dtype, list(df.columns))}
     norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
     empty = server.pd.DataFrame()
+    if as_of_month is None and (found := as_of.detect(uploads)):
+        as_of_month = as_of.month_end(found["month"])
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2026-12-31", "fx": {"EUR": 1.0},
-              "billing_terms": {}, "default_l": 1, "as_of_month": as_of_month, "last_month_complete": last_month_complete}
+              "billing_terms": {}, "default_l": 1, "as_of_month": as_of_month}
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
     return server.sanitize(ge.compute_all(norm["revenue"], norm.get("crm", empty), norm.get("pnl", empty), config, sources,
                                           files=server.candidate_views(uploads)))

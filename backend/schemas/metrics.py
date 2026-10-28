@@ -24,7 +24,8 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 11         # 11: the page reader's answer form (docs/design/page-image.md sections 4 and 5): claims carry label_text, segment, share_of and is_quote; label and
+CONTRACT_VERSION = 12         # 12: one as-of month (docs/specs/dates-and-periods.md section 2, 2026-10-28): the as-of month always counts as complete, `source_period.status` is always Complete and `complete_by` "as_of", the last month is no longer left out of NRR, gross churn and growth, and the fiscal year-end sets the months of a yearly column; results stored under 11 read "Stale – re-run audit".
+                              # 11: the page reader's answer form (docs/design/page-image.md sections 4 and 5): claims carry label_text, segment, share_of and is_quote; label and
                               #    period corrections run on a blank field only and "sign not on page" no longer changes a value, so claim matches stored under 10 read "Stale – re-run audit"; no engine block changes.
                               # 10: the yearly-basis block names two annual payback proxies, the S&M scope and the fiscal year (docs/specs/forecast-and-payback.md section 4.5); 9: the simplified flow (docs/design/simplified-flow.md): claims enter the register without an approval, a stated figure the app cannot test
                               #    reads Unverified, gates are written from the claim, the ratings are computed and the memo carries the optional analyst note
@@ -646,8 +647,8 @@ class Question(Block):
 class SourcePeriod(Block):
     """The latest valid source period (docs/specs/dates-and-periods.md section 2): months as text, no figure."""
     month: str                                      # the last month of the revenue file with a valid date and a non-zero amount
-    status: Literal["Complete", "Possibly partial"]
-    complete_by: Optional[Literal["as_of", "analyst"]]
+    status: Literal["Complete"]                      # the as-of month always counts as complete; the months after it are plan
+    complete_by: Optional[Literal["as_of"]]
     evidence_to: str                                # the last month any revenue figure reads
 
 
@@ -660,7 +661,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[11]
+    contract_version: Literal[12]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]

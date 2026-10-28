@@ -74,7 +74,7 @@ def test_pricing_is_a_money_type_with_an_optional_period_and_no_engine_metric_to
 
 
 def test_the_engine_contract_is_9():
-    assert metrics.CONTRACT_VERSION == 11
+    assert metrics.CONTRACT_VERSION == 12
     assert metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags"), "contracts 7 and 8 change the metric list, not the claim fields"
 
 
