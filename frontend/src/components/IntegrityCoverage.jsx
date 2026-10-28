@@ -1,5 +1,5 @@
 import { blockedText, COVERAGE_COLUMNS, COVERAGE_HEADING, INTEGRITY_HEADING, NO_RESULTS, REQUESTS_HEADING, RESULT_COLUMNS, RESULT_STYLE,
-  RESULTS_HEADING } from "@/lib/integrity";
+  RESULTS_HEADING, STATEMENT_HEADING } from "@/lib/integrity";
 
 const PLACEHOLDER = "—";
 
@@ -44,6 +44,17 @@ export default function IntegrityCoverage({ integrity }) {
           ))}
         </Table>
       ) : <p className="text-xs text-slate-600" data-testid="integrity-results-none">{NO_RESULTS}</p>}
+
+      {integrity.statement_findings?.length > 0 && (
+        <div className="mt-3 text-xs text-slate-700" data-testid="integrity-statement">
+          <div className="font-semibold text-slate-800">{STATEMENT_HEADING}</div>
+          <ul className="list-disc pl-5">
+            {integrity.statement_findings.map((f) => (
+              <li key={`${f.line}-${f.period}-${f.kind}`}>{f.text} <span className="font-mono text-[11px] text-slate-500">{f.source}</span></li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <h3 className="mt-4 mb-2 text-sm font-semibold text-slate-800">{COVERAGE_HEADING}</h3>
       <Table columns={COVERAGE_COLUMNS} testid="integrity-coverage">

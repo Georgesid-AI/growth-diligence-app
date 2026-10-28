@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import SheetMap from "@/components/SheetMap";
 import RecognitionLine from "@/components/RecognitionLine";
-import { CURRENCY_NOT_FOUND, currencyChoices } from "@/lib/recognition";
+import { CURRENCY_NOT_FOUND, currencyChoices, typeLineText, typeSettled, TYPE_LABELS as FILE_TYPE_LABELS } from "@/lib/recognition";
 import { uploadChatFile, getDatasets, decideColumns, decideLines, decideRecognition, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
 import {
   S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
@@ -355,8 +355,9 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
   return (
     <Bubble side="left" testid={`chat-system-${view.dtype}`}>
       <div className="font-medium text-slate-900" data-testid="bubble-head">{S5_head(view)}</div>
-      {!view.recognition_only && <TypeLine view={view} retype={retype} />}
-      <RecognitionLine view={view} decide={decideRecognition} reportingCurrency={audit.reporting_currency} />
+      {!view.recognition_only && typeSettled(view) && <TypeLine view={view} retype={retype} decideRecognition={decideRecognition} />}
+      <RecognitionLine view={view} decide={decideRecognition} reportingCurrency={audit.reporting_currency}
+        typeShown={!view.recognition_only && typeSettled(view)} />
       {view.currency_pending && !(view.recognition && view.recognition.recognised && view.recognition.currency?.state === "confirm") && (
         <CurrencyQuestion view={view} decide={decideRecognition} reportingCurrency={audit.reporting_currency} />)}
       {view.unit_note && <p className="text-xs text-slate-600 mt-1" data-testid="bubble-units">{view.unit_note}</p>}
@@ -471,7 +472,7 @@ function ForecastClaims({ view, auditId, onSaved }) {
 }
 
 /** The detected type, how it was found, and the Change button: the analyst can override it (chat-upload.md section 19). */
-function TypeLine({ view, retype }) {
+function TypeLine({ view, retype, decideRecognition }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -493,13 +494,21 @@ function TypeLine({ view, retype }) {
   };
   return (
     <div className="mt-1 text-xs text-slate-600" data-testid={`type-line-${view.dtype}`}>
-      <span data-testid={`type-label-${view.dtype}`}>{S26_type(view)}</span>
-      <button type="button" data-testid={`type-change-${view.dtype}`} onClick={() => setOpen((v) => !v)} className="ml-2 underline hover:text-slate-900">{S26_CHANGE}</button>
+      <span data-testid={`type-label-${view.dtype}`}>{typeLineText(view) || S26_type(view)}</span>
+      {" · "}<button type="button" data-testid={`type-change-${view.dtype}`} onClick={() => setOpen((v) => !v)} className="underline hover:text-slate-900">{S26_CHANGE}</button>
       {open && (
         <span className="ml-2 inline-flex gap-1.5">
           {Object.entries(TYPE_LABELS).filter(([dtype]) => dtype !== view.dtype).map(([dtype, label]) => (
             <Button key={dtype} size="sm" variant="outline" disabled={busy} data-testid={`type-pick-${dtype}`} onClick={() => go(dtype)} className="h-6 px-2">{label}</Button>
           ))}
+          {view.recognition?.recognised && view.recognition.file_type && (
+            <select data-testid={`type-file-select-${view.dtype}`} disabled={busy} defaultValue=""
+              onChange={(e) => e.target.value && decideRecognition(view, { action: "change", part: "file_type", file_type: e.target.value }).then(() => setOpen(false))}
+              className="h-6 border border-[#D1D5DB] rounded bg-white text-xs">
+              <option value="">Kind of file</option>
+              {Object.entries(FILE_TYPE_LABELS).filter(([t]) => t !== view.recognition.file_type).map(([t, label]) => <option key={t} value={t}>{label}</option>)}
+            </select>
+          )}
         </span>
       )}
       {ask && (

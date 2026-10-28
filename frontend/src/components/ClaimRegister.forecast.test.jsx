@@ -127,7 +127,7 @@ test("a question a row asks stays visible with Details closed", async () => {
 const PAYBACK = { ...ACTUAL, claim_id: "p1", claim_type: "cac_payback", unit: "months", currency: null, claimed_value: 16, period: "FY2024", metric: "CAC payback",
   observed_value: 16, observed_at: "FY2024 (annual)", observed_citation: "(yearly_basis.years.cac_payback_net_new_arr_months, P&L, rows 3–5, FY2024 (annual))",
   gap: 0, gap_normalised: 0, gloss: "as claimed",
-  calc_lines: ["Annual payback FY2024 (revenue-growth proxy): 24.0 months = 12 × S&M €336,000 ÷ (revenue growth €240,000 × gross margin 70.0%)",
+  calc_lines: ["CAC payback FY2024 (yearly, revenue-based): 24.0 = 12 × S&M €336,000 ÷ (revenue growth €240,000 × gross margin 70.0%)",
     "Annual payback FY2024 (net-new-ARR proxy): 16.0 months = 12 × S&M €336,000 ÷ (net new ARR €360,000 × gross margin 70.0%)", "S&M scope: sales and marketing",
     "Claim definition: net new ARR, gross margin, sales and marketing"] };
 

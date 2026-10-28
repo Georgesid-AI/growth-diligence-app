@@ -165,6 +165,14 @@ def overall(rows: List[dict]) -> dict:
     return {"conclusion": conclusion, "code": code, "completed": x, "applicable": y}
 
 
+def statement_findings(results: dict) -> List[dict]:
+    """The integrity findings of a P&L read as a statement (docs/design/pnl-lines.md section 3): a total that differs from its lines, a sign
+    that differs, a % row that does not recompute, each beyond the app's tolerance and with the cell it cites. They are shown with the data
+    integrity results; they are not one of the six checks, so they move neither the coverage nor the conclusion."""
+    return [{"kind": f["kind"], "line": f["line"], "period": f["period"], "text": f["text"], "source": _cite(f["source"])}
+            for f in (results.get("pnl_lines") or {}).get("findings") or ()]
+
+
 def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fiscal_year_end: int = 12) -> dict:
     """Both blocks, the conclusion, the data requests and the memo's sentence for one audit. `results` may be None (not computed):
     every check that reads it is then Blocked. `fiscal_year_end` (1-12) sets the quarters of the clustering check."""
@@ -189,6 +197,7 @@ def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fis
     return {
         **out,
         "results": block_a,
+        "statement_findings": statement_findings(results),
         "coverage": coverage,
         "completed_text": COMPLETED_TEXT.format(x=out["completed"], y=out["applicable"]),
         "blocked": blocked,

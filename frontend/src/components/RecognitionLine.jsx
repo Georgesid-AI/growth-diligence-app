@@ -13,7 +13,7 @@ const SMALL = "h-6 px-2 ml-1.5";
  * rows kept out of revenue. The component renders the `recognition` block of the dataset view; every decision goes through
  * `decide(view, body)`, which sends one part at a time and hands back the dataset view. It never shows a confidence or a cost.
  */
-export default function RecognitionLine({ view, decide, reportingCurrency }) {
+export default function RecognitionLine({ view, decide, reportingCurrency, typeShown = false }) {
   const rec = view.recognition;
   const d = view.dtype;
   const id = (name) => `recognition-${name}-${d}`;
@@ -77,14 +77,14 @@ export default function RecognitionLine({ view, decide, reportingCurrency }) {
 
   return (
     <div className="mt-1 text-xs text-slate-700 space-y-1" data-testid={`recognition-${d}`}>
-      <div>
+      {!typeShown && <div>
         <span data-testid={id("type")}>{typeText}</span>
         {!unclassed && <button type="button" data-testid={id("type-change")} onClick={() => toggle("type")} className="ml-2 underline hover:text-slate-900">Change</button>}
         {!unclassed && rec.type_state === "click" && (
           <Button size="sm" variant="outline" disabled={busy} data-testid={id("type-correct")} className={SMALL}
             onClick={() => send({ action: "confirm", part: "file_type" })}>Correct</Button>)}
         {(unclassed || open.type) && select(id("type-select"), typeOptions, pickType)}
-      </div>
+      </div>}
       {((unclassed && offersReport(rec)) || view.mapping_dropped) && <p data-testid={id("reupload-note")}>{REUPLOAD_NOTE}</p>}
       {rec.file_type && rec.supports && rec.supports.length > 0 && <p data-testid={id("supports")}>{supportsText(rec)}</p>}
       {rec.series_source && (rec.tables || []).length > 1 && (

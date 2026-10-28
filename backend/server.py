@@ -3381,7 +3381,7 @@ async def _run_compute(audit_id: str) -> dict:
     try:
         views = candidate_views({t: d for t, d in ds.items() if not d.get("sheet_map")})
         results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=views, on_error=on_error,
-                                          yearly=(statement or {}).get("yearly")))
+                                          yearly=(statement or {}).get("yearly"), statement=(statement or {}).get("lines")))
     except Exception as exc:
         failed = failures + [type(exc).__name__]        # bound before the lambda: `exc` is unbound once the block ends
         await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failed))
@@ -3982,7 +3982,9 @@ app.add_middleware(
 # 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
 # 11: demo audits carry no client name (the field is gone).
 # 12: results carry contract_version 5 (demo audits seeded under 11 held version 4 and opened as Stale).
-SEED_VERSION = 20          # 20: engine contract 13 (deck actuals): demo audits held under contract 12 are reseeded
+SEED_VERSION = 21          # 21: engine contract 14 (P&L lines): demo audits held under contract 13 are reseeded
+                          # 20: engine contract 13 (deck actuals): demo audits held under contract 12 are reseeded
+                          # 19: engine contract 12 (one as-of month): demo audits held under contract 11 are reseeded
                           # 18: engine contract 11 (the page reader's answer form): demo audits held under contract 10 are reseeded
                           # 17: engine contract 10 (the yearly-basis block names two annual payback proxies and the S&M scope): demo audits held under contract 9 are reseeded
                           # 16: engine contract 9 (the simplified flow): demo audits held under contract 8 are reseeded

@@ -1254,12 +1254,13 @@ describe("a P&L read as a statement (section 26)", () => {
     expect(api.decideColumns).not.toHaveBeenCalled();
   });
 
-  test("Basis is a drop-down that saves in one click; a line the calculations could read but do not says Not used: <basis>", async () => {
+  test("Basis is a drop-down that saves in one click; the Used column shows the use of every line, never Not used", async () => {
     const lines = [
-      line(3, "Revenue (monthly)", { meaning: "revenue", basis: "month", used: true }),
-      line(4, "Revenue current year (YTD)", { meaning: "revenue", basis: "ytd", not_used: "ytd" }),
-      line(7, "Forecast revenue", { meaning: "revenue", basis: "month", tag: "forecast", not_used: "forecast" }),
-      line(5, "Revenue last 12 months (LTM)", { meaning: "revenue", basis: "ltm", not_used: "ltm", checks: { ltm_mismatch: ["Dec-24"] } }),
+      line(3, "Revenue (monthly)", { meaning: "revenue", basis: "month", used: true, use: "series" }),
+      line(4, "Revenue current year (YTD)", { meaning: "revenue", basis: "ytd", use: "recompute check" }),
+      line(7, "Forecast revenue", { meaning: "revenue", basis: "month", tag: "forecast", use: "series" }),
+      line(5, "Revenue last 12 months (LTM)", { meaning: "revenue", basis: "ltm", use: "recompute check", checks: { ltm_mismatch: ["Dec-24"] } }),
+      line(6, "Revenue - quarterly", { meaning: "revenue", basis: "quarter", use: "excluded" }),
       line(9, "Section", { role: "heading", basis: null }),
     ];
     await mount({ datasets: [STATEMENT({}, { lines })] });
@@ -1267,25 +1268,24 @@ describe("a P&L read as a statement (section 26)", () => {
     expect(S30B_HEADERS.slice(0, 4)).toEqual(["Line", "Role", "Meaning", "Basis"]);
     expect(q("line-basis-3").value).toBe("month");
     expect([...q("line-basis-3").options].map((o) => o.value)).toEqual(["month", "quarter", "ytd", "ltm", "lifetime", "balance"]);
-    expect(q("line-used-3").textContent).toBe("Yes");
-    expect(q("line-used-4").textContent).toBe("Not used: ytd");
-    expect(q("line-used-7").textContent).toBe("Not used: forecast");
+    expect([3, 4, 7, 6, 9].map((r) => q(`line-used-${r}`).textContent)).toEqual(["series", "recompute check", "series", "excluded", "—"]);
+    expect(document.body.textContent).not.toMatch(/Not used:/);
     expect(q("line-checks-5").textContent).toBe("LTM ≠ last 12 months (Dec-24)");
     expect(q("line-basis-9")).toBeNull();            // a heading has no figure, so no basis
-    api.decideLines.mockResolvedValue(STATEMENT({}, { lines: lines.map((l) => (l.row === 4 ? { ...l, basis: "month", not_used: null, used: true } : l)) }));
+    api.decideLines.mockResolvedValue(STATEMENT({}, { lines: lines.map((l) => (l.row === 4 ? { ...l, basis: "month", used: true, use: "series" } : l)) }));
     await change(q("line-basis-4"), "month");
     expect(api.decideLines).toHaveBeenLastCalledWith("a1", "pnl", [{ row: 4, action: "change", basis: "month" }]);
-    expect(q("line-used-4").textContent).toBe("Yes");
+    expect(q("line-used-4").textContent).toBe("series");
   });
 
-  test("the Used column says Yes or No; an AI line the calculations do not use reads AI suggestion without – confirm", async () => {
+  test("the Used column names the use of each line; an AI line the calculations do not use reads AI suggestion without – confirm", async () => {
     await mount({ datasets: [STATEMENT({ pending: 1 }, { pending: 1, lines: [
-      line(3, "Revenue", { source: "ai", confidence: null, pending: true, used: true }),
-      line(4, "Headcount", { source: "ai", confidence: null, meaning: "headcount", used: false }),
-      line(5, "Cost", { used: false })] })] });
+      line(3, "Revenue", { source: "ai", confidence: null, pending: true, used: true, use: "series" }),
+      line(4, "Headcount", { source: "ai", confidence: null, meaning: "headcount", used: false, use: "series" }),
+      line(5, "Cost", { used: false, use: "excluded" })] })] });
     await flush();
     expect(S30B_HEADERS).toEqual(["Line", "Role", "Meaning", "Basis", "Used", "Confidence", "Checks"]);
-    expect([3, 4, 5].map((r) => q(`line-used-${r}`).textContent)).toEqual(["Yes", "No", "No"]);
+    expect([3, 4, 5].map((r) => q(`line-used-${r}`).textContent)).toEqual(["series", "series", "excluded"]);
     expect(q("line-confidence-3").textContent).toBe("AI suggestion – confirm");
     expect(q("line-confidence-4").textContent).toBe("AI suggestion");
     expect(q("line-confirm-4")).toBeNull();
@@ -1331,6 +1331,34 @@ describe("a P&L read as a statement (section 26)", () => {
     await mount({ datasets: [STATEMENT({ type_source: "you" }, { ai_read: true })] });
     await flush();
     expect(q("type-label-pnl").textContent).toBe("Type: P&L (yearly summary) (your choice)");
+  });
+
+  // docs/design/pnl-lines.md section 8: one Type line per file
+  const STATEMENT_TYPE = { recognised: true, file_type: "financial_statements", type_state: "auto", type_source: "rules", type_candidates: [],
+    type_reason: null, supports: [], blocked: [], revenue_row: null, revenue_column: null, last_actual: null, currency: { state: "auto" },
+    other_sheets: [], non_revenue_rows: [], money_kind: { asked: false }, tables: [] };
+  const typeLines = () => [...document.querySelectorAll("[data-testid]")].filter((e) => /^(type-label|recognition-type)-(pnl|kpi|revenue|crm)$/.test(e.dataset.testid));
+
+  test("a statement file shows one Type line; when the AI names another kind of file it says so after the rules' type", async () => {
+    await mount({ datasets: [STATEMENT({ type_source: "rules", recognition: STATEMENT_TYPE }, { ai_read: true })] });
+    await flush();
+    expect(typeLines().map((e) => e.dataset.testid)).toEqual(["type-label-pnl"]);
+    expect(q("type-line-pnl").textContent).toBe("Type: Financial statements · AI suggests P&L (yearly summary) · Change");
+  });
+
+  test("a statement the AI did not read shows the rules' type alone", async () => {
+    await mount({ datasets: [STATEMENT({ type_source: "rules", recognition: STATEMENT_TYPE }, { ai_read: false })] });
+    await flush();
+    expect(typeLines()).toHaveLength(1);
+    expect(q("type-line-pnl").textContent).toBe("Type: Financial statements · Change");
+  });
+
+  test("a type that waits for a decision is the recognition's own line and the only one", async () => {
+    const waiting = { ...STATEMENT_TYPE, type_state: "click", type_reason: "rules_and_model_disagree", type_candidates: ["financial_statements", "arr_mrr_snapshot"] };
+    await mount({ datasets: [STATEMENT({ type_source: "rules", recognition: waiting }, { ai_read: true })] });
+    await flush();
+    expect(typeLines().map((e) => e.dataset.testid)).toEqual(["recognition-type-pnl"]);
+    expect(q("recognition-type-pnl").textContent).toContain("Type: Financial statements");
   });
 
   test("the help text of a statement says lines and names a sales cost line read as revenue", async () => {

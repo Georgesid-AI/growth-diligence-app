@@ -157,9 +157,11 @@ def reason_text(row: dict, reporting_currency: Optional[str]) -> str:
 
 def flagged_rows(rows: List[dict], listed: Iterable[str] = ()) -> List[dict]:
     """The register rows Worth flagging names, by rank: every Verified beat outside tolerance, and every row whose Definition check
-    the analyst answered Yes (claim-matching.md section 4.1), except the ones already `listed` (by the banner)."""
+    the analyst answered Yes (claim-matching.md section 4.1), and every plan in the file that differs from the plan in the deck
+    (docs/design/pnl-lines.md section 4), except the ones already `listed` (by the banner)."""
     skip = set(listed)
-    return [r for r in rows if r["claim_id"] not in skip and (cm.is_beat(r) or r.get("definition_check") == "yes" or r.get("deck_status") == "differs")]
+    return [r for r in rows if r["claim_id"] not in skip and (cm.is_beat(r) or r.get("definition_check") == "yes" or r.get("deck_status") == "differs"
+                                                              or str(r.get("reason") or "").startswith(cm.PLAN_DIFFERS))]
 
 
 def flag_text(row: dict) -> str:

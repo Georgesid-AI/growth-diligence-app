@@ -290,7 +290,8 @@ export function gapText(row, ccy) {
 
 const READINGS = { parser: "Read by the parser", edited: "Edited by the analyst", "analyst-entered": "Analyst-entered",
   "added-from-deck": "Added from deck by analyst",       // claim-types-and-correction.md section 5
-  "forecast-file": "Read from forecast table" };         // chat-upload.md section 20
+  "forecast-file": "Read from forecast table",          // chat-upload.md section 20
+  "plan-file": "Plan in the P&L file" };                // docs/design/pnl-lines.md section 4
 export const readingText = (reading) => READINGS[reading] || reading;
 
 export const segmentEdit = (segment) => ({ segment });

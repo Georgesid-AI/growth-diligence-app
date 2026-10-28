@@ -3,7 +3,7 @@
  * helpers the line uses. The wording lives here once so the component and its tests read the same text. No text mentions a
  * confidence number or a cost; a reason code has one closed text.
  */
-import { fmtMonth } from "./chatUpload";
+import { fmtMonth, typeLabel } from "./chatUpload";
 
 // The six types, in the order of the specification (section 3); the keys are the codes the server accepts.
 export const TYPE_LABELS = {
@@ -18,6 +18,28 @@ export const TYPE_LABELS = {
 export const TYPE_SOURCE_TEXT = { rules: "by rules", ai: "AI suggestion, not verified", you: "your choice" };
 export const TYPE_REASON_TEXT = { rules_and_model_disagree: "Two readings differ. Choose the type.", type_unsure: "Choose the type." };
 export const TYPE_CHOOSE = "Type: choose the type";
+
+// docs/design/pnl-lines.md section 8: one Type line per file. The line is the recognition's when it waits for a decision (the type is not
+// settled); otherwise the TypeLine below the head reads "Type: <rules' type>", with " · AI suggests <the AI's reading>" only when the AI read
+// the file and named another kind of file than the rules, and a "Change" after it.
+const AGREES = { revenue: ["invoice_transactions", "customer_revenue", "monthly_revenue_report", "revenue_summary"],
+  kpi: ["monthly_revenue_report", "arr_mrr_snapshot"] };
+const recognised = (view) => (view.recognition && view.recognition.recognised && view.recognition.file_type ? view.recognition : null);
+/** True when the recognition has no type decision open, so the TypeLine is the file's one Type line. */
+export const typeSettled = (view) => {
+  const rec = view.recognition && view.recognition.recognised ? view.recognition : null;
+  return !rec || (rec.file_type != null && rec.type_state !== "click");
+};
+/** The one Type line's words (without the Change button). */
+export const typeLineText = (view) => {
+  const rec = recognised(view);
+  if (!rec) return null;
+  const ours = TYPE_LABELS[rec.file_type];
+  const aiRead = view.type_source !== "you" && (view.sheet_map ? !!view.sheet_map.ai_read : view.type_source === "ai");
+  const theirs = typeLabel(view);
+  const suggests = aiRead && theirs && theirs !== ours && !(AGREES[view.dtype] || []).includes(rec.file_type);
+  return `Type: ${ours}${view.type_source === "you" ? " (your choice)" : ""}${suggests ? ` · AI suggests ${theirs}` : ""}`;
+};
 // Under the type choice of a metrics sheet with a customer-style header, and once the report is chosen (George, 20 Oct 2026, issue #136).
 export const REUPLOAD_NOTE = "Switching back to Customer revenue needs a re-upload.";
 export const offersReport = (rec) => (rec.type_candidates || []).includes("monthly_revenue_report") && (rec.type_candidates || []).includes("customer_revenue");

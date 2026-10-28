@@ -76,6 +76,16 @@ UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISI
 # value at stake and no overlaps (null), whatever its type. Its deck reading stays "forecast-file" after an edit.
 FORECAST_FILE = "forecast_file"
 FORECAST_READING = "forecast-file"
+# A plan cell of a P&L read as a statement (docs/design/pnl-lines.md section 4): a claim with source "File <sheet>!<cell> (plan)", never Verified or
+# Contradicted, tested as implied against observed rate, ranked by value at stake like a deck forecast and compared with the deck's forecast of the
+# same metric and period. It is built from the engine's `pnl_lines.plan`, not stored.
+PLAN_FILE = "plan_file"
+PLAN_READING = "plan-file"
+PLAN_NOTE = "plan in the file: never Verified or Contradicted; its implied rate is tested against the observed rate"
+PLAN_DIFFERS = "plan in file differs from plan in deck"
+PLAN_CLAIM_TYPES = {"Revenue": "revenue", "Cost of revenue": "costs", "S&M expense": "costs", "Operating expenses": "costs",
+                    "Gross margin": "gross_profit", "EBITDA": "ebitda"}
+PLAN_DECK_TYPES = ("revenue", "gross_profit", "ebitda")        # the claim types whose deck forecast names one plan line (a cost claim does not)
 FORECAST_NOTE = "Read from the forecast file, not yet tested against data"      # George, 2026-10-16
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
 # George, 2026-10-23 (review of PR 164, H2): a best-case or worst-case figure of a deck page is stored and listed under Scenarios, never matched,
@@ -137,6 +147,7 @@ ANNUAL_ANALYSIS = "Yearly basis (P&L summary)"          # forecast-and-payback.m
 ANNUAL_KEYS = {payback_definition.REVENUE_GROWTH: "yearly_basis.years.cac_payback_months",
                payback_definition.NET_NEW_ARR: "yearly_basis.years.cac_payback_net_new_arr_months"}
 ANNUAL_NOT_CALCULATED = "annual payback not calculated for {year}: {reason}"
+YEARLY_REVENUE_BASED = "yearly, revenue-based"      # the label of a payback read from yearly columns (docs/design/pnl-lines.md section 6)
 ANNUAL_NO_YEAR = "no actual year in the yearly P&L"
 # dates-and-periods.md section 3 (2026-10-28): a deck year matches a yearly column only when both end in the same month.
 PERIOD_NOT_COVERED = "period not covered: the claim's period ends {claim}, the file's {name} ends {file}"
@@ -897,7 +908,7 @@ def _keyword_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Op
 def _page_ref(sources: list) -> str:
     refs = []
     for s in sources or ():
-        ref = f"slide {s['slide']}" if s.get("slide") is not None else f"p{s['page']}" if s.get("page") is not None else \
+        ref = s["plan_ref"] if s.get("plan_ref") else f"slide {s['slide']}" if s.get("slide") is not None else f"p{s['page']}" if s.get("page") is not None else \
             f"{s['sheet']}!{s['cell']}" if s.get("cell") else None
         if ref and ref not in refs:
             refs.append(ref)
@@ -905,6 +916,8 @@ def _page_ref(sources: list) -> str:
 
 
 def _deck_reading(c: dict) -> str:
+    if c.get("origin") == PLAN_FILE:
+        return PLAN_READING
     if c.get("origin") == FORECAST_FILE:
         return FORECAST_READING                         # kept after a later edit: the claim came from a forecast table
     if c.get("origin") == "analyst":
@@ -1179,6 +1192,14 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out.update(fx_rate=fx["rate"], fx_date=fx["date"],
                    claimed_converted=low * fx["rate"] if low is not None else None,
                    claimed_converted_high=high * fx["rate"] if high is not None else None)
+    if c.get("origin") == PLAN_FILE:           # docs/design/pnl-lines.md section 4: never Verified or Contradicted; implied against observed rate
+        out.update(metric=None, metric_set_by=None, direction=None, tolerance=None)
+        out.update(calc_lines=_plan_lines(c["plan"], results.get("reporting_currency")),
+                   calc_details=["implied growth = plan ÷ the year before − 1; implied share = plan ÷ that year's revenue; "
+                                 "observed = the last two actual years (the last actual year for a share); gap in points"])
+        finish("Unverified", PLAN_NOTE)
+        out.update(gate_needed=False, overlaps_with=None)
+        return out
     if c.get("origin") == FORECAST_FILE:       # chat-upload.md section 20: never matched, ranked or gated; no value at stake, no overlaps
         out.update(metric=None, metric_set_by=None, direction=None, tolerance=None)
         finish("Unverified", FORECAST_NOTE)
@@ -1520,19 +1541,26 @@ def _forecast_view(results: dict, metric: Optional[str], segment: str, start: Op
     return {"lines": view["lines"], "details": view["details"], "text": view["text"]}
 
 
-def yearly_year(results: dict, start: int, end: int):
-    """(year, reason) for a claim period [start, end] (month indexes) against the yearly columns of the P&L read as a statement
-    (dates-and-periods.md section 3): the column whose first and last month are the claim's, else None with `period not covered` when a
-    column of the same year number ends in another month (never a mismatch), else None with no reason. The one rule for every claim
-    matched against a yearly column."""
-    years = (results.get("yearly_basis") or {}).get("years") or []
-    year = next((y for y in years if y.get("period_start") == _ms(start) and y.get("period_end") == _ms(end)), None)
+def _year_column(columns: list, start: int, end: int):
+    """(column, reason) of the yearly column whose first and last month are the claim's, else None with `period not covered` when a column of the
+    same year number ends in another month, else None with no reason."""
+    year = next((y for y in columns if y.get("period_start") == _ms(start) and y.get("period_end") == _ms(end)), None)
     if year is not None:
         return year, None
-    other = next((y for y in years if (y.get("period_end") or "")[:4] == _ms(end)[:4] and y.get("period_end") != _ms(end)), None)
+    other = next((y for y in columns if (y.get("period_end") or "")[:4] == _ms(end)[:4] and y.get("period_end") != _ms(end)), None)
     if other:
         return None, PERIOD_NOT_COVERED.format(claim=period_words(_ms(end)), name=other["period"], file=period_words(other["period_end"]))
     return None, None
+
+
+def yearly_year(results: dict, start: int, end: int, plan: bool = False):
+    """(year, reason) for a claim period [start, end] (month indexes) against the yearly columns of the P&L read as a statement
+    (dates-and-periods.md section 3): the column whose first and last month are the claim's, else None with `period not covered` when a
+    column of the same year number ends in another month (never a mismatch), else None with no reason. The one rule for every claim
+    matched against a yearly column (docs/design/pnl-lines.md section 7): the actual years (`yearly_basis`) and, with `plan`, the plan years
+    of the statement (`pnl_lines`)."""
+    columns = (results.get("pnl_lines") or {}).get("plan") if plan else (results.get("yearly_basis") or {}).get("years")
+    return _year_column(columns or [], start, end)
 
 
 def _annual_payback(out: dict, results: dict, text: str, start: int, end: int):
@@ -1561,11 +1589,14 @@ def _annual_payback(out: dict, results: dict, text: str, start: int, end: int):
                 year.get("cac_payback_net_new_arr_reason"), year.get("net_new_arr")))
     lines, details = [], ["annual payback = 12 × S&M ÷ (incremental annual recurring value × gross margin)"]
     for denominator, proxy, months, reason, amount in proxies:
+        # docs/design/pnl-lines.md section 6: the revenue-growth proxy is the yearly, revenue-based payback and is never worded in months
+        head = f"CAC payback {name} ({YEARLY_REVENUE_BASED})" if denominator == payback_definition.REVENUE_GROWTH \
+            else f"Annual payback {name} ({proxy})"
         if months is not None:
-            lines.append(f"Annual payback {name} ({proxy}): {months:.1f} months = 12 × S&M {money(year['sm_expense'])} ÷ "
-                         f"({denominator} {money(amount)} × gross margin {gm * 100:.1f}%)")
+            lines.append(f"{head}: {months:.1f}{'' if denominator == payback_definition.REVENUE_GROWTH else ' months'} = 12 × S&M "
+                         f"{money(year['sm_expense'])} ÷ ({denominator} {money(amount)} × gross margin {gm * 100:.1f}%)")
         else:
-            lines.append(f"Annual payback {name} ({proxy}): not calculated – {reason}")
+            lines.append(f"{head}: not calculated – {reason}")
     scope = year.get("sm_scope") or "unknown"
     claimed = payback_definition.claimed_definition(text)
     lines += [f"S&M scope: {scope}", "Claim definition: " + ", ".join(claimed[k] or "not stated" for k in ("denominator", "margin", "cost"))]
@@ -1975,6 +2006,80 @@ def _rank(rows: List[dict]) -> List[dict]:
     return ordered
 
 
+def plan_candidates(results: Optional[dict], taken: Iterable[Tuple[Optional[str], Optional[str]]] = ()) -> List[dict]:
+    """The plan cells of the statement (`pnl_lines.plan`) as candidates of origin PLAN_FILE, each with its source "File <sheet>!<cell> (plan)".
+    A cell already saved as a claim of the forecast table (`taken`: its sheet and cell) is left out."""
+    block = (results or {}).get("pnl_lines") or {}
+    file = (block.get("source") or {}).get("file")
+    out = []
+    for n, p in enumerate(block.get("plan") or (), 1):
+        sheet = p["source"].get("sheet")
+        if p["metric"] not in PLAN_CLAIM_TYPES or (sheet, p["cell"]) in set(taken):
+            continue
+        last = calendar.monthrange(int(p["period_end"][:4]), int(p["period_end"][5:7]))[1]
+        out.append({"id": f"plan#{n}", "claim_type": PLAN_CLAIM_TYPES[p["metric"]], "value": p["value"], "value_high": None, "unit": None,
+                    "currency": results.get("reporting_currency"), "target_date": p["period_end"][:4], "period_text": p["period"],
+                    "period_start": f"{p['period_start']}-01", "period_end": f"{p['period_end']}-{last:02d}", "snippet": p["metric"],
+                    "label_from": None, "file": file, "sources": [{"file": file, "sheet": sheet, "cell": p["cell"], "kind": "plan",
+                                                                   "plan_ref": p["source_text"]}],
+                    "origin": PLAN_FILE, "status": "approved", "basis": "projection", "scenario": "none", "plan": p})
+    return out
+
+
+def _plan_lines(p: dict, currency: Optional[str]) -> List[str]:
+    """The calculation lines of a plan row: the implied rate, the observed one and the gap in points, each with the columns it compares."""
+    shown = lambda v: "not calculated" if v is None else f"{v * 100:.1f}%"      # noqa: E731
+    implied, observed, gap = p["implied"], p["observed"], p["gap_points"]
+    first, second = (p["compared"].split(" against ") + [""])[:2]
+    word = "growth" if p["measure"] == "growth" else "share of revenue"
+    lines = [f"Plan {p['period']}: {_money(p['value'], currency)} at {p['source_text']}",
+             f"Implied {word} {first}: {shown(implied)}" + (f" – {p['reason']}" if implied is None else "")]
+    lines.append(f"Observed {word} {second}: {shown(observed)}" + (f" – {p['reason']}" if implied is not None and observed is None else ""))
+    if gap is not None:
+        lines.append(f"Gap: {gap:+.1f} points")
+    return lines
+
+
+def _compare_plan(rows: List[dict], results: dict) -> List[dict]:
+    """The plan rows against the deck forecasts of the same line and period (docs/design/pnl-lines.md section 4). The deck period is matched
+    to the plan year through `yearly_year`. Within tolerance the two are one claim with two sources: the plan row goes and its source joins
+    the deck row's. Beyond it the plan row reads "plan in file differs from plan in deck" (Worth flagging). A deck period the plan years do not
+    cover reads "period not covered" on the deck row. Nothing here changes a label."""
+    plans = [r for r in rows if r.get("deck_reading") == PLAN_READING and r["claim_type"] in PLAN_DECK_TYPES]
+    if not plans:
+        return rows
+    currency, gone = results.get("reporting_currency"), set()
+    for deck in rows:
+        if deck.get("deck_reading") == PLAN_READING or deck.get("claim_type") not in PLAN_DECK_TYPES or deck.get("figure_type") != "target" \
+                or deck.get("claimed_value") is None or deck.get("segment") not in (None, WHOLE) or not deck.get("period_start") \
+                or not deck.get("period_end"):
+            continue
+        year, why = yearly_year(results, _month_of(deck["period_start"]), _month_of(deck["period_end"]), plan=True)
+        if year is None:
+            if why:
+                deck["calc_lines"] = list(deck.get("calc_lines") or []) + [f"Plan in file: {why}"]
+            continue
+        for plan in plans:
+            if plan["claim_type"] != deck["claim_type"] or plan["period"] != year["period"] or plan["claim_id"] in gone:
+                continue
+            claimed = deck["claimed_converted"] if deck.get("claimed_converted") is not None else deck["claimed_value"]
+            if deck.get("currency") not in (None, currency) and deck.get("claimed_converted") is None:
+                continue
+            gap = plan["claimed_value"] - claimed
+            if within_tolerance("Revenue", gap, claimed):
+                deck["page_ref"] = ", ".join(x for x in (deck.get("page_ref"), plan["page_ref"]) if x)
+                deck["calc_lines"] = list(deck.get("calc_lines") or []) + [
+                    f"Plan in file: {_money(plan['claimed_value'], currency)} at {plan['page_ref']}, within {tolerance_text('Revenue')} of the deck"]
+                gone.add(plan["claim_id"])
+            else:
+                text = (f"{PLAN_DIFFERS}: file {_money(plan['claimed_value'], currency)}, deck {_money(claimed, currency)}"
+                        f" ({gap / abs(claimed):+.0%})" if claimed else f"{PLAN_DIFFERS}")
+                plan.update(reason=text, gloss=text)
+                deck["calc_lines"] = list(deck.get("calc_lines") or []) + [f"Plan in file: {_money(plan['claimed_value'], currency)} at "
+                                                                            f"{plan['page_ref']} – {PLAN_DIFFERS}"]
+    return [r for r in rows if r["claim_id"] not in gone]
+
+
 def build_register(candidates: List[dict], results: Optional[dict], settings: dict,
                    peers: Optional[List[dict]] = None) -> List[dict]:
     """The claim register: one row per claim, in rank order. `candidates` are the approved and edited rows in register
@@ -1989,7 +2094,10 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
                                  peers if peers is not None else candidates)
     claims = _expand(candidates)
     others = _expand(peers) if peers is not None else claims
-    rows = _rank([_value_at_stake(_mark_auto(_row(c, results, settings, others), c), results, settings) for c in claims])
+    taken = {(src.get("sheet"), src.get("cell")) for c in candidates if c.get("origin") == FORECAST_FILE for src in c.get("sources") or ()}
+    claims += _expand(plan_candidates(results, taken))          # the statement's plan cells (docs/design/pnl-lines.md section 4)
+    rows = [_value_at_stake(_mark_auto(_row(c, results, settings, others), c), results, settings) for c in claims]
+    rows = _rank(_compare_plan(rows, results))
     _overlaps(rows)
     from . import claim_groups      # the relationships of docs/specs/claim-groups.md; a part adds no exposure of its own
     claim_groups.annotate(rows, settings.get("group_choices"), settings.get("fiscal_year_end"))
