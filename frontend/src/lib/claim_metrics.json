@@ -21,6 +21,7 @@
     "Revenue growth": "%",
     "ARR growth": "%",
     "MRR growth": "%",
-    "Customer growth": "%"
+    "Customer growth": "%",
+    "Revenue growth multiple": "x"
   }
 }

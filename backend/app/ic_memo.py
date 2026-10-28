@@ -16,7 +16,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from app import claim_groups as cg
 from app import claim_matching as cm
-from app import disclosure
+from app import deck_actuals, disclosure
 from app import formatting as fmt
 from app import integrity as integrity_mod
 from app import verdict as vd
@@ -598,6 +598,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     asks += [f"- {r}" for r in integrity["data_requests"]]        # a Blocked integrity check is a data request (integrity-coverage.md 3)
     asks += [f"- {q}" for q in vd.management_questions(results)]
     asks += [f"- {o['item']}: {o['requested']}" for o in vd.other_requests(results) if o["requested"]]
+    asks += [f"- {a[0].upper()}{a[1:]}" for a in deck_actuals.data_requests(rows)]       # deck-actuals.md section 6: the table behind a deck-only metric
     app += ["Requests", *asks, ""]
     inventory = _step_narrative(narratives, "data_inventory")
     if inventory and inventory.get("next_actions"):
@@ -612,6 +613,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         width = max(len(r) for r in t["rows"])
         rows_ = [r + [""] * (width - len(r)) for r in t["rows"]]
         app += [f"{t['sheet']}{cite}", _table(rows_[0], rows_[1:]), ""]
+    app += _glossed(deck_actuals.appendix_lines(rows, results))        # deck-actuals.md section 3: the details block of each metric, from stored data
     if rec.get("available") and rec.get("by_month"):
         cite = notes.source("Revenue reconciliation", "revenue_reconciliation.by_month", (rec.get("source") or {}).get("revenue_file"))
         app += [f"Revenue reconciliation by month{cite}",

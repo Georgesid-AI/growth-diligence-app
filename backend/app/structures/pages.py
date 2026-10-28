@@ -152,6 +152,9 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
     cell = by_id[item["value_cell"]]
     period_cells = [by_id[c]["text"] for c in item.get("period_cells") or () if c in by_id]
     label = item.get("label_text") or (by_id[item["label_cell"]]["text"] if item.get("label_cell") in by_id else None)     # label_cell only locates label_text
+    layout = association.Layout(grid)
+    if not label or layout.is_heading(label):       # a heading names the page, not a segment: the nearest legend item or rotated chart label does (deck-actuals.md section 4)
+        label = layout.nearest_label(cell) or label
     unit = item.get("unit_other") if item.get("unit") == "other" else item.get("unit")
     target, stated = _target_date(item.get("period")), (" ".join(period_cells) or item.get("period"))
     source = {"file": deck["file"], **_where(grid), "kind": "page", "cell": item["value_cell"]}
@@ -175,7 +178,7 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
         "period_cells": list(item.get("period_cells") or []), "basis": item.get("basis"), "scenario": item.get("scenario") or checker.NO_SCENARIO,
         "flags": list(item.get("flags") or []), "proposed_flags": [],
         "page_segment": item.get("segment"), "page_share_of": item.get("share_of"),      # as printed, shown on the row (page-image.md section 4)
-        "heading_metric": association.Layout(grid).heading_metric(cell),      # the one metric word of the title over the figure; a closed word, no text
+        "heading_metric": layout.heading_metric(cell),      # the one metric word of the title over the figure; a closed word, no text
     }
     claims.recurring_year_end(candidate)             # "MRR in 2021" is Dec 2021 (issue #151)
     found = claims.period_range(candidate["target_date"], fiscal_year_end) if candidate.get("period_read_note") else \

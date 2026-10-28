@@ -3928,3 +3928,27 @@ def test_the_not_calculated_reasons_hold_closed_words_and_a_period_token_never_t
     assert unavailable["calc_lines"][0].startswith("Required growth: not calculated – population differs")
     for r in (row, unavailable):
         assert all(secret not in str(v) for v in (*r["calc_lines"], *r["calc_details"], r["reason"], r["relationship"], r["gloss"]))
+
+
+def test_the_deck_actuals_reasons_and_details_hold_figures_and_closed_words_and_the_one_label_of_the_inputs_and_reach_no_model():
+    """docs/design/deck-actuals.md: "deck differs from file" and "Deck only" are closed sentences with figures; the details block is built from stored
+    data with no model call, and the label as printed is held in its inputs only (and in the segment name of a part, as the segment rule already allows)."""
+    from app import deck_actuals
+    sentinel = "Zephyr Holdings"
+    base = {"id": "x1", "status": "approved", "origin": "ai", "ai_status": "matched", "claim_type": "revenue", "currency": "EUR", "target_date": "2026-12",
+            "period_text": "Dec 2026", "snippet": "EUR 100", "label_from": f"{sentinel} Revenue", "file": "deck.pptx", "order": 0, "basis": "actual",
+            "sources": [{"file": "deck.pptx", "slide": 3}]}
+    from app.decks import claims as deck_claims
+    results = {**_results_with_the_series(), "as_of_month": "2026-12", "mrr_series": {"months": ["2026-12"], "segments": [], "source": SOURCE,
+                                                                                    "data": [{"month": "2026-12", "total": 500.0}]}}
+    for value in (4800.0, 100.0):
+        out = claim_matching.build_register([deck_claims.resolve_period({**base, "value": value}, 12)], results,
+                                            {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
+        assert out["deck_status"] in (deck_actuals.DIFFERS_STATUS, deck_actuals.TAG, deck_actuals.CONSISTENT, None), out["reason"]
+        elsewhere = {k: v for k, v in out.items() if k not in ("details", "segment", "relationship", "gate_sentence")}
+        assert sentinel not in json.dumps(elsewhere, default=str)
+        if out["details"]:
+            assert [i["label"] for i in out["details"]["inputs"]] == [f"{sentinel} Revenue"]
+            assert sentinel not in out["details"]["formula"] and sentinel not in json.dumps(out["details"]["checked"]), "formula and checks say the metric"
+    assert deck_actuals.DIFFERS_REASON.format(deck="€1", file="€2") == "deck differs from file: deck €1, file €2"
+    assert "app.llm" not in inspect.getsource(deck_actuals) and "gateway" not in inspect.getsource(deck_actuals)

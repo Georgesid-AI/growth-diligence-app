@@ -27,14 +27,14 @@ def test_an_approved_ai_claim_within_tolerance_is_verified_and_outside_it_is_con
     assert (inside["evidence_label"], inside["deck_reading"]) == ("Verified", "AI suggestion, not verified")
     assert "not verified" not in inside["reason"] and "analyst edits" not in inside["reason"]
     outside = run_claim({**NRR, **AI, "value": 120})
-    assert outside["evidence_label"] == "Contradicted"
+    assert (outside["evidence_label"], outside["deck_status"]) == ("Unverified", "differs"), "deck-actuals.md: a past period is management data, not a claim"
 
 
 def test_an_approved_ai_claim_that_beats_the_data_is_a_verified_beat():
     revenue = {"claim_type": "revenue", "snippet": "Revenue", "currency": "EUR", "target_date": "2024-02", **AI}
     observed = run_claim({**revenue, "value": 1})["observed_value"]
     row = run_claim({**revenue, "value": observed * 0.8})
-    assert (row["evidence_label"], row["gap_kind"]) == ("Verified", "beat") and row["reason"].startswith(cm.BEAT_PREFIX)
+    assert (row["evidence_label"], row["deck_status"]) == ("Unverified", "differs"), "deck-actuals.md: either way beyond tolerance, the deck differs from the file"
 
 
 # --- 2. value at stake ----------------------------------------------------------------------------------------------------

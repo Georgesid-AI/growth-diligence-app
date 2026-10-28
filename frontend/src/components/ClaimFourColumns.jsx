@@ -57,8 +57,9 @@ export function fourCells({ row, ccy, auditId, labelRow, reason, prefix = "regis
       )}
     </>
   );
-  const source = row.observed_citation || path || row.page_ref ? (
+  const source = row.source || row.observed_citation || path || row.page_ref ? (
     <>
+      {row.source && <div className="text-slate-800" data-testid={`${prefix}source-ref`}>{row.source}</div>}
       {row.observed_citation && (
         <div className="font-mono text-[10px] text-slate-500 break-words" data-testid={`${prefix}observed-citation`}>{row.observed_citation}</div>
       )}
