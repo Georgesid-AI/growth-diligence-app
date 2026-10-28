@@ -1484,6 +1484,21 @@ def _forecast_view(results: dict, metric: Optional[str], segment: str, start: Op
     return {"lines": view["lines"], "details": view["details"], "text": view["text"]}
 
 
+def yearly_year(results: dict, start: int, end: int):
+    """(year, reason) for a claim period [start, end] (month indexes) against the yearly columns of the P&L read as a statement
+    (dates-and-periods.md section 3): the column whose first and last month are the claim's, else None with `period not covered` when a
+    column of the same year number ends in another month (never a mismatch), else None with no reason. The one rule for every claim
+    matched against a yearly column."""
+    years = (results.get("yearly_basis") or {}).get("years") or []
+    year = next((y for y in years if y.get("period_start") == _ms(start) and y.get("period_end") == _ms(end)), None)
+    if year is not None:
+        return year, None
+    other = next((y for y in years if (y.get("period_end") or "")[:4] == _ms(end)[:4] and y.get("period_end") != _ms(end)), None)
+    if other:
+        return None, PERIOD_NOT_COVERED.format(claim=period_words(_ms(end)), name=other["period"], file=period_words(other["period_end"]))
+    return None, None
+
+
 def _annual_payback(out: dict, results: dict, text: str, start: int, end: int):
     """(observed, observed_at, source, reason) of a CAC payback claim whose period is one fiscal year, read against the yearly-basis block
     (forecast-and-payback.md section 4): both proxies are listed in `calc_lines`, and the claim is compared with one of them only when its own
@@ -1499,14 +1514,9 @@ def _annual_payback(out: dict, results: dict, text: str, start: int, end: int):
             out.update(evidence_analysis=str(item.get("metric")), evidence_source_key=MISSING_KEY)
         return f"Unverified|{reason}", None, None, None
 
-    year = next((y for y in results["yearly_basis"]["years"] if y.get("period_start") == _ms(start) and y.get("period_end") == _ms(end)), None)
+    year, why_not = yearly_year(results, start, end)
     if year is None:
-        other = next((y for y in results["yearly_basis"]["years"] if (y.get("period_end") or "")[:4] == _ms(end)[:4]
-                      and y.get("period_end") != _ms(end)), None)
-        if other:            # same year number, another year-end month: the file does not cover the claim's period
-            return blocked(ANNUAL_NOT_CALCULATED.format(year=label, reason=PERIOD_NOT_COVERED.format(
-                claim=period_words(_ms(end)), name=other["period"], file=period_words(other["period_end"]))))
-        return blocked(ANNUAL_NOT_CALCULATED.format(year=label, reason=ANNUAL_NO_YEAR))
+        return blocked(ANNUAL_NOT_CALCULATED.format(year=label, reason=why_not or ANNUAL_NO_YEAR))
     name = year["period"]
     gm = year.get("gross_margin_pct")
     proxies = ((payback_definition.REVENUE_GROWTH, "revenue-growth proxy", year.get("cac_payback_months"), year.get("cac_payback_reason"),

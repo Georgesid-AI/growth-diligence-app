@@ -160,3 +160,16 @@ def test_year_on_year_revenue_growth_runs_fiscal_year_to_fiscal_year_for_a_june_
     assert rows[6]["observed_at"] == "2018-07 to 2019-06 vs 2017-07 to 2018-06", "the twelve months to June against the twelve before"
     assert rows[6]["period_coverage"] == "Covered"
     assert rows[12]["observed_at"] != rows[6]["observed_at"]
+
+
+def test_every_reader_of_a_yearly_column_gets_the_same_end_month_rule():
+    june = yearly_input()
+    for a in june["actual"]:
+        a["start"], a["end"] = f"{a['year'] - 1}-07", f"{a['year']}-06"
+    results = payback_results(june)
+    month = lambda y, m: y * 12 + m - 1  # noqa: E731  (the register's month index)
+    year, why = cm.yearly_year(results, month(2023, 7), month(2024, 6))
+    assert year["period"] == "FY2024" and why is None, "both end in June: matched"
+    year, why = cm.yearly_year(results, month(2024, 1), month(2024, 12))
+    assert year is None and why == "period not covered: the claim's period ends Dec 2024, the file's FY2024 ends Jun 2024"
+    assert cm.yearly_year(results, month(2030, 1), month(2030, 12)) == (None, None), "no column of that year: not this reason"
