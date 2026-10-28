@@ -141,7 +141,7 @@ describe("the screen", () => {
     expect(q("run-audit").disabled).toBe(false);
   });
 
-  test("the strip holds currency, the as-of month and (not December) the fiscal year-end, each read-only with a Change link that opens its field and its help", async () => {
+  test("the strip holds currency, the as-of month and the fiscal year-end, each read-only with a Change link that opens its field and its help", async () => {
     await mount({ audit: { ...WITH_SERIES, fiscal_year_end: 6, as_of_month: "2026-06-30", as_of_by: "analyst" } });
     const strip = q("audit-setup");
     expect(strip.textContent).toContain("Reporting currency: EUR");

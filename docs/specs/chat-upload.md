@@ -39,7 +39,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   with its help text, the Board deck box; (c) the mapped files, one summary line per file with "show all lines"; the FX settings (§16) follow; (d) the
   assumptions strip, read-only with a Change link on each item: reporting currency, as-of month ("As-of month: Dec 2021 (detected from <file>) · Change",
   "(set by analyst)" after a typed value; Change opens the typed month-and-year input with the help line "Last month of actual figures. Months after it are
-  read as plan.") and fiscal year-end, shown only when not December or when changed (a December audit gets a "Set fiscal year-end" link); (e) Run audit;
+  read as plan.") and fiscal year-end ("Fiscal year-end: December · Change", always shown); (e) Run audit;
   (f) two parked blocks, grey cards with a title, one sentence and their fields: "Path to plan (needs more data)" (Target ARR, Target date; the sentence
   is "Calculates the growth rate the plan needs to reach the target. Needs a monthly revenue series (MRR or ARR) up to the as-of month. The
   expansion-adjusted version also needs revenue by customer and month."; the fields are disabled until the revenue file's months are known, and stored values

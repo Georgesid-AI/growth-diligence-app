@@ -59,20 +59,18 @@ export function ConsentBlock({ audit, setAudit }) {
 }
 
 /**
- * The assumptions strip under the mapped files: reporting currency, as-of month and (not December, or changed) fiscal year-end, each read-only
+ * The assumptions strip under the mapped files: reporting currency, as-of month and fiscal year-end, each read-only
  * with a Change link that opens its field. The as-of month is a typed month and year, detected from the files unless set; the page holds it
  * (`asOf`, `setAsOf`) and sends it when it computes.
  */
 export function AssumptionsSetup({ audit, setAudit, asOf, setAsOf }) {
   const save = useSave(audit, setAudit);
   const [editing, setEditing] = useState(null);                  // "currency" | "as_of" | "fy" | null
-  const [fyOpened, setFyOpened] = useState(false);               // fiscal year-end was opened in this session: it stays shown
   // The server holds the one as-of month (detected on Map or typed): the page follows it.
   useEffect(() => { setAsOf(asOfInputValue(audit.as_of_month)); }, [audit.as_of_month]);       // eslint-disable-line react-hooks/exhaustive-deps
   const [asOfText, setAsOfText] = useState(asOfDisplay(asOf));
   useEffect(() => { setAsOfText(asOfDisplay(asOf)); }, [asOf]);
   const fy = Number(audit.fiscal_year_end) || DEFAULT_FISCAL_YEAR_END;
-  const showFy = fy !== DEFAULT_FISCAL_YEAR_END || fyOpened;
 
   const commitAsOf = async () => {
     const typed = asOfText.trim();
@@ -115,7 +113,7 @@ export function AssumptionsSetup({ audit, setAudit, asOf, setAsOf }) {
               onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} className="h-8 w-40 bg-white border-[#E5E7EB] font-mono" />
             <p className={help} data-testid="setup-help-as_of_month">{SETUP_HELP.as_of_month}</p>
           </>)}
-        {showFy && item("fy", SETUP_LABELS.fiscal_year_end, MONTHS[fy - 1], editing === "fy",
+        {item("fy", SETUP_LABELS.fiscal_year_end, MONTHS[fy - 1], editing === "fy",
           <>
             <Select value={String(fy)} onValueChange={async (v) => { if (await save("fiscal_year_end", { fiscal_year_end: Number(v) }, "Fiscal year-end saved; claim periods re-mapped")) setEditing(null); }}>
               <SelectTrigger data-testid="fiscal-year-end-select" className="h-8 w-36 bg-white border-[#E5E7EB]"><SelectValue /></SelectTrigger>
@@ -125,9 +123,6 @@ export function AssumptionsSetup({ audit, setAudit, asOf, setAsOf }) {
             </Select>
             <p className={help} data-testid="setup-help-fiscal_year_end">{SETUP_HELP.fiscal_year_end}</p>
           </>)}
-        {!showFy && (
-          <button type="button" className={link} data-testid="setup-fy-open" onClick={() => { setFyOpened(true); setEditing("fy"); }}>Set fiscal year-end</button>
-        )}
       </div>
       {asOfWarning(asOf, revenueLastMonth(audit)) && (
         <p className="mt-2 text-[11px] leading-snug text-amber-700" data-testid="setup-warning-as_of_month">{asOfWarning(asOf, revenueLastMonth(audit))}</p>

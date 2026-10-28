@@ -127,19 +127,15 @@ describe("the assumptions strip: the as-of month", () => {
 });
 
 describe("the assumptions strip: fiscal year-end", () => {
-  test("hidden in December, shown when not December", async () => {
+  test("always shown, December included, with a Change link that opens the select", async () => {
     await setup(AUDIT);
-    expect(q("setup-fy")).toBeNull();
+    expect(q("setup-fy").textContent).toBe("Fiscal year-end: December Change");
+    expect(q("setup-fy-open")).toBeNull();
+    await click(q("setup-fy-change"));
+    expect(q("fiscal-year-end-select")).not.toBeNull();
     await act(async () => { root.unmount(); }); host.remove();
     await setup({ ...AUDIT, fiscal_year_end: 3 });
     expect(q("setup-fy").textContent).toBe("Fiscal year-end: March Change");
-  });
-
-  test("a December audit can still set it; once opened it stays shown", async () => {
-    await setup(AUDIT);
-    await click(q("setup-fy-open"));
-    expect(q("fiscal-year-end-select")).not.toBeNull();
-    expect(q("setup-fy").textContent).toContain("Fiscal year-end: December");
   });
 });
 
