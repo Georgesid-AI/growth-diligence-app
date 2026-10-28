@@ -23,7 +23,7 @@ from .llm.schemas import NON_REVENUE_KINDS, RECOGNITION_TYPES  # noqa: F401  (th
 from .structures import redact
 from .structures import sheet as sheet_mod
 
-REASONS = ("no_candidate", "tie", "confidence_80", "row_missing", "label_mismatch", "marked_not_revenue", "not_numeric_enough",
+REASONS = ("no_candidate", "tie", "row_missing", "label_mismatch", "marked_not_revenue", "not_numeric_enough",
            "no_revenue_word", "rules_and_model_disagree", "after_as_of", "not_a_period", "turnover_question",
            "type_unsure")
 MISSING = ("revenue_measure", "reference", "numbers")
@@ -597,8 +597,6 @@ def _row_decision(cands: List[Dict], info: Dict, prop_row: Optional[Dict], marke
                 reason = "turnover_question"
             elif len(cands) > 1 and _same_key(cands[0], cands[1]):
                 reason = "tie"
-            elif first["confidence"] <= cr.MAPPING_THRESHOLD:
-                reason = "confidence_80"
         state = "click" if reason else "auto"
     if chosen["turnover"]:
         if money == "revenue":
@@ -858,8 +856,6 @@ def _finalize_columns(info: Dict, ctx: Dict) -> Dict:
         elif len(measures) > 1 and (_RANK[measures[0]["kind"]], measures[0]["confidence"]) == \
                 (_RANK[measures[1]["kind"]], measures[1]["confidence"]):
             reason = "tie"
-        elif first["confidence"] <= cr.MAPPING_THRESHOLD:
-            reason = "confidence_80"
     state = "you" if chosen["column"] == dec.get("revenue_row") else ("click" if reason else "auto")
     if _is_turnover(chosen["label"]):
         if money == "revenue":
@@ -982,9 +978,10 @@ def model_text(sheets, company_name: Optional[str], mapping: Dict[str, str], wit
                     limit = r
                     break
         keep = sorted({r for r, _, _ in sheet.titles if r <= limit})[-redact.FILE_MAX_TITLE_ROWS:]
-        titles = [{"row": r, "col": c, "text": t[:st.FILE_TYPE_CELL_MAX]} for r, c, t in sheet.titles if r in keep]
+        off = sheet.first_col - 1                      # the columns are printed as the sheet counts them (A = 1), not from the first one kept
+        titles = [{"row": r, "col": c + off, "text": t[:st.FILE_TYPE_CELL_MAX]} for r, c, t in sheet.titles if r in keep]
         shown = sheet.raw_headers if sheet.raw_headers is not None else sheet.headers
-        heads = [{"row": header, "col": c, "text": h[:st.FILE_TYPE_CELL_MAX]} for c, h in enumerate(shown[:redact.FILE_MAX_COLUMNS], 1) if h]
+        heads = [{"row": header, "col": c + off, "text": h[:st.FILE_TYPE_CELL_MAX]} for c, h in enumerate(shown[:redact.FILE_MAX_COLUMNS], 1) if h]
         labels, label_rows = None, []
         if info["layout"] == "labels":
             labels = "metric" if info["mode"] == "metric" else "masked"
@@ -1012,7 +1009,8 @@ def model_text(sheets, company_name: Optional[str], mapping: Dict[str, str], wit
                 profiles[c] = st._profile([v for _, v in values])
         out.append({"name": cells[0]["text"], "titles": cells[1:1 + n_titles], "headers": cells[1 + n_titles:1 + n_titles + n_heads],
                     "labels": labels, "label_rows": [(r["row"], r["text"]) for r in cells[1 + n_titles + n_heads:]],
-                    "samples": _sample_rows(numeric, file_hash), "profiles": profiles})
+                    "samples": {c + off: v for c, v in _sample_rows(numeric, file_hash).items()},
+                    "profiles": {c + off: v for c, v in profiles.items()}})
     return redact.recognition_text(out)
 
 
@@ -1021,7 +1019,6 @@ def model_text(sheets, company_name: Optional[str], mapping: Dict[str, str], wit
 # ---------------------------------------------------------------------------
 NO_MAPPING_TYPES = ("monthly_revenue_report", "revenue_summary", "financial_statements", "arr_mrr_snapshot")
 SAME_SOURCE = "Not applicable – same source"
-CONFIRM_ONLY = ("confidence_80",)          # the reasons that wait for a confirmation only (section 7)
 SERIES_RULES = {
     "row": "Revenue = the confirmed revenue row, one value per month up to the last actual month",
     "recurring": "Revenue series read from an MRR or ARR line, not computed from customers, one value per month up to the last actual month",
@@ -1120,6 +1117,9 @@ def proposal_from(reply: Dict, sheets, company_name: Optional[str], mapping: Dic
         return None
     out = {k: reply.get(k) for k in ("sheet", "file_type", "currency")}
     out["non_revenue_rows"] = [{"row": x["row"], "kind": x["kind"]} for x in reply.get("non_revenue_rows") or []]
+    cue = reply.get("boundary_cue")
+    out["last_actual_column"] = reply.get("last_actual_column")        # a suggestion: as_of.suggestion checks it against the sheet
+    out["boundary_cue"] = {"cell": cue["cell"], "text": cue["text"]} if cue else None
     row = reply.get("revenue_row")
     out["revenue_row"] = None
     if row:
@@ -1143,12 +1143,12 @@ def has_monthly_series(result: Optional[Dict]) -> bool:
 
 def pnl_confirmed(result: Optional[Dict]) -> bool:
     """A P&L satisfies the required revenue file when its recognition is confirmed with two or more periods and gives a monthly series
-    (section 8): no part in click and the revenue row or column decided by the analyst."""
+    (section 8): no part in click and the revenue row or column accepted (read by the rules, or decided by the analyst)."""
     if not result or not result.get("recognised") or result.get("periods", 0) < 2 or result.get("needs_click") \
             or not has_monthly_series(result):
         return False
     row = result.get("revenue_row") or result.get("revenue_column")
-    return bool(row and row["state"] == "you")
+    return bool(row and row["state"] in ("auto", "you"))
 
 
 def engine_feed(result: Dict, file: str, sheet_name: str, unit_scale: int = 1, from_pnl: bool = False) -> Optional[Dict]:

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  TYPE_LABELS, TYPE_SOURCE_TEXT, TYPE_REASON_TEXT, TYPE_CHOOSE, REASON_TEXT, MONTH_REASON_TEXT, CONFIRM_ONLY, TURNOVER_QUESTION,
+  TYPE_LABELS, TYPE_SOURCE_TEXT, TYPE_REASON_TEXT, TYPE_CHOOSE, REASON_TEXT, MONTH_REASON_TEXT, TURNOVER_QUESTION,
   REUPLOAD_NOTE, offersReport, supportsText, rowText, rowChoice, monthText, lastActualText, claimsText, currencyChoices, CURRENCY_NOT_FOUND, TABLES_TEXT, sourceText, SOURCE_CHOICES,
 } from "@/lib/recognition";
 
@@ -60,10 +60,8 @@ export default function RecognitionLine({ view, decide, reportingCurrency }) {
   const row = rec.revenue_row || rec.revenue_column;
   const last = rec.last_actual;
   const rowKey = rec.revenue_column ? "column" : "row";
-  const rowWaitsConfirm = row && row.state === "click" && CONFIRM_ONLY.includes(row.reason);
-  const rowNeedsChoice = row && row.state === "click" && !CONFIRM_ONLY.includes(row.reason) && row.reason !== "turnover_question";
-  const rowLine = rowNeedsChoice ? `Revenue row: choose the row. ${REASON_TEXT[row.reason] || ""}`.trim()
-    : rowWaitsConfirm ? `${rowText(row)}. ${REASON_TEXT[row.reason]}` : row ? rowText(row) : null;
+  const rowNeedsChoice = row && row.state === "click" && row.reason !== "turnover_question";
+  const rowLine = rowNeedsChoice ? `Revenue row: choose the row. ${REASON_TEXT[row.reason] || ""}`.trim() : row ? rowText(row) : null;
   const lastWaits = last && last.state === "click";
   const lastLine = lastWaits ? `Last actual column: not read. ${MONTH_REASON_TEXT[last.reason] || ""}`.trim() : lastActualText(last);
 
@@ -103,10 +101,7 @@ export default function RecognitionLine({ view, decide, reportingCurrency }) {
       {row && (
         <div>
           <span data-testid={id("row")}>{rowLine}</span>
-          {row.state === "auto" && (
-            <Button size="sm" variant="outline" disabled={busy} data-testid={id("row-correct")} className={SMALL}
-              onClick={() => send({ action: "confirm", part: "revenue_row" })}>Correct</Button>)}
-          {!rowNeedsChoice && <button type="button" data-testid={id("row-change")} onClick={() => toggle("row")} className="ml-2 underline hover:text-slate-900">Change</button>}
+          {!rowNeedsChoice && <>{" · "}<button type="button" data-testid={id("row-change")} onClick={() => toggle("row")} className="underline hover:text-slate-900">Change</button></>}
           {rowSelect}
         </div>
       )}
@@ -122,12 +117,6 @@ export default function RecognitionLine({ view, decide, reportingCurrency }) {
       {last && lastLine && (
         <div>
           <span data-testid={id("last")}>{lastLine}</span>
-        </div>
-      )}
-      {rowWaitsConfirm && (
-        <div>
-          <Button size="sm" variant="outline" disabled={busy} data-testid={id("correct")} className="h-6 px-2"
-            onClick={() => send({ action: "confirm", part: "pending" })}>Correct</Button>
         </div>
       )}
       {currency.state === "confirm" && currency.mixed ? null : currency.state === "confirm" ? (

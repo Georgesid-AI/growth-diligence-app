@@ -36,6 +36,7 @@ import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from app import as_of  # noqa: E402
 from app import formatting as fmt  # noqa: E402
+from app import run_audit  # noqa: E402
 from app.llm import gateway  # noqa: E402
 from schemas import metrics  # noqa: E402
 from schemas.metrics import ContractError, MetricsPayload  # noqa: E402
@@ -865,10 +866,31 @@ def test_run_audit_engine_on_a_stale_audit_clears_the_flag_through_to_results(ap
     monkeypatch.setattr(server, "_mapping_counts", counts)
     monkeypatch.setattr(server, "_run_compute", compute)
     assert api.get(f"/api/audits/{AUDIT_ID}/results").status_code == 409
+    api.db["audits"].docs[0]["as_of_month"] = "2024-02-29"
     r = api.post(f"/api/audits/{AUDIT_ID}/run/engine")
     assert r.status_code == 200 and r.json()["status"] == "done" and api.recomputed == [AUDIT_ID]
     assert api.get(f"/api/audits/{AUDIT_ID}/results").status_code == 200
     assert api.get(f"/api/audits/{AUDIT_ID}").json()["results_stale"] is False
+
+
+def test_run_audit_engine_waits_for_an_as_of_month_when_the_files_gave_none_and_the_analyst_typed_none(api, monkeypatch):
+    """dates-and-periods.md section 2: no suggestion, no month; Run audit stops at the engine stage until the analyst sets one."""
+    api.db["audits"].docs[0].update(status="mapped", as_of_month=None, as_of_by="detected")
+    api.db["datasets"].docs.append({"audit_id": AUDIT_ID, "dtype": "revenue", "mapped_at": "2026-01-01"})
+
+    async def counts(audit_id, audit, datasets=None):
+        return {"open": 0, "missing_required": 0}, True
+
+    async def compute(audit_id):
+        api.recomputed.append(audit_id)
+        return cf.stored(nrr=cf.nrr(1.0641, 100))
+
+    monkeypatch.setattr(server, "_mapping_counts", counts)
+    monkeypatch.setattr(server, "_run_compute", compute)
+    out = api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()
+    assert (out["status"], out["message"]) == ("failed", run_audit.AS_OF_CHECK) and api.recomputed == []
+    api.put(f"/api/audits/{AUDIT_ID}", json={"as_of_month": "2024-02-29"})
+    assert api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()["status"] == "done" and api.recomputed == [AUDIT_ID]
 
 
 def test_stale_results_read_stale_re_run_audit_on_the_review_the_verdict_and_the_memo_not_compute_the_audit_first(api):

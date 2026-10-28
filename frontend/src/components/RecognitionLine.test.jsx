@@ -48,11 +48,6 @@ const CLICK = {
   last_actual: { ...AUTO.last_actual, state: "click", reason: "after_as_of" },
   currency: { code: null, state: "confirm" },
 };
-// the row waits only for a confirmation (the confirm-only reason confidence_80)
-const CONFIRM_ONLY = {
-  ...AUTO, needs_click: true,
-  revenue_row: { ...AUTO.revenue_row, state: "click", reason: "confidence_80", confidence: 80 },
-};
 const view = (recognition, over = {}) => ({ dtype: "revenue", file: "report.csv", recognition, ...over });
 
 let root, host, decide;
@@ -145,17 +140,18 @@ describe("yearly columns and recurring rows (decisions of 19 Oct 2026)", () => {
   test("a recurring row is called a recurring row and never a revenue row", async () => {
     await mount({ ...AUTO, revenue_row: { ...AUTO.revenue_row, row: 5, label: "MRR", kind: "recurring" } });
     expect(q("recognition-row-revenue").textContent).toBe("Recurring row: MRR (row 5)");
-    expect(q("recognition-row-correct-revenue").textContent).toBe("Correct");
+    expect(q("recognition-row-correct-revenue")).toBeNull();
     expect(host.textContent).not.toMatch(/Revenue row/);
   });
 });
 
 describe("the proposed revenue row and the last actual column", () => {
-  test("an accepted proposal shows the row with Correct and Change, and the last actual column read-only", async () => {
+  test("an accepted proposal shows the row with Change only, and the last actual column read-only", async () => {
     await mount(AUTO);
     expect(q("recognition-row-revenue").textContent).toBe("Revenue row: Recognised revenue (EUR) (row 4)");
+    expect(q("recognition-row-revenue").parentElement.textContent).toBe("Revenue row: Recognised revenue (EUR) (row 4) · Change");
     expect(q("recognition-last-revenue").textContent).toBe("Last actual column: FY 2025 (from as-of month Jun 2025)");
-    expect(q("recognition-row-correct-revenue").textContent).toBe("Correct");
+    expect(q("recognition-row-correct-revenue")).toBeNull();
     expect(q("recognition-row-change-revenue").textContent).toBe("Change");
     for (const gone of ["last-correct", "last-change", "last-select"]) expect(q(`recognition-${gone}-revenue`)).toBeNull();
   });
@@ -163,13 +159,6 @@ describe("the proposed revenue row and the last actual column", () => {
   test("a column with no header reads as the last actual month", async () => {
     await mount({ ...AUTO, last_actual: { ...AUTO.last_actual, label: null } });
     expect(q("recognition-last-revenue").textContent).toBe("Last actual month: Jun 2025 (from as-of month Jun 2025)");
-  });
-
-  test("Correct confirms the part and sends nothing else", async () => {
-    await mount(AUTO);
-    await click(q("recognition-row-correct-revenue"));
-    expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "revenue_row" });
-    expect(decide).toHaveBeenCalledTimes(1);
   });
 
   test("Change opens the candidate rows and sends the choice", async () => {
@@ -273,7 +262,7 @@ describe("wording", () => {
 
   test("every reason code has a closed text that names what to do and mentions neither confidence nor cost", () => {
     const { REASON_TEXT } = load();
-    const codes = ["no_candidate", "tie", "confidence_80", "row_missing", "label_mismatch", "marked_not_revenue", "not_numeric_enough",
+    const codes = ["no_candidate", "tie", "row_missing", "label_mismatch", "marked_not_revenue", "not_numeric_enough",
       "no_revenue_word", "rules_and_model_disagree", "after_as_of", "not_a_period", "turnover_question", "type_unsure"];
     expect(Object.keys(REASON_TEXT).sort()).toEqual([...codes].sort());
     for (const code of codes) {
@@ -309,21 +298,16 @@ describe("review follow-ups (second round, 19 Oct 2026)", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "file_type" });
   });
 
-  test("a row that waits only for a confirmation has one Correct button", async () => {
-    await mount(CONFIRM_ONLY);
-    expect(q("recognition-row-revenue").textContent).toBe("Revenue row: Recognised revenue (EUR) (row 4). Please confirm the revenue row.");
+  test("a row the rules read with confidence 80 is accepted with no Correct button and no confirm state", async () => {
+    await mount({ ...AUTO, revenue_row: { ...AUTO.revenue_row, confidence: 80 } });
+    expect(q("recognition-row-revenue").textContent).toBe("Revenue row: Recognised revenue (EUR) (row 4)");
     expect(q("recognition-row-correct-revenue")).toBeNull();
-    expect(q("recognition-row-select-revenue")).toBeNull();
-    expect(all("recognition-correct-revenue").length).toBe(1);
-    expect(q("recognition-correct-revenue").textContent).toBe("Correct");
+    expect(q("recognition-correct-revenue")).toBeNull();
     expect(q("recognition-row-change-revenue")).not.toBeNull();
-    await click(q("recognition-correct-revenue"));
-    expect(decide).toHaveBeenCalledTimes(1);
-    expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "pending" });
   });
 
   test("a row that needs a choice keeps its drop-down and no Correct", async () => {
-    await mount({ ...CONFIRM_ONLY, revenue_row: { ...AUTO.revenue_row, state: "click", reason: "rules_and_model_disagree" } });
+    await mount({ ...AUTO, needs_click: true, revenue_row: { ...AUTO.revenue_row, state: "click", reason: "rules_and_model_disagree" } });
     expect(q("recognition-row-select-revenue")).not.toBeNull();
     expect(q("recognition-correct-revenue")).toBeNull();
   });
@@ -332,8 +316,9 @@ describe("review follow-ups (second round, 19 Oct 2026)", () => {
     await mount({ ...AUTO, file_type: "financial_statements", other_sheets: [] }, { dtype: "pnl", file: "pnl.csv" });
     expect(q("recognition-type-pnl").textContent).toBe("Type: Financial statements (by rules)");
     expect(q("recognition-type-revenue")).toBeNull();
-    await click(q("recognition-row-correct-pnl"));
-    expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "pnl" }), { action: "confirm", part: "revenue_row" });
+    expect(q("recognition-row-correct-pnl")).toBeNull();
+    await click(q("recognition-row-change-pnl"));
+    expect(q("recognition-row-select-pnl")).not.toBeNull();
   });
 
   test("S4 says what the audit now accepts and keeps the rest of the drop-zone text", () => {

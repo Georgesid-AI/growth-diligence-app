@@ -55,6 +55,23 @@ def test_two_stored_copies_of_one_candidate_are_listed_once_with_both_page_refer
     assert len(answered) == 1 and answered[0]["status"] == "approved", "the copy the analyst answered stands"
 
 
+def test_two_readings_of_one_figure_that_fold_keep_the_metric_name_over_the_page_heading_and_all_page_references():
+    from app.decks import claims
+    cell = {"page": 3, "cell": "r9c8", "kind": "page"}
+    other = {"page": 12, "cell": "r9c8", "kind": "page"}
+    heading = {"id": "a", "deck_id": "d", "structure_key": "k", "order": 3, "cell": "r9c8", "status": "pending", "sources": [cell],
+               "label_from": "2021 REVENUE"}
+    metric = {**heading, "id": "b", "sources": [cell, other], "label_from": "Recognised Revenue"}
+    for pair in ([heading, metric], [metric, heading]):
+        folded = claims.fold_twins(pair)
+        assert len(folded) == 1 and folded[0]["label_from"] == "Recognised Revenue", "a metric name beats a heading with the year"
+        assert {s["page"] for s in folded[0]["sources"]} == {3, 12}, "both page references stay"
+    longer = claims.fold_twins([{**heading, "label_from": "Revenue"}, {**heading, "id": "b", "label_from": "Net recognised revenue"}])
+    assert longer[0]["label_from"] == "Net recognised revenue", "of two alike, the longer"
+    assert claims.fold_twins([{**heading, "label_from": None}, {**heading, "id": "b", "label_from": "MRR"}])[0]["label_from"] == "MRR"
+    assert claims.fold_twins([{**heading, "label_from": "MRR"}, {**heading, "id": "b", "label_from": None}])[0]["label_from"] == "MRR"
+
+
 def _waiting(db):
     db["datasets"].docs[0]["mapped_at"] = "2026-10-05T00:00:00"
     db["audits"].docs[0]["structure_reading_consent"] = True

@@ -1464,7 +1464,7 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "extraction_confidence", "with_confidence", "confidence_level", "EVIDENCE_STATUSES", "MEMO_GROUPS", "QUALIFIED_NO_FIGURE",
                             "EXTRACTION_EXPLAINER", "EVIDENCE_EXPLAINER", "POPULATION_PREFIX", "NOT_VERIFIED",
                             # docs/specs/dates-and-periods.md: coverage, the growth basis and their reasons
-                            "period_coverage", "months_missing", "growth_basis", "analysis_date", "as_of_by", "as_of_file",
+                            "period_coverage", "months_missing", "growth_basis", "analysis_date", "as_of_by", "as_of_file", "as_of_cue",
                             "NOT_COVERED_REASON", "PARTLY_REASON", "PERIOD_NOT_COVERED", "AFTER_SOURCE_DETAIL", "GROWTH_UNKNOWN_REASON",
                             "GROWTH_WINDOW_REASON", "GROWTH_BASE_REASON", "GROWTH_RULES", "GROWTH_CUES",
                             # docs/specs/claim-types-and-correction.md: the claim fields, the edit log, Add from deck and their reasons
@@ -2549,7 +2549,7 @@ def test_the_period_the_model_is_told_is_two_closed_values_and_never_the_as_of_s
     when the as-of month always counts as complete). The as-of setting, who set it and the requested analysis date are not outbound
     fields."""
     assert {"evidence_to", "last_month_status"} <= gateway.OUTBOUND_TOP_LEVEL
-    assert not ({"as_of_month", "as_of_by", "as_of_file", "requested_analysis_date"} & (gateway.OUTBOUND_TOP_LEVEL | gateway.OUTBOUND_FIELDS))
+    assert not ({"as_of_month", "as_of_by", "as_of_file", "as_of_cue", "requested_analysis_date"} & (gateway.OUTBOUND_TOP_LEVEL | gateway.OUTBOUND_FIELDS))
     out = gateway.period_fields({"source_period": {"month": "2019-06", "status": "Complete", "complete_by": "as_of",
                                                    "evidence_to": "2019-06"}, "as_of_month": "2026-06"})
     assert out == {"evidence_to": "2019-06", "last_month_status": "Complete"}
@@ -2726,8 +2726,9 @@ def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_ha
             assert title not in stored.get(name, ""), (title, name)
     kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
     assert len(kept) == 1 and set(kept[0]) <= {"audit_id", "kind", "file_hash", "prompt_tag", "reply", "saved_at"}
-    assert kept[0]["reply"]["file_type"] == "crm" and set(kept[0]["reply"]) <= {"sheet", "file_type", "revenue_row", "currency", "non_revenue_rows"}
-    assert "last_actual_column" not in kept[0]["reply"], "the as-of month sets the boundary: the model names no column (PR 196 review)"
+    assert kept[0]["reply"]["file_type"] == "crm" and set(kept[0]["reply"]) <= {
+        "sheet", "file_type", "revenue_row", "currency", "non_revenue_rows", "last_actual_column", "boundary_cue"}
+    assert kept[0]["reply"].get("last_actual_column") is None and kept[0]["reply"].get("boundary_cue") is None, "a CRM has no boundary"
     log = "\n".join(r.getMessage() for r in caplog.records)
     for title in FILE_TYPE_TITLES + ("Source inputs", "Annual tracker", "Funnel and evidence", "Account ID", "CRM_Anonymous", chat.COMPANY):
         assert title not in log, f"{title!r} reached a log line"
@@ -3022,6 +3023,34 @@ def test_recognition_the_text_holds_sheet_names_title_rows_and_headers_with_the_
     assert [m.group(1) for m in (re.match(r"^s1 header r3c(\d+): ", line) for line in text.split("\n")) if m] == [str(c) for c in range(1, 14)]
 
 
+def test_recognition_the_columns_are_printed_as_the_sheet_counts_them_so_the_suggested_column_and_cue_address_are_sheet_positions():
+    rec = importlib.import_module("app.recognition")
+    shifted = cr_mod.read_workbook(b",Plan,\n,Metric,Jan-25,Feb-25\n,Revenue,1000,2000\n,Customers,30,40\n,Churn,5,6\n", "x.csv")
+    assert shifted[0].first_col == 2
+    text = rec.model_text(shifted, company_name=RECOGNITION_COMPANY, mapping={}, withheld=RECOGNITION_WITHHELD, file_hash=FILE_HASH)
+    lines = text.split("\n")
+    assert "s1 title r1c2: Plan" in lines and "s1 header r2c3: Jan-25" in lines and "s1 header r2c4: Feb-25" in lines, "B = 2, as in the sheet"
+    assert not any(re.match(r"^s1 (title|header) r\d+c1: ", line) for line in lines), "column A is empty and is not printed as column 1"
+    assert {int(m.group(1)) for m in (re.match(r"^s1 c(\d+) (sample|profile)", line) for line in lines) if m} <= {2, 3, 4}
+
+
+def test_recognition_a_boundary_cue_is_kept_with_the_model_reply_and_the_audit_and_reaches_no_log_line(api, caplog):
+    caplog.set_level(logging.DEBUG)
+    cue = "Forecast scenario"
+    csv = f"Test report,,,\n,Jan 2021,Feb 2021,{cue}\nRevenue,10,20,30\nCustomers,3,4,5\nChurn,1,2,3\n".encode()
+    reply = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report", "revenue_row": {"row": 3, "label": "Revenue"},
+                        "currency": None, "non_revenue_rows": [], "last_actual_column": 3, "boundary_cue": {"cell": "D2", "text": cue}})
+    api.state["adapter"] = t.FakeAdapter(replies=[reply])
+    assert chat.upload(api, "report.csv", csv).status_code == 200
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    assert cue not in log, "the cue text reached a log line"
+    stored = _all_documents(api.db)
+    assert cue not in stored.get("llm_calls", ""), "the call row holds counts and hashes, never text"
+    kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
+    assert kept and kept[0]["reply"]["boundary_cue"] == {"cell": "D2", "text": cue} and kept[0]["reply"]["last_actual_column"] == 3
+    assert api.db["audits"].docs[0].get("as_of_cue") == cue, "the audit keeps the one cue its as-of month was detected by"
+
+
 def test_recognition_the_customer_names_the_audit_already_pseudonymises_take_their_pseudonyms_in_the_title_and_headers():
     rec = importlib.import_module("app.recognition")
     sheets = cr_mod.read_workbook(b"Revenue of Alder Works by month,,\nMetric,Jan-25,Feb-25\nRevenue,1,2\nCustomers,3,4\nChurn,5,6\n", "x.csv")
@@ -3074,9 +3103,17 @@ def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_tex
         assert parse({**good, "file_type": other, "revenue_row": None, "currency": None, "non_revenue_rows": []})
     for bad in ({**good, "confidence": 90}, {**good, "note": "x"}, {**good, "file_type": "deck"}, {**good, "currency": "EURO"},
                 {**good, "non_revenue_rows": [{"row": 9, "kind": "maybe"}]}, {**good, "non_revenue_rows": [{"row": 9, "kind": "forecast", "why": "x"}]},
-                {**good, "last_actual_column": 7}, {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
+                {**good, "last_actual_column": 0}, {**good, "last_actual_column": 7, "boundary_cue": {"cell": "Sheet1!H2", "text": "Forecast"}},
+                {**good, "boundary_cue": {"cell": "H2"}}, {**good, "boundary_cue": {"cell": "H2", "text": "Forecast", "why": "x"}},
+                {**good, "boundary_cue": {"cell": "H2", "text": "x" * 201}}, {**good, "boundary_cue": "H2"},
+                {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
         with pytest.raises(gateway.GatewayError):
             parse(bad)
+    cued = parse({**good, "last_actual_column": 7, "boundary_cue": {"cell": "H2", "text": "Forecast"}})
+    assert (cued.last_actual_column, cued.boundary_cue.cell, cued.boundary_cue.text) == (7, "H2", "Forecast")
+    assert parse({**good, "last_actual_column": None, "boundary_cue": None}).boundary_cue is None
+    for cell in ("D3", "AA12", "r3c4", "r12"):
+        assert parse({**good, "last_actual_column": 4, "boundary_cue": {"cell": cell, "text": "Plan"}})
     kinds = ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
     for kind in kinds:
         assert parse({**good, "non_revenue_rows": [{"row": 9, "kind": kind}]})
@@ -3088,7 +3125,7 @@ def test_recognition_the_words_a_result_can_carry_are_closed_lists_and_hold_no_t
     assert rec.RECOGNITION_TYPES == ("invoice_transactions", "customer_revenue", "monthly_revenue_report", "revenue_summary",
                                      "financial_statements", "arr_mrr_snapshot")
     assert rec.NON_REVENUE_KINDS == ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
-    assert set(rec.REASONS) == {"no_candidate", "tie", "confidence_80", "row_missing", "label_mismatch", "marked_not_revenue",
+    assert set(rec.REASONS) == {"no_candidate", "tie", "row_missing", "label_mismatch", "marked_not_revenue",
                                 "not_numeric_enough", "no_revenue_word", "rules_and_model_disagree", "after_as_of",
                                 "not_a_period", "turnover_question", "type_unsure"}
     assert all(re.fullmatch(r"[a-z0-9_]+", w) for w in rec.REASONS + rec.RECOGNITION_TYPES + rec.NON_REVENUE_KINDS)

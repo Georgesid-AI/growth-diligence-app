@@ -1662,10 +1662,19 @@ def growth_basis(text: str) -> str:
     return found[0] if len(found) == 1 else "unknown"
 
 
+def specific_label(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """The more specific of two labels read for one figure: a metric name ("Recognised Revenue") over a page heading that carries the
+    year or a number ("2021 REVENUE"); of two alike, the longer; of two the same length, the first. A missing label gives the other."""
+    if not a or not b:
+        return a or b
+    rank = lambda text: (not re.search(r"\d", text), len(text.strip()))      # noqa: E731
+    return b if rank(b) > rank(a) else a
+
+
 def fold_twins(candidates: List[Dict]) -> List[Dict]:
     """The stored copies of one candidate shown once: two documents of the same deck, page reply (`structure_key`), order and cell are one
     figure written twice (two reads of a deck at once; live bug, 2026-10-28). The copy the analyst has answered stands, else the first;
-    it takes the other's sources, so both page references stay. Candidates with no structure key (the parser's, the analyst's) are left alone."""
+    it takes the other's sources, so both page references stay, and the more specific of the two labels (specific_label). Candidates with no structure key (the parser's, the analyst's) are left alone."""
     kept: Dict[tuple, Dict] = {}
     out: List[Dict] = []
     for c in candidates:
@@ -1680,7 +1689,7 @@ def fold_twins(candidates: List[Dict]) -> List[Dict]:
             continue
         sources = list(first.get("sources") or []) + [s for s in c.get("sources") or [] if s not in (first.get("sources") or [])]
         winner = c if first.get("status") == "pending" and c.get("status") != "pending" else first
-        winner = {**winner, "sources": sources}
+        winner = {**winner, "sources": sources, "label_from": specific_label(first.get("label_from"), c.get("label_from"))}
         kept[key] = winner
         out[out.index(first)] = winner
     return out
