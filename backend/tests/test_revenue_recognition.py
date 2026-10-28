@@ -338,11 +338,11 @@ def test_the_model_and_the_rules_agree_the_revenue_row_and_the_boundary_are_acce
     assert got["needs_click"] is False and got["type_source"] == "rules"
 
 
-def test_a_rule_confidence_of_exactly_80_needs_a_click_and_81_or_more_does_not(rec):
-    """The thresholds of the column mapping (chat-upload.md 4.1, 21): a label with a revenue word among other words scores 80."""
+def test_a_rule_confidence_of_80_or_more_is_accepted_with_no_click_and_no_confirm_state(rec):
+    """A label with a revenue word among other words scores 80: the row is shown with Change and read (George, 2026-10-28)."""
     text = "Metric,Jan-25,Feb-25,Mar-25\nRevenue - EMEA,100,110,120\nCustomers,4,5,6\nChurn,1,2,3\n"
     got = rec.recognise(csv_sheets(text), as_of_month="2025-03-31")
-    assert (got["revenue_row"]["confidence"], got["revenue_row"]["state"], got["revenue_row"]["reason"]) == (80, "click", "confidence_80")
+    assert (got["revenue_row"]["confidence"], got["revenue_row"]["state"], got["revenue_row"]["reason"]) == (80, "auto", None)
     exact = rec.recognise(csv_sheets(text.replace("Revenue - EMEA", "Revenue")), as_of_month="2025-03-31")
     assert (exact["revenue_row"]["confidence"], exact["revenue_row"]["state"]) == (100, "auto")
 
@@ -731,24 +731,12 @@ def test_a_pnl_with_one_period_never_satisfies_the_revenue_file(api):
     assert "revenue_file_missing" in blocker_kinds(api)
 
 
-def test_a_confirm_only_reason_is_settled_by_one_correct(api):
+def test_a_row_the_rules_read_at_80_is_accepted_without_a_click(api):
     api.db["audits"].docs[0]["structure_reading_consent"] = False        # no as-of month stored, no P&L: the boundary waits for nothing
     text = "Metric,Jan-25,Feb-25,Mar-25,Apr-25\nRevenue - EMEA (EUR),100,110,120,130\nCustomers,4,5,6,7\nChurn,1,2,3,4\nCash,5,6,7,8\n"
     got = upload(api, "emea.csv", text.encode()).json()["recognition"]
-    assert (got["revenue_row"]["state"], got["revenue_row"]["reason"]) == ("click", "confidence_80")
-    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("auto", None)
-    done = decide(api, action="confirm", part="pending")
-    assert done.status_code == 200, done.text
-    after = done.json()["recognition"]
-    assert (after["revenue_row"]["state"], after["last_actual"]["state"]) == ("you", "auto") and after["needs_click"] is False
-
-
-def test_one_correct_does_not_settle_a_part_that_needs_a_choice(api):
-    set_as_of(api)
-    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(revenue_row={"row": 5, "label": "MRR"})])
-    upload(api, MONTHLY, monthly_bytes())
-    after = decide(api, action="confirm", part="pending").json()["recognition"]
-    assert (after["revenue_row"]["state"], after["revenue_row"]["reason"]) == ("click", "rules_and_model_disagree")
+    assert (got["revenue_row"]["state"], got["revenue_row"]["reason"], got["needs_click"]) == ("auto", None, False)
+    assert decide(api, action="confirm", part="pending").status_code == 422, "there is no confirm state and no Correct for the row"
 
 
 def test_a_new_prompt_version_asks_again_for_the_same_bytes(api):

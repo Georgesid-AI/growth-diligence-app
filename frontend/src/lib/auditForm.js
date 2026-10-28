@@ -113,10 +113,18 @@ export const asOfDisplay = (v) => {
   return iso ? `${MONTH_ABBR[Number(iso.slice(5, 7)) - 1][0].toUpperCase()}${MONTH_ABBR[Number(iso.slice(5, 7)) - 1].slice(1)} ${iso.slice(0, 4)}` : "";
 };
 
-/** "(detected from revenue.csv)" or "(set by analyst)"; "" before any month is known. */
+/** "(detected from pnl.xlsx, cue: 'Forecast')", "(detected from revenue.csv)" or "(set by analyst)"; "" before any month is known. */
 export const asOfSourceText = (audit) => {
   if (!audit?.as_of_month) return "";
-  return audit.as_of_by === "analyst" ? "(set by analyst)" : audit.as_of_file ? `(detected from ${audit.as_of_file})` : "(detected)";
+  if (audit.as_of_by === "analyst") return "(set by analyst)";
+  if (!audit.as_of_file) return "(detected)";
+  return `(detected from ${audit.as_of_file}${audit.as_of_cue ? `, cue: '${audit.as_of_cue}'` : ""})`;
+};
+
+/** The as-of value of the assumptions strip: the month with its source, "check" when files are mapped and none gave a month, else "not set". */
+export const asOfStripText = (audit) => {
+  if (audit?.as_of_month) return `${asOfDisplay(audit.as_of_month)} ${asOfSourceText(audit)}`.trim();
+  return audit?.datasets?.revenue || audit?.datasets?.pnl ? "check" : "not set";
 };
 
 /** The revenue file's last month (YYYY-MM) as the screen knows it: the computed source period, else the mapped file's months; null before. */

@@ -90,6 +90,21 @@ describe("the assumptions strip: the as-of month", () => {
     expect(q("asof-month-input")).toBeNull();
   });
 
+  test("a month detected by a cue names it: 'As-of month: Dec 2021 (detected from <file>, cue: 'Forecast')'", async () => {
+    await setup({ ...AUDIT, as_of_month: "2021-12-31", as_of_by: "detected", as_of_file: "pl.xlsx", as_of_cue: "Forecast" }, "2021-12-31");
+    expect(q("setup-as_of").textContent).toBe("As-of month: Dec 2021 (detected from pl.xlsx, cue: 'Forecast') Change");
+  });
+
+  test("mapped files and no month read 'As-of month: check' with Change; no file reads 'not set'", async () => {
+    await setup({ ...AUDIT, datasets: SERIES, as_of_month: null, as_of_by: "detected" }, "");
+    expect(q("setup-as_of").textContent).toBe("As-of month: check Change");
+    await click(q("setup-as_of-change"));
+    expect(q("asof-month-input").value).toBe("");
+    await act(async () => { root.unmount(); }); host.remove();
+    await setup({ ...AUDIT, datasets: {}, as_of_month: null }, "");
+    expect(q("setup-as_of").textContent).toBe("As-of month: not set Change");
+  });
+
   test("Change opens the typed month-and-year input with its help line; a typed month saves and reads '(set by analyst)'", async () => {
     const audit = { ...AUDIT, as_of_month: "2021-12-31", as_of_by: "detected", as_of_file: "pl.xlsx" };
     await setup(audit, "2021-12-31");

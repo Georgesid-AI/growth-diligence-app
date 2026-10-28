@@ -27,7 +27,6 @@ export const TURNOVER_QUESTION = "Is this money the company earned (revenue) or 
 export const REASON_TEXT = {
   no_candidate: "No row looks like revenue. Choose the revenue row.",
   tie: "Two rows fit equally. Choose the revenue row.",
-  confidence_80: "Please confirm the revenue row.",
   row_missing: "The proposed row could not be matched to the sheet. Choose the revenue row.",
   label_mismatch: "The proposed row could not be matched to the sheet. Choose the revenue row.",
   marked_not_revenue: "The proposed row is a forecast, budget, bookings, pipeline, contract value or run-rate row. Choose the revenue row.",
@@ -41,8 +40,6 @@ export const REASON_TEXT = {
 };
 // The same reasons for the last actual column, which the audit's as-of month sets (dates-and-periods.md section 2).
 export const MONTH_REASON_TEXT = REASON_TEXT;
-// The reasons that wait for a confirmation only (they share one Correct button, decision 4).
-export const CONFIRM_ONLY = ["confidence_80"];
 
 const ANALYSIS = {
   customer_level: "customer-level analysis (NRR, gross churn, concentration, cohorts)",

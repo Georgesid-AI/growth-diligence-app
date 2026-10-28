@@ -525,7 +525,6 @@ def test_l2_a_version_4_audit_is_stale_until_run_audit_calculates_it_again_with_
     import copy
     rules_only(api, "2025-06-30")
     assert upload(api, MONTHLY, monthly_bytes()).status_code == 200
-    assert decide(api, action="confirm", part="pending").status_code == 200
     assert run_stage(api, "engine")["status"] == "done"
     audit = api.db["audits"].docs[0]
     old = copy.deepcopy(audit["results"])

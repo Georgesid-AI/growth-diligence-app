@@ -38,70 +38,131 @@ def yearly_pnl(fye):
     return {"dtype": "pnl", "file": "pnl.xlsx", "sheet_map": stored_map(YEARLY), "fye": fye}
 
 
-# --- 1. detection ------------------------------------------------------------------------------------------------------------
+# --- 1. detection: the model's suggested boundary, checked by rules (dates-and-periods.md section 2) ------------------------------
 
-def test_detection_from_a_monthly_revenue_file_is_its_last_month_with_a_non_zero_amount():
+def test_detection_from_a_file_of_invoices_is_its_last_month_with_a_non_zero_amount():
     ds = revenue_file([("2019-04-01", 100), ("2019-05-01", 110), ("2019-06-01", 120), ("2019-07-01", 0), ("2019-08-01", None)])
-    assert as_of.detect({"revenue": ds}) == {"month": "2019-06", "file": "revenue.csv"}
+    assert as_of.detect({"revenue": ds}) == {"month": "2019-06", "file": "revenue.csv", "cue": None}
     assert as_of.month_end("2019-06") == "2019-06-30"
 
 
-@pytest.mark.parametrize("fye, month", [(12, "2023-12"), (6, "2023-06")])
-def test_detection_from_a_yearly_pnl_is_the_fiscal_year_end_month_of_its_last_actual_column(fye, month):
-    found = as_of.detect({"pnl": yearly_pnl(fye)}, fye)
-    assert found == {"month": month, "file": "pnl.xlsx"}, "FY2024 to FY2026 are forecast columns and are never the as-of month"
+def sheet_dataset(text: str, name: str = "pnl.csv", dtype: str = "pnl", column=None, cue=None, **extra) -> dict:
+    """A file read as a sheet, as the server stores it: its sheets and the model's kept proposal (no months, no mapping, no rows)."""
+    sheets = cr.read_workbook(text.encode(), name)
+    proposal = {"sheet": 1, "file_type": "financial_statements", "revenue_row": None, "currency": None, "non_revenue_rows": [],
+                "last_actual_column": column, "boundary_cue": {"cell": cue[0], "text": cue[1]} if cue else None}
+    return {"dtype": dtype, "file": name, "months": None, "mapping": {}, "rows": [], "recognition_sheets": rec.pack_sheets(sheets),
+            "recognition_proposal": proposal, "recognition_decisions": {}, **extra}
 
 
-def test_a_yearly_column_after_the_revenue_files_last_month_is_not_actual_and_the_revenue_month_wins():
-    revenue = revenue_file([("2022-08-01", 100), ("2022-09-01", 120)])
-    assert as_of.detect({"revenue": revenue, "pnl": yearly_pnl(6)}, 6)["month"] == "2022-09", "FY2022 (June) ends before September 2022"
-    assert as_of.detect({"revenue": revenue, "pnl": yearly_pnl(12)}, 12)["month"] == "2022-09", "FY2022 (December) ends after it"
-    assert as_of.detect({"revenue": revenue, "pnl": yearly_pnl(12)}, 12)["file"] == "revenue.csv"
+YEARLY_FORECAST = ("Annual P&L,,,,,,\n,,,,Forecast,,\nLine,FY 2019,FY 2020,FY 2021,FY 2022,FY 2023,FY 2024\n"
+                   "Revenue,100,110,120,130,140,150\nCost of sales,50,55,60,65,70,75\n")
+MONTHS = [f"{m} {y}" for y in (2021, 2022) for m in ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")]
+MONTHLY_FORECAST = ("Monthly report,\n" + "Line," + ",".join(MONTHS) + "\n" + "Revenue," + ",".join(str(100 + i) for i in range(12)) + ",,,,,,,,,,,,\n"
+                    + "Forecast," + ",,,,,,,,,,,," + ",".join(str(200 + i) for i in range(12)) + "\n")
+NO_PLAN_WORD = YEARLY_FORECAST.replace("Forecast", "Notes")
 
 
-def test_with_no_actual_column_up_to_the_revenue_month_the_last_unmarked_column_with_revenue_stands():
-    old = revenue_file([("2019-01-01", 100), ("2019-02-01", 120)])
-    assert as_of.detect({"revenue": old, "pnl": yearly_pnl(12)}, 12) == {"month": "2023-12", "file": "pnl.xlsx"}
+def test_a_yearly_pnl_with_a_forecast_title_over_the_last_three_columns_gives_the_end_of_the_column_before_them():
+    found = as_of.detect({"pnl": sheet_dataset(YEARLY_FORECAST, column=4, cue=("E2", "Forecast"))}, 12)
+    assert found == {"month": "2021-12", "file": "pnl.csv", "cue": "Forecast"}
+    june = as_of.detect({"pnl": sheet_dataset(YEARLY_FORECAST, column=4, cue=("r2c5", "forecast"))}, 6)
+    assert june["month"] == "2021-06", "a yearly column ends in the fiscal year-end month"
 
 
-def test_nothing_detected_without_a_revenue_figure():
+def test_a_monthly_report_with_a_forecast_row_label_gives_the_month_before_it_starts():
+    ds = sheet_dataset(MONTHLY_FORECAST, "report.csv", "revenue", column=13, cue=("r4", "Forecast"))
+    assert as_of.detect({"revenue": ds}) == {"month": "2021-12", "file": "report.csv", "cue": "Forecast"}
+    assert as_of.detect({"revenue": sheet_dataset(MONTHLY_FORECAST, "report.csv", "revenue", column=13, cue=("A4", "Forecast"))})["month"] == "2021-12"
+
+
+def test_with_no_plan_word_anywhere_or_no_suggestion_detection_returns_nothing_and_never_the_last_column_with_a_number():
+    assert as_of.detect({"pnl": sheet_dataset(NO_PLAN_WORD)}) is None, "no suggestion"
+    assert as_of.detect({"pnl": sheet_dataset(NO_PLAN_WORD, column=4, cue=("E2", "Forecast"))}) is None, "the cell says Notes"
+    assert as_of.detect({"pnl": sheet_dataset(NO_PLAN_WORD, column=4, cue=("E2", "Notes"))}) is None, "no plan word in the cell"
+    assert as_of.detect({"revenue": sheet_dataset(MONTHLY_FORECAST.replace("Forecast", "Second"), "r.csv", "revenue", column=13,
+                                                  cue=("r4", "Second"))}) is None
+    assert as_of.detect({"pnl": sheet_dataset(YEARLY_FORECAST)}) is None, "a plan word on the sheet is not a suggestion"
+
+
+@pytest.mark.parametrize("column, cue, why", [
+    (4, ("E3", "FY 2022"), "the cue cell holds no plan word"),
+    (4, ("E2", "Budget"), "the cue text is not the cell's text"),
+    (4, ("Z9", "Forecast"), "the cue cell is not on the sheet"),
+    (5, ("E2", "Forecast"), "the title is over the suggested column, not after it"),
+    (3, ("B2", "Forecast"), "no cell"),
+    (4, ("E4", "Revenue"), "a data cell"),
+    (1, ("E2", "Forecast"), "column A holds labels, not a period"),
+    (99, ("E2", "Forecast"), "the column is not on the sheet"),
+])
+def test_a_suggestion_that_fails_the_check_gives_nothing(column, cue, why):
+    assert as_of.detect({"pnl": sheet_dataset(YEARLY_FORECAST, column=column, cue=cue)}) is None, why
+
+
+def test_a_cue_left_of_the_suggested_column_fails_and_a_merged_title_reaching_past_it_holds():
+    left = YEARLY_FORECAST.replace(",,,,Forecast,,", ",Forecast,,,,,")
+    assert as_of.detect({"pnl": sheet_dataset(left, column=4, cue=("B2", "Forecast"))}) is None, "the title sits over FY 2019"
+    from openpyxl import Workbook
+    import io
+    wb = Workbook()
+    ws = wb.active
+    for row in ([None] * 7, [None] * 7, ["Line", "FY 2019", "FY 2020", "FY 2021", "FY 2022", "FY 2023", "FY 2024"],
+                ["Revenue", 100, 110, 120, 130, 140, 150], ["Cost of sales", 50, 55, 60, 65, 70, 75]):
+        ws.append(row)
+    ws["D2"] = "Forecast"
+    ws.merge_cells("D2:G2")
+    buf = io.BytesIO()
+    wb.save(buf)
+    sheets = cr.read_workbook(buf.getvalue(), "m.xlsx")
+    ds = {**sheet_dataset(YEARLY_FORECAST), "recognition_sheets": rec.pack_sheets(sheets),
+          "recognition_proposal": {"sheet": 1, "last_actual_column": 4, "boundary_cue": {"cell": "D2", "text": "Forecast"}}}
+    assert as_of.detect({"pnl": ds}, 12)["month"] == "2021-12", "the merged title D2:G2 reaches FY 2022 to FY 2024"
+
+
+def test_the_later_month_of_the_two_files_wins_and_the_cue_belongs_to_the_file_it_came_from():
+    pnl = sheet_dataset(YEARLY_FORECAST, column=4, cue=("E2", "Forecast"))
+    later = revenue_file([("2022-08-01", 100), ("2022-09-01", 120)])
+    found = as_of.detect({"revenue": later, "pnl": pnl}, 12)
+    assert found == {"month": "2022-09", "file": "revenue.csv", "cue": None}
+    earlier = revenue_file([("2021-02-01", 100)])
+    assert as_of.detect({"revenue": earlier, "pnl": pnl}, 12) == {"month": "2021-12", "file": "pnl.csv", "cue": "Forecast"}
+
+
+def test_a_pnl_stored_with_a_statement_map_reads_the_suggested_column_from_it():
+    ds = {**sheet_dataset(YEARLY_FORECAST, column=4, cue=("E2", "Forecast")), "sheet_map": sh.build(sh.read(
+        cr.read_workbook(YEARLY_FORECAST.encode(), "pnl.csv")[0].grid, {}, 12))}
+    assert as_of.detect({"pnl": ds}, 12)["month"] == "2021-12"
+
+
+def test_nothing_detected_without_a_file_or_a_revenue_figure():
     assert as_of.detect({}) is None
     assert as_of.detect({"revenue": revenue_file([("2019-01-01", 0)])}) is None
 
 
 # --- 1b. recognised files: stored with no months and no mapping (PR 196 review, finding 1) ----------------------------------
 
-def recognised_dataset(name: str, dtype: str = "revenue", content: bytes = None) -> dict:
+def recognised_dataset(name: str, dtype: str = "revenue", content: bytes = None, **suggestion) -> dict:
     """A file stored by recognition alone, as _store_recognised and the P&L path keep it: its sheets, no months, no mapping, no rows."""
     content = content if content is not None else (RECOGNITION / name).read_bytes()
     sheets = cr.read_workbook(content, name)
+    proposal = {"sheet": 1, "last_actual_column": suggestion.get("column"),
+                "boundary_cue": {"cell": suggestion["cue"][0], "text": suggestion["cue"][1]} if suggestion.get("cue") else None}
     return {"dtype": dtype, "file": name, "months": None, "mapping": {}, "rows": [], "recognition_only": dtype == "revenue",
-            "recognition_sheets": rec.pack_sheets(sheets), "recognition_proposal": None, "recognition_decisions": {}}
+            "recognition_sheets": rec.pack_sheets(sheets), "recognition_proposal": proposal, "recognition_decisions": {}}
 
 
-def test_detection_from_a_recognised_monthly_report_is_its_last_month_with_a_non_zero_value_before_the_forecast_columns():
-    assert as_of.detect({"revenue": recognised_dataset(MONTHLY)}) == {"month": "2025-06", "file": MONTHLY}, \
-        "July to December are tagged Forecast: never read, whatever the boundary"
-    zeros = (RECOGNITION / MONTHLY).read_text().replace("10614,10625,", "0,,")          # May 0, June blank
-    assert as_of.detect({"revenue": recognised_dataset(MONTHLY, content=zeros.encode())})["month"] == "2025-04"
+def test_detection_from_a_recognised_monthly_report_is_the_checked_column_before_its_forecast_header():
+    ds = recognised_dataset(MONTHLY, column=7, cue=("H2", "Forecast"))
+    assert as_of.detect({"revenue": ds}) == {"month": "2025-06", "file": MONTHLY, "cue": "Forecast"}
+    assert as_of.detect({"revenue": recognised_dataset(MONTHLY)}) is None, "July to December are marked Forecast, but no suggestion came"
+    assert as_of.detect({"revenue": recognised_dataset(MONTHLY, column=7, cue=("B2", "Actual"))}) is None, "the cue cell holds no plan word"
 
 
-def test_detection_reads_every_recognised_shape_that_holds_a_revenue_figure():
-    summary = recognised_dataset("revenue_summary_by_product.csv")
-    assert as_of.detect({"revenue": summary})["month"], "a revenue summary: the last period of the summed rows"
-    statement = recognised_dataset("pnl_single_period.csv", dtype="pnl")
-    assert as_of.detect({"pnl": statement}) is None or as_of.detect({"pnl": statement})["file"] == "pnl_single_period.csv"
-    text = b"Line,FY2022,FY2023,FY2024\nRevenue,100,120,\nCost of sales,50,55,60\nPayroll,20,22,24\nEBITDA,30,43,\n"
-    yearly = recognised_dataset("statement.csv", dtype="pnl", content=text)
-    assert as_of.detect({"pnl": yearly}, 6) == {"month": "2023-06", "file": "statement.csv"}, "a yearly statement ends at the fiscal year-end"
-    snapshot = recognised_dataset("arr_snapshot.csv")
-    assert as_of.detect({"revenue": snapshot}) is None, "a snapshot has one undated value: no month to detect"
-
-
-def test_the_recognised_series_is_read_with_no_boundary_and_the_revenue_month_caps_a_recognised_pnl():
-    report = recognised_dataset(MONTHLY)
-    assert as_of.revenue_last(report) == "2025-06"
-    assert as_of.pnl_month(recognised_dataset(MONTHLY, dtype="pnl"), 12, "2025-03") == "2025-03", "a P&L column after the revenue month is plan"
+def test_a_yearly_statement_ends_at_the_fiscal_year_end_and_a_snapshot_gives_nothing():
+    text = b"Line,FY2022,FY2023,FY2024\nForecast,,,\nRevenue,100,120,\nCost of sales,50,55,60\nPayroll,20,22,24\nEBITDA,30,43,\n"
+    yearly = recognised_dataset("statement.csv", dtype="pnl", content=text, column=3, cue=("r2", "Forecast"))
+    assert as_of.detect({"pnl": yearly}, 6) == {"month": "2023-06", "file": "statement.csv", "cue": "Forecast"}
+    assert as_of.detect({"revenue": recognised_dataset("arr_snapshot.csv", column=2, cue=("B1", "Forecast"))}) is None
 
 
 @pytest.fixture()
@@ -128,15 +189,15 @@ def chat(monkeypatch):
 def test_a_recognised_monthly_report_alone_sets_the_as_of_month_and_the_set_up_field_names_the_file(chat):
     """The chat-upload path: the report is stored with no months and no mapping; Map detects the month from its series."""
     assert chat.db["audits"].docs[0]["as_of_month"] is None
-    chat.state["adapter"] = t.FakeAdapter(replies=[recognition_reply()])
+    chat.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(last_actual_column=7, boundary_cue={"cell": "H2", "text": "Forecast"})])
     res = upload(chat, MONTHLY, (RECOGNITION / MONTHLY).read_bytes())
     assert res.status_code == 200, res.text
     got = chat.get(f"/api/audits/{AUDIT}").json()
-    assert (got["as_of_month"], got["as_of_by"], got["as_of_file"]) == ("2025-06-30", "detected", MONTHLY)
+    assert (got["as_of_month"], got["as_of_by"], got["as_of_file"], got["as_of_cue"]) == ("2025-06-30", "detected", MONTHLY, "Forecast")
     assert res.json()["recognition"]["last_actual"]["as_of"] == "2025-06", "the boundary is read from the month the file set"
-    # the set-up field: auditForm.asOfSourceText reads as_of_by and as_of_file: "(detected from <file>)" (auditForm.test.js)
+    # the set-up field: auditForm.asOfSourceText reads as_of_by, as_of_file and as_of_cue: "(detected from <file>, cue: '<cue>')" (auditForm.test.js)
     js = (ROOT / "frontend/src/lib/auditForm.js").read_text()
-    assert "`(detected from ${audit.as_of_file})`" in js
+    assert "(detected from ${audit.as_of_file}${audit.as_of_cue ? `, cue: '${audit.as_of_cue}'` : \"\"})" in js
 
 
 def test_the_last_actual_column_is_read_from_the_as_of_month_and_the_plan_columns_start_the_month_after():

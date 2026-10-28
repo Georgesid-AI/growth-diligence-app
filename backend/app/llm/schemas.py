@@ -359,6 +359,18 @@ class RecognitionNonRevenue(BaseModel):
     kind: Literal[NON_REVENUE_KINDS]
 
 
+CELL_ADDRESS = r"^(?:[A-Z]{1,3}[1-9][0-9]{0,5}|r[1-9][0-9]{0,5}c[1-9][0-9]{0,3}|r[1-9][0-9]{0,5})$"      # D3, r3c4 or, for a row label, r12
+
+
+class BoundaryCue(BaseModel):
+    """The cell the model decided the last actual column by: its address and its exact text (dates-and-periods.md section 2)."""
+
+    model_config = {"extra": "forbid"}
+
+    cell: str = Field(pattern=CELL_ADDRESS)
+    text: str = Field(min_length=1, max_length=200)
+
+
 class FileRecognitionReply(BaseModel):
     """What the model must return for a file (spec section 5.7): exactly these keys, no confidence, no free text."""
 
@@ -370,6 +382,8 @@ class FileRecognitionReply(BaseModel):
     revenue_row: Optional[RecognitionRow]
     currency: Optional[str] = Field(pattern=r"^[A-Z]{3}$")
     non_revenue_rows: List[RecognitionNonRevenue] = Field(max_length=RECOGNITION_MAX_ROWS)
+    last_actual_column: Optional[int] = Field(default=None, ge=1, le=16384)     # a suggestion: Python checks the cue before it is used
+    boundary_cue: Optional[BoundaryCue] = None
 
 
 # The sheet skeleton (chat-upload.md section 26): a P&L the rules cannot map, read as a statement. Its own schema and prompt, outside
@@ -573,8 +587,11 @@ def file_recognition_output_schema() -> dict:
             "non_revenue_rows": {"type": "array", "items": {
                 "type": "object", "properties": {"row": {"type": "integer"}, "kind": {"type": "string", "enum": list(NON_REVENUE_KINDS)}},
                 "required": ["row", "kind"], "additionalProperties": False}},
+            "last_actual_column": nullable({"type": "integer"}),
+            "boundary_cue": nullable({"type": "object", "properties": {"cell": {"type": "string"}, "text": {"type": "string"}},
+                                      "required": ["cell", "text"], "additionalProperties": False}),
         },
-        "required": ["type", "sheet", "file_type", "revenue_row", "currency", "non_revenue_rows"],
+        "required": ["type", "sheet", "file_type", "revenue_row", "currency", "non_revenue_rows", "last_actual_column", "boundary_cue"],
         "additionalProperties": False,
     }
 

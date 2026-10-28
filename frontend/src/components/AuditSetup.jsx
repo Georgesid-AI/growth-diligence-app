@@ -7,7 +7,7 @@ import { getAudit, updateAudit } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import { s2Explainer, S3_EXPLAINER_NO_CONSENT } from "@/lib/chatUpload";
 import {
-  CONSENT_LABEL, VERIFIED_LINE, DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfInputValue, asOfDisplay, asOfSourceText, parseMonthYear, asOfWarning, revenueLastMonth, groupThousands, plainNumber, storedNumberInput,
+  CONSENT_LABEL, VERIFIED_LINE, DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfInputValue, asOfDisplay, asOfStripText, parseMonthYear, asOfWarning, revenueLastMonth, groupThousands, plainNumber, storedNumberInput,
   targetDateError,
 } from "@/lib/auditForm";
 
@@ -106,7 +106,7 @@ export function AssumptionsSetup({ audit, setAudit, asOf, setAsOf }) {
             <p className={help} data-testid="setup-help-reporting_currency">{SETUP_HELP.reporting_currency}</p>
           </>)}
         {item("as_of", SETUP_LABELS.as_of_month,
-          audit.as_of_month ? `${asOfDisplay(audit.as_of_month)} ${asOfSourceText(audit)}`.trim() : "not set", editing === "as_of",
+          asOfStripText(audit), editing === "as_of",
           <>
             <Input data-testid="asof-month-input" type="text" value={asOfText} placeholder={AS_OF_PLACEHOLDER} autoFocus
               onChange={(e) => setAsOfText(e.target.value)} onBlur={commitAsOf}

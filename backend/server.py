@@ -851,7 +851,8 @@ async def _refresh_as_of(audit_id: str) -> None:
     docs = await db.datasets.find({"audit_id": audit_id, "dtype": {"$in": ["revenue", "pnl"]}}).to_list(4)
     found = as_of_mod.detect({d["dtype"]: d for d in docs}, _fiscal_year_end(a))
     month = as_of_mod.month_end(found["month"]) if found else None
-    fields = {"as_of_month": month, "as_of_by": as_of_mod.DETECTED, "as_of_file": found["file"] if found else None}
+    fields = {"as_of_month": month, "as_of_by": as_of_mod.DETECTED, "as_of_file": found["file"] if found else None,
+              "as_of_cue": found["cue"] if found else None}
     if all(a.get(k) == v for k, v in fields.items()):
         return
     stale = {"setup_stale": True} if month != a.get("as_of_month") and a.get("results") else {}
@@ -1379,7 +1380,7 @@ class RecognitionDecision(BaseModel):
     the lists the server offers. No typed text: a sheet name, a currency and a type are checked against the file's own lists."""
     model_config = {"extra": "forbid"}
     action: Literal["confirm", "change"]
-    part: Literal["revenue_row", "file_type", "currency", "pending", "money_kind", "sheet", "series_source"]
+    part: Literal["revenue_row", "file_type", "currency", "money_kind", "sheet", "series_source"]
     row: Optional[int] = None
     column: Optional[int] = None
     file_type: Optional[str] = None
@@ -1397,10 +1398,7 @@ def _recognition_decision(current: dict, body: RecognitionDecision, decisions: d
     out = dict(decisions)
     bad = HTTPException(400, "That choice is not one of the options offered")
     if body.action == "confirm":
-        if body.part == "pending":
-            if row and row["state"] == "click" and row["reason"] in rec.CONFIRM_ONLY and row.get(key) is not None:
-                out["revenue_row"] = row[key]
-        elif body.part == "revenue_row" and row and row.get(key) is not None:
+        if body.part == "revenue_row" and row and row.get(key) is not None:
             out["revenue_row"] = row[key]
         elif body.part == "file_type" and current.get("file_type"):
             out["file_type"] = current["file_type"]
@@ -2569,6 +2567,8 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
         elif stage == "engine":
             if not mapped:
                 result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_MAPPING)
+            elif not audit.get("as_of_month"):          # no month detected and none typed: Run audit waits for the analyst (dates-and-periods.md section 2)
+                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.AS_OF_CHECK)
             else:
                 await _run_compute(audit_id)
                 result = run_audit.stage_result(stage, run_audit.DONE)

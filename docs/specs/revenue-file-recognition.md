@@ -239,8 +239,17 @@ JSON only, `extra="forbid"`, no free text, **no confidence number**:
               | "arr_mrr_snapshot" | "crm" | "pnl" | "not_revenue",
  "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"} | null,   // sheet row number and the label as sent
  "currency": "EUR" | null,                       // an ISO code, only if seen in the text
- "non_revenue_rows": [{"row": 9, "kind": "forecast" | "budget" | "bookings" | "pipeline" | "contract_value" | "run_rate"}]}
+ "non_revenue_rows": [{"row": 9, "kind": "forecast" | "budget" | "bookings" | "pipeline" | "contract_value" | "run_rate"}],
+ "last_actual_column": 7 | null,                 // the sheet column number, A = 1, of the last column of actual figures (amended 2026-10-28)
+ "boundary_cue": {"cell": "r2c8", "text": "Forecast"} | null}   // the cell it decided by: a title or header cell with a plan word, or a row label with one
 ```
+`last_actual_column` and `boundary_cue` are a suggestion for the as-of month, checked by Python before they are used (dates-and-periods.md §2,
+`as_of.suggestion`): the cue cell must exist on the sheet with the cue's text, the text must hold a plan word (budget, plan, forecast, FC, estimate,
+projection), and the cell must be a row label or sit above or in the header row of a column after `last_actual_column`. The columns of the text
+the model reads (`r<row>c<col>`) are numbered as the sheet numbers them (A = 1), whatever empty columns lie before the first one kept; a cue is
+written `r2c8` (or `H2`) for a title or header cell and `r12` for a row label. Both fields are kept in the stored proposal, the cue text with them
+(model JSON output, rule 17); the cue text of the detected month is also stored on the audit (`as_of_cue`) and shown on the strip. Neither field
+sets the boundary itself: the audit's one as-of month does (§6.2). A reply without them (an older cached answer) parses with both null.
 A reply with another key, a `confidence`, a kind or type outside the lists, a row or column below 1, a currency that is not three letters, or a
 `revenue_row` without its label fails to parse (`parse_failed`, check `schema` or `metric_list`). The label echo is compared by Python with the label
 of that row and then dropped: it is never kept (§5.5). On an entity-labelled or unsure sheet the labels the model saw are "Row n", so its
@@ -269,7 +278,7 @@ take no part in the checks. The reason codes below are the closed list `REASONS`
   other words ("Revenue - EMEA"); the value fit is the share of period columns with a number in the row; confidence is rounded to an integer. A tie of
   two candidates with the same rank and confidence is a tie.
 - **States.** `auto` (no click), `click` (the analyst decides), `you` (decided). No proposal and no model: `auto` when the confidence is above 80
-  (`MAPPING_THRESHOLD`, chat-upload.md §4.1, §21) and untied; a confidence of exactly 80 is `click` (`confidence_80`), a tie is `click` (`tie`), no
+  (`MAPPING_THRESHOLD`, chat-upload.md §4.1, §21) and untied; a confidence of exactly 80 is accepted like any other (the `confidence_80` reason and the confirm state were removed 2026-10-28), a tie is `click` (`tie`), no
   candidate is `click` (`no_candidate`), turnover is `click` (`turnover_question`).
 - **The model's proposed row** is checked in this order; the first failure is the reason and the state is `click`:
   `row_missing` (no such label row) · `marked_not_revenue` (the row is forecast, budget, bookings, pipeline, contract value or run-rate, by the rules or
@@ -335,14 +344,13 @@ The model's `sheet` is used only when it is the sheet Python chose as best (§3)
 
 ### 6.5 The model is silent or wrong
 If the model cannot be read, the rules' outcome stands, with the same thresholds (81+ `auto`, 80 and ties `click`), as for the column mapping
-(chat-upload.md §4.2). Rules and model agreeing is **auto-accepted with a Correct button**; disagreeing or unsure shows the candidates.
+(chat-upload.md §4.2). Rules and model agreeing, or the rules alone at any confidence, is **auto-accepted, shown with Change only** (the Correct button was removed 2026-10-28); disagreeing or unsure shows the candidates.
 
 ### 6.6 The analyst
 `POST /api/audits/{id}/datasets/{dtype}/recognition`, `dtype` `revenue` or `pnl` (a P&L carries its own recognition, §8), with one part at a time:
 | Body | Effect |
 |---|---|
 | `{action: "confirm", part: "revenue_row" \| "last_actual" \| "file_type" \| "currency"}` | Correct: the proposal becomes `you` (the part must have a proposal) |
-| `{action: "confirm", part: "pending"}` | the one Correct button (§7): every part waiting only for confirmation (reasons `confidence_80`, `no_as_of_month`) becomes `you` |
 | `{action: "change", part: "revenue_row", row}` | one of the `candidates`; else 400 |
 | `{action: "change", part: "last_actual", column}` | one of the period columns up to the as-of month; else 400 |
 | `{action: "change", part: "file_type", file_type}` | one of the six types; else 400 |
@@ -380,9 +388,9 @@ to find the cell. (Wording chosen under rule 19, as chat-upload.md §13 did; Geo
 |---|---|---|
 | S31a | the type line | Type: {Invoice transactions / Customer revenue / Monthly revenue report / Revenue summary / Financial statements / ARR/MRR snapshot} ({by rules / AI suggestion, not verified / your choice}) and a **Change** button that offers the other five types. An unclassed type reads "Type: choose the type" with a drop-down of the two candidates. A type waiting for a click reads "Type: {type} ({source}). {reason}" with Correct and Change (`TYPE_REASON_TEXT`: `rules_and_model_disagree` Two readings differ. Choose the type. · `type_unsure` Choose the type.). An AI suggestion always says "not verified" (CLAUDE.md rule 18) |
 | S31b | what it supports and blocks, one line | (a `monthly_series` item reads "monthly series missing, needs one column per month") Supports: {trend analysis (MRR/ARR, growth, run-rate) / customer-level analysis (NRR, gross churn, concentration, cohorts) and trend analysis (…) / claim matching only}. Blocked: {analysis}, needs {data}; {analysis}, needs {data}. — the "Blocked" part is left out when nothing is blocked; the data is the closed `needs` text of §3.1 |
-| S31c | the revenue row | Revenue row: {label} (row {n}) — for kind `recurring` "Recurring row: {label} (row {n})" — with **Correct** and **Change** (Change opens the candidates: "{label} (row {n})"). Waiting only for confirmation (`confidence_80`): the same line followed by the reason, no drop-down until Change. Needs a choice (any other reason): "Revenue row: choose the row. {reason}" with the drop-down and no Correct. Decided: Change only. Not shown for a type with no revenue row |
+| S31c | the revenue row | Revenue row: {label} (row {n}) — for kind `recurring` "Recurring row: {label} (row {n})" — followed by " · Change" (Change opens the candidates: "{label} (row {n})"); the row is accepted without a click and there is no Correct button and no confirm state (2026-10-28). Needs a choice (any other reason): "Revenue row: choose the row. {reason}" with the drop-down and no Correct. Decided: Change only. Not shown for a type with no revenue row |
 | S31d | the last actual month | Last actual month: {Mon YYYY}. Columns after it are not used. with **Correct** and **Change** (the candidate months). Waiting only for confirmation (`no_as_of_month`): the same line followed by the reason, no drop-down until Change. Needs a choice (`after_as_of`, `not_a_period`, `rules_and_model_disagree`): "Last actual month: choose the month. {reason}" with the drop-down and no Correct. Decided: Change only. The second sentence is left out when no column follows |
-| S31e | the reasons, closed texts (`REASON_TEXT` in `lib/recognition.js`, one per code of §6) | no_candidate: No row looks like revenue. Choose the revenue row. · tie: Two rows fit equally. Choose the revenue row. · confidence_80: Please confirm the revenue row. · row_missing, label_mismatch: The proposed row could not be matched to the sheet. Choose the revenue row. · marked_not_revenue: The proposed row is a forecast, budget, bookings, pipeline, contract value or run-rate row. Choose the revenue row. · not_numeric_enough: The proposed row has too few numbers. Choose the revenue row. · no_revenue_word: The proposed row has no revenue word in its label. Choose the revenue row. · rules_and_model_disagree: Two readings differ. Choose the revenue row. (for the month: … Choose the last actual month.) · no_as_of_month: The audit has no as-of month, so this month needs your confirmation. · after_as_of: The proposed month is after the as-of month. Choose a month up to it. · not_a_period: The proposed column is not a month. Choose the last actual month. · turnover_question: the question of chat-upload.md §15 with the buttons Revenue / Volume · type_unsure: Choose the type. |
+| S31e | the reasons, closed texts (`REASON_TEXT` in `lib/recognition.js`, one per code of §6) | no_candidate: No row looks like revenue. Choose the revenue row. · tie: Two rows fit equally. Choose the revenue row. · row_missing, label_mismatch: The proposed row could not be matched to the sheet. Choose the revenue row. · marked_not_revenue: The proposed row is a forecast, budget, bookings, pipeline, contract value or run-rate row. Choose the revenue row. · not_numeric_enough: The proposed row has too few numbers. Choose the revenue row. · no_revenue_word: The proposed row has no revenue word in its label. Choose the revenue row. · rules_and_model_disagree: Two readings differ. Choose the revenue row. (for the month: … Choose the last actual month.) · no_as_of_month: The audit has no as-of month, so this month needs your confirmation. · after_as_of: The proposed month is after the as-of month. Choose a month up to it. · not_a_period: The proposed column is not a month. Choose the last actual month. · turnover_question: the question of chat-upload.md §15 with the buttons Revenue / Volume · type_unsure: Choose the type. |
 | S31f | not a revenue file | the server's message of §2: "Not a revenue file. Missing: {names}." It replaces every other line of the recognition and is shown **above the S6 type picker, which stays** as the fallback (decision 3, §14) |
 | S31g | other sheets | Other sheets in this file: {sheet} ({type}) **Use this sheet**, one per recognised sheet. Left out when there is none |
 | S31h | the consent explainer | The sentence of §5.8 added to S2 |
@@ -391,7 +399,7 @@ to find the cell. (Wording chosen under rule 19, as chat-upload.md §13 did; Geo
 | S31k | currency | Currency: {code}. Or, with none found: Currency not found in the file. Confirm the currency: {drop-down of ISO codes, the audit's reporting currency first}. A file with a column mapping and no currency column shows the same question in place of "Required field not mapped: currency" (the answer becomes a constant column mapped as the currency field) |
 | S31l | two tables on one sheet (section 6.7) | Two tables on this sheet: a metrics block and a dated list. Then, when the revenue row wins: Revenue series: the revenue row of the metrics block. The dated list matches it month by month ({n} months). — when the analyst chooses: {The dated list and the revenue row differ in {k} of {n} months. / The dated list matches the row month by month ({n} months).} Choose which table supplies the revenue series: with the buttons Use the revenue row and Use the dated list; after the choice: Revenue series: {the revenue row of the metrics block / the dated list}. The dated list and the revenue row differ in {k} of {n} months. |
 
-**One Correct button (decision 4, §14).** Where one or more parts wait only for confirmation (reasons `confidence_80` and `no_as_of_month`, the *confirm-only* reasons), the parts keep their lines and Change, and the file shows one **Correct** button (`part: "pending"`, §6.6) instead of one per part. Correct on an auto part (the accepted proposals above) keeps its own button.
+**No Correct button on the revenue row (2026-10-28, replaces decision 4, §14).** The revenue row is shown accepted with Change; the `pending` part and the reason `confidence_80` are gone. Correct stays on a type and a currency that wait for a click.
 
 The banner is unchanged (rule 21): a revenue file with an open click counts as "uploaded, mapping not confirmed" (S16d); a recognised file with
 nothing open clears it. No banner kind is added.
@@ -409,8 +417,9 @@ nothing open clears it. No banner kind is added.
   the clicks of §7. A P&L the rules type by its columns, or a statement-shaped P&L (financial statements) that the P&L path of §26 reads, stays the
   audit's P&L (CAC payback needs it) and also carries its `recognition` block; it satisfies the required revenue file once its recognition is confirmed with two or more periods (decision 3, §14).
   **How a P&L's recognition is confirmed (review H2):** the P&L's own bubble shows the same recognition line (S31, ids with `pnl`), served by the P&L dataset's
-  `recognition` block, and the analyst presses **Correct** on its revenue row (`POST …/datasets/pnl/recognition` `{action: "confirm", part: "revenue_row"}`, or
-  `part: "pending"`). Confirmed means no part in `click` and the revenue row `you`; with fewer than two periods it is never confirmed for this purpose (the banner S16a
+  `recognition` block, and the analyst decides its revenue row with Change (`POST …/datasets/pnl/recognition` `{action: "change", part: "revenue_row", row}`, or
+  `{action: "confirm", part: "revenue_row"}`, which no screen sends since the Correct button was removed on 2026-10-28; whether a P&L whose row is read with no
+  click may satisfy the required revenue file is open for the owner). Confirmed means no part in `click` and the revenue row `you`; with fewer than two periods it is never confirmed for this purpose (the banner S16a
   stays). A `revenue` upload is unaffected (its S16d rule is chat-upload.md §16). Banner kinds are unchanged (rule 21).
 - **When the P&L is the only revenue source** (no separate revenue file; the recognised revenue comes from the P&L), the revenue-versus-P&L
   reconciliation compares a source with itself. `revenue_reconciliation` then carries `status: "not_applicable"` and the text "Not applicable – same
@@ -461,7 +470,7 @@ The vocabulary and the exclusion words (§2.1, §4.1, measured on the fixtures);
 guard; the label-row definition; the confidence formula (§6.1); the check orders of §6.1 and §6.2; "min(3, periods)" for the numeric-column check;
 the best-sheet order (§3); one call per new file shared with §19; no call without consent; the model's proposal for a sheet Python did not pick is
 dropped; the currency of the model is a cross-check only; the label echo is checked and never stored; the text grammar and problem codes; routing
-(decided, §14 item 3); typed text is never accepted; the effective as-of month of §6.2; the total-row rule (§6.1); the `pending` part and the confirm-only reasons; `prompt_tag` in the kept answer.
+(decided, §14 item 3); typed text is never accepted; the effective as-of month of §6.2; the total-row rule (§6.1); the confirm-only reasons and the `pending` part (both removed 2026-10-28); `prompt_tag` in the kept answer.
 
 ## 13. Not built here
 The column mapping of dates-down layouts stays as chat-upload.md §4 reads it; only their recognition is new (§2).
@@ -492,7 +501,7 @@ docs/architecture.md (recorded in this PR).
    from the file hash, never the same row in two neighbouring columns (§5.1, §5.9; docs/architecture.md and CLAUDE.md rule 16 carry the wording).
 8. **The recognition call runs for every recognised file**, cached by file hash (and prompt version), as the column mapping is (§5.5).
 9. **The S6 type picker stays** as the fallback when Python recognises no type; S31f sits above it (§7).
-10. **Two confirm-only reasons on one file collapse into one Correct button** (§7, §6.6 `pending`).
+10. ~~Two confirm-only reasons on one file collapse into one Correct button~~ (removed 2026-10-28 with the confirm state).
 11. **Every new test is `xfail(strict=True, reason="awaiting implementation: revenue-file recognition")`**; the implementation PR removes the markers.
 
 ## 15. Amendments made with the implementation (owner request of 19 Oct 2026)
