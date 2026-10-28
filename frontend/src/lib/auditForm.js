@@ -6,7 +6,6 @@
  * another.
  */
 import { dateRangeError } from "./datePicker";
-import { seeGlossary } from "./glossary";
 import { monthName } from "./periods";
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -89,14 +88,8 @@ export function requiredFieldError(form) {
 // one line of help. The creation dialog asks for the audit name only.
 export const SETUP_HELP = {
   reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
-  target_arr: seeGlossary("The plan figure the audit tests. Every claim's VaS is measured against it."),
-  target_date: seeGlossary("When the plan says Target ARR is reached. Sets the forecast horizon."),
-  as_of_month: "Last month of actual data; it always counts as complete and the months after it are plan. "
-    + "Detected from the revenue file and the P&L once they are mapped; type a month and year to set it yourself.",
+  as_of_month: "Last month of actual figures. Months after it are read as plan.",
   fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
-  first_quarterly_review: "Gate dates are never later than this. Defaults to the audit's creation date plus 90 days.",
-  // docs/specs/dates-and-periods.md section 2
-  analysis_date: "The date of this analysis. It dates the memo and your own text; it never changes the period of a figure.",
 };
 export const AS_OF_PLACEHOLDER = "e.g. Jun 2021";
 
@@ -138,8 +131,7 @@ export function asOfWarning(asOf, revenueLast) {
 
 export const SETUP_LABELS = {
   reporting_currency: "Reporting currency", target_arr: "Target ARR", target_date: "Target date", as_of_month: "As-of month",
-  fiscal_year_end: "Fiscal year-end", first_quarterly_review: "First quarterly review",
-  analysis_date: "Requested analysis date",
+  fiscal_year_end: "Fiscal year-end", first_quarterly_review: "First quarterly review date",
   structure_reading_consent: "AI reading",
 };
 export const REPORTING_CURRENCIES = ["EUR", "USD", "GBP", "JPY"];

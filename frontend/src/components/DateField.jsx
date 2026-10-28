@@ -18,7 +18,7 @@ const arrow = "h-7 w-7 inline-flex items-center justify-center rounded border bo
  * `testId` names the text box; the parts inside carry `${testId}-open` (the calendar button), `-error`, `-month-prev`,
  * `-month-next`, `-year-prev`, `-year-next`, `-year` (the typed year), `-year-error`, `-day-<n>` and `-clear`.
  */
-export default function DateField({ value, onChange, testId, className = "", placeholder = "Select a date", clearable = true }) {
+export default function DateField({ value, onChange, testId, className = "", placeholder = "Select a date", clearable = true, disabled = false }) {
   const [open, setOpen] = useState(false);
   const [side, setSide] = useState("bottom");
   const [view, setView] = useState(() => openingView(value));
@@ -69,15 +69,15 @@ export default function DateField({ value, onChange, testId, className = "", pla
     <>
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
-        <div ref={wrap} className={`mt-1.5 flex h-9 w-full items-center rounded-md border bg-white ${typedError ? "border-rose-400" : "border-[#E5E7EB]"} ${className}`}>
+        <div ref={wrap} className={`mt-1.5 flex h-9 w-full items-center rounded-md border ${disabled ? "bg-slate-100 opacity-70" : "bg-white"} ${typedError ? "border-rose-400" : "border-[#E5E7EB]"} ${className}`}>
           <input type="text" data-testid={testId} aria-label={placeholder} aria-invalid={typedError ? true : undefined}
-            autoComplete="off" placeholder={placeholder} value={typed ?? displayDate(value)}
+            autoComplete="off" disabled={disabled} placeholder={placeholder} value={typed ?? displayDate(value)}
             onFocus={() => setTyped(selected ? value : "")} onClick={openCalendar}
             onChange={(e) => { setTyped(e.target.value); setTypedError(null); }}
             onBlur={commitTyped}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (commitTyped()) setOpen(false); } }}
             className="h-full min-w-0 flex-1 bg-transparent px-3 font-mono text-sm text-slate-900 outline-none placeholder:text-slate-400" />
-          <button type="button" data-testid={id("open")} aria-label="Open calendar" onClick={() => (open ? setOpen(false) : openCalendar())}
+          <button type="button" data-testid={id("open")} aria-label="Open calendar" disabled={disabled} onClick={() => (open ? setOpen(false) : openCalendar())}
             className="px-3 text-slate-500 hover:text-slate-800"><CalendarDays className="h-4 w-4" /></button>
         </div>
       </PopoverAnchor>

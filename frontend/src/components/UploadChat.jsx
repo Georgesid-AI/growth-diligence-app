@@ -8,7 +8,7 @@ import RecognitionLine from "@/components/RecognitionLine";
 import { CURRENCY_NOT_FOUND, currencyChoices } from "@/lib/recognition";
 import { uploadChatFile, getDatasets, decideColumns, decideLines, decideRecognition, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
 import {
-  S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
+  S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, S13_READY, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, S28_read, S28_SHOW_CLAIMS, S28_cap, S28_CONFIRM,
   forecastValueText, forecastCells, MAP_LABEL, CALCULATE_CLASS, ALL_CONFIRMED_LINE, mappingComplete, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S25_STATEMENT_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
@@ -27,7 +27,7 @@ const uid = () => `m${nextId++}`;
  * `onFiles(files)` hands the attached files up; the page's Run audit reads them and then passes `leftover` (the files it did not
  * send): the bubbles of every other file are dropped, and the stored files are read again.
  */
-export default function UploadChat({ audit, extras, onViews, onStaged, onMapping, mapButton, onFiles, leftover }) {
+export default function UploadChat({ audit, extras, onViews, onStaged, onMapping, mapButton, onFiles, leftover, deck = null }) {
   const [messages, setMessages] = useState([]);
   const [decided, setDecided] = useState(false);          // the analyst confirmed or corrected a column on this page
   const [busy, setBusy] = useState(0);
@@ -39,7 +39,6 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
   const [lastReason, setLastReason] = useState("header_misleading");   // stays for the next correction on this page
   const picker = useRef(null);
   const queue = useRef(Promise.resolve());
-  const consent = audit.structure_reading_consent === true;
   const views = messages.filter((m) => m.kind === "system" && m.view).map((m) => m.view);
   const allConfirmed = decided && mappingComplete({ attached: messages.filter((m) => m.staged).length, views });   // after the last open column
   const firstTable = messages.find((m) => m.kind === "system" && m.view)?.id;       // the info box sits above the first table
@@ -209,6 +208,22 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
     return next;
   };
 
+  const bar = (
+    <div className="border-b border-[#E5E7EB] px-3 py-3 flex items-center gap-2">
+      <input ref={picker} type="file" multiple accept={ALLOWED_EXTENSIONS.map((e) => `.${e}`).join(",")} className="hidden" data-testid="chat-file-input"
+        onChange={(e) => { takeFiles(e.target.files); e.target.value = ""; }} />
+      <button type="button" aria-label="Attach files" data-testid="chat-paperclip" onClick={() => picker.current?.click()}
+        className="p-2 rounded-md text-slate-600 hover:bg-slate-100"><Paperclip className="h-4 w-4" /></button>
+      {/* A disabled button shows no tooltip of its own, so the wrapper carries it. */}
+      <span title={mapButton.tooltip} data-testid="chat-map-wrap">
+        <Button type="button" size="sm" data-testid="chat-map" disabled={mapButton.disabled} onClick={map}
+          className={CALCULATE_CLASS} title={mapButton.tooltip}>
+          {mapping ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{MAP_LABEL}
+        </Button>
+      </span>
+    </div>
+  );
+
   return (
     <section
       data-testid="upload-chat"
@@ -217,14 +232,15 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => { e.preventDefault(); setDragging(false); takeFiles(e.dataTransfer?.files); }}
     >
-      <p data-testid="chat-explainer" className="px-5 pt-4 text-xs text-slate-600">
-        {consent ? S2_EXPLAINER_CONSENT : S3_EXPLAINER_NO_CONSENT}
-      </p>
-      <div data-testid="chat-messages" className="px-5 py-4 space-y-3 min-h-[240px]">
+      {bar}
+      <div className="px-5 pt-4">
         {/* The drop zone stays after a drop: more files can be attached until Map is pressed. */}
         <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg text-center text-slate-500 ${messages.length === 0 ? "py-14 text-sm" : "py-3 text-xs"} ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
           {S4_DROP_ZONE_LEAD}<strong>{S4_DROP_ZONE_BOLD}</strong>
         </div>
+      </div>
+      {deck}
+      <div data-testid="chat-messages" className="px-5 py-4 space-y-3">
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
             decide={decide} decideLines={decideSheetLines} decideRecognition={decideRecognitionPart} retype={retype} claimsSaved={claimsSaved} showInfo={m.id === firstTable}
@@ -234,19 +250,6 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
         ))}
         {busy > 0 && <div className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…</div>}
         {allConfirmed && <p className="text-xs text-emerald-700" data-testid="all-confirmed">{ALL_CONFIRMED_LINE}</p>}
-      </div>
-      <div className="border-t border-[#E5E7EB] px-3 py-3 flex items-center gap-2">
-        <input ref={picker} type="file" multiple accept={ALLOWED_EXTENSIONS.map((e) => `.${e}`).join(",")} className="hidden" data-testid="chat-file-input"
-          onChange={(e) => { takeFiles(e.target.files); e.target.value = ""; }} />
-        <button type="button" aria-label="Attach files" data-testid="chat-paperclip" onClick={() => picker.current?.click()}
-          className="p-2 rounded-md text-slate-600 hover:bg-slate-100"><Paperclip className="h-4 w-4" /></button>
-        {/* A disabled button shows no tooltip of its own, so the wrapper carries it. */}
-        <span title={mapButton.tooltip} data-testid="chat-map-wrap">
-          <Button type="button" size="sm" data-testid="chat-map" disabled={mapButton.disabled} onClick={map}
-            className={CALCULATE_CLASS} title={mapButton.tooltip}>
-            {mapping ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{MAP_LABEL}
-          </Button>
-        </span>
       </div>
     </section>
   );

@@ -4,13 +4,15 @@
  */
 import { seeGlossary } from "./glossary";
 
-export const S2_EXPLAINER_CONSENT =
+// The deck sentence of S2 (Upload page restructure, George, 2026-10-28): the zero-data-retention wording only when the server says PROVIDER_ZDR is on.
+export const ZDR_SENTENCE_ON = "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.";
+export const ZDR_SENTENCE_OFF = "Deck pages are sent to Anthropic's API for reading and are not used for training.";
+export const s2Explainer = (zdr) =>
   "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. "
   + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name. "
   + "The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction. "
-  + "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training. "
+  + `${zdr ? ZDR_SENTENCE_ON : ZDR_SENTENCE_OFF} `
   + "Uploaded files are stored for this audit and deleted with it.";
-  // George, 2026-10-22 (docs/design/ai-reads-rules-check.md); 2026-10-27 (docs/design/page-image.md sections 2 and 3: as printed, the image, the disclosure line word for word)
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
 export const S4_DROP_ZONE_LEAD =

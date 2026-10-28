@@ -126,14 +126,12 @@ export async function runAudit({ api, auditId, pick = { data: [], decks: [] }, f
 }
 
 /**
- * Whether the audit can run at all (George, 2026-10-27): it needs a mapped file, a Target ARR and a Target date. One line saying what is
- * missing, or null. `views` are the audit's stored datasets.
+ * Whether the audit can run at all: it needs a mapped file (George, 2026-10-27; since 2026-10-28 Target ARR and Target date are parked and
+ * never block). One line saying what is missing, or null. `views` are the audit's stored datasets.
  */
 export function missingForRun({ audit, views = [] }) {
   const missing = [
     !views.length && "a mapped file",
-    !Number(audit?.target_arr) && "Target ARR",
-    !audit?.target_date && "Target date",
   ].filter(Boolean);
   return missing.length ? `The audit cannot run yet. Missing: ${missing.join(", ")}.` : null;
 }

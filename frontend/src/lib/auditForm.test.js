@@ -83,9 +83,8 @@ test("the company name is the only required field; a client name is not asked fo
 
 // docs/specs/chat-upload.md section 30 (George, 2026-10-24): the as-of month defaults to the revenue file's last month.
 describe("the as-of month default and its warning line", () => {
-  test("the help says the month is detected and always complete; the field takes a typed month and year", () => {
-    expect(SETUP_HELP.as_of_month).toBe("Last month of actual data; it always counts as complete and the months after it are plan. "
-      + "Detected from the revenue file and the P&L once they are mapped; type a month and year to set it yourself.");
+  test("the help says what the as-of month is; the field takes a typed month and year", () => {
+    expect(SETUP_HELP.as_of_month).toBe("Last month of actual figures. Months after it are read as plan.");
     expect(AS_OF_PLACEHOLDER).toBe("e.g. Jun 2021");
   });
 

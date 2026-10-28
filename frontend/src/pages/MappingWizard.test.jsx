@@ -6,7 +6,7 @@ import * as api from "@/lib/api";
 import { toast } from "sonner";
 import { SETUP_HELP } from "@/lib/auditForm";
 import {
-  S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, ALL_CONFIRMED_LINE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
+  s2Explainer, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, ALL_CONFIRMED_LINE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
   S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss, S28_read, S28_cap, S28_saved, mappingComplete,
   S25_STATEMENT_PARAGRAPHS, S30a_sent, S30B_HEADERS, S30D_TOO_LONG, S30E_ONE_PERIOD, S30F_SERIES, S30H_YEARLY, S30C_RATE,
 } from "@/lib/chatUpload";
@@ -24,6 +24,8 @@ jest.mock("@/components/DeckPanel", () => ({ reloadKey = 0 }) => <div data-testi
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const AUDIT = { id: "a1", company_name: "Target", reporting_currency: "EUR", fiscal_year_end: 12, structure_reading_consent: true, datasets: {} };
+const S2_EXPLAINER_CONSENT = s2Explainer(false);          // PROVIDER_ZDR is off unless an audit says otherwise
+const WITH_SERIES = { ...AUDIT, datasets: { revenue: { months: { first: "2023-01", last: "2024-12" } } } };     // a monthly series is mapped: the parked target fields are on
 const FIELDS = { required: ["customer_id", "invoice_date", "amount", "currency"], optional: ["segment", "revenue_type"] };
 
 const row = (column, over = {}) => ({
@@ -92,8 +94,7 @@ afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(
 describe("the screen", () => {
   test("keeps the header bar, the chat panel and the deck panel below it", async () => {
     await mount();
-    expect(q("fiscal-year-end-select")).not.toBeNull();
-    expect(q("asof-month-input")).not.toBeNull();
+    expect(q("audit-setup")).not.toBeNull();
     expect(q("compute-button")).toBeNull();
     const chat = q("upload-chat");
     expect(chat.compareDocumentPosition(q("deck-panel")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -108,37 +109,65 @@ describe("the screen", () => {
     expect(q("chat-file-input").multiple).toBe(true);
   });
 
-  test("the set-up fields are at the top, above the chat, each with its one line of help", async () => {
-    await mount({ audit: { ...AUDIT, target_arr: 40000000, target_date: "2028-12-31", as_of_month: "2026-06" } });
-    const setup = q("audit-setup");
-    expect(setup.compareDocumentPosition(q("upload-chat")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(setup.compareDocumentPosition(q("fx-settings")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(q("fx-settings").compareDocumentPosition(q("upload-chat")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(SETUP_HELP).toEqual({
-      reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
-      target_arr: "The plan figure the audit tests. Every claim's VaS (see glossary) is measured against it.",
-      target_date: "When the plan says Target ARR (see glossary) is reached. Sets the forecast horizon.",
-      as_of_month: "Last month of actual data; it always counts as complete and the months after it are plan. Detected from the revenue file and the P&L once they are mapped; type a month and year to set it yourself.",
-      fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
-      first_quarterly_review: "Gate dates are never later than this. Defaults to the audit's creation date plus 90 days.",
-      analysis_date: "The date of this analysis. It dates the memo and your own text; it never changes the period of a figure.",
-    });
-    for (const [field, text] of Object.entries(SETUP_HELP)) expect(q(`setup-help-${field}`).textContent).toBe(text);
-    expect(setup.contains(q("setup-currency-select")) && setup.contains(q("setup-target-arr-input")) && setup.contains(q("fiscal-year-end-select"))).toBe(true);
-    expect(q("setup-target-arr-input").value).toBe("40,000,000");
-    expect(q("setup-target-date-input").value).toBe("31 Dec 2028");
-    expect(q("asof-month-input").value).toBe("Jun 2026");
+  test("the page runs top to bottom: consent text and tick, the mapping text, paperclip and Map, drop zone, deck box, mapped files, FX, strip, Run audit, parked blocks", async () => {
+    await mount({ audit: WITH_SERIES, datasets: [VIEW()] });
+    await flush();
+    const order = ["consent-block", "chat-explainer", "chat-paperclip", "chat-drop-zone", "deck-panel", "chat-messages", "fx-settings", "audit-setup", "run-audit", "parked-blocks"];
+    for (let i = 1; i < order.length; i += 1) {
+      expect([order[i - 1], order[i], !!(q(order[i - 1]).compareDocumentPosition(q(order[i])) & Node.DOCUMENT_POSITION_FOLLOWING)]).toEqual([order[i - 1], order[i], true]);
+    }
+    expect(q("setup-consent-checkbox").compareDocumentPosition(q("chat-explainer")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(q("consent-block").contains(q("setup-consent-checkbox"))).toBe(true);
   });
 
-  test("the first quarterly review is a set-up field with the server's default, and an edit saves through the inputs call", async () => {
-    await mount({ audit: { ...AUDIT, ic_inputs: { first_quarterly_review: "2026-01-09" } } });
+  test("no set-up field sits above the upload area, and the requested analysis date is not on the page", async () => {
+    await mount({ audit: WITH_SERIES });
+    const chat = q("upload-chat");
+    for (const id of ["setup-currency-select", "setup-target-arr-input", "setup-target-date-input", "asof-month-input", "fiscal-year-end-select", "setup-review-date-input", "setup-as_of", "audit-setup"]) {
+      const el = q(id);
+      if (el) expect(el.compareDocumentPosition(chat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeFalsy();
+    }
+    expect(q("setup-analysis-date-input")).toBeNull();
+    expect(q("setup-help-analysis_date")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/analysis date/i);
+    expect(document.body.textContent).not.toMatch(/last month is\s+complete/i);
+  });
+
+  test("Run audit is on with the parked fields empty and no quarterly review date", async () => {
+    await mount({ audit: { ...AUDIT, target_arr: 0, target_date: null, ic_inputs: {} } });
+    expect(q("setup-target-arr-input").value).toBe("");
+    expect(q("setup-target-date-input").value).toBe("");
+    expect(q("setup-review-date-input").value).toBe("");
+    expect(q("run-audit").disabled).toBe(false);
+  });
+
+  test("the strip holds currency, the as-of month and (not December) the fiscal year-end, each read-only with a Change link that opens its field and its help", async () => {
+    await mount({ audit: { ...WITH_SERIES, fiscal_year_end: 6, as_of_month: "2026-06-30", as_of_by: "analyst" } });
+    const strip = q("audit-setup");
+    expect(strip.textContent).toContain("Reporting currency: EUR");
+    expect(strip.textContent).toContain("As-of month: Jun 2026 (set by analyst)");
+    expect(strip.textContent).toContain("Fiscal year-end: June");
+    const help = { currency: [SETUP_HELP.reporting_currency, "reporting_currency"], as_of: ["Last month of actual figures. Months after it are read as plan.", "as_of_month"], fy: [SETUP_HELP.fiscal_year_end, "fiscal_year_end"] };
+    for (const [key, field] of [["currency", "setup-currency-select"], ["as_of", "asof-month-input"], ["fy", "fiscal-year-end-select"]]) {
+      expect(q(field)).toBeNull();
+      await click(q(`setup-${key}-change`));
+      expect(strip.contains(q(field))).toBe(true);
+      expect(q(`setup-help-${help[key][1]}`).textContent).toBe(help[key][0]);
+    }
+  });
+
+  test("the parked cards hold the target and review fields with the server's stored values", async () => {
+    await mount({ audit: { ...WITH_SERIES, target_arr: 40000000, target_date: "2028-12-31", ic_inputs: { first_quarterly_review: "2026-01-09" } } });
+    expect(q("parked-path-to-plan").contains(q("setup-target-arr-input"))).toBe(true);
+    expect(q("setup-target-arr-input").value).toBe("40,000,000");
+    expect(q("setup-target-date-input").value).toBe("31 Dec 2028");
+    expect(q("parked-quarterly").contains(q("setup-review-date-input"))).toBe(true);
     expect(q("setup-review-date-input").value).toBe("9 Jan 2026");
-    expect(q("audit-setup").contains(q("setup-review-date-input"))).toBe(true);
   });
 
   test("each set-up field saves as it changes; a refused save names the field and the reason", async () => {
     api.updateAudit.mockResolvedValue({});
-    await mount();
+    await mount({ audit: WITH_SERIES });
     await act(async () => { q("setup-target-arr-input").focus(); });
     await change(q("setup-target-arr-input"), "12500000");
     await act(async () => { q("setup-target-arr-input").blur(); });
@@ -149,21 +178,16 @@ describe("the screen", () => {
     await act(async () => { q("setup-target-date-input").blur(); });
     expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { target_date: "2028-06-30" });
     // clearing the as-of month sends an explicit null: back to detection on Map
+    await click(q("setup-as_of-change"));
     await act(async () => { q("asof-month-input").focus(); });
     await change(q("asof-month-input"), "Jun 2026");
     await act(async () => { q("asof-month-input").blur(); });
     expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { as_of_month: "2026-06-30" });
+    await click(q("setup-as_of-change"));
     await act(async () => { q("asof-month-input").focus(); });
     await change(q("asof-month-input"), "");
     await act(async () => { q("asof-month-input").blur(); });
     expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { as_of_month: null });
-    // a target date not after the as-of month is refused before anything is sent
-    api.updateAudit.mockClear();
-    await act(async () => { q("asof-month-input").focus(); });
-    await change(q("asof-month-input"), "Jun 2028");
-    await act(async () => { q("asof-month-input").blur(); });
-    expect(api.updateAudit).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenLastCalledWith("Target date must be after the as-of month");
     // a server refusal names the field
     api.updateAudit.mockRejectedValue({ response: { status: 422, statusText: "", data: { detail: [{ loc: ["body", "target_arr"], msg: "Input should be a valid number" }] } } });
     await act(async () => { q("setup-target-arr-input").focus(); });
@@ -172,9 +196,19 @@ describe("the screen", () => {
     expect(toast.error).toHaveBeenLastCalledWith("Target ARR could not be saved: HTTP 422 — target_arr: Input should be a valid number");
   });
 
+  test("an as-of month not before the stored target date is refused before anything is sent", async () => {
+    await mount({ audit: { ...WITH_SERIES, target_date: "2028-06-30" } });
+    await click(q("setup-as_of-change"));
+    await act(async () => { q("asof-month-input").focus(); });
+    await change(q("asof-month-input"), "Jun 2028");
+    await act(async () => { q("asof-month-input").blur(); });
+    expect(api.updateAudit).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenLastCalledWith("Target date must be after the as-of month");
+  });
+
   test("Target ARR: a stored 0 shows an empty box, a digit replaces it, clearing leaves it empty", async () => {
     api.updateAudit.mockResolvedValue({});
-    await mount({ audit: { ...AUDIT, target_arr: 0 } });
+    await mount({ audit: { ...WITH_SERIES, target_arr: 0 } });
     expect(q("setup-target-arr-input").value).toBe("");
     await change(q("setup-target-arr-input"), "05");
     expect(q("setup-target-arr-input").value).toBe("5");
@@ -184,10 +218,10 @@ describe("the screen", () => {
 
   test("the header target follows a saved Target ARR without a reload", async () => {
     api.updateAudit.mockResolvedValue({ target_arr: 12500000 });
-    await mount({ audit: { ...AUDIT, target_arr: 0 } });
+    await mount({ audit: { ...WITH_SERIES, target_arr: 0 } });
     await act(async () => { q("setup-target-arr-input").focus(); });
     await change(q("setup-target-arr-input"), "12500000");
-    api.getAudit.mockResolvedValue({ ...AUDIT, target_arr: 12500000 });
+    api.getAudit.mockResolvedValue({ ...WITH_SERIES, target_arr: 12500000 });
     await act(async () => { q("setup-target-arr-input").blur(); });
     await flush();
     expect(q("header-target").textContent).toBe("12500000");
@@ -195,7 +229,7 @@ describe("the screen", () => {
   });
 
   test("a 502 or 503 on a set-up save reads 'Server is restarting', not the proxy's page", async () => {
-    await mount();
+    await mount({ audit: WITH_SERIES });
     for (const status of [502, 503]) {
       api.updateAudit.mockRejectedValue({ response: { status, statusText: "Bad Gateway", data: "<html><body>Cloudflare Error 502</body></html>" } });
       await act(async () => { q("setup-target-arr-input").focus(); });
@@ -220,7 +254,7 @@ describe("the screen", () => {
     expect(q("chat-map").textContent).toBe("Map");
     expect(bar.querySelector("input:not([type=file])")).toBeNull();
     for (const id of ["chat-text-input", "chat-send", "chat-send-wrap", "chat-calculate", "chat-calculate-wrap", "compute-button", "compute-button-wrap"]) expect(q(id)).toBeNull();
-    expect(document.body.textContent).not.toMatch(/Calculate/);
+    expect(document.body.textContent).not.toMatch(/\bCalculate\b/);
     expect(document.body.textContent).not.toContain("This window accepts files and mapping confirmations.");
   });
 
@@ -247,7 +281,7 @@ describe("the screen", () => {
     expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
     expect(q("all-confirmed").textContent).toBe("All columns confirmed. Press Run audit at the bottom of the page to calculate.");
     expect(q("all-confirmed").textContent).toBe(ALL_CONFIRMED_LINE);
-    expect(q("chat-map-wrap").title).not.toMatch(/Calculate/);
+    expect(q("chat-map-wrap").title).not.toMatch(/\bCalculate\b/);
   });
 
   test("a mapping that was complete on arrival (nothing confirmed here) shows no all-confirmed line", async () => {

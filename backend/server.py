@@ -352,6 +352,7 @@ async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
     a["as_of_by"] = _as_of_by(a)
+    a["provider_zdr"] = os.environ.get("PROVIDER_ZDR", "").strip().lower() == "true"     # picks the deck sentence of the Upload page text
     a["results_stale"] = run_audit.results_stale(a)
     if a["results_stale"]:
         a["results"] = None       # figures of an older engine contract never reach the browser (George, 2026-10-20)
