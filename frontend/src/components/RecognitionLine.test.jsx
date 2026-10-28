@@ -1,7 +1,9 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
-import { S2_EXPLAINER_CONSENT, S4_DROP_ZONE_LEAD } from "@/lib/chatUpload";
+import { s2Explainer, S4_DROP_ZONE_LEAD } from "@/lib/chatUpload";
+
+const S2_EXPLAINER_CONSENT = s2Explainer(true);
 
 const load = () => ({ RecognitionLine: require("./RecognitionLine").default, ...require("@/lib/recognition") });
 

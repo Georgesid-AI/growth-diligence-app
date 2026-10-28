@@ -29,8 +29,6 @@ describe("abbreviations point to the glossary at their first use in a text block
 
   test("Value at stake reads VaS on screen: the register's second line and the help text", () => {
     expect(VAS_LABEL).toBe("VaS");
-    expect(SETUP_HELP.target_arr).toBe("The plan figure the audit tests. Every claim's VaS (see glossary) is measured against it.");
-    expect(SETUP_HELP.target_date).toBe("When the plan says Target ARR (see glossary) is reached. Sets the forecast horizon.");
     expect(REVENUE_REQUIRED_NOTE).toBe("The revenue file is the only required file. Every metric in the audit – ARR (see glossary), "
       + "NRR (see glossary), churn, CAC (see glossary) payback – is computed from it; without it nothing can be calculated or verified.");
   });

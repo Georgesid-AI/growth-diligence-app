@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Loader2, Plus, X, Search } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import DeckPanel from "@/components/DeckPanel";
-import AuditSetup from "@/components/AuditSetup";
+import { ConsentBlock, AssumptionsSetup, ParkedBlocks } from "@/components/AuditSetup";
 import UploadChat from "@/components/UploadChat";
 import RunAuditPanel from "@/components/RunAuditPanel";
 import { Button } from "@/components/ui/button";
@@ -52,18 +52,23 @@ export default function MappingWizard() {
       </div>
       {missing && <p role="status" className="mb-4 text-sm text-amber-800" data-testid="run-missing-line">{missing}</p>}
 
-      <AuditSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
+      <ConsentBlock audit={audit} setAudit={setAudit} />
 
-      <div className="mt-5 space-y-5">
+      <UploadChat audit={audit} onViews={setViews} onStaged={setAttached} onMapping={setMapping}
+        onFiles={attach} leftover={leftover}
+        mapButton={map}
+        deck={<div className="px-5 pt-4"><DeckPanel auditId={audit.id} reloadKey={fxVersion} /></div>}
+        extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
+
+      <div className="mt-5">
         <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
-        <UploadChat audit={audit} onViews={setViews} onStaged={setAttached} onMapping={setMapping}
-          onFiles={attach} leftover={leftover}
-          mapButton={map}
-          extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
-        <DeckPanel auditId={audit.id} reloadKey={fxVersion} />
       </div>
 
+      <AssumptionsSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
+
       <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={mapping} topHost={topHost} />
+
+      <ParkedBlocks audit={audit} setAudit={setAudit} asOf={asOf} />
     </Layout>
   );
 }

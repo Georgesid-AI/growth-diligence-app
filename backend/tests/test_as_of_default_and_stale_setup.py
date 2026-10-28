@@ -96,6 +96,18 @@ def test_the_screen_gets_the_months_of_the_revenue_file(monkeypatch):
     assert audit["datasets"]["revenue"]["months"] == months
 
 
+@pytest.mark.parametrize("value,expected", [(None, False), ("", False), ("false", False), ("yes", False), ("true", True), (" TRUE ", True)])
+def test_the_screen_gets_provider_zdr_as_one_boolean_that_is_off_unless_the_flag_says_true(monkeypatch, value, expected):
+    """The Upload page text picks its deck sentence from this flag (docs/specs/chat-upload.md section 23); default off."""
+    monkeypatch.setattr(server, "db", _fake_db())
+    if value is None:
+        monkeypatch.delenv("PROVIDER_ZDR", raising=False)
+    else:
+        monkeypatch.setenv("PROVIDER_ZDR", value)
+    audit = asyncio.run(server.audit_public(copy.deepcopy(server.db["audits"].docs[0])))
+    assert audit["provider_zdr"] is expected
+
+
 # 6 --------------------------------------------------------------------------------------------------------------------------
 @pytest.fixture()
 def api(monkeypatch):

@@ -24,7 +24,7 @@ jest.mock("react-router-dom", () => ({
   Link: ({ to, children, ...rest }) => <a href={to} {...rest}>{children}</a>,
 }), { virtual: true });
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
-jest.mock("@/components/AuditSetup", () => ({ __esModule: true, default: () => <div data-testid="audit-setup" /> }));
+jest.mock("@/components/AuditSetup", () => ({ __esModule: true, ConsentBlock: () => null, AssumptionsSetup: () => <div data-testid="audit-setup" />, ParkedBlocks: () => null }));
 jest.mock("@/components/DeckPanel", () => () => <div data-testid="deck-panel" />);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,19 +69,19 @@ const attach = async (...names) => {
 const press = async (id) => { await act(async () => { q(id).click(); }); await act(async () => { await Promise.resolve(); }); };
 const follows = (a, b) => !!(q(a).compareDocumentPosition(q(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-test("Run audit and its stages sit at the bottom of the page, below the Board deck box; Map stays and there is no Calculate button", async () => {
+test("Run audit and its stages sit under the assumptions strip, below the Board deck box and the mapped files; Map stays and there is no Calculate button", async () => {
   await mount();
   expect(document.body.querySelectorAll('[data-testid="run-audit"]')).toHaveLength(1);
   expect(q("run-audit").textContent).toBe("Run audit");
+  expect(follows("chat-drop-zone", "deck-panel")).toBe(true);
+  expect(follows("deck-panel", "chat-messages")).toBe(true);
+  expect(follows("upload-chat", "fx-settings")).toBe(true);
+  expect(follows("fx-settings", "audit-setup")).toBe(true);
   expect(follows("audit-setup", "run-audit-panel")).toBe(true);
-  expect(follows("audit-setup", "fx-settings")).toBe(true);
-  expect(follows("fx-settings", "upload-chat")).toBe(true);
-  expect(follows("upload-chat", "deck-panel")).toBe(true);
-  expect(follows("deck-panel", "run-audit-panel")).toBe(true);
   expect(q("chat-map")).not.toBeNull();
   expect(q("chat-calculate")).toBeNull();
   expect(q("compute-button")).toBeNull();
-  expect(document.body.textContent).not.toMatch(/Calculate/);
+  expect(document.body.textContent).not.toMatch(/\bCalculate\b/);
   expect(q("upload-chat").textContent).not.toMatch(/Files already uploaded/);
   expect([...q("run-stages").querySelectorAll("li")].map((li) => li.getAttribute("data-testid"))).toEqual(["stage-mapping", "stage-engine", "stage-claims"]);
   expect(q("stage-mapping").textContent).toContain("File mapping");

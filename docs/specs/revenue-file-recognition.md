@@ -306,12 +306,12 @@ take no part in the checks. The reason codes below are the closed list `REASONS`
   period column that has a number in the revenue row (a sheet with no revenue row: the last period column). The audit's **as-of month** is the stored
   `as_of_month` when it is set; else the audit's default, the last month of the P&L (chat-upload.md §2) — for a P&L file that is its own last month, so a
   clean audit with a defaulted as-of month asks no click; else none. The server passes this value as `as_of_month`.
+- **Detection is code only** (PR #196; amended 2026-10-28, George): the model gives no last actual column and nothing is compared with it.
 - **Checks, in this order; the first failure is the reason and the state is `click`:**
   1. `not_a_period` — the proposed column is not a period column of the sheet.
-  2. `no_as_of_month` — there is no as-of month at all (none stored, no P&L): **the boundary needs a click**, even when rules and model agree.
+  2. `no_as_of_month` — there is no as-of month at all (none stored, no P&L): **the boundary needs a click**.
   3. `after_as_of` — the column's period ends after the as-of month: **rejected, needs a click**. The candidates are the period columns up to the
      as-of month.
-  4. `rules_and_model_disagree` — the proposed column is not the rules' column.
   Otherwise `auto`. A boundary earlier than the as-of month is accepted: the engine reads to the last actual, as for a file that ends early.
 - `last_actual` = `{column, month, state, reason, candidates}` with `candidates` `[{column, month}]`. `month` is the period's end month, YYYY-MM.
   Only the labels layout has period columns: a records or snapshot layout has `last_actual: null` and `excluded_columns: []` (the engine's as-of

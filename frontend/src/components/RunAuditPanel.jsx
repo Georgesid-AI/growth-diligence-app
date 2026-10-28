@@ -71,7 +71,7 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
   return (
     <section className="mt-5" data-testid="run-audit-panel">
       <p className="text-sm text-slate-600 mb-3 max-w-3xl">
-        Attach the files in the box below and press Run audit. The columns are mapped, the metrics calculated and the deck claims read.
+        Attach the files in the box above and press Run audit. The columns are mapped, the metrics calculated and the deck claims read.
         You stop only where a decision is yours, on the Audit page.
       </p>
       {runButton("run-audit")}

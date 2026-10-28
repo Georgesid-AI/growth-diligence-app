@@ -317,10 +317,10 @@ describe("the audit tile (docs/specs/chat-upload.md section 24)", () => {
       expect(api.runStage).not.toHaveBeenCalled();
       expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/mapping", { state: { missing: "The audit cannot run yet. Missing: a mapped file." } });
     });
-    test("with Target ARR and Target date not set it does not run, and names both", async () => {
+    test("with Target ARR and Target date not set it still runs: they are parked and never block", async () => {
       await press("run-audit-a2");
-      expect(api.runStage).not.toHaveBeenCalled();
-      expect(mockNavigate).toHaveBeenCalledWith("/audit/a2/mapping", { state: { missing: "The audit cannot run yet. Missing: Target ARR, Target date." } });
+      expect(api.runStage).toHaveBeenCalled();
+      expect(mockNavigate.mock.calls.map((c) => c[0])).toEqual(["/audit/a2/dashboard"]);
     });
     test("a stage that fails opens Upload & Mapping with its message, where Retry stage is", async () => {
       api.runStage.mockImplementation(async (id, key) => (key === "engine" ? { stage: key, status: "failed", message: "The calculations could not be completed." } : { stage: key, status: "done" }));
