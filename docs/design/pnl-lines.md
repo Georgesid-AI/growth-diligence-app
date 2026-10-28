@@ -52,6 +52,11 @@ check, or an exclusion. The table in section 5 names the use per line.
 
 ## 5. Lines and uses
 
+The rows below are examples from one real file. The engine assigns a use by
+the line's mapped role (revenue, cost of revenue, S&M, R&D, G&A, other
+income, D&A, tax, total, rate), never by its label text. A file with other
+labels or other groupings gets the same uses through the same roles.
+
 | Line (as mapped) | Use |
 |---|---|
 | OPEX total | burn base; opex ÷ revenue trend; sum check against the department totals |
