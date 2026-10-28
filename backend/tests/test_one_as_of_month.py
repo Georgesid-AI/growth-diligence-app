@@ -11,13 +11,19 @@ import pytest
 pytest.importorskip("fastapi")
 
 import server  # noqa: E402
+import test_llm_gateway as t  # noqa: E402
 from app import as_of  # noqa: E402
 from app import claim_matching as cm  # noqa: E402
 from app.decks import claims as deck_claims  # noqa: E402
 from app.structures import sheet as sh  # noqa: E402
 from forecast_support import payback_claim, payback_results, row_of, yearly_input  # noqa: E402
-from test_as_of_default_and_stale_setup import api  # noqa: E402,F401  (the fixture)
-from test_sheet_structure import YEARLY, stored_map  # noqa: E402
+from test_as_of_default_and_stale_setup import api  # noqa: E402,F401  (the set-up client, aud-1)
+from test_chat_upload import AUDIT, mapping_reply, upload  # noqa: E402
+from test_revenue_recognition import FIXTURES as RECOGNITION, MONTHLY, recognition_reply  # noqa: E402
+from test_sheet_structure import YEARLY, sheet_of, stored_map  # noqa: E402
+
+from app import column_rules as cr  # noqa: E402
+from app import recognition as rec  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -63,6 +69,76 @@ def test_nothing_detected_without_a_revenue_figure():
     assert as_of.detect({"revenue": revenue_file([("2019-01-01", 0)])}) is None
 
 
+# --- 1b. recognised files: stored with no months and no mapping (PR 196 review, finding 1) ----------------------------------
+
+def recognised_dataset(name: str, dtype: str = "revenue", content: bytes = None) -> dict:
+    """A file stored by recognition alone, as _store_recognised and the P&L path keep it: its sheets, no months, no mapping, no rows."""
+    content = content if content is not None else (RECOGNITION / name).read_bytes()
+    sheets = cr.read_workbook(content, name)
+    return {"dtype": dtype, "file": name, "months": None, "mapping": {}, "rows": [], "recognition_only": dtype == "revenue",
+            "recognition_sheets": rec.pack_sheets(sheets), "recognition_proposal": None, "recognition_decisions": {}}
+
+
+def test_detection_from_a_recognised_monthly_report_is_its_last_month_with_a_non_zero_value_before_the_forecast_columns():
+    assert as_of.detect({"revenue": recognised_dataset(MONTHLY)}) == {"month": "2025-06", "file": MONTHLY}, \
+        "July to December are tagged Forecast: never read, whatever the boundary"
+    zeros = (RECOGNITION / MONTHLY).read_text().replace("10614,10625,", "0,,")          # May 0, June blank
+    assert as_of.detect({"revenue": recognised_dataset(MONTHLY, content=zeros.encode())})["month"] == "2025-04"
+
+
+def test_detection_reads_every_recognised_shape_that_holds_a_revenue_figure():
+    summary = recognised_dataset("revenue_summary_by_product.csv")
+    assert as_of.detect({"revenue": summary})["month"], "a revenue summary: the last period of the summed rows"
+    statement = recognised_dataset("pnl_single_period.csv", dtype="pnl")
+    assert as_of.detect({"pnl": statement}) is None or as_of.detect({"pnl": statement})["file"] == "pnl_single_period.csv"
+    text = b"Line,FY2022,FY2023,FY2024\nRevenue,100,120,\nCost of sales,50,55,60\nPayroll,20,22,24\nEBITDA,30,43,\n"
+    yearly = recognised_dataset("statement.csv", dtype="pnl", content=text)
+    assert as_of.detect({"pnl": yearly}, 6) == {"month": "2023-06", "file": "statement.csv"}, "a yearly statement ends at the fiscal year-end"
+    snapshot = recognised_dataset("arr_snapshot.csv")
+    assert as_of.detect({"revenue": snapshot}) is None, "a snapshot has one undated value: no month to detect"
+
+
+def test_the_recognised_series_is_read_with_no_boundary_and_the_revenue_month_caps_a_recognised_pnl():
+    report = recognised_dataset(MONTHLY)
+    assert as_of.revenue_last(report) == "2025-06"
+    assert as_of.pnl_month(recognised_dataset(MONTHLY, dtype="pnl"), 12, "2025-03") == "2025-03", "a P&L column after the revenue month is plan"
+
+
+@pytest.fixture()
+def chat(monkeypatch):
+    """The chat-upload client of conftest.api (the fixture name `api` is this file's set-up client, aud-1): the audit-chat audit with
+    no as-of month and the fake adapter."""
+    from fastapi.testclient import TestClient
+
+    from app import usage as usage_mod
+    from app.llm import gateway
+    from test_chat_upload import AUDIT_DOC
+
+    db = t.FakeDB()
+    db["audits"].docs.append({**AUDIT_DOC, "usage": usage_mod.empty()})
+    monkeypatch.setattr(server, "db", db)
+    server._RECOGNITION_CACHE.clear()
+    state = {"adapter": t.FakeAdapter(replies=[])}
+    monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: state["adapter"])
+    client = TestClient(server.app, raise_server_exceptions=False)
+    client.db, client.state = db, state
+    return client
+
+
+def test_a_recognised_monthly_report_alone_sets_the_as_of_month_and_the_set_up_field_names_the_file(chat):
+    """The chat-upload path: the report is stored with no months and no mapping; Map detects the month from its series."""
+    assert chat.db["audits"].docs[0]["as_of_month"] is None
+    chat.state["adapter"] = t.FakeAdapter(replies=[recognition_reply()])
+    res = upload(chat, MONTHLY, (RECOGNITION / MONTHLY).read_bytes())
+    assert res.status_code == 200, res.text
+    got = chat.get(f"/api/audits/{AUDIT}").json()
+    assert (got["as_of_month"], got["as_of_by"], got["as_of_file"]) == ("2025-06-30", "detected", MONTHLY)
+    assert res.json()["recognition"]["last_actual"]["as_of"] == "2025-06", "the boundary is read from the month the file set"
+    # the set-up field: auditForm.asOfSourceText reads as_of_by and as_of_file: "(detected from <file>)" (auditForm.test.js)
+    js = (ROOT / "frontend/src/lib/auditForm.js").read_text()
+    assert "`(detected from ${audit.as_of_file})`" in js
+
+
 def test_the_last_actual_column_is_read_from_the_as_of_month_and_the_plan_columns_start_the_month_after():
     m = stored_map(YEARLY)
     assert as_of.last_actual_column(m, 12, "2022-12")["header"] == "FY2022"
@@ -72,9 +148,55 @@ def test_the_last_actual_column_is_read_from_the_as_of_month_and_the_plan_column
     assert plan and plan[0]["end"] == "2024-06" and plan[0]["header"] == "FY2024"
 
 
+# --- 1c. the statement feed applies the boundary (PR 196 review, finding 2) ----------------------------------------------------
+
+SIX_YEARS = (b"Line,FY 2019,FY 2020,FY 2021,FY 2022,FY 2023,FY 2024\n"
+             b"Revenue,500,600,700,800,900,1000\nCost of sales,200,220,240,260,280,300\nSales and marketing,100,110,120,130,140,150\n")
+
+
+def test_the_statement_feed_picks_actual_columns_up_to_the_as_of_month_and_plan_columns_after_it_whatever_the_tag():
+    m = sh.build(sh.read(sheet_of("six_years.csv", SIX_YEARS).grid, {}, 12))
+    assert all(p["tag"] == "unknown" for p in m["periods"]), "no Actual or Forecast mark anywhere: the tag decides nothing"
+    fed = sh.feed(m, 12, 1, {"file": "six_years.csv", "sheet": "CSV"}, "2021-12-31")
+    assert [y["period"] for y in fed["yearly"]["actual"]] == ["FY 2019", "FY 2020", "FY 2021"]
+    assert [y["period"] for y in fed["yearly"]["planned"]] == ["FY 2022", "FY 2023", "FY 2024"]
+    assert [r["period"] for r in fed["yearly"]["reported"]] == ["FY 2019", "FY 2020", "FY 2021"]
+    june = sh.feed(m, 6, 1, {}, "2021-12-31")
+    assert [y["period"] for y in june["yearly"]["actual"]] == ["FY 2019", "FY 2020", "FY 2021"], "FY 2022 ends June 2022: plan"
+    assert [y["period"] for y in sh.feed(m, 6, 1, {}, "2022-06-30")["yearly"]["actual"]][-1] == "FY 2022"
+    tagged = stored_map(YEARLY)                   # FY2021-23 tagged actual, FY2024-26 forecast
+    early = sh.feed(tagged, 12, 1, {}, "2022-12-31")["yearly"]
+    assert [y["period"] for y in early["actual"]] == ["FY2021", "FY2022"], "an actual-tagged column after the as-of month is plan"
+    assert [(y["period"], y["tag"]) for y in early["planned"]] == [("FY2023", "actual"), ("FY2024", "forecast"), ("FY2025", "forecast"),
+                                                                   ("FY2026", "forecast")]
+    assert sh.feed(m, 12, 1, {}, "2018-12-31")["yearly"] is None, "no column up to the as-of month: no yearly input"
+
+
+def test_on_the_production_path_a_yearly_pnl_feeds_three_actual_and_three_plan_columns_from_the_as_of_month(chat, monkeypatch):
+    """Run audit: the audit's stored as-of month (Dec 2021) reaches sheet.feed and the engine's yearly input."""
+    chat.db["audits"].docs[0].update(as_of_month="2021-12-31", as_of_by="analyst")
+    chat.state["adapter"] = t.FakeAdapter(replies=[mapping_reply()])
+    assert upload(chat, "blank_vs_zero.csv").status_code == 200, "the revenue file of test_sheet_structure's compute tests"
+    out = upload(chat, "six_years.csv", SIX_YEARS, dtype="pnl").json()
+    assert out.get("sheet_map"), out
+    seen = {}
+    real = server.ge.compute_all
+
+    def spy(*args, **kw):
+        seen["yearly"] = kw.get("yearly")
+        return real(*args, **kw)
+    monkeypatch.setattr(server.ge, "compute_all", spy)
+    results = chat.post(f"/api/audits/{AUDIT}/compute")
+    assert results.status_code == 200, results.text
+    assert [y["period"] for y in seen["yearly"]["actual"]] == ["FY 2019", "FY 2020", "FY 2021"]
+    assert [y["period"] for y in seen["yearly"]["planned"]] == ["FY 2022", "FY 2023", "FY 2024"]
+    assert [y["period"] for y in results.json()["yearly_basis"]["years"]] == ["FY 2019", "FY 2020", "FY 2021"]
+    assert results.json()["as_of_month"] == "2021-12"
+
+
 # --- stored once on the audit, typed override --------------------------------------------------------------------------------
 
-def test_the_as_of_month_is_stored_once_detected_or_typed(api):
+def test_the_as_of_month_is_stored_once_detected_or_typed(api):  # noqa: F811
     audit = api.db["audits"].docs[0]
     audit.update(as_of_by="detected", as_of_month=None)
     api.db["datasets"].docs.append({"audit_id": "aud-1", **revenue_file([("2019-05-01", 10), ("2019-06-01", 12)])})
@@ -92,7 +214,7 @@ def test_the_as_of_month_is_stored_once_detected_or_typed(api):
     assert (cleared["as_of_month"], cleared["as_of_by"]) == ("2019-06-30", "detected"), "cleared: back to detection"
 
 
-def test_a_changed_detected_month_marks_computed_results_stale(api):
+def test_a_changed_detected_month_marks_computed_results_stale(api):  # noqa: F811
     audit = api.db["audits"].docs[0]
     audit.update(as_of_by="detected", as_of_month="2024-02-29")
     api.db["datasets"].docs.append({"audit_id": "aud-1", **revenue_file([("2024-03-01", 10)])})
@@ -100,7 +222,7 @@ def test_a_changed_detected_month_marks_computed_results_stale(api):
     assert audit["as_of_month"] == "2024-03-31" and audit["setup_stale"] is True
 
 
-def test_recognition_and_the_register_read_the_stored_field(api):
+def test_recognition_and_the_register_read_the_stored_field(api):  # noqa: F811
     api.db["audits"].docs[0].update(as_of_month="2024-02-29", as_of_by="analyst")
     assert asyncio.run(server._effective_as_of("aud-1", api.db["audits"].docs[0])) == "2024-02-29"
     assert server._register_settings(api.db["audits"].docs[0], {})["as_of_by"] == "analyst"

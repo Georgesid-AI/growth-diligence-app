@@ -270,9 +270,14 @@ def _reported_settings(as_of):
 
 def test_unset_as_of_defaults_to_the_last_invoice_month_not_the_last_service_month():
     """Reproduced on main before 2026-10-24: as-of defaulted to the last MRR month, 2027-05, Enterprise NRR 0%, 0.58 years to target ->
-    '0.0 cannot be raised to a negative power'. The default is now the revenue file's last actual month, so the deferred months are
-    never the run-rate (George, 2026-10-24); the "As-of month" Missing Data item that named them is gone."""
-    results = _reported_settings(None)
+    '0.0 cannot be raised to a negative power'. The detected month is the revenue file's last actual month (as_of.detect on Map, never
+    the engine: PR 196 review), so the deferred months are never the run-rate; the "As-of month" Missing Data item that named them is gone."""
+    from app import as_of
+    rev = _prepaid_annual_revenue()
+    rows = [{"invoice_date": str(r["invoice_date"].date()), "amount": r["amount"]} for r in rev.to_dict("records")]
+    found = as_of.detect({"revenue": {"mapping": {"invoice_date": "invoice_date", "amount": "amount"}, "rows": rows}})
+    assert found["month"] == "2026-06", "the last invoice month, not the last service month (2027-05)"
+    results = _reported_settings(as_of.month_end(found["month"]))
     assert results["as_of_month"] == "2026-06"
     assert results["source_period"]["month"] == "2026-06"
     assert not _missing(results, "As-of month")

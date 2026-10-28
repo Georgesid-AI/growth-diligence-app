@@ -46,10 +46,10 @@ def recognise(rec, name, as_of=AS_OF_YEAR_END, proposal=None):
 
 
 def proposal(**over):
-    """What a validated model reply hands Python (section 5): the sheet it read, the type, the revenue row with its label, the last
-    actual column, the currency and the rows that are not revenue. Rows and columns are sheet positions (A = 1, row 1 = 1)."""
+    """What a validated model reply hands Python (section 5): the sheet it read, the type, the revenue row with its label, the
+    currency and the rows that are not revenue. Rows are sheet positions (row 1 = 1); the boundary is the audit's as-of month."""
     body = {"sheet": 1, "file_type": "monthly_revenue_report", "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"},
-            "last_actual_column": 7, "currency": "EUR",
+            "currency": "EUR",
             "non_revenue_rows": [{"row": 9, "kind": "forecast"}, {"row": 10, "kind": "bookings"}, {"row": 11, "kind": "pipeline"}]}
     body.update(over)
     return body
@@ -204,7 +204,7 @@ def test_no_currency_anywhere_recognises_the_file_and_asks_the_analyst_to_confir
 
 def test_a_currency_the_model_names_but_the_file_never_shows_is_dropped(rec):
     got = recognise(rec, "monthly_report_no_currency.csv", proposal=proposal(currency="USD", revenue_row={"row": 3, "label": "Revenue"},
-                                                                          last_actual_column=13, non_revenue_rows=[]))
+                                                                          non_revenue_rows=[]))
     assert got["currency"] == {"code": None, "state": "confirm"}, "Python finds the code in the cells or the analyst confirms it"
 
 
@@ -320,7 +320,7 @@ def test_a_proposed_revenue_row_that_fails_a_check_is_unsure_and_needs_a_click(r
 def test_a_proposed_revenue_row_numeric_in_fewer_than_three_columns_is_unsure(rec):
     text = ("Metric,Jan-25,Feb-25,Mar-25,Apr-25,May-25\nRevenue,100,110,120,130,140\nRevenue (restated),,,,,150\nCustomers,4,5,6,7,8\n")
     got = rec.recognise(csv_sheets(text), as_of_month="2025-05-31", proposal=proposal(
-        revenue_row={"row": 3, "label": "Revenue (restated)"}, last_actual_column=6, currency=None, non_revenue_rows=[]))
+        revenue_row={"row": 3, "label": "Revenue (restated)"}, currency=None, non_revenue_rows=[]))
     assert (got["revenue_row"]["state"], got["revenue_row"]["reason"]) == ("click", "not_numeric_enough")
 
 
@@ -354,7 +354,8 @@ def test_two_revenue_rows_of_the_same_kind_and_score_are_a_tie_and_wait_for_a_cl
 
 
 def test_the_model_cannot_move_the_boundary_the_as_of_month_sets_it(rec):
-    got = recognise(rec, MONTHLY, as_of=AS_OF, proposal=proposal(last_actual_column=13))        # December 2025: ignored
+    got = recognise(rec, MONTHLY, as_of=AS_OF, proposal=proposal())
+    assert "last_actual_column" not in proposal(), "the reply names no column any more (PR 196 review)"
     last = got["last_actual"]
     assert (last["column"], last["state"], last["reason"], last["candidates"]) == (7, "auto", None, [])
     assert last["as_of"] == AS_OF[:7] and got["needs_click"] is False
@@ -375,8 +376,8 @@ def test_with_no_as_of_month_the_boundary_is_the_rules_last_actual_column_and_wa
 
 
 @pytest.mark.parametrize("column", [1, 99, 5])
-def test_a_proposed_boundary_is_ignored_whatever_it_names(rec, column):
-    got = recognise(rec, MONTHLY, as_of=AS_OF, proposal=proposal(last_actual_column=column))
+def test_a_stored_proposal_with_the_old_column_field_is_read_and_the_column_ignored(rec, column):
+    got = recognise(rec, MONTHLY, as_of=AS_OF, proposal={**proposal(), "last_actual_column": column})      # a proposal kept before PR 196
     assert (got["last_actual"]["column"], got["last_actual"]["state"], got["last_actual"]["reason"]) == (7, "auto", None)
 
 
@@ -476,7 +477,7 @@ def test_the_model_naming_another_type_than_the_rules_makes_the_type_a_click_wit
 
 
 def test_with_no_rules_type_the_models_choice_among_the_candidates_is_an_ai_suggestion_that_waits(rec):
-    base = dict(revenue_row=None, last_actual_column=5, currency=None, non_revenue_rows=[])
+    base = dict(revenue_row=None, currency=None, non_revenue_rows=[])
     got = recognise(rec, "unclassed_names_by_quarter.csv", proposal=proposal(file_type="customer_revenue", **base))
     assert (got["file_type"], got["type_state"], got["type_reason"], got["type_source"]) == ("customer_revenue", "click", "type_unsure", "ai")
     outside = recognise(rec, "unclassed_names_by_quarter.csv", proposal=proposal(file_type="monthly_revenue_report", **base))
@@ -486,7 +487,7 @@ def test_with_no_rules_type_the_models_choice_among_the_candidates_is_an_ai_sugg
 def test_with_two_periods_a_row_numeric_in_only_one_is_unsure(rec):
     text = "Line,FY2024,FY2025\nRevenue,100,\nCost of sales,50,55\nPayroll,20,22\nEBITDA,30,33\n"
     got = rec.recognise(csv_sheets(text), as_of_month=AS_OF_YEAR_END,
-                        proposal=proposal(revenue_row={"row": 2, "label": "Revenue"}, last_actual_column=3, currency=None, non_revenue_rows=[]))
+                        proposal=proposal(revenue_row={"row": 2, "label": "Revenue"}, currency=None, non_revenue_rows=[]))
     assert (got["revenue_row"]["state"], got["revenue_row"]["reason"]) == ("click", "not_numeric_enough")
 
 
@@ -670,7 +671,7 @@ def test_a_change_to_a_row_that_is_not_a_candidate_or_to_the_last_actual_column_
 
 def test_the_analyst_confirms_the_currency_when_the_file_names_none_and_the_as_of_month_sets_the_boundary(api):
     api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(
-        revenue_row={"row": 3, "label": "Revenue"}, last_actual_column=13, currency=None, non_revenue_rows=[])])
+        revenue_row={"row": 3, "label": "Revenue"}, currency=None, non_revenue_rows=[])])
     got = upload(api, "monthly_report_no_currency.csv", (FIXTURES / "monthly_report_no_currency.csv").read_bytes()).json()["recognition"]
     assert got["needs_click"] is True and got["currency"]["state"] == "confirm"
     assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("auto", None), "the boundary waits for nothing"
@@ -702,8 +703,7 @@ def test_a_workbook_stored_as_the_pnl_is_recognised_through_the_pnl_path_and_ano
 
 def test_a_proposal_for_a_sheet_python_did_not_pick_is_dropped(api):
     set_as_of(api, AS_OF_YEAR_END)
-    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(sheet=1, revenue_row={"row": 3, "label": "MRR"}, last_actual_column=13,
-                                                                    non_revenue_rows=[])])
+    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(sheet=1, revenue_row={"row": 3, "label": "MRR"}, non_revenue_rows=[])])
     got = upload(api, "pack.xlsx", kpi_and_pnl_bytes()).json()["recognition"]
     assert got["sheet"] == "P&L" and got["type_source"] == "rules"
     assert got["revenue_row"]["row"] == 3 and got["revenue_row"]["state"] == "auto", "the proposal named the KPIs sheet: it is not applied to P&L"
@@ -767,8 +767,7 @@ def test_a_new_prompt_version_asks_again_for_the_same_bytes(api):
 def test_an_entity_labelled_upload_stores_and_logs_no_customer_name(api, caplog):
     caplog.set_level(logging.DEBUG)
     set_as_of(api, AS_OF_YEAR_END)
-    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(file_type="customer_revenue", revenue_row=None, last_actual_column=13,
-                                                                    non_revenue_rows=[])])
+    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(file_type="customer_revenue", revenue_row=None, non_revenue_rows=[])])
     upload(api, "customer_revenue_months.csv", (FIXTURES / "customer_revenue_months.csv").read_bytes())
     decide(api, action="confirm", part="last_actual")
     sent = " ".join(json.loads(p)["text"] for p in recognition_calls(api))
@@ -800,8 +799,7 @@ def test_the_analyst_answers_the_turnover_question_and_the_row_is_then_decided(a
     text = ("Metric,Jan-25,Feb-25,Mar-25,Apr-25,May-25,Jun-25,Jul-25,Aug-25,Sep-25,Oct-25,Nov-25,Dec-25\n"
             "Turnover (EUR),11,12,13,14,15,16,17,18,19,20,21,22\nCustomers,4,5,6,7,8,9,10,11,12,13,14,15\n"
             "Churn,1,2,3,4,5,6,7,8,9,10,11,12\nCash,5,6,7,8,9,10,11,12,13,14,15,16\n")
-    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(revenue_row={"row": 2, "label": "Turnover (EUR)"}, last_actual_column=13,
-                                                                    non_revenue_rows=[])])
+    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(revenue_row={"row": 2, "label": "Turnover (EUR)"}, non_revenue_rows=[])])
     got = upload(api, "turnover.csv", text.encode()).json()["recognition"]
     assert (got["revenue_row"]["state"], got["revenue_row"]["reason"], got["money_kind"]) == ("click", "turnover_question", {"asked": True})
     done = decide(api, action="change", part="money_kind", money_kind="revenue").json()["recognition"]

@@ -191,8 +191,7 @@ def crm_workbook():
 
 
 def only_recognition_reply(word):
-    return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": word, "revenue_row": None, "last_actual_column": None,
-                       "currency": None, "non_revenue_rows": []})
+    return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": word, "revenue_row": None, "currency": None, "non_revenue_rows": []})
 
 
 @pytest.mark.parametrize("scenario", ["no_consent", "failed_call", "model_says_not_revenue"])

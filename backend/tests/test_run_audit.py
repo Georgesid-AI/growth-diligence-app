@@ -55,7 +55,7 @@ class EchoAdapter(t.FakeAdapter):
         sent = json.loads(user_payload)
         if sent.get("type") == "file_recognition":     # a recognition call (revenue-file-recognition.md 5.7): a valid reply that names only the type
             return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "financial_statements", "revenue_row": None,
-                               "last_actual_column": None, "currency": None, "non_revenue_rows": []}), 100, 20
+                               "currency": None, "non_revenue_rows": []}), 100, 20
         if "valid_source_keys" not in sent:            # a column-mapping call: the model proposes the S&M column of the P&L
             item = {"metric": "sm_expense", "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown",
                     "value_cell": "r1c2", "unit_other": None, "period_cells": [], "proposed_flags": []}

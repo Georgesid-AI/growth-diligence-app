@@ -238,7 +238,6 @@ JSON only, `extra="forbid"`, no free text, **no confidence number**:
  "file_type": "invoice_transactions" | "customer_revenue" | "monthly_revenue_report" | "revenue_summary" | "financial_statements"
               | "arr_mrr_snapshot" | "crm" | "pnl" | "not_revenue",
  "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"} | null,   // sheet row number and the label as sent
- "last_actual_column": 7 | null,                 // sheet column number (A = 1)
  "currency": "EUR" | null,                       // an ISO code, only if seen in the text
  "non_revenue_rows": [{"row": 9, "kind": "forecast" | "budget" | "bookings" | "pipeline" | "contract_value" | "run_rate"}]}
 ```

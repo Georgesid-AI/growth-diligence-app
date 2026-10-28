@@ -7,16 +7,18 @@ Detection: the last period with a non-zero revenue value across the revenue file
 month with a non-zero amount. A P&L column counts as actual when its header is not marked budget, plan or forecast and its
 period ends on or before that month (with no revenue file: when it is not marked); the P&L gives the end month of its last
 actual column with non-zero revenue, else of its last unmarked column with non-zero revenue. A yearly column ends in the fiscal year-end
-month of its year.
+month of its year. A file stored by recognition alone (a monthly report, a revenue summary, a statement, an ARR snapshot: no months, no
+mapping) gives the last period of its recognised series with a non-zero value, read with no boundary, the same way.
 """
 import calendar
 from typing import Dict, List, Optional
 
 from app import column_rules as cr
+from app import recognition as rec
 from app.structures import sheet as sheet_mod
 
 DETECTED, ANALYST = "detected", "analyst"
-EXCLUDED_TAGS = ("forecast", "budget")
+EXCLUDED_TAGS = sheet_mod.PLAN_TAGS
 
 
 def _amount(value) -> Optional[float]:
@@ -30,8 +32,9 @@ def _amount(value) -> Optional[float]:
         return None
 
 
-def revenue_last(ds: Optional[Dict]) -> Optional[str]:
-    """YYYY-MM of the last month of a mapped revenue file with a valid date and a non-zero amount."""
+def revenue_last(ds: Optional[Dict], fiscal_year_end: int = 12) -> Optional[str]:
+    """YYYY-MM of the last month of a mapped revenue file with a valid date and a non-zero amount; of a file stored by recognition
+    alone, the end month of the last period of its series with a non-zero value."""
     if not ds:
         return None
     mapping, rows = ds.get("mapping") or {}, ds.get("rows") or []
@@ -41,7 +44,19 @@ def revenue_last(ds: Optional[Dict]) -> Optional[str]:
             rows = [r for r in rows if _amount(r.get(amount_col)) not in (None, 0.0)]
         found = cr.months_of([r.get(date_col) for r in rows])
         return found["last"] if found else None
-    return ((ds.get("months") or {}).get("last")) or None      # a recognised report with no customer rows: its months as stored
+    return _pick(recognised_columns(ds, fiscal_year_end), None)
+
+
+def recognised_columns(ds: Dict, fiscal_year_end: int) -> List[Dict]:
+    """The periods of a recognised file's series, read again from its stored sheets with no boundary (the as-of month is what is being
+    detected), with the model's kept proposal and the analyst's decisions: {"end", "tag", "revenue"} in period order. Empty for a file
+    with no recognised sheets or no dated period."""
+    sheets = rec.unpack_sheets(ds.get("recognition_sheets"))
+    if not sheets:
+        return []
+    result = rec.recognise(sheets, None, ds.get("recognition_proposal"), None, ds.get("recognition_decisions"), fiscal_year_end)
+    columns = [{"end": x["month"], "tag": None, "revenue": x.get("value")} for x in result.get("series") or [] if x.get("month")]
+    return sorted(columns, key=lambda c: c["end"])
 
 
 def _pick(columns: List[Dict], revenue_month: Optional[str]) -> Optional[str]:
@@ -74,7 +89,7 @@ def pnl_month(ds: Optional[Dict], fiscal_year_end: int, revenue_month: Optional[
     mapping, rows = ds.get("mapping") or {}, ds.get("rows") or []
     month_col, revenue_col = mapping.get("month"), mapping.get("revenue")
     if not month_col:
-        return None
+        return _pick(recognised_columns(ds, fiscal_year_end), revenue_month)
     columns = []
     for r in rows:
         found = cr.months_of([r.get(month_col)])
@@ -86,7 +101,7 @@ def pnl_month(ds: Optional[Dict], fiscal_year_end: int, revenue_month: Optional[
 def detect(datasets: Dict[str, Dict], fiscal_year_end: int = 12) -> Optional[Dict]:
     """{"month": "YYYY-MM", "file": name} from the stored datasets by dtype, or None when no file holds a revenue figure."""
     rev, pnl = datasets.get("revenue"), datasets.get("pnl")
-    revenue_month = revenue_last(rev)
+    revenue_month = revenue_last(rev, fiscal_year_end)
     pnl_found = pnl_month(pnl, fiscal_year_end, revenue_month)
     found = [(m, d) for m, d in ((revenue_month, rev), (pnl_found, pnl)) if m]
     if not found:
@@ -97,9 +112,8 @@ def detect(datasets: Dict[str, Dict], fiscal_year_end: int = 12) -> Optional[Dic
 
 def last_actual_column(sheet_map: Dict, fiscal_year_end: int, as_of: Optional[str]) -> Optional[Dict]:
     """The last actual column of a statement P&L under the audit's as-of month: not marked budget, plan or forecast, ending on or
-    before it; with no such column, None."""
-    cols = [c for c in statement_columns(sheet_map, fiscal_year_end) if c["tag"] not in EXCLUDED_TAGS
-            and (as_of is None or c["end"] <= as_of[:7])]
+    before it (the statement feed's rule, sheet.is_actual); with no such column, None."""
+    cols = [c for c in statement_columns(sheet_map, fiscal_year_end) if sheet_mod.is_actual(c, as_of)]
     return cols[-1] if cols else None
 
 

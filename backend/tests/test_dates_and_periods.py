@@ -22,6 +22,7 @@ from test_claim_matching import run_claim  # noqa: E402
 from test_claim_register_api import AUDIT, _get, _put  # noqa: E402
 from test_ic_memo import _ready  # noqa: E402
 
+from app import as_of  # noqa: E402
 from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
 from app import ic_memo as im  # noqa: E402
@@ -60,8 +61,12 @@ def _upload(dtype, name, content):
 
 
 def run_engine(uploads: dict, as_of_month=None) -> dict:
+    """compute_all as the server calls it: the as-of month as given, else detected from the uploads as Map detects it (as_of.detect);
+    the engine itself never picks one."""
     norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
     empty = server.pd.DataFrame()
+    if as_of_month is None and (found := as_of.detect(uploads)):
+        as_of_month = as_of.month_end(found["month"])
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0}, "billing_terms": {},
               "default_l": 1, "as_of_month": as_of_month}
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}

@@ -1031,25 +1031,15 @@ def metric_periods(results: dict, rev: pd.DataFrame, pnl: pd.DataFrame, deals: p
     return out
 
 
-def _resolve_as_of(as_of_str, pnl: pd.DataFrame, mrr: pd.DataFrame, rev: pd.DataFrame = None):
-    """As-of month = explicit override, else the last actual month of the revenue file (a month with a valid invoice date and a
-    non-zero amount, revenue_months), else last P&L month, else last MRR month. A P&L may run on into plan months; the revenue file
-    ends where the actuals end (George, 2026-10-24)."""
+def _resolve_as_of(as_of_str):
+    """The audit's one as-of month as the server passes it (docs/specs/dates-and-periods.md section 2: detected on Map across the
+    revenue file and the P&L, or typed by the analyst; stored once on the audit). The engine never picks one from the data: with
+    none, nothing is cut and the results carry no as-of month."""
     if as_of_str:
         try:
             return pd.Period(str(as_of_str), "M")
         except Exception:
             pass
-    actual = revenue_months(rev)
-    if actual:
-        return actual[-1]
-    if pnl is not None and not pnl.empty and "month" in pnl.columns:
-        months = [_month_of(x) for x in pnl["month"]]
-        months = [m for m in months if m is not None]
-        if months:
-            return max(months)
-    if mrr is not None and not mrr.empty:
-        return mrr.columns[-1]
     return None
 
 
@@ -1771,7 +1761,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
 
     # As-of month: truncate all "current"/time-series views to <= as_of. MRR after the
     # as-of month is deferred revenue and must not appear in current figures.
-    as_of = _resolve_as_of(config.get("as_of_month"), pnl, mrr, rev)
+    as_of = _resolve_as_of(config.get("as_of_month"))
     if not mrr.empty and as_of is not None:
         keep = [c for c in mrr.columns if c <= as_of]
         mrr = mrr.loc[:, keep] if keep else mrr.iloc[:, :0]

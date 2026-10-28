@@ -1118,7 +1118,7 @@ def proposal_from(reply: Dict, sheets, company_name: Optional[str], mapping: Dic
     the label of that row (as written, or as the model was sent it) and dropped; only `label_matches` stays (section 5.5)."""
     if not reply or not 1 <= reply.get("sheet", 0) <= len(sheets):
         return None
-    out = {k: reply.get(k) for k in ("sheet", "file_type", "last_actual_column", "currency")}
+    out = {k: reply.get(k) for k in ("sheet", "file_type", "currency")}
     out["non_revenue_rows"] = [{"row": x["row"], "kind": x["kind"]} for x in reply.get("non_revenue_rows") or []]
     row = reply.get("revenue_row")
     out["revenue_row"] = None

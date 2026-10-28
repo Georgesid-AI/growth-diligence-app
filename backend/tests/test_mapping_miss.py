@@ -25,7 +25,7 @@ def type_reply(word):
     """The reply of the file_type prompt v2 (revenue-file-recognition.md section 5.7) that names only the file's type: the old word
     "revenue" is a monthly revenue report, "unknown" is not_revenue."""
     return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": {"revenue": "monthly_revenue_report", "unknown": "not_revenue"}.get(word, word),
-                       "revenue_row": None, "last_actual_column": None, "currency": None, "non_revenue_rows": []})
+                       "revenue_row": None, "currency": None, "non_revenue_rows": []})
 
 
 def sheets_of(content, name):

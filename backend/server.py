@@ -858,15 +858,9 @@ async def _refresh_as_of(audit_id: str) -> None:
 
 
 async def _effective_as_of(audit_id: str, audit: Optional[dict]) -> Optional[str]:
-    """The audit's one as-of month, as stored (detected on Map or typed by the analyst); None before any file is mapped. An audit
-    stored before the field existed has its month detected from the stored months of its files."""
-    if (audit or {}).get("as_of_month"):
-        return audit["as_of_month"]
-    for dtype in ("revenue", "pnl"):
-        found = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "months": 1})
-        if ((found or {}).get("months") or {}).get("last"):
-            return found["months"]["last"]
-    return None
+    """The audit's one as-of month, as stored (detected on Map or typed by the analyst); None before any file is mapped. No other
+    source: an audit stored before the field existed gets its month at its next Map or Run audit (_refresh_as_of)."""
+    return (audit or {}).get("as_of_month") or None
 
 
 _RECOGNITION_CACHE: "OrderedDict[str, dict]" = OrderedDict()
@@ -1226,6 +1220,7 @@ async def _settle_recognition(audit_id: str, dtype: str, background: Optional[Ba
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
     if not ds or not ds.get("recognition_only"):
         return
+    await _refresh_as_of(audit_id)          # the file's own series may set the as-of month its boundary is read from
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     result = await _recognition_of(audit_id, audit, ds)
     done = bool(result and result["recognised"] and not result["needs_click"])
@@ -3354,7 +3349,8 @@ async def _run_compute(audit_id: str) -> dict:
     rev = pd.DataFrame() if revenue_ds.get("recognition_only") or "revenue" not in ds else read("revenue")
     crm = read("crm") if "crm" in ds else pd.DataFrame()
     statement = sheet_mod.feed(ds["pnl"]["sheet_map"], _fiscal_year_end(a), ds["pnl"].get("unit_scale") or 1,
-                               {"file": ds["pnl"]["file"], "sheet": ds["pnl"]["sheet"]}) if ds.get("pnl", {}).get("sheet_map") else None
+                               {"file": ds["pnl"]["file"], "sheet": ds["pnl"]["sheet"]}, a.get("as_of_month")) \
+        if ds.get("pnl", {}).get("sheet_map") else None
     if statement:                  # a statement: its monthly P&L, never a split of a year or a quarter (section 26.6)
         pnl = statement_pnl(statement)
     else:
@@ -4024,9 +4020,11 @@ async def seed_demo():
                               "rows": recs, "mapping": mapping}
         fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
         fx[spec["reporting_currency"].upper()] = 1.0
+        found = as_of_mod.detect(uploads, spec["fiscal_year_end"])          # detected as on Map, stored once on the audit
+        as_of_month = as_of_mod.month_end(found["month"]) if found else None
         config = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
                   "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1,
-                  "as_of_month": None}
+                  "as_of_month": as_of_month}
         sources = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
         results = ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], config, sources,
                                  files=candidate_views(uploads),
@@ -4040,8 +4038,7 @@ async def seed_demo():
             "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",
             "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True,
             "seed_version": SEED_VERSION, "usage": usage_mod.empty(),
-            "as_of_month": as_of_mod.month_end(results["as_of_month"]) if results.get("as_of_month") else None,
-            "as_of_by": as_of_mod.DETECTED, "as_of_file": meta["revenue"]["file"],
+            "as_of_month": as_of_month, "as_of_by": as_of_mod.DETECTED, "as_of_file": found["file"] if found else None,
         })
     logger.info("Seeded demo audits")
 

@@ -2696,8 +2696,7 @@ def test_chat_the_file_type_reply_is_one_closed_word():
 
 def _recognition_word(word):
     """The reply of the file_type prompt v2 (revenue-file-recognition.md 5.7) that names only the file's type."""
-    return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": word, "revenue_row": None, "last_actual_column": None,
-                       "currency": None, "non_revenue_rows": []})
+    return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": word, "revenue_row": None, "currency": None, "non_revenue_rows": []})
 
 
 def _file_type_upload(api):
@@ -2727,8 +2726,8 @@ def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_ha
             assert title not in stored.get(name, ""), (title, name)
     kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
     assert len(kept) == 1 and set(kept[0]) <= {"audit_id", "kind", "file_hash", "prompt_tag", "reply", "saved_at"}
-    assert kept[0]["reply"]["file_type"] == "crm" and set(kept[0]["reply"]) <= {"sheet", "file_type", "revenue_row", "last_actual_column", "currency",
-                                                                              "non_revenue_rows"}
+    assert kept[0]["reply"]["file_type"] == "crm" and set(kept[0]["reply"]) <= {"sheet", "file_type", "revenue_row", "currency", "non_revenue_rows"}
+    assert "last_actual_column" not in kept[0]["reply"], "the as-of month sets the boundary: the model names no column (PR 196 review)"
     log = "\n".join(r.getMessage() for r in caplog.records)
     for title in FILE_TYPE_TITLES + ("Source inputs", "Annual tracker", "Funnel and evidence", "Account ID", "CRM_Anonymous", chat.COMPANY):
         assert title not in log, f"{title!r} reached a log line"
@@ -3065,17 +3064,17 @@ def test_recognition_the_gateway_refuses_a_row_label_on_a_masked_sheet_a_figure_
 
 def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_text():
     good = {"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report",
-            "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"}, "last_actual_column": 7, "currency": "EUR",
+            "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"}, "currency": "EUR",
             "non_revenue_rows": [{"row": 9, "kind": "forecast"}]}
     parse = lambda body: gateway.parse_structure_reply(json.dumps(body), "file_recognition", "")  # noqa: E731
     assert parse(good).file_type == "monthly_revenue_report"
-    assert parse({**good, "file_type": "not_revenue", "revenue_row": None, "last_actual_column": None, "currency": None,
+    assert parse({**good, "file_type": "not_revenue", "revenue_row": None, "currency": None,
                   "non_revenue_rows": []}).file_type == "not_revenue"
     for other in ("crm", "pnl"):                           # the same call answers the file type of chat-upload.md section 19 (spec 5.6)
-        assert parse({**good, "file_type": other, "revenue_row": None, "last_actual_column": None, "currency": None, "non_revenue_rows": []})
+        assert parse({**good, "file_type": other, "revenue_row": None, "currency": None, "non_revenue_rows": []})
     for bad in ({**good, "confidence": 90}, {**good, "note": "x"}, {**good, "file_type": "deck"}, {**good, "currency": "EURO"},
                 {**good, "non_revenue_rows": [{"row": 9, "kind": "maybe"}]}, {**good, "non_revenue_rows": [{"row": 9, "kind": "forecast", "why": "x"}]},
-                {**good, "last_actual_column": 0}, {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
+                {**good, "last_actual_column": 7}, {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
         with pytest.raises(gateway.GatewayError):
             parse(bad)
     kinds = ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")

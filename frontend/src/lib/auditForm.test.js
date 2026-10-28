@@ -99,6 +99,9 @@ describe("the as-of month default and its warning line", () => {
 
   test("the field says where its month came from", () => {
     expect(asOfSourceText({ as_of_month: "2021-06-30", as_of_by: "detected", as_of_file: "revenue.csv" })).toBe("(detected from revenue.csv)");
+    // a file stored by recognition alone (a monthly report with no months and no mapping) names itself the same way (PR 196 review)
+    expect(asOfSourceText({ as_of_month: "2025-06-30", as_of_by: "detected", as_of_file: "monthly_report.csv" }))
+      .toBe("(detected from monthly_report.csv)");
     expect(asOfSourceText({ as_of_month: "2021-06-30", as_of_by: "analyst", as_of_file: "revenue.csv" })).toBe("(set by analyst)");
     expect(asOfSourceText({ as_of_month: null })).toBe("");
     expect(asOfDisplay("2021-06-30")).toBe("Jun 2021");
