@@ -1,0 +1,6 @@
+2026-10-28, branch claude/nifty-darwin-wyq1t2.
+Deleted: nothing.
+Decided: the candidate write is an upsert on (audit_id, deck_id, structure_key, order, cell) so a second read of a deck finds the row there; stored pairs fold on read (`decks.claims.fold_twins`, the answered copy stands, sources joined) at the claims list and the register's readers; before the first Calculate a page-read claim with High confidence and no review flag is accepted at read time, once results exist the entry rule is unchanged (Medium that is matched and unflagged still enters).
+Slow or unclear: the live run's server log was not available, so which two triggers overlapped is read from the code, not observed; "Medium and Low wait" is true only before the first Calculate, after it the spec's rule (matched, no review flag) stands.
+Root cause and rule: `process_deck_pages` reads the deck's rows once and inserts with no key or claim on the deck, and two background tasks (the upload's and a settle or Map task from `process_waiting_decks_safely`, which selects decks still "waiting" and never marks them "reading") can run on one deck; a write that can run twice is keyed on what it writes.
+Process change to propose: a test per background task that runs it twice at once on the same deck and asserts the stored rows, so a new trigger cannot add a second writer unseen.

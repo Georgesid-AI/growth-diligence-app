@@ -255,6 +255,16 @@ async def revenue_ready(db, audit_id: str) -> bool:
                                                      {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1}))
 
 
+CANDIDATE_KEY = ("audit_id", "deck_id", "structure_key", "order", "cell")       # what one candidate is: reading a deck again writes it once
+
+
+async def store_candidate(db, row: Dict) -> None:
+    """Write a candidate once: a second read of the same deck (the upload's task and Run audit's, or the settle step) that reaches the same
+    page reply, order and cell finds the row there and leaves it alone (live bug, 2026-10-28: two stored copies, identical but for the id)."""
+    key = {k: row.get(k) for k in CANDIDATE_KEY}
+    await db[CANDIDATES_COLLECTION].update_one(key, {"$setOnInsert": {k: v for k, v in row.items() if k not in key}}, upsert=True)
+
+
 async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
     """Read one deck's structures with the model, or queue them; returns the deck's AI status.
 
@@ -332,7 +342,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
                     row_order = order = order + 1
                 row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
                        "id": str(uuid.uuid4()), "order": row_order, "status": "pending", "structure_key": result.key}
-                await db[CANDIDATES_COLLECTION].insert_one(row)
+                await store_candidate(db, row)
                 reviewed.append(row)
         statuses.append(entry)
     overall = STOPPED if stopped_message else READ if any(s["status"] == "read" for s in statuses) else NOT_READ

@@ -1977,7 +1977,7 @@ async def list_deck_candidates(audit_id: str):
         d["pages_read"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") == "read")
         d["pages_rejected"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") not in ("read", "stopped"))
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
-    candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    candidates = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000))
     # The claims Python enters on its own read as approved ("auto"), the ones a check asks about as pending (simplified-flow.md section 2).
     kept = {c["id"]: c for c in await _with_entries(audit_id, audit, [c for c in candidates if c.get("status") != "rejected"])}
     candidates = [kept.get(c["id"], c) for c in candidates]
@@ -2463,22 +2463,24 @@ async def _open_turnover_ids(audit_id: str, audit: dict, found: list) -> set:
 
 async def _entry_plan(audit_id: str, audit: dict, found: list) -> dict:
     """What `_enter_matched_claims` would do, without writing (simplified-flow.md section 2): the pending claims that enter, the ones Python
-    entered earlier that a check now asks about (re-opened), the Revenue / Volume questions open and the claims left waiting. Reads the
-    stored results; nothing is changed. Without results nothing is tested, so nothing enters."""
+    entered earlier that a check now asks about (re-opened), the Revenue / Volume questions open and the claims left waiting. A claim enters
+    when no check asks about it and, before the first Calculate (no stored results), when the page read gave it High extraction confidence: High is accepted
+    without a click, Medium and Low wait for the analyst (George, 2026-10-28). Once results exist the rule is the one above. Nothing is changed."""
     audit = await _current_audit(audit_id, audit, strict=False)
     plan = {"enter": [], "reopen": [], "open_turnover": set(), "waiting": 0}
-    if not audit.get("results"):
-        plan["waiting"] = sum(1 for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES)
-        return plan
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
     entered = [c for c in found if claim_matching.entered_by_python(c)]
     if not pending and not entered:
         return plan
-    as_of = audit.get("as_of_month") or audit["results"].get("as_of_month")
+    as_of = audit.get("as_of_month") or (audit.get("results") or {}).get("as_of_month")
     plan["open_turnover"] = await _open_turnover_ids(audit_id, audit, found)
     waits = lambda c: run_audit.needs_a_word({**c, "flags": claim_matching.flags_of(c, as_of)}) or c["id"] in plan["open_turnover"]      # noqa: E731
+    peers = {}
+    for c in found:
+        peers.setdefault(c.get("deck_id"), []).append(c)
+    high = lambda c: c.get("origin") == "ai" and deck_claims.confidence(c, peers[c.get("deck_id")])["level"] == "High"      # noqa: E731
     plan["reopen"] = [c["id"] for c in entered if waits(c)]
-    plan["enter"] = [c["id"] for c in pending if not waits(c)]
+    plan["enter"] = [c["id"] for c in pending if not waits(c) and (audit.get("results") or high(c))]
     plan["waiting"] = len(pending) - len(plan["enter"]) + len(plan["reopen"])
     return plan
 
@@ -2499,7 +2501,7 @@ async def _enter_matched_claims(audit_id: str, audit: dict, found: Optional[list
     answered, edited or added is never touched, an Other figure is never a task. Writes the plan of `_entry_plan` (Run audit's claims stage
     and every calculation); the screens read the same plan without writing (`_with_entries`). No threshold or tolerance is read or changed."""
     if found is None:
-        found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+        found = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000))
     plan = await _entry_plan(audit_id, audit, found)
     accepted = []
     for cid in plan["reopen"]:
@@ -2609,7 +2611,7 @@ async def review_summary(audit_id: str):
     if not audit:
         raise HTTPException(404, "Audit not found")
     datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
-    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    found = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000))
     found = await _with_entries(audit_id, audit, found)
     auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") == "approved"]
     # Other figures are never a task (claim-types-and-correction.md section 4)
@@ -2697,8 +2699,8 @@ async def _claim_rows(audit_id: str, audit: dict) -> tuple:
     audit = await _current_audit(audit_id, audit, strict=False)
     # Every candidate not rejected: the register holds the approved and edited ones; the deck hint (claim-matching.md
     # section 11 point 7) reads the pending ones too.
-    found = await db[decks.CANDIDATES_COLLECTION].find(
-        {"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    found = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find(
+        {"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000))
     found = await _with_entries(audit_id, audit, found)         # the claims Python matched enter on their own (simplified-flow.md section 2)
     claims = [c for c in found if c.get("status") in REGISTER_STATUSES]
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
@@ -2756,7 +2758,7 @@ def _marked(audit: dict, rows: list) -> list:
 async def _open_claim_questions(audit_id: str, audit: dict, rows: list) -> int:
     """The claim questions the Audit page lists: the claims waiting for an answer (a failed check, a Revenue / Volume question) and the
     register rows whose Definition check is open (simplified-flow.md section 2). A count only."""
-    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    found = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000))
     waiting = (await _entry_plan(audit_id, audit, found))["waiting"]
     definitions = [r for r in rows if r.get("definition_check") == claim_matching.DEFINITION_ASK]
     asked = {str(r["claim_id"]).split("#")[0] for r in definitions}
@@ -2794,7 +2796,7 @@ async def _integrity(audit_id: str, results: Optional[dict], fiscal_year_end: in
     """Both blocks of the Data integrity section and the conclusion (docs/specs/integrity-coverage.md), from the stored results, the
     deck count, the stored candidates and the audit's fiscal year-end (the clustering check's quarters). Pure reads; no model."""
     deck_count = len(await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1}).to_list(100))
-    candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    candidates = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000))
     return integrity_mod.assess(results, deck_count=deck_count, candidates=candidates, fiscal_year_end=fiscal_year_end)
 
 

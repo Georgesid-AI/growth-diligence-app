@@ -269,3 +269,17 @@ def test_an_untested_row_that_asks_the_analyst_to_set_something_is_a_card_and_an
     assert run_api.put(f"/api/audits/{AUDIT}/decks/candidates/noperiod", json={"target_date": "2024-02"}).status_code == 200
     assert run_api.get(f"/api/audits/{AUDIT}/decks").json()["attention"] == []
     assert run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["open_questions"] == 0
+
+
+# --- g. High confidence is accepted without a click, before any audit result exists (George, 2026-10-28) ---------------------------------
+def test_a_high_confidence_page_read_claim_is_accepted_before_the_first_calculate_medium_and_low_wait(run_api):
+    """Live bug: every candidate of an audit with no results stayed pending, High ones too ("Needs your attention")."""
+    high = claim("high", origin="ai", ai_status="matched", flags=[], cell="r9c8")
+    medium = claim("medium", origin="ai", ai_status="matched", flags=[], cell="r9c9", target_date=None, period_text=None)
+    low = claim("low", origin="ai", ai_status="unmatched", flags=[])
+    deck(run_api, high, medium, low)
+    assert not run_api.db["audits"].docs[0].get("results"), "fixture: no audit result yet"
+    listed = {c["id"]: c for c in run_api.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]}
+    assert [listed[c]["confidence"]["level"] for c in ("high", "medium", "low")] == ["High", "Medium", "Low"]
+    assert [listed[c]["status"] for c in ("high", "medium", "low")] == ["approved", "pending", "pending"]
+    assert [c for c, d in listed.items() if d["status"] == "pending"] == ["medium", "low"], "the count of what waits leaves the High one out"
