@@ -492,12 +492,27 @@ async def queue_unread_pages(db, audit_id: str) -> List[str]:
 
 
 async def process_waiting_decks(db, audit_id: str, adapter=None, sleep=None) -> List[str]:
-    """Read every deck that waited for the revenue file, once it is mapped. Returns their deck ids."""
+    """Read every deck that waited for the revenue file, once it is mapped. Returns the ids of the decks this call read. A deck is claimed
+    before it is read: its status turns from "waiting" to "reading" in one conditional update, so a second trigger (the settle step, a Map
+    save, the upload's own task) finds it taken and leaves it alone. A read that fails returns the deck to "waiting"."""
     waiting = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": WAITING},
                                              {"_id": 0, "deck_id": 1}).to_list(1000)
+    claimed = []
     for d in waiting:
-        await process_deck(db, audit_id, d["deck_id"], adapter=adapter, sleep=sleep)
-    return [d["deck_id"] for d in waiting]
+        taken = await db[TEXT_COLLECTION].update_one(
+            {"audit_id": audit_id, "deck_id": d["deck_id"], "ai_status": WAITING},
+            {"$set": {"ai_status": "reading", "ai_message": None, "reading_since": datetime.now(timezone.utc).isoformat()},
+             "$unset": {"read_progress": ""}})
+        if not taken.modified_count:
+            continue
+        claimed.append(d["deck_id"])
+        try:
+            await process_deck(db, audit_id, d["deck_id"], adapter=adapter, sleep=sleep)
+        except Exception:
+            await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": d["deck_id"], "ai_status": "reading"},
+                                                 {"$set": {"ai_status": WAITING, "ai_message": WAITING_TEXT}})
+            raise
+    return claimed
 
 
 def _where(structure: Dict) -> Dict:
