@@ -96,9 +96,8 @@ def test_item_3_a_pnl_confirmed_with_two_or_more_periods_is_the_revenue_file_for
     assert len(page_calls(reading)) == 1 and deck_doc(reading)["ai_status"] == "read"
 
 
-def test_item_3_a_pnl_not_yet_confirmed_is_not_the_revenue_file_and_the_deck_waits(reading):
-    reading.db["audits"].docs[0]["as_of_month"] = "2025-06-30"
-    upload_file(reading, "pnl_monthly.csv", (rr.FIXTURES / "pnl_monthly.csv").read_bytes())
+def test_item_3_a_pnl_with_one_period_is_not_the_revenue_file_and_the_deck_waits(reading):
+    upload_file(reading, "pnl_single_period.csv", (rr.FIXTURES / "pnl_single_period.csv").read_bytes())
     upload_deck(reading)
     assert page_calls(reading) == [] and deck_doc(reading)["ai_status"] == "waiting"
 
@@ -154,7 +153,7 @@ def test_c_run_audit_reads_a_deck_still_waiting_once_the_audit_has_its_revenue_f
 
 
 def test_c_run_audit_leaves_a_waiting_deck_waiting_while_the_revenue_file_is_missing(reading):
-    upload_file(reading, "pnl.csv")
+    upload_file(reading, "pnl_single_period.csv", (rr.FIXTURES / "pnl_single_period.csv").read_bytes())
     upload_deck(reading)
     reading.db["audits"].docs[0]["results"] = {"revenue_series": {"data": []}}
     out = reading.post(f"/api/audits/{AUDIT}/run/claims").json()

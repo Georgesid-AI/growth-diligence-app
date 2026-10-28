@@ -1143,12 +1143,12 @@ def has_monthly_series(result: Optional[Dict]) -> bool:
 
 def pnl_confirmed(result: Optional[Dict]) -> bool:
     """A P&L satisfies the required revenue file when its recognition is confirmed with two or more periods and gives a monthly series
-    (section 8): no part in click and the revenue row or column decided by the analyst."""
+    (section 8): no part in click and the revenue row or column accepted (read by the rules, or decided by the analyst)."""
     if not result or not result.get("recognised") or result.get("periods", 0) < 2 or result.get("needs_click") \
             or not has_monthly_series(result):
         return False
     row = result.get("revenue_row") or result.get("revenue_column")
-    return bool(row and row["state"] == "you")
+    return bool(row and row["state"] in ("auto", "you"))
 
 
 def engine_feed(result: Dict, file: str, sheet_name: str, unit_scale: int = 1, from_pnl: bool = False) -> Optional[Dict]:

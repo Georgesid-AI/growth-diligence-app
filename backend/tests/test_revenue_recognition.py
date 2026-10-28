@@ -713,14 +713,14 @@ def blocker_kinds(api):
     return [b["kind"] for b in api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]]
 
 
-def test_a_pnl_with_two_or_more_months_satisfies_the_revenue_file_once_the_analyst_confirms_its_recognition(api):
+def test_a_pnl_with_two_or_more_months_satisfies_the_revenue_file_once_its_revenue_row_is_read_without_a_click(api):
     rules_only(api, "2025-06-30")
     body = upload(api, "pnl_monthly.csv", (FIXTURES / "pnl_monthly.csv").read_bytes()).json()
     assert body["dtype"] == "pnl" and body["recognition"]["recognised"] and body["recognition"]["periods"] == 6
-    assert "revenue_file_missing" in blocker_kinds(api), "recognised is not confirmed"
-    done = decide(api, dtype="pnl", action="confirm", part="revenue_row")
-    assert done.status_code == 200 and done.json()["recognition"]["revenue_row"]["state"] == "you"
-    assert "revenue_file_missing" not in blocker_kinds(api), "a confirmed P&L with 2+ months is the revenue file"
+    assert body["recognition"]["revenue_row"]["state"] == "auto"
+    assert "revenue_file_missing" not in blocker_kinds(api), "a P&L with 2+ months and a read revenue row is the revenue file"
+    changed = decide(api, dtype="pnl", action="change", part="revenue_row", row=body["recognition"]["revenue_row"]["row"])
+    assert changed.status_code == 200 and changed.json()["recognition"]["revenue_row"]["state"] == "you", "Change stays the override"
 
 
 def test_a_pnl_with_one_period_never_satisfies_the_revenue_file(api):

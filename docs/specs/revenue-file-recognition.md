@@ -415,11 +415,10 @@ nothing open clears it. No banner kind is added.
   recognition. Types with customer rows (`invoice_transactions`, `customer_revenue`) keep the column mapping of chat-upload.md §4 beside the
   recognition line; the other four types have no column mapping, hold no required field (as a statement file, chat-upload.md §26.6) and wait only for
   the clicks of §7. A P&L the rules type by its columns, or a statement-shaped P&L (financial statements) that the P&L path of §26 reads, stays the
-  audit's P&L (CAC payback needs it) and also carries its `recognition` block; it satisfies the required revenue file once its recognition is confirmed with two or more periods (decision 3, §14).
+  audit's P&L (CAC payback needs it) and also carries its `recognition` block; it satisfies the required revenue file once its recognition is accepted with two or more periods (decision 3, §14).
   **How a P&L's recognition is confirmed (review H2):** the P&L's own bubble shows the same recognition line (S31, ids with `pnl`), served by the P&L dataset's
-  `recognition` block, and the analyst decides its revenue row with Change (`POST …/datasets/pnl/recognition` `{action: "change", part: "revenue_row", row}`, or
-  `{action: "confirm", part: "revenue_row"}`, which no screen sends since the Correct button was removed on 2026-10-28; whether a P&L whose row is read with no
-  click may satisfy the required revenue file is open for the owner). Confirmed means no part in `click` and the revenue row `you`; with fewer than two periods it is never confirmed for this purpose (the banner S16a
+  `recognition` block, and its revenue row is accepted without a click when the rules read it (decided 2026-10-28); Change
+  (`POST …/datasets/pnl/recognition` `{action: "change", part: "revenue_row", row}`) overrides it. Confirmed means no part in `click` and the revenue row `auto` or `you`; with fewer than two periods it is never confirmed for this purpose (the banner S16a
   stays). A `revenue` upload is unaffected (its S16d rule is chat-upload.md §16). Banner kinds are unchanged (rule 21).
 - **When the P&L is the only revenue source** (no separate revenue file; the recognised revenue comes from the P&L), the revenue-versus-P&L
   reconciliation compares a source with itself. `revenue_reconciliation` then carries `status: "not_applicable"` and the text "Not applicable – same
