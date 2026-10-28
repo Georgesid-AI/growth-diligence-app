@@ -107,7 +107,7 @@ def test_item6_artefact_usd_market_size_is_converted_at_the_rate_saved_with_the_
 def test_item6_artefact_the_converted_market_size_survives_replacing_the_revenue_file(api):
     """Same row after the analyst replaces the revenue file: the rate saved at the mapping step must still convert it."""
     chat.upload(api, "blank_vs_zero.csv")
-    api.db["audits"].docs[0]["as_of_month"] = "2026-06"
+    api.db["audits"].docs[0].update(as_of_month="2026-06", as_of_by="analyst")        # typed: Map never overwrites it
     api.db[decks.CANDIDATES_COLLECTION].docs.append({**copy.deepcopy(ITEM6_CLAIM), "audit_id": CHAT_AUDIT})
     api.put(f"/api/audits/{CHAT_AUDIT}/datasets/revenue/mapping", json={"fx": {"USD": 0.9}, "billing_terms": {}})
     other = (chat.MESSY / "blank_vs_zero.csv").read_bytes() + b"\n"

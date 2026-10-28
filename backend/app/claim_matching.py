@@ -12,6 +12,7 @@ import calendar
 import hashlib
 import re
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from . import forecast_calc, payback_definition
@@ -108,7 +109,6 @@ NOT_VERIFIED = ("Unverified", "Inconclusive", "Unsupported", "Contradicted")    
 COVERED, PARTLY_COVERED, NOT_COVERED = "Covered", "Partly covered", "Not covered"
 NOT_COVERED_REASON = "claim period not in supplied data: {detail}"
 PARTLY_REASON = "claim period partly covered (months missing: {months})"
-PARTIAL_DETAIL = "{month} is possibly partial (tick 'Last month is complete' to use it)"
 AFTER_SOURCE_DETAIL = "after the latest valid source period, {month}"
 # docs/specs/claim-types-and-correction.md section 2: the fields a claim must know before it is matched.
 FIGURE_TYPES = ("actual", "target", "unknown")
@@ -136,6 +136,8 @@ ANNUAL_KEYS = {payback_definition.REVENUE_GROWTH: "yearly_basis.years.cac_paybac
                payback_definition.NET_NEW_ARR: "yearly_basis.years.cac_payback_net_new_arr_months"}
 ANNUAL_NOT_CALCULATED = "annual payback not calculated for {year}: {reason}"
 ANNUAL_NO_YEAR = "no actual year in the yearly P&L"
+# dates-and-periods.md section 3 (2026-10-28): a deck year matches a yearly column only when both end in the same month.
+PERIOD_NOT_COVERED = "period not covered: the claim's period ends {claim}, the file's {name} ends {file}"
 POPULATION_REASON_FC = "population differs: the claim counts {claimed}, the series counts {measured}"
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
 GROWTH_BASES = ("mom", "yoy", "annualised", "cumulative")
@@ -362,10 +364,15 @@ def _format(unit: str, value: float, currency: Optional[str]) -> str:
     if unit == "currency":
         return _money(value, currency)
     if unit == "%":
-        return f"{value:.1f}%"
+        return f"{_one_place(value)}%"
     if unit in ("days", "months"):
-        return f"{value:.1f} {unit}"
+        return f"{_one_place(value)} {unit}"
     return f"{value:,.0f}"
+
+
+def _one_place(value: float) -> str:
+    """One decimal place, half up as the memo's number check reads it (a stored 120.55 is 120.6, not the binary float's 120.5)."""
+    return str(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
 # --- what the engine holds ----------------------------------------------------------------------------------------------
@@ -1096,7 +1103,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         period_note=c.get("period_read_note") if c.get("target_date") else NO_PERIOD, segment=segment, segment_set_by=segment_by,
         metric=metric, metric_set_by=metric_by, direction=spec["direction"] if spec else None,
         tolerance=tolerance_text(metric) if spec else None, as_of_month=as_of,
-        as_of_defaulted=not settings.get("as_of_month"), overlaps_with=[], months_missing=[], calc_lines=[], calc_details=[],
+        as_of_defaulted=settings.get("as_of_by", "detected" if not settings.get("as_of_month") else "analyst") != "analyst", overlaps_with=[], months_missing=[], calc_lines=[], calc_details=[],
         gate_date=inputs.get("gate_date"),
         gate_threshold=inputs.get("gate_threshold"), gate_budget_decision=inputs.get("gate_budget_decision"),
         gate_metric_name=inputs.get("gate_metric_name"), gate_direction=inputs.get("gate_direction"))
@@ -1420,7 +1427,7 @@ def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Op
 
 class _Span:
     """The months a metric's figures can be read for (dates-and-periods.md sections 3 and 4): first..last of its stored
-    metric_periods block, without the missing months; for NRR and growth a Possibly partial month is not in the data. With no
+    metric_periods block, without the missing months; the as-of month always counts as complete (section 2). With no
     stored periods (results computed before them) every month the series holds counts."""
 
     def __init__(self, results: dict, metric: str):
@@ -1432,13 +1439,9 @@ class _Span:
         self.first = _mi(periods["first"]) if periods else None
         self.last = _mi(periods["last"]) if periods else None
         self.missing = {_mi(m) for m in periods["missing"]} if periods else set()
-        partial_read = metric in ("NRR (12-month)", "Gross revenue churn", MONTHLY_CHURN) or spec.get("kind") == "growth"
-        self.partial = _mi(source["month"]) if partial_read and source.get("status") == "Possibly partial" and source.get("month") else None
         self.evidence_to = source.get("evidence_to")
 
     def has(self, m: int, values: Optional[dict] = None) -> bool:
-        if m == self.partial:
-            return False
         if not self.known:
             return values is None or values.get(_ms(m)) is not None
         return self.first <= m <= self.last and m not in self.missing
@@ -1447,16 +1450,13 @@ class _Span:
         """The last month a figure can be read at, never after `fallback` (the as-of month)."""
         if not self.known:
             return fallback
-        last = self.last if self.partial is None or self.last < self.partial else self.partial - 1
-        return min(last, fallback)
+        return min(self.last, fallback)
 
     def detail(self, read: List[int]) -> str:
         """Why none of the months `read` is in the data (section 4, "Not covered")."""
         name = _short(self.metric)
         if self.known and all(m < self.first for m in read):
             return f"before {name}'s first month, {_ms(self.first)}"
-        if self.partial is not None and max(read) == self.partial:
-            return PARTIAL_DETAIL.format(month=_ms(self.partial))
         if self.known and all(m > self.last for m in read):
             if self.metric in REVENUE_FILE_METRICS and self.evidence_to:
                 return AFTER_SOURCE_DETAIL.format(month=self.evidence_to)
@@ -1501,6 +1501,11 @@ def _annual_payback(out: dict, results: dict, text: str, start: int, end: int):
 
     year = next((y for y in results["yearly_basis"]["years"] if y.get("period_start") == _ms(start) and y.get("period_end") == _ms(end)), None)
     if year is None:
+        other = next((y for y in results["yearly_basis"]["years"] if (y.get("period_end") or "")[:4] == _ms(end)[:4]
+                      and y.get("period_end") != _ms(end)), None)
+        if other:            # same year number, another year-end month: the file does not cover the claim's period
+            return blocked(ANNUAL_NOT_CALCULATED.format(year=label, reason=PERIOD_NOT_COVERED.format(
+                claim=period_words(_ms(end)), name=other["period"], file=period_words(other["period_end"]))))
         return blocked(ANNUAL_NOT_CALCULATED.format(year=label, reason=ANNUAL_NO_YEAR))
     name = year["period"]
     gm = year.get("gross_margin_pct")
@@ -1596,7 +1601,7 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
         if first is not None and target < _mi(first) and not span.known:
             return f"Unverified|{NOT_COVERED_REASON.format(detail=span.detail([target]))}", None, None, None
         if not forecast and not span.has(target, values if not span.known else None):
-            if span.known or target == span.partial:
+            if span.known:
                 return _not_covered(span, [target], cov), None, None, None
         value = values.get(_ms(target))
         if value is not None and not forecast:

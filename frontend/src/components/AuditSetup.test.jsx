@@ -61,9 +61,9 @@ test("ticking and unticking save the consent like the other set-up fields", asyn
 describe("the as-of month: default and warning line", () => {
   const MAPPED = { ...AUDIT, datasets: { revenue: { months: { first: "2017-07", last: "2019-06" } } } };
 
-  test("the empty field names the default, the revenue file's last month", async () => {
+  test("the empty field asks for a typed month and year", async () => {
     await mount(MAPPED);
-    expect(q("asof-month-input").placeholder).toBe("last month of the revenue file");
+    expect(q("asof-month-input").placeholder).toBe("e.g. Jun 2021");
   });
 
   test("an as-of month later than the revenue file's last month gets a warning line under the field", async () => {

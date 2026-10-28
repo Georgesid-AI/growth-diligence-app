@@ -50,7 +50,7 @@ def test_the_proxies_are_independent_of_each_other():
 def test_the_block_validates_against_the_contract_and_the_contract_moves_to_10():
     found = metrics.YearlyBasis.model_validate(block())
     assert found.years[-1].net_new_arr == 360_000
-    assert metrics.CONTRACT_VERSION == 11, "new optional fields of the yearly-basis block (forecast-and-payback.md section 4.5)"
+    assert metrics.CONTRACT_VERSION == 12, "new optional fields of the yearly-basis block (forecast-and-payback.md section 4.5)"
 
 
 def test_a_marketing_only_line_is_calculated_and_named_never_total_sm():

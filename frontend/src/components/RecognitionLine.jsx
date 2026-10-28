@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   TYPE_LABELS, TYPE_SOURCE_TEXT, TYPE_REASON_TEXT, TYPE_CHOOSE, REASON_TEXT, MONTH_REASON_TEXT, CONFIRM_ONLY, TURNOVER_QUESTION,
-  REUPLOAD_NOTE, offersReport, supportsText, rowText, rowChoice, monthText, claimsText, currencyChoices, CURRENCY_NOT_FOUND, TABLES_TEXT, sourceText, SOURCE_CHOICES,
+  REUPLOAD_NOTE, offersReport, supportsText, rowText, rowChoice, monthText, lastActualText, claimsText, currencyChoices, CURRENCY_NOT_FOUND, TABLES_TEXT, sourceText, SOURCE_CHOICES,
 } from "@/lib/recognition";
 
 const SMALL = "h-6 px-2 ml-1.5";
@@ -62,21 +62,14 @@ export default function RecognitionLine({ view, decide, reportingCurrency }) {
   const rowKey = rec.revenue_column ? "column" : "row";
   const rowWaitsConfirm = row && row.state === "click" && CONFIRM_ONLY.includes(row.reason);
   const rowNeedsChoice = row && row.state === "click" && !CONFIRM_ONLY.includes(row.reason) && row.reason !== "turnover_question";
-  const lastWaitsConfirm = last && last.state === "click" && CONFIRM_ONLY.includes(last.reason);
-  const lastNeedsChoice = last && last.state === "click" && !CONFIRM_ONLY.includes(last.reason);
-  const lastKey = (c) => c.column ?? c.row;
   const rowLine = rowNeedsChoice ? `Revenue row: choose the row. ${REASON_TEXT[row.reason] || ""}`.trim()
     : rowWaitsConfirm ? `${rowText(row)}. ${REASON_TEXT[row.reason]}` : row ? rowText(row) : null;
-  const base = last && last.month ? `Last actual month: ${monthText(last.month)}.${(rec.excluded_columns || []).length > 0 ? " Columns after it are not used." : ""}` : null;
-  const lastLine = lastNeedsChoice ? `Last actual month: choose the month. ${MONTH_REASON_TEXT[last.reason] || ""}`.trim()
-    : lastWaitsConfirm ? `${base} ${MONTH_REASON_TEXT[last.reason]}` : base;
+  const lastWaits = last && last.state === "click";
+  const lastLine = lastWaits ? `Last actual column: not read. ${MONTH_REASON_TEXT[last.reason] || ""}`.trim() : lastActualText(last);
 
   const rowSelect = row && (rowNeedsChoice || open.row) && select(id("row-select"),
     row.candidates.map((c) => <option key={c[rowKey]} value={c[rowKey]}>{rowChoice(c)}</option>),
     (v) => send({ action: "change", part: "revenue_row", row: Number(v) }));
-  const lastSelect = last && (lastNeedsChoice || open.last) && select(id("last-select"),
-    last.candidates.map((c) => <option key={lastKey(c)} value={lastKey(c)}>{monthText(c.month)}</option>),
-    (v) => send({ action: "change", part: "last_actual", column: Number(v) }));
 
   // S31k: the currency; the codes are shown as the option label so the line reads no code but the file's own
   const currency = rec.currency || {};
@@ -129,14 +122,9 @@ export default function RecognitionLine({ view, decide, reportingCurrency }) {
       {last && lastLine && (
         <div>
           <span data-testid={id("last")}>{lastLine}</span>
-          {last.state === "auto" && (
-            <Button size="sm" variant="outline" disabled={busy} data-testid={id("last-correct")} className={SMALL}
-              onClick={() => send({ action: "confirm", part: "last_actual" })}>Correct</Button>)}
-          {!lastNeedsChoice && <button type="button" data-testid={id("last-change")} onClick={() => toggle("last")} className="ml-2 underline hover:text-slate-900">Change</button>}
-          {lastSelect}
         </div>
       )}
-      {(rowWaitsConfirm || lastWaitsConfirm) && (
+      {rowWaitsConfirm && (
         <div>
           <Button size="sm" variant="outline" disabled={busy} data-testid={id("correct")} className="h-6 px-2"
             onClick={() => send({ action: "confirm", part: "pending" })}>Correct</Button>

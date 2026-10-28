@@ -1050,9 +1050,9 @@ def _source_scenario():
         {"month": month(i), "sm_expense": 1000, "revenue": 500, "cost_of_revenue": 100} for i in range(13)
     ])
     pnl.insert(0, "_row", range(2, len(pnl) + 2))
-    # the scenario's last month is complete by construction (docs/specs/dates-and-periods.md section 2: else NRR stops a month early)
+    # the as-of month always counts as complete (docs/specs/dates-and-periods.md section 2)
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2027-01-01",
-              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1, "last_month_complete": True}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1}
     sources = {"revenue": {"file": "rev.xlsx", "sheet": "S1"}, "pnl": {"file": "pnl.xlsx", "sheet": "P1"}}
     return ge.compute_all(rev, pd.DataFrame(), pnl, config, sources)
 
@@ -1087,7 +1087,7 @@ def _missing_data():
     pnl = pd.DataFrame([{"month": month(i), "sm_expense": 1000, "revenue": 500, "cost_of_revenue": 100} for i in range(13)])
     pnl.insert(0, "_row", range(2, len(pnl) + 2))
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2027-01-01",
-              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1, "last_month_complete": True}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1}
     sources = {"revenue": {"file": "r"}, "crm": {"file": "c"}, "pnl": {"file": "p"}}
     res = ge.compute_all(rev, crm, pnl, config, sources)
     metrics = {m["metric"] for m in res["missing_data"]}

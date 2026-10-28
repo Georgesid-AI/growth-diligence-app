@@ -79,13 +79,11 @@ def _month_index(month: str) -> int:
 
 def smoothness(results: dict) -> Optional[dict]:
     """Smoothness (smoothness.md): the deviation, in points, of the last 12 month-on-month growth rates of the latest run of
-    consecutive months with revenue, a Possibly partial last month left out. None when 13 such months do not exist. The one
+    consecutive months with revenue (the as-of month counts as complete). None when 13 such months do not exist. The one
     calculation: the integrity block and the data-integrity narrative's payload both read it."""
     series = results.get("revenue_series") or {}
-    partial = results.get("source_period") or {}
-    skip = partial.get("month") if partial.get("status") == "Possibly partial" else None
     points = sorted((_month_index(d["month"]), d["month"], d["total"]) for d in series.get("data") or ()
-                    if d.get("month") != skip and isinstance(d.get("total"), (int, float)) and d["total"] > 0)
+                    if isinstance(d.get("total"), (int, float)) and d["total"] > 0)
     run: list = []
     for point in points:
         run = run + [point] if run and point[0] == run[-1][0] + 1 else [point]

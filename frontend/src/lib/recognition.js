@@ -34,16 +34,15 @@ export const REASON_TEXT = {
   not_numeric_enough: "The proposed row has too few numbers. Choose the revenue row.",
   no_revenue_word: "The proposed row has no revenue word in its label. Choose the revenue row.",
   rules_and_model_disagree: "Two readings differ. Choose the revenue row.",
-  no_as_of_month: "The audit has no as-of month, so this month needs your confirmation.",
-  after_as_of: "The proposed month is after the as-of month. Choose a month up to it.",
-  not_a_period: "The proposed column is not a month. Choose the last actual month.",
+  after_as_of: "The file starts after the as-of month, so no column is read. Set the as-of month in the set-up section.",
+  not_a_period: "No column of the file is a period.",
   turnover_question: TURNOVER_QUESTION,
   type_unsure: "Choose the type.",
 };
-// The same reasons for the month: "Choose the revenue row." becomes "Choose the last actual month."
-export const MONTH_REASON_TEXT = { ...REASON_TEXT, rules_and_model_disagree: "Two readings differ. Choose the last actual month." };
+// The same reasons for the last actual column, which the audit's as-of month sets (dates-and-periods.md section 2).
+export const MONTH_REASON_TEXT = REASON_TEXT;
 // The reasons that wait for a confirmation only (they share one Correct button, decision 4).
-export const CONFIRM_ONLY = ["confidence_80", "no_as_of_month"];
+export const CONFIRM_ONLY = ["confidence_80"];
 
 const ANALYSIS = {
   customer_level: "customer-level analysis (NRR, gross churn, concentration, cohorts)",
@@ -69,6 +68,13 @@ export const rowChoice = (c) => `${c.label} (${c.row != null ? `row ${c.row}` : 
 
 /** S31d: "Jun 2025". */
 export const monthText = (month) => (month ? fmtMonth(month) : "");
+
+/** The last actual column, read-only (dates-and-periods.md section 2): "Last actual column: FY 2021 (from as-of month Dec 2021)". */
+export const lastActualText = (last) => {
+  if (!last || !last.month) return null;
+  const from = last.as_of ? ` (from as-of month ${monthText(last.as_of)})` : "";
+  return last.label ? `Last actual column: ${last.label}${from}` : `Last actual month: ${monthText(last.month)}${from}`;
+};
 
 /** S31i: "{n} rows ({kinds}) are not used as revenue and are kept as claims for matching." The kinds, in sheet order, without repeats. */
 export const claimsText = (rows) => {

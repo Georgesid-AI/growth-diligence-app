@@ -118,17 +118,16 @@ describe("the screen", () => {
       reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
       target_arr: "The plan figure the audit tests. Every claim's VaS (see glossary) is measured against it.",
       target_date: "When the plan says Target ARR (see glossary) is reached. Sets the forecast horizon.",
-      as_of_month: "Last month of actual data. Metrics are computed up to this month. Defaults to the last month of the revenue file once it is mapped; a month you set is kept.",
+      as_of_month: "Last month of actual data; it always counts as complete and the months after it are plan. Detected from the revenue file and the P&L once they are mapped; type a month and year to set it yourself.",
       fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
       first_quarterly_review: "Gate dates are never later than this. Defaults to the audit's creation date plus 90 days.",
       analysis_date: "The date of this analysis. It dates the memo and your own text; it never changes the period of a figure.",
-      last_month_complete: "Tick when the revenue file's last month holds all its invoices. Unticked, that month is shown but not used for NRR and growth.",
     });
     for (const [field, text] of Object.entries(SETUP_HELP)) expect(q(`setup-help-${field}`).textContent).toBe(text);
     expect(setup.contains(q("setup-currency-select")) && setup.contains(q("setup-target-arr-input")) && setup.contains(q("fiscal-year-end-select"))).toBe(true);
     expect(q("setup-target-arr-input").value).toBe("40,000,000");
     expect(q("setup-target-date-input").value).toBe("31 Dec 2028");
-    expect(q("asof-month-input").value).toBe("30 Jun 2026");
+    expect(q("asof-month-input").value).toBe("Jun 2026");
   });
 
   test("the first quarterly review is a set-up field with the server's default, and an edit saves through the inputs call", async () => {
@@ -149,11 +148,11 @@ describe("the screen", () => {
     await change(q("setup-target-date-input"), "30.06.2028");
     await act(async () => { q("setup-target-date-input").blur(); });
     expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { target_date: "2028-06-30" });
-    // clearing the as-of month sends an explicit null: back to the default
+    // clearing the as-of month sends an explicit null: back to detection on Map
     await act(async () => { q("asof-month-input").focus(); });
-    await change(q("asof-month-input"), "2026-06-15");
+    await change(q("asof-month-input"), "Jun 2026");
     await act(async () => { q("asof-month-input").blur(); });
-    expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { as_of_month: "2026-06-15" });
+    expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { as_of_month: "2026-06-30" });
     await act(async () => { q("asof-month-input").focus(); });
     await change(q("asof-month-input"), "");
     await act(async () => { q("asof-month-input").blur(); });
@@ -161,7 +160,7 @@ describe("the screen", () => {
     // a target date not after the as-of month is refused before anything is sent
     api.updateAudit.mockClear();
     await act(async () => { q("asof-month-input").focus(); });
-    await change(q("asof-month-input"), "2028-06-15");
+    await change(q("asof-month-input"), "Jun 2028");
     await act(async () => { q("asof-month-input").blur(); });
     expect(api.updateAudit).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenLastCalledWith("Target date must be after the as-of month");

@@ -241,12 +241,10 @@ def test_twelve_months_or_a_gap_that_leaves_fewer_than_thirteen_consecutive_mont
         assert "Smoothness: Revenue file with at least 13 consecutive months of revenue" in assessed["data_requests"]
 
 
-def test_a_possibly_partial_last_month_is_not_read():
+def test_the_as_of_month_counts_as_complete_so_the_last_month_is_read():
     smooth = [10000 * 1.01 ** i for i in range(15)]
-    partial = _series(smooth + [90000], status="Possibly partial")        # a spike in the unfinished last month
-    complete = _series(smooth + [90000], status="Complete")
-    assert _smooth(partial)[1]["result"] == "Amber", "the spike is left out"
-    assert _smooth(complete)[1]["result"] == "Green", "ticked complete, the same month is read"
+    spike = _series(smooth + [90000], status="Complete")                 # the as-of month is complete: the spike is read
+    assert _smooth(spike)[1]["result"] == "Green"
 
 
 def test_with_smoothness_and_clustering_all_five_applicable_checks_can_complete():

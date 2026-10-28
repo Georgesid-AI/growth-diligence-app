@@ -103,15 +103,15 @@ def test_2_a_report_whose_clicks_are_done_opens_the_gate_through_the_api(api):
     assert revenue_doc(api)["mapped_at"] and deck_gate(api) == (structures.READ, 1)
 
 
-def test_2_an_as_of_month_moved_before_the_last_actual_column_closes_the_gate_again(api):
+def test_2_an_as_of_month_moved_before_the_last_actual_column_moves_the_column_and_keeps_the_gate_open(api):
     import server
     report_api(api, "monthly report found")
     assert revenue_doc(api)["mapped_at"]
     assert api.put(f"/api/audits/{api_audit()}", json={"as_of_month": "2025-03-31"}).status_code == 200
     audit = api.db["audits"].docs[0]
     assert revenue_doc(api)["mapped_at"], "mapped_at is only rewritten by upload and by a recognition decision"
-    assert asyncio.run(server._is_mapped(api_audit(), audit, revenue_doc(api))) is False, "the rest of the app sees a click waiting"
-    assert deck_gate(api) == (structures.WAITING, 0)
+    assert asyncio.run(server._is_mapped(api_audit(), audit, revenue_doc(api))) is True, "the boundary follows the as-of month: nothing waits"
+    assert deck_gate(api) == (structures.READ, 1)
 
 
 def test_2_an_empty_decisions_call_on_a_report_waiting_for_its_currency_does_not_open_the_gate(api):

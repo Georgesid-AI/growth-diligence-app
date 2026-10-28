@@ -1,5 +1,5 @@
-import { isIsoDate, asOfInputValue, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_LABEL, VERIFIED_LINE, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS,
-  requiredFieldError, SETUP_HELP, AS_OF_PLACEHOLDER, asOfWarning, revenueLastMonth } from "./auditForm";
+import { isIsoDate, asOfInputValue, parseMonthYear, asOfSourceText, asOfDisplay, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_LABEL, VERIFIED_LINE, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS,
+  requiredFieldError, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfWarning, revenueLastMonth } from "./auditForm";
 
 // The reported case: target 31/12/2027, as-of 30/06/2026, as the date inputs deliver them.
 test("target 2027-12-31 after as-of 2026-06-30 passes", () => {
@@ -83,11 +83,29 @@ test("the company name is the only required field; a client name is not asked fo
 
 // docs/specs/chat-upload.md section 30 (George, 2026-10-24): the as-of month defaults to the revenue file's last month.
 describe("the as-of month default and its warning line", () => {
-  test("the help and the empty field say where the default comes from", () => {
-    expect(SETUP_HELP.as_of_month).toBe("Last month of actual data. Metrics are computed up to this month. "
-      + "Defaults to the last month of the revenue file once it is mapped; a month you set is kept.");
-    expect(AS_OF_PLACEHOLDER).toBe("last month of the revenue file");
-    expect(SETUP_HELP.as_of_month).not.toMatch(/P&L/);
+  test("the help says the month is detected and always complete; the field takes a typed month and year", () => {
+    expect(SETUP_HELP.as_of_month).toBe("Last month of actual data; it always counts as complete and the months after it are plan. "
+      + "Detected from the revenue file and the P&L once they are mapped; type a month and year to set it yourself.");
+    expect(AS_OF_PLACEHOLDER).toBe("e.g. Jun 2021");
+  });
+
+  test("a typed month and year becomes the stored last day of that month; anything else is refused", () => {
+    expect(parseMonthYear("Jun 2021")).toBe("2021-06-30");
+    expect(parseMonthYear("june 2021")).toBe("2021-06-30");
+    expect(parseMonthYear("2020-02")).toBe("2020-02-29");
+    expect(parseMonthYear("06/2021")).toBe("2021-06-30");
+    for (const bad of ["", "2021", "Foo 2021", "13/2021", "Jun 1999", "2021-06-15"]) expect(parseMonthYear(bad)).toBeNull();
+  });
+
+  test("the field says where its month came from", () => {
+    expect(asOfSourceText({ as_of_month: "2021-06-30", as_of_by: "detected", as_of_file: "revenue.csv" })).toBe("(detected from revenue.csv)");
+    expect(asOfSourceText({ as_of_month: "2021-06-30", as_of_by: "analyst", as_of_file: "revenue.csv" })).toBe("(set by analyst)");
+    expect(asOfSourceText({ as_of_month: null })).toBe("");
+    expect(asOfDisplay("2021-06-30")).toBe("Jun 2021");
+  });
+
+  test("no completeness tick is left in the labels or the help", () => {
+    expect(JSON.stringify([SETUP_LABELS, SETUP_HELP])).not.toMatch(/last month is\s+complete|partial/i);
   });
 
   test("the revenue file's last month comes from the results, else from the mapped file, else none", () => {

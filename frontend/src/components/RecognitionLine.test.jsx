@@ -31,8 +31,7 @@ const AUTO = {
     candidates: [{ row: 4, label: "Recognised revenue (EUR)", kind: "recognised", confidence: 100 },
                  { row: 5, label: "MRR", kind: "recurring", confidence: 100 }],
   },
-  last_actual: { column: 7, month: "2025-06", state: "auto", reason: null,
-                 candidates: [{ column: 6, month: "2025-05" }, { column: 7, month: "2025-06" }] },
+  last_actual: { column: 7, month: "2025-06", label: "FY 2025", as_of: "2025-06", state: "auto", reason: null, candidates: [] },
   excluded_columns: [8, 9, 10, 11, 12, 13],
   currency: { code: "EUR", state: "seen" }, money_kind: { asked: false },
   non_revenue_rows: [{ row: 9, label: "Forecast revenue", kind: "forecast" }, { row: 10, label: "Bookings", kind: "bookings" }],
@@ -47,11 +46,10 @@ const CLICK = {
   last_actual: { ...AUTO.last_actual, state: "click", reason: "after_as_of" },
   currency: { code: null, state: "confirm" },
 };
-// both parts wait only for a confirmation (the confirm-only reasons confidence_80 and no_as_of_month)
+// the row waits only for a confirmation (the confirm-only reason confidence_80)
 const CONFIRM_ONLY = {
   ...AUTO, needs_click: true,
   revenue_row: { ...AUTO.revenue_row, state: "click", reason: "confidence_80", confidence: 80 },
-  last_actual: { ...AUTO.last_actual, state: "click", reason: "no_as_of_month" },
 };
 const view = (recognition, over = {}) => ({ dtype: "revenue", file: "report.csv", recognition, ...over });
 
@@ -150,59 +148,52 @@ describe("yearly columns and recurring rows (decisions of 19 Oct 2026)", () => {
   });
 });
 
-describe("the proposed revenue row and the last actual month", () => {
-  test("an accepted proposal shows the row and the month with Correct and Change", async () => {
+describe("the proposed revenue row and the last actual column", () => {
+  test("an accepted proposal shows the row with Correct and Change, and the last actual column read-only", async () => {
     await mount(AUTO);
     expect(q("recognition-row-revenue").textContent).toBe("Revenue row: Recognised revenue (EUR) (row 4)");
-    expect(q("recognition-last-revenue").textContent).toBe("Last actual month: Jun 2025. Columns after it are not used.");
+    expect(q("recognition-last-revenue").textContent).toBe("Last actual column: FY 2025 (from as-of month Jun 2025)");
     expect(q("recognition-row-correct-revenue").textContent).toBe("Correct");
     expect(q("recognition-row-change-revenue").textContent).toBe("Change");
-    expect(q("recognition-last-correct-revenue").textContent).toBe("Correct");
-    expect(q("recognition-last-change-revenue").textContent).toBe("Change");
+    for (const gone of ["last-correct", "last-change", "last-select"]) expect(q(`recognition-${gone}-revenue`)).toBeNull();
+  });
+
+  test("a column with no header reads as the last actual month", async () => {
+    await mount({ ...AUTO, last_actual: { ...AUTO.last_actual, label: null } });
+    expect(q("recognition-last-revenue").textContent).toBe("Last actual month: Jun 2025 (from as-of month Jun 2025)");
   });
 
   test("Correct confirms the part and sends nothing else", async () => {
     await mount(AUTO);
     await click(q("recognition-row-correct-revenue"));
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "revenue_row" });
-    await click(q("recognition-last-correct-revenue"));
-    expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "last_actual" });
-    expect(decide).toHaveBeenCalledTimes(2);
+    expect(decide).toHaveBeenCalledTimes(1);
   });
 
-  test("Change opens the candidate rows and the candidate months and sends the choice", async () => {
+  test("Change opens the candidate rows and sends the choice", async () => {
     await mount(AUTO);
     await click(q("recognition-row-change-revenue"));
     const rows = [...q("recognition-row-select-revenue").querySelectorAll("option")].filter((o) => o.value).map((o) => [o.value, o.textContent]);
     expect(rows).toEqual([["4", "Recognised revenue (EUR) (row 4)"], ["5", "MRR (row 5)"]]);
     await choose(q("recognition-row-select-revenue"), "5");
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "revenue_row", row: 5 });
-    await click(q("recognition-last-change-revenue"));
-    const months = [...q("recognition-last-select-revenue").querySelectorAll("option")].filter((o) => o.value).map((o) => [o.value, o.textContent]);
-    expect(months).toEqual([["6", "May 2025"], ["7", "Jun 2025"]]);
-    await choose(q("recognition-last-select-revenue"), "6");
-    expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "last_actual", column: 6 });
   });
 
-  test("an unsure row or month asks the analyst to choose, with the reason, and offers no Correct", async () => {
+  test("an unsure row asks the analyst to choose, with the reason, and offers no Correct; a file that starts after the as-of month says so", async () => {
     await mount(CLICK);
     expect(q("recognition-row-revenue").textContent).toBe("Revenue row: choose the row. Two readings differ. Choose the revenue row.");
     expect(q("recognition-last-revenue").textContent).toBe(
-      "Last actual month: choose the month. The proposed month is after the as-of month. Choose a month up to it.");
+      "Last actual column: not read. The file starts after the as-of month, so no column is read. Set the as-of month in the set-up section.");
     expect(q("recognition-row-correct-revenue")).toBeNull();
-    expect(q("recognition-last-correct-revenue")).toBeNull();
     expect(q("recognition-row-select-revenue")).not.toBeNull();
-    expect(q("recognition-last-select-revenue")).not.toBeNull();
     await choose(q("recognition-row-select-revenue"), "4");
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "revenue_row", row: 4 });
   });
 
-  test("after the analyst decides, the part reads as decided and only Change stays", async () => {
-    await mount({ ...AUTO, revenue_row: { ...AUTO.revenue_row, state: "you" }, last_actual: { ...AUTO.last_actual, state: "you" } });
+  test("after the analyst decides, the row reads as decided and only Change stays", async () => {
+    await mount({ ...AUTO, revenue_row: { ...AUTO.revenue_row, state: "you" } });
     expect(q("recognition-row-correct-revenue")).toBeNull();
     expect(q("recognition-row-change-revenue").textContent).toBe("Change");
-    expect(q("recognition-last-correct-revenue")).toBeNull();
-    expect(q("recognition-last-change-revenue").textContent).toBe("Change");
   });
 
   test("a file with no revenue row (customers by periods) shows no revenue-row line", async () => {
@@ -281,7 +272,7 @@ describe("wording", () => {
   test("every reason code has a closed text that names what to do and mentions neither confidence nor cost", () => {
     const { REASON_TEXT } = load();
     const codes = ["no_candidate", "tie", "confidence_80", "row_missing", "label_mismatch", "marked_not_revenue", "not_numeric_enough",
-      "no_revenue_word", "rules_and_model_disagree", "no_as_of_month", "after_as_of", "not_a_period", "turnover_question", "type_unsure"];
+      "no_revenue_word", "rules_and_model_disagree", "after_as_of", "not_a_period", "turnover_question", "type_unsure"];
     expect(Object.keys(REASON_TEXT).sort()).toEqual([...codes].sort());
     for (const code of codes) {
       expect(REASON_TEXT[code].length).toBeGreaterThan(10);
@@ -316,27 +307,23 @@ describe("review follow-ups (second round, 19 Oct 2026)", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "file_type" });
   });
 
-  test("two parts that wait only for a confirmation share one Correct button", async () => {
+  test("a row that waits only for a confirmation has one Correct button", async () => {
     await mount(CONFIRM_ONLY);
     expect(q("recognition-row-revenue").textContent).toBe("Revenue row: Recognised revenue (EUR) (row 4). Please confirm the revenue row.");
-    expect(q("recognition-last-revenue").textContent).toBe(
-      "Last actual month: Jun 2025. Columns after it are not used. The audit has no as-of month, so this month needs your confirmation.");
     expect(q("recognition-row-correct-revenue")).toBeNull();
-    expect(q("recognition-last-correct-revenue")).toBeNull();
     expect(q("recognition-row-select-revenue")).toBeNull();
     expect(all("recognition-correct-revenue").length).toBe(1);
     expect(q("recognition-correct-revenue").textContent).toBe("Correct");
     expect(q("recognition-row-change-revenue")).not.toBeNull();
-    expect(q("recognition-last-change-revenue")).not.toBeNull();
     await click(q("recognition-correct-revenue"));
     expect(decide).toHaveBeenCalledTimes(1);
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "pending" });
   });
 
-  test("a part that needs a choice keeps its drop-down beside the shared Correct of a confirm-only part", async () => {
+  test("a row that needs a choice keeps its drop-down and no Correct", async () => {
     await mount({ ...CONFIRM_ONLY, revenue_row: { ...AUTO.revenue_row, state: "click", reason: "rules_and_model_disagree" } });
     expect(q("recognition-row-select-revenue")).not.toBeNull();
-    expect(q("recognition-correct-revenue")).not.toBeNull();
+    expect(q("recognition-correct-revenue")).toBeNull();
   });
 
   test("a P&L carries its own recognition line, with ids and decisions of its own dtype", async () => {

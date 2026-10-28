@@ -6,7 +6,7 @@ import DateField from "@/components/DateField";
 import { getAudit, putIcInputs, updateAudit } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  CONSENT_LABEL, VERIFIED_LINE, DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfInputValue, asOfWarning, revenueLastMonth, groupThousands, plainNumber, storedNumberInput,
+  CONSENT_LABEL, VERIFIED_LINE, DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfInputValue, asOfDisplay, asOfSourceText, parseMonthYear, asOfWarning, revenueLastMonth, groupThousands, plainNumber, storedNumberInput,
   targetDateError,
 } from "@/lib/auditForm";
 
@@ -15,7 +15,7 @@ const help = "mt-1 text-[11px] leading-snug text-slate-500";
 
 /**
  * The audit's set-up fields at the top of the upload and mapping page: reporting currency, Target ARR, target date, as-of
- * month (with "Last month is complete"), the requested analysis date and fiscal year-end, each with one line of help, then the
+ * month (a typed month and year; detected from the files unless set), the requested analysis date and fiscal year-end, each with one line of help, then the
  * AI reading tick and the line on how extracted numbers are checked (chat-upload.md section 23). Each saves as it changes; a save that fails names the field and
  * the server's reason. The as-of month is held by the page (`asOf`, `setAsOf`), which also sends it when it computes.
  */
@@ -23,6 +23,18 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
   const [arr, setArr] = useState(storedNumberInput(audit.target_arr));
   const [targetDate, setTargetDate] = useState(audit.target_date || "");
   useEffect(() => { setArr(storedNumberInput(audit.target_arr)); setTargetDate(audit.target_date || ""); }, [audit.target_arr, audit.target_date]);
+  // The as-of month is typed as a month and year; an empty field hands it back to detection on Map.
+  // The server holds the one as-of month (detected on Map or typed): the page follows it.
+  useEffect(() => { setAsOf(asOfInputValue(audit.as_of_month)); }, [audit.as_of_month]);       // eslint-disable-line react-hooks/exhaustive-deps
+  const [asOfText, setAsOfText] = useState(asOfDisplay(asOf));
+  useEffect(() => { setAsOfText(asOfDisplay(asOf)); }, [asOf]);
+  const commitAsOf = async () => {
+    const typed = asOfText.trim();
+    const next = typed ? parseMonthYear(typed) : null;
+    if (typed && !next) { toast.error("As-of month must be a month and year, e.g. Jun 2021"); setAsOfText(asOfDisplay(asOf)); return; }
+    if (next === (asOf ? parseMonthYear(asOfDisplay(asOf)) : null)) return;
+    await dates("as_of_month", targetDate, next);
+  };
 
   const save = async (field, patch, success) => {
     try {
@@ -46,7 +58,7 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
       if (nextTarget) await save(field, { target_date: nextTarget });
     } else {
       setAsOf(nextAsOf);
-      await save(field, { as_of_month: nextAsOf || null });      // cleared: back to the default, the last month of the revenue file
+      await save(field, { as_of_month: nextAsOf || null });      // cleared: back to detection on Map
     }
   };
   // Required: the date is always there (default: creation date + 90 days); clearing it returns it to the default.
@@ -90,17 +102,14 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
         </div>
         <div>
           <label className={label}>{SETUP_LABELS.as_of_month}</label>
-          <DateField testId="asof-month-input" value={asOfInputValue(asOf)} onChange={(v) => dates("as_of_month", targetDate, v)} placeholder={AS_OF_PLACEHOLDER} className="!mt-1" />
+          <Input data-testid="asof-month-input" type="text" value={asOfText} placeholder={AS_OF_PLACEHOLDER}
+            onChange={(e) => setAsOfText(e.target.value)} onBlur={commitAsOf}
+            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} className="mt-1 h-9 bg-white border-[#E5E7EB] font-mono" />
+          {asOfSourceText(audit) && <p className={help} data-testid="setup-as-of-source">{asOfSourceText(audit)}</p>}
           <p className={help} data-testid="setup-help-as_of_month">{SETUP_HELP.as_of_month}</p>
           {asOfWarning(asOf, revenueLastMonth(audit)) && (
             <p className="mt-1 text-[11px] leading-snug text-amber-700" data-testid="setup-warning-as_of_month">{asOfWarning(asOf, revenueLastMonth(audit))}</p>
           )}
-          <label className="mt-2 flex items-center gap-2 text-xs text-slate-700">
-            <input type="checkbox" data-testid="setup-last-month-complete" checked={!!audit.last_month_complete}
-              onChange={(e) => save("last_month_complete", { last_month_complete: e.target.checked })} />
-            {SETUP_LABELS.last_month_complete}
-          </label>
-          <p className={help} data-testid="setup-help-last_month_complete">{SETUP_HELP.last_month_complete}</p>
         </div>
         <div>
           <label className={label}>{SETUP_LABELS.analysis_date}</label>

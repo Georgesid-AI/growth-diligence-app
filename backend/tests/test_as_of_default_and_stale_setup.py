@@ -135,7 +135,7 @@ def assert_current(api):
 
 
 @pytest.mark.parametrize("patch", [{"target_arr": 5_000_000}, {"target_date": "2028-12-31"}, {"as_of_month": "2024-03-31"},
-                                   {"fiscal_year_end": 6}, {"reporting_currency": "USD"}, {"last_month_complete": True}])
+                                   {"fiscal_year_end": 6}, {"reporting_currency": "USD"}])
 def test_a_change_of_a_set_up_field_marks_the_stored_results_stale(api, patch):
     assert_current(api)
     assert api.put("/api/audits/aud-1", json=patch).status_code == 200
@@ -156,7 +156,7 @@ def test_a_change_of_the_fx_rates_marks_the_stored_results_stale(api):
 
 
 @pytest.mark.parametrize("patch", [{"target_arr": 1_000_000}, {"target_date": "2027-12-31"}, {"as_of_month": "2024-02-29"},
-                                   {"fiscal_year_end": 12}, {"reporting_currency": "EUR"}, {"last_month_complete": False}, {"company_name": "Acme Ltd"}, {"analysis_date": "2026-10-24"}])
+                                   {"fiscal_year_end": 12}, {"reporting_currency": "EUR"}, {"company_name": "Acme Ltd"}, {"analysis_date": "2026-10-24"}])
 def test_the_same_value_or_another_field_leaves_the_results_current(api, patch):
     assert api.put("/api/audits/aud-1", json=patch).status_code == 200
     assert_current(api)
@@ -174,8 +174,8 @@ def test_an_audit_with_no_results_has_nothing_to_mark(api):
 
 
 def test_no_set_up_change_recomputes_on_its_own(api):
-    """George, 2026-10-24 (PR 177): reporting currency and the last-month tick mark the results stale like the rest; nothing recomputes."""
-    for patch in ({"reporting_currency": "USD"}, {"last_month_complete": True}, {"target_arr": 5_000_000}):
+    """George, 2026-10-24 (PR 177): reporting currency and the as-of month mark the results stale like the rest; nothing recomputes."""
+    for patch in ({"reporting_currency": "USD"}, {"as_of_month": "2024-03-31"}, {"target_arr": 5_000_000}):
         assert api.put("/api/audits/aud-1", json=patch).status_code == 200
     assert api.calls == []
 

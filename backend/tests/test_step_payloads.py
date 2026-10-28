@@ -251,12 +251,12 @@ def test_smoothness_is_the_integrity_modules_reading_not_not_computed():
     assert noisy["Month-on-month revenue smoothness"]["result"] == "Green"
 
 
-def test_smoothness_stays_not_computed_with_a_closed_reason_when_the_window_is_short_or_the_last_month_is_partial():
+def test_smoothness_stays_not_computed_with_a_closed_reason_when_the_window_is_short_and_reads_the_last_month():
     short = checks_by_name(sp.build_integrity(_with_series([10000 * 1.01 ** i for i in range(12)])))["Month-on-month revenue smoothness"]
     assert short == {"check": "Month-on-month revenue smoothness", "status": "not computed",
                      "reason": "the revenue file has fewer than 13 consecutive months of revenue"}
-    thirteen_partial = checks_by_name(sp.build_integrity(_with_series([10000 * 1.01 ** i for i in range(13)], "Possibly partial")))
-    assert thirteen_partial["Month-on-month revenue smoothness"]["status"] == "not computed", "the partial month is left out"
+    thirteen = checks_by_name(sp.build_integrity(_with_series([10000 * 1.01 ** i for i in range(13)], "Complete")))
+    assert thirteen["Month-on-month revenue smoothness"]["status"] != "not computed", "the as-of month is read"
 
 
 def _with_closes(n, late):

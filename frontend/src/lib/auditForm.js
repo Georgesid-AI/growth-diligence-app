@@ -91,15 +91,40 @@ export const SETUP_HELP = {
   reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
   target_arr: seeGlossary("The plan figure the audit tests. Every claim's VaS is measured against it."),
   target_date: seeGlossary("When the plan says Target ARR is reached. Sets the forecast horizon."),
-  as_of_month: "Last month of actual data. Metrics are computed up to this month. "
-    + "Defaults to the last month of the revenue file once it is mapped; a month you set is kept.",
+  as_of_month: "Last month of actual data; it always counts as complete and the months after it are plan. "
+    + "Detected from the revenue file and the P&L once they are mapped; type a month and year to set it yourself.",
   fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
   first_quarterly_review: "Gate dates are never later than this. Defaults to the audit's creation date plus 90 days.",
   // docs/specs/dates-and-periods.md section 2
   analysis_date: "The date of this analysis. It dates the memo and your own text; it never changes the period of a figure.",
-  last_month_complete: "Tick when the revenue file's last month holds all its invoices. Unticked, that month is shown but not used for NRR and growth.",
 };
-export const AS_OF_PLACEHOLDER = "last month of the revenue file";
+export const AS_OF_PLACEHOLDER = "e.g. Jun 2021";
+
+const MONTH_ABBR = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/** A typed month and year ("Jun 2021", "June 2021", "2021-06", "06/2021") as the stored last-day date ("2021-06-30"), else null. */
+export function parseMonthYear(text) {
+  const t = String(text ?? "").trim().toLowerCase();
+  let year, month;
+  let m = /^([a-z]{3,9})\.?\s+(\d{4})$/.exec(t);
+  if (m) { month = MONTH_ABBR.indexOf(m[1].slice(0, 3)) + 1; year = Number(m[2]); }
+  if (!month && (m = /^(\d{4})-(\d{1,2})$/.exec(t))) { year = Number(m[1]); month = Number(m[2]); }
+  if (!month && (m = /^(\d{1,2})\/(\d{4})$/.exec(t))) { month = Number(m[1]); year = Number(m[2]); }
+  if (!month || month > 12 || !year || year < 2000 || year > 2100) return null;
+  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+}
+
+/** "Jun 2021" for a stored as-of date or month, else "". */
+export const asOfDisplay = (v) => {
+  const iso = asOfInputValue(v);
+  return iso ? `${MONTH_ABBR[Number(iso.slice(5, 7)) - 1][0].toUpperCase()}${MONTH_ABBR[Number(iso.slice(5, 7)) - 1].slice(1)} ${iso.slice(0, 4)}` : "";
+};
+
+/** "(detected from revenue.csv)" or "(set by analyst)"; "" before any month is known. */
+export const asOfSourceText = (audit) => {
+  if (!audit?.as_of_month) return "";
+  return audit.as_of_by === "analyst" ? "(set by analyst)" : audit.as_of_file ? `(detected from ${audit.as_of_file})` : "(detected)";
+};
 
 /** The revenue file's last month (YYYY-MM) as the screen knows it: the computed source period, else the mapped file's months; null before. */
 export const revenueLastMonth = (audit) => audit?.results?.source_period?.month || audit?.datasets?.revenue?.months?.last || null;
@@ -114,7 +139,7 @@ export function asOfWarning(asOf, revenueLast) {
 export const SETUP_LABELS = {
   reporting_currency: "Reporting currency", target_arr: "Target ARR", target_date: "Target date", as_of_month: "As-of month",
   fiscal_year_end: "Fiscal year-end", first_quarterly_review: "First quarterly review",
-  analysis_date: "Requested analysis date", last_month_complete: "Last month is complete",
+  analysis_date: "Requested analysis date",
   structure_reading_consent: "AI reading",
 };
 export const REPORTING_CURRENCIES = ["EUR", "USD", "GBP", "JPY"];

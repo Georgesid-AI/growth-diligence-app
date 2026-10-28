@@ -146,12 +146,11 @@ DOWN = sheet_text("", "Month,Revenue,Cost of sales,Payroll", [
     "Jan-25,100,10,5", "Feb-25,110,10,5", "Mar-25,120,10,5", "Apr-25,999,10,5", "May-25,999,10,5", "Jun-25,999,10,5"]).lstrip("\n")
 
 
-def test_h4_the_last_actual_month_the_analyst_chose_ends_the_series_and_the_feed(rec):
+def test_h4_the_as_of_month_ends_the_series_and_the_feed(rec):
     free = run(rec, DOWN, as_of="2025-06-30")
     assert [s["month"] for s in free["series"]][-1] == "2025-06"
-    march = next(c["row"] for c in free["last_actual"]["candidates"] if c["month"] == "2025-03")
-    got = run(rec, DOWN, as_of="2025-06-30", decisions={"last_actual": march})
-    assert got["last_actual"]["month"] == "2025-03" and got["last_actual"]["state"] == "you"
+    got = run(rec, DOWN, as_of="2025-03-31")
+    assert got["last_actual"]["month"] == "2025-03" and got["last_actual"]["state"] == "auto"
     assert [s["value"] for s in got["series"]] == [100, 110, 120]
     feed = rec.engine_feed(got, "f.csv", got["sheet"])
     assert [x["value"] for x in feed["series"]] == [100, 110, 120] and feed["rows"] == [2, 3, 4]
@@ -167,7 +166,7 @@ def test_h5_budget_columns_before_the_boundary_do_not_enter_the_series(rec):
     text = ALT_HEAD + "\nRevenue,100,150,110,160,120,170\nCustomers,3,3,4,4,5,5\nCost of sales,9,9,9,9,9,9\n"
     got = run(rec, text, as_of="2025-03-31")
     assert [(s["month"], s["value"]) for s in got["series"]] == [("2025-01", 100), ("2025-02", 110), ("2025-03", 120)]
-    assert got["last_actual"]["column"] == 6 and {c["column"] for c in got["last_actual"]["candidates"]} == {2, 4, 6}
+    assert got["last_actual"]["column"] == 6 and got["last_actual"]["candidates"] == [], "read from the as-of month, never chosen"
     feed = rec.engine_feed(got, "f.csv", got["sheet"])
     assert [x["month"] for x in feed["series"]] == ["2025-01", "2025-02", "2025-03"], "one value per month"
 
@@ -416,20 +415,14 @@ def test_l4_a_file_over_the_limit_is_refused_before_the_model_is_called_or_anyth
 # ---------------------------------------------------------------------------
 # M3: after "Use the dated list" the last actual month can still be confirmed or changed
 # ---------------------------------------------------------------------------
-def test_m3_the_last_actual_month_can_be_confirmed_and_changed_after_choosing_the_dated_list(api):
-    rules_only(api, None)
-    api.db["audits"].docs[0]["as_of_month"] = None
+def test_m3_the_dated_list_is_read_up_to_the_as_of_month_and_the_last_actual_month_is_no_decision(api):
+    rules_only(api, "2025-06")
     got = upload(api, SIDE, (FIXTURES / SIDE).read_bytes()).json()["recognition"]
-    assert got["last_actual"]["reason"] == "no_as_of_month"
+    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("auto", None)
     chosen = decide(api, action="change", part="series_source", series_source="dated_list").json()["recognition"]
-    assert chosen["series_basis"] == "column" and chosen["last_actual"]["state"] == "click"
-    api.db["audits"].docs[0]["as_of_month"] = "2025-06"
-    changed = decide(api, action="change", part="last_actual", column=7)
-    assert changed.status_code == 200, changed.text
-    assert changed.json()["recognition"]["last_actual"]["state"] == "you"
-    api.db["audits"].docs[0]["as_of_month"] = None
-    confirmed = decide(api, action="confirm", part="pending")
-    assert confirmed.status_code == 200 and confirmed.json()["recognition"]["last_actual"]["state"] == "you"
+    assert chosen["series_basis"] == "column" and chosen["last_actual"]["state"] == "auto"
+    assert chosen["last_actual"]["as_of"] == "2025-06" and chosen["series"][-1]["month"] <= "2025-06"
+    assert decide(api, action="change", part="last_actual", column=7).status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -551,5 +544,5 @@ def test_l2_a_version_4_audit_is_stale_until_run_audit_calculates_it_again_with_
     assert res.status_code == 200
     again = res.json()["results"]
     from schemas.metrics import CONTRACT_VERSION
-    assert again["contract_version"] == CONTRACT_VERSION == 11 and again["recognition"]["series_basis"] == "row"
+    assert again["contract_version"] == CONTRACT_VERSION == 12 and again["recognition"]["series_basis"] == "row"
     assert again["revenue_series"]["basis"] == "row" and again["revenue_series"]["data"]

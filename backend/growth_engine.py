@@ -958,7 +958,7 @@ def _first_months(mrr: pd.DataFrame) -> dict:
     return fm
 
 
-COMPLETE, POSSIBLY_PARTIAL = "Complete", "Possibly partial"
+COMPLETE = "Complete"
 
 
 def revenue_months(rev: pd.DataFrame) -> list:
@@ -970,18 +970,16 @@ def revenue_months(rev: pd.DataFrame) -> list:
                    if (m := _month_of(d)) is not None and pd.notna(a) and a != 0})
 
 
-def source_period(rev: pd.DataFrame, as_of, last_month_complete: bool) -> dict | None:
+def source_period(rev: pd.DataFrame, as_of) -> dict | None:
     """The latest valid source period (docs/specs/dates-and-periods.md section 2): the last month of the revenue file with a valid
-    invoice date and a non-zero amount; Complete when the as-of month is later, or the analyst ticked "Last month is complete";
-    otherwise Possibly partial. `evidence_to` is the last month any revenue figure reads: the earlier of the as-of month and it."""
+    invoice date and a non-zero amount. The as-of month always counts as complete and the months after it are plan, so the status
+    is always Complete. `evidence_to` is the last month any revenue figure reads: the earlier of the as-of month and it."""
     months = revenue_months(rev)
     if not months:
         return None
     month = months[-1]
-    by = "as_of" if as_of is not None and as_of > month else "analyst" if last_month_complete else None
     end = min(month, as_of) if as_of is not None else month
-    return {"month": _period_str(month), "status": COMPLETE if by else POSSIBLY_PARTIAL, "complete_by": by,
-            "evidence_to": _period_str(end)}
+    return {"month": _period_str(month), "status": COMPLETE, "complete_by": "as_of", "evidence_to": _period_str(end)}
 
 
 def _span(months, gaps_from=None) -> dict | None:
@@ -1819,7 +1817,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     # An as-of month after the last month of revenue is no gap to report: the latest valid source period says where the
     # evidence ends, and every figure carries its own period (docs/specs/dates-and-periods.md section 2). The months after it
     # are not filled, not guessed.
-    source = source_period(rev, as_of, bool(config.get("last_month_complete")))
+    source = source_period(rev, as_of)
 
     date_order_notes = []
     for name, fields in date_formats.items():
@@ -1878,12 +1876,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                              "unlocked_by": "Upload revenue lines with customer ID, invoice date, amount, currency",
                              "file": rev_src.get("file")})
 
-    # A Possibly partial last month is shown in every series and excluded from the NRR and the gross churn (dates-and-periods.md section 2)
-    complete_mrr = mrr
-    if source and source["status"] == POSSIBLY_PARTIAL and not mrr.empty:
-        cut = pd.Period(source["month"], "M")
-        complete_mrr = mrr.loc[:, [c for c in mrr.columns if c < cut]]
-    nrr = guarded("NRR (12-month)", rev_src.get("file"), None, compute_nrr, complete_mrr, seg_map, _first_months(complete_mrr))
+    nrr = guarded("NRR (12-month)", rev_src.get("file"), None, compute_nrr, mrr, seg_map, _first_months(mrr))
     if nrr and nrr.get("insufficient_history"):
         missing_data.append({"metric": "NRR (12-month)", "reason": f"Needs 12+ months of history; have {nrr['months_available']}",
                              "unlocked_by": "Provide at least 13 months of revenue lines", "file": rev_src.get("file")})
@@ -1895,7 +1888,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         missing_data.append({"metric": "NRR by segment", "reason": "Segment column not mapped on revenue lines",
                              "unlocked_by": "Map the optional 'segment' column on revenue lines", "file": rev_src.get("file")})
 
-    churn = guarded("Gross revenue churn", rev_src.get("file"), None, compute_gross_churn, complete_mrr)
+    churn = guarded("Gross revenue churn", rev_src.get("file"), None, compute_gross_churn, mrr)
     if churn and churn.get("insufficient_history"):
         missing_data.append({"metric": "Gross revenue churn", "reason": f"Needs 12+ months; have {churn['months_available']}",
                              "unlocked_by": "Provide at least 13 months of revenue lines", "file": rev_src.get("file")})

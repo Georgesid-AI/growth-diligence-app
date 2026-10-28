@@ -383,7 +383,7 @@ def allowlist_payload(node: Any, key: Optional[str] = None) -> Any:
 
 
 def period_fields(results: dict) -> dict:
-    """The period the model is told: where the evidence ends and whether that last month is complete, both read from the
+    """The period the model is told: where the evidence ends and the status of that month (always Complete), both read from the
     stored source period (dates-and-periods.md section 2). The as-of setting and the requested analysis date never go."""
     source = results.get("source_period") or {}
     return {"evidence_to": source.get("evidence_to"), "last_month_status": source.get("status")}

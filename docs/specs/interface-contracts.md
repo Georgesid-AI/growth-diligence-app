@@ -196,12 +196,12 @@ the stale versions 1 to 7; `test_recurring_claim_types.py` pins the types, the m
 
 Amended 2026-10-23 (George, decision on PR 171; contract 8 stays): **`gross_churn.monthly_series`**, a required list of `{month, churn_pct}` (a Fraction, null when the MRR at the month's start is
 zero), one rate per month from the second data month: MRR lost in the month (churn and contraction, expansion not netted, as `overall_pct`) over the MRR of the customers that had revenue at the month's
-start. A Possibly partial last month is skipped as for NRR. `metric_periods` gains `gross_churn_monthly` (first, last, missing months of the series). The series is the register's and the export's: server-only
+start. The last month is read as for NRR (the as-of month always counts as complete, amended 2026-10-28). `metric_periods` gains `gross_churn_monthly` (first, last, missing months of the series). The series is the register's and the export's: server-only
 (`SERVER_ONLY_FIELDS` of `test_gateway_data_boundary.py`, never sent to a narrative). `test_interface_contracts.py` drops it and breaks it in its violation table; `test_monthly_churn.py` pins the arithmetic.
 The xlsx export gains a "Churn Series" sheet (month, trailing-12-month rate, monthly rate); a source key under `gross_churn.series` or `gross_churn.monthly_series` names that sheet.
 
 Amended 2026-10-24 (George, chat-upload.md §30 point 6): results are also "Stale – re-run audit" when a set-up input they were computed with changed since (audit field `setup_stale`: Reporting currency, Target ARR, Target date,
-As-of month, fiscal year-end, "Last month is complete", FX rates). `run_audit.results_stale` reads both; every reader of §7 above behaves the same. Run audit calculates again and clears the field. No engine output field and no contract version change.
+As-of month, fiscal year-end, FX rates). `run_audit.results_stale` reads both; every reader of §7 above behaves the same. Run audit calculates again and clears the field. No engine output field and no contract version change.
 
 Amended 2026-10-26 (source association, docs/specs/source-association.md): no engine output field, no register field and no contract version change. The deck claim's `flags` may hold four
 more closed words (`sources disagree`, `source ambiguous`, `source not associated`, `extraction incomplete`); `DECK_CLAIM_FIELDS`, the baseline CSV and the memo's Appendix A are unchanged.

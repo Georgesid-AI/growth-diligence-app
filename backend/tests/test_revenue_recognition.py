@@ -353,29 +353,36 @@ def test_two_revenue_rows_of_the_same_kind_and_score_are_a_tie_and_wait_for_a_cl
     assert (got["revenue_row"]["state"], got["revenue_row"]["reason"]) == ("click", "tie")
 
 
-def test_a_boundary_later_than_the_as_of_month_is_rejected_and_needs_a_click(rec):
-    got = recognise(rec, MONTHLY, as_of=AS_OF, proposal=proposal(last_actual_column=13))        # December 2025
+def test_the_model_cannot_move_the_boundary_the_as_of_month_sets_it(rec):
+    got = recognise(rec, MONTHLY, as_of=AS_OF, proposal=proposal(last_actual_column=13))        # December 2025: ignored
     last = got["last_actual"]
-    assert (last["state"], last["reason"]) == ("click", "after_as_of") and got["needs_click"] is True
-    assert [c["column"] for c in last["candidates"]] == [2, 3, 4, 5, 6, 7], "the analyst chooses a month up to the as-of month"
+    assert (last["column"], last["state"], last["reason"], last["candidates"]) == (7, "auto", None, [])
+    assert last["as_of"] == AS_OF[:7] and got["needs_click"] is False
 
 
-def test_a_rules_boundary_later_than_the_as_of_month_is_rejected_the_same_way(rec):
+def test_the_boundary_is_the_last_column_up_to_the_as_of_month_and_the_columns_after_it_are_plan(rec):
     got = recognise(rec, MONTHLY, as_of="2025-03-31")
-    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("click", "after_as_of")
+    last = got["last_actual"]
+    assert (last["state"], last["reason"], last["month"]) == ("auto", None, "2025-03")
+    assert last["column"] < 7 and got["excluded_columns"], "the months after the as-of month are not read"
 
 
-def test_with_no_as_of_month_the_boundary_needs_a_click_even_when_model_and_rules_agree(rec):
+def test_with_no_as_of_month_the_boundary_is_the_rules_last_actual_column_and_waits_for_nothing(rec):
     got = recognise(rec, MONTHLY, as_of=None, proposal=proposal())
     last = got["last_actual"]
-    assert (last["column"], last["state"], last["reason"]) == (7, "click", "no_as_of_month")
-    assert got["revenue_row"]["state"] == "auto", "only the boundary waits"
+    assert (last["column"], last["state"], last["reason"]) == (7, "auto", None)
+    assert got["revenue_row"]["state"] == "auto" and got["needs_click"] is False
 
 
-@pytest.mark.parametrize("column, reason", [(1, "not_a_period"), (99, "not_a_period"), (5, "rules_and_model_disagree")])
-def test_a_proposed_boundary_that_is_no_period_column_or_disagrees_with_the_rules_waits_for_a_click(rec, column, reason):
+@pytest.mark.parametrize("column", [1, 99, 5])
+def test_a_proposed_boundary_is_ignored_whatever_it_names(rec, column):
     got = recognise(rec, MONTHLY, as_of=AS_OF, proposal=proposal(last_actual_column=column))
-    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("click", reason)
+    assert (got["last_actual"]["column"], got["last_actual"]["state"], got["last_actual"]["reason"]) == (7, "auto", None)
+
+
+def test_a_file_that_starts_after_the_as_of_month_waits_with_after_as_of(rec):
+    got = recognise(rec, MONTHLY, as_of="2024-01-31")
+    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("click", "after_as_of") and got["needs_click"] is True
 
 
 def test_the_model_marking_the_revenue_row_as_a_forecast_removes_it_from_the_candidates(rec):
@@ -489,7 +496,7 @@ def test_the_choices_waiting_count_a_turnover_rows_two_clicks_as_one(rec):
     assert got["revenue_row"]["state"] == "click" and got["money_kind"]["asked"] is True
     assert rec.choices_waiting(got) == 1
     assert rec.choices_waiting(recognise(rec, MONTHLY, as_of=AS_OF)) == 0
-    assert rec.choices_waiting(recognise(rec, MONTHLY, as_of=None)) == 1, "only the boundary waits"
+    assert rec.choices_waiting(recognise(rec, MONTHLY, as_of=None)) == 0, "the boundary waits for nothing"
 
 
 def test_growth_labels_name_the_row_and_never_call_a_recurring_row_revenue(rec):
@@ -520,7 +527,7 @@ def monthly_bytes():
 
 
 def set_as_of(api, value=AS_OF):
-    api.db["audits"].docs[0]["as_of_month"] = value
+    api.db["audits"].docs[0].update(as_of_month=value, as_of_by="analyst")        # typed by the analyst: Map never overwrites it
 
 
 def recognition_calls(api):
@@ -645,34 +652,32 @@ def test_correct_confirms_a_part_and_change_chooses_among_the_candidates(api):
     changed = decide(api, action="change", part="revenue_row", row=4)
     assert changed.status_code == 200, changed.text
     assert (changed.json()["recognition"]["revenue_row"]["row"], changed.json()["recognition"]["revenue_row"]["state"]) == (4, "you")
-    done = decide(api, action="confirm", part="last_actual")
-    assert done.json()["recognition"]["last_actual"]["state"] == "you"
+    assert decide(api, action="confirm", part="last_actual").status_code == 422, "the last actual column is no decision any more"
     stored = api.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"]
     assert next(d for d in stored if d["dtype"] == "revenue")["recognition"]["revenue_row"]["state"] == "you", "the decision is saved"
 
 
-def test_a_change_to_a_row_that_is_not_a_candidate_or_to_a_column_after_the_as_of_month_is_refused(api):
+def test_a_change_to_a_row_that_is_not_a_candidate_or_to_the_last_actual_column_is_refused(api):
     set_as_of(api)
     api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply()])
     upload(api, MONTHLY, monthly_bytes())
     assert decide(api, action="change", part="revenue_row", row=7).status_code == 400, "Customers is no candidate"
     assert decide(api, action="change", part="revenue_row", row=9).status_code == 400, "Forecast revenue is never revenue"
-    assert decide(api, action="change", part="last_actual", column=13).status_code == 400, "December 2025 is after the as-of month"
-    assert decide(api, action="change", part="last_actual", column=1).status_code == 400
+    assert decide(api, action="change", part="last_actual", column=13).status_code == 422, "the as-of month sets the last actual column"
     assert decide(api, action="change", part="file_type", file_type="crm").status_code == 400
     assert decide(api, action="change", part="currency", currency="XXX").status_code == 400
 
 
-def test_the_analyst_confirms_the_currency_and_the_boundary_when_the_file_names_neither(api):
+def test_the_analyst_confirms_the_currency_when_the_file_names_none_and_the_as_of_month_sets_the_boundary(api):
     api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(
         revenue_row={"row": 3, "label": "Revenue"}, last_actual_column=13, currency=None, non_revenue_rows=[])])
     got = upload(api, "monthly_report_no_currency.csv", (FIXTURES / "monthly_report_no_currency.csv").read_bytes()).json()["recognition"]
     assert got["needs_click"] is True and got["currency"]["state"] == "confirm"
-    assert got["last_actual"]["reason"] == "no_as_of_month"
+    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("auto", None), "the boundary waits for nothing"
     set_as_of(api, AS_OF_YEAR_END)
-    assert decide(api, action="change", part="currency", currency="EUR").json()["recognition"]["currency"] == {"code": "EUR", "state": "you"}
-    final = decide(api, action="change", part="last_actual", column=13).json()["recognition"]
-    assert final["last_actual"]["state"] == "you" and final["excluded_columns"] == []
+    final = decide(api, action="change", part="currency", currency="EUR").json()["recognition"]
+    assert final["currency"] == {"code": "EUR", "state": "you"}
+    assert final["last_actual"]["state"] == "auto" and final["excluded_columns"] == [], "read to December from the as-of month"
 
 
 def rules_only(api, as_of=AS_OF_YEAR_END):
@@ -726,16 +731,16 @@ def test_a_pnl_with_one_period_never_satisfies_the_revenue_file(api):
     assert "revenue_file_missing" in blocker_kinds(api)
 
 
-def test_two_confirm_only_reasons_on_one_file_are_settled_by_one_correct(api):
-    api.db["audits"].docs[0]["structure_reading_consent"] = False        # no as-of month stored, no P&L: the boundary needs confirming
+def test_a_confirm_only_reason_is_settled_by_one_correct(api):
+    api.db["audits"].docs[0]["structure_reading_consent"] = False        # no as-of month stored, no P&L: the boundary waits for nothing
     text = "Metric,Jan-25,Feb-25,Mar-25,Apr-25\nRevenue - EMEA (EUR),100,110,120,130\nCustomers,4,5,6,7\nChurn,1,2,3,4\nCash,5,6,7,8\n"
     got = upload(api, "emea.csv", text.encode()).json()["recognition"]
     assert (got["revenue_row"]["state"], got["revenue_row"]["reason"]) == ("click", "confidence_80")
-    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("click", "no_as_of_month")
+    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("auto", None)
     done = decide(api, action="confirm", part="pending")
     assert done.status_code == 200, done.text
     after = done.json()["recognition"]
-    assert (after["revenue_row"]["state"], after["last_actual"]["state"]) == ("you", "you") and after["needs_click"] is False
+    assert (after["revenue_row"]["state"], after["last_actual"]["state"]) == ("you", "auto") and after["needs_click"] is False
 
 
 def test_one_correct_does_not_settle_a_part_that_needs_a_choice(api):
@@ -785,7 +790,6 @@ def test_the_decision_endpoint_logs_codes_only(api, caplog):
     upload(api, MONTHLY, monthly_bytes())
     caplog.clear()
     assert decide(api, action="change", part="revenue_row", row=5).status_code == 200
-    assert decide(api, action="confirm", part="last_actual").status_code == 200
     log = "\n".join(r.getMessage() for r in caplog.records)
     for secret in ("Recognised revenue", "MRR", "Forecast revenue", "Northwind", MONTHLY):
         assert secret not in log, f"{secret!r} reached a log line"

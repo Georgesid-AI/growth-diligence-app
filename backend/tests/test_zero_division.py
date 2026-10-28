@@ -95,7 +95,7 @@ def _segment_a(final_amount):
     rev["_row"] = range(2, len(rev) + 2)
     # the as-of month is complete by construction (docs/specs/dates-and-periods.md section 2: else NRR stops a month early)
     cfg = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2025-06-30", "fx": {"EUR": 1.0},
-           "billing_terms": {}, "default_l": 1, "as_of_month": None, "last_month_complete": True}
+           "billing_terms": {}, "default_l": 1, "as_of_month": None}
     return ge.compute_all(rev, None, None, cfg, {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}})
 
 
