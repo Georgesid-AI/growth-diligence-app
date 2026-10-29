@@ -65,3 +65,21 @@ test("plan 2 (3): a check blocked by missing company data is in the data request
       .toContain("Revenue reconciliation: P&L with a revenue line, overlapping the revenue file's months");
   } finally { await done(); }
 });
+
+// docs/design/pnl-lines.md section 3: the findings of a statement's lines are listed with their cell, outside the six checks.
+test("the P&L line findings are listed under the results with the cell they cite and do not change the coverage", async () => {
+  const withFindings = { ...SPARSE, statement_findings: [
+    { kind: "sign", line: "OPEX total", period: "FY 2021", text: "OPEX total differs from the sum of its lines by 3,000,000 in FY 2021",
+      source: "pnl.csv · CSV · row 12" }] };
+  const { host, done } = await mount(withFindings);
+  try {
+    const box = host.querySelector('[data-testid="integrity-statement"]');
+    expect(box.textContent).toContain("OPEX total differs from the sum of its lines by 3,000,000 in FY 2021");
+    expect(box.textContent).toContain("pnl.csv · CSV · row 12");
+    expect(host.querySelector('[data-testid="integrity-coverage"]').querySelectorAll("tbody tr").length).toBe(6);
+  } finally { await done(); }
+  const none = await mount(SPARSE);
+  try {
+    expect(none.host.querySelector('[data-testid="integrity-statement"]')).toBeNull();
+  } finally { await none.done(); }
+});

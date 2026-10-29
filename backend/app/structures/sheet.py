@@ -35,7 +35,8 @@ MONEY = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "eb
          "bookings", "acv", "tcv", "cash_balance", "arpa", "contracted_revenue")
 YEARLY_FIELDS = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin")     # what the yearly-basis metrics read
 TRACK_FIELDS = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "ebitda")
-FAILED_CHECKS = ("total_mismatch", "no_breakdown", "ytd_mismatch", "ltm_mismatch")              # these lines come first in the table
+RECOMPUTE_CHECKS = ("growth_mismatch", "margin_mismatch", "gross_margin_mismatch", "result_mismatch")     # docs/design/pnl-lines.md section 3
+FAILED_CHECKS = ("total_mismatch", "no_breakdown", "ytd_mismatch", "ltm_mismatch", "sign_differs") + RECOMPUTE_CHECKS              # these lines come first in the table
 NOT_LINES = ("heading", "note")
 # How a line is measured and which lines feed anything (26.15).
 BALANCE_MEANINGS = ("arr", "mrr", "customers", "cash_balance")      # their basis is balance unless the label says otherwise
@@ -75,6 +76,7 @@ MEANING_DEFS = (
 _NEW_ARR = re.compile(r"^new\b.*\barr$")
 _NEW_ACV = re.compile(r"^new\b.*\bacv$")
 _SHARE = re.compile(r"%.*\bshare\b|\bshare\b.*%")
+_INTERNAL_EVENTS = re.compile(r"\binternal\b.*\bevents?\b")     # not S&M: counted in G&A (docs/design/pnl-lines.md section 6)
 # Basis cues in a label (26.15), first match in this order; a cue wins over the reply.
 _BASIS_CUES = ((re.compile(r"\bytd\b|\bcurrent year\b|\byear to date\b"), "ytd"),
                (re.compile(r"\bltm\b|\bttm\b|\blast 12 months\b|\blast twelve months\b|\btrailing (?:12|twelve) months\b"), "ltm"),
@@ -317,6 +319,8 @@ def meaning_of(label: str) -> Tuple[str, int]:
     padded = f" {text} "
     if _SHARE.search((label or "").lower()):
         return "other", 100
+    if _INTERNAL_EVENTS.search(text):
+        return "opex", 100
     if _NEW_ARR.match(text):
         return "new_arr", 100
     if _NEW_ACV.match(text):
@@ -587,7 +591,8 @@ def python_labels(lines: List[Dict], periods: Optional[List[Dict]] = None) -> No
             line["python"].update(meaning="sm_expense", confidence=100)
     for line in lines:                       # a sub-line with no meaning of its own takes its parent's
         own, parent = line["python"], by_row.get(line["python"]["parent_row"])
-        if parent and own["role"] != "rate" and parent["python"]["meaning"] != "other" and (
+        if parent and own["role"] != "rate" and not _INTERNAL_EVENTS.search(_norm(line["label"])) \
+                and parent["python"]["meaning"] != "other" and (
                 own["meaning"] == "other" or (own["meaning"] == "opex" and parent["python"]["meaning"] in ("sm_expense",
                                                                                                          "cost_of_revenue"))):
             own.update(meaning=parent["python"]["meaning"], confidence=INHERITED)
@@ -714,13 +719,19 @@ def check(lines: List[Dict], periods: List[Dict]) -> None:
             tolerance = TOLERANCE * abs(value) + 1e-9
             if abs(sum(found) - value) <= tolerance:
                 continue
-            if abs(-sum(found) - value) <= tolerance or abs(sum(abs(v) for v in found) - abs(value)) <= tolerance:
+            # The block's own sign convention: a total and its lines of one sign add up by size; only a total whose sign is the opposite of
+            # every one of its lines is a sign finding (docs/design/pnl-lines.md section 3).
+            if abs(sum(abs(v) for v in found) - abs(value)) <= tolerance and all(v * value <= 0 for v in found):
                 total["checks"].setdefault("sign_differs", []).append(p["header"])
             else:
                 total["checks"].setdefault("total_mismatch", []).append(p["header"])
     for line in lines:
         if line["meaning"] in COSTS and _negative(line):
             line["checks"]["sign_convention"] = []
+    from . import pnl_lines
+    by_row = {x["row"]: x for x in lines}
+    for found in pnl_lines.recompute_checks(lines, periods):
+        by_row[found["row"]]["checks"].setdefault(found["code"], []).append(found["period"])
     for found in basis_checks(lines, periods):
         if not found["ok"]:
             by_row = next(x for x in lines if x["row"] == found["row"])
@@ -804,15 +815,28 @@ def pick(lines: List[Dict], meaning: str, tag: str = "actual") -> List[Dict]:
             and not any(a["meaning"] == meaning and line_tag(a) == tag for a in _ancestors(x, by_row))]
 
 
-def _field_values(chosen: List[Dict], k: int, scale: float, meaning: str) -> Optional[float]:
+def excluded_parts(line: Dict, lines: Optional[List[Dict]], meaning: str) -> List[Dict]:
+    """The sub-lines of an S&M total that are mapped to overhead (opex) and are not S&M: internal events, counted in G&A (docs/design/
+    pnl-lines.md section 6). Read from the mapped role of the sub-line, never from its label."""
+    if meaning != "sm_expense" or not lines:
+        return []
+    return [x for x in lines if x.get("parent_row") == line["row"] and x["meaning"] == "opex" and x["role"] not in ("rate",) + NOT_LINES
+            and _has_values(x) and line_tag(x) == line_tag(line)]
+
+
+def _field_values(chosen: List[Dict], k: int, scale: float, meaning: str, lines: Optional[List[Dict]] = None) -> Optional[float]:
     """The sum of the chosen lines in period k, blank when one of them is blank; a cost line written as negatives read as
-    positive; money ×scale."""
+    positive; money ×scale. S&M leaves out the sub-lines of its totals that are mapped to overhead (`excluded_parts`)."""
     total = 0.0
     for line in chosen:
         v = line["values"][k]
         if v is None:
             return None
         total += abs(v) if meaning in COSTS and _negative(line) else v
+        for x in excluded_parts(line, lines, meaning):
+            w = x["values"][k]
+            if w is not None:
+                total -= abs(w) if _negative(x) else w
     return total * (scale if meaning in MONEY else 1)
 
 
@@ -837,7 +861,7 @@ def monthly_pnl(lines: List[Dict], periods: List[Dict], scale: float) -> Optiona
     chosen = {f: pick(lines, f) for f in PNL_FIELDS}
     if not months or not all(chosen.values()):
         return None
-    rows = [{"month": periods[k]["start"], **{f: _field_values(chosen[f], k, scale, f) for f in PNL_FIELDS}} for k in months]
+    rows = [{"month": periods[k]["start"], **{f: _field_values(chosen[f], k, scale, f, lines) for f in PNL_FIELDS}} for k in months]
     return {"rows": rows, "lines": {f: [x["row"] for x in chosen[f]] for f in PNL_FIELDS}}
 
 
@@ -931,15 +955,17 @@ def yearly_input(lines: List[Dict], periods: List[Dict], scale: float, meta: Dic
     def fields(k):
         out = {}
         for f in TRACK_FIELDS:
-            v = _field_values(chosen[f], k, scale, f) if chosen[f] else None
+            v = _field_values(chosen[f], k, scale, f, lines) if chosen[f] else None
             if v is not None:
-                out[f] = {"value": v, "cells": [f"{get_column_letter(periods[k]['col'])}{x['row']}" for x in chosen[f]]}
+                parts = chosen[f] + [y for x in chosen[f] for y in excluded_parts(x, lines, f)]
+                out[f] = {"value": v, "cells": [f"{get_column_letter(periods[k]['col'])}{x['row']}" for x in parts]}
                 if f == "sm_expense":
                     out[f]["scope"] = sm_scope([x["label"] for x in chosen[f]])
         return out
     actual = [{"period": periods[k]["header"], "year": periods[k]["year"], "start": periods[k]["start"], "end": periods[k]["end"],
                "fields": fields(k)} for k in years]
-    planned = [{"period": periods[k]["header"], "year": periods[k]["year"], "tag": periods[k]["tag"], "fields": fields(k)}
+    planned = [{"period": periods[k]["header"], "year": periods[k]["year"], "start": periods[k]["start"], "end": periods[k]["end"],
+                "tag": periods[k]["tag"], "fields": fields(k)}
                for k, p in enumerate(periods) if p["grain"] == "year" and k not in years]
     reported = [{"period": periods[k]["header"], "start": periods[k]["start"], "end": periods[k]["end"],
                  "revenue": fields(k).get("revenue")} for k, p in enumerate(periods)
@@ -990,12 +1016,13 @@ def _sm_claim(lines: List[Dict], periods: List[Dict], fiscal_year_end: int) -> O
     for k, p in enumerate(periods):
         if p["tag"] == "actual" or p["grain"] not in ("year", "quarter", "half", "month"):
             continue
-        value = _field_values(chosen, k, 1, "sm_expense")
+        value = _field_values(chosen, k, 1, "sm_expense", lines)
         part = forecast_claims._part(p["header"], date.fromisoformat(p["start"] + "-01") if p["grain"] == "month" else None,
                                       fiscal_year_end)
         if value is not None and part:
             parts.append({"fy": part[0], "grain": part[1], "index": part[2], "value": value, "j": p["col"] - 1, "header": p["header"],
-                          "tag": p["tag"], "cells": [f"{get_column_letter(p['col'])}{x['row']}" for x in chosen]})
+                          "tag": p["tag"],
+                          "cells": [f"{get_column_letter(p['col'])}{x['row']}" for x in chosen + [y for x in chosen for y in excluded_parts(x, lines, "sm_expense")]]})
     return {"row": chosen[0]["row"], "label": SM_CLAIM_LABEL, "metric": "sm_expense", "parts": parts} if parts else None
 
 
@@ -1063,13 +1090,15 @@ def view(sheet_map: Dict, fiscal_year_end: int, scale: float) -> Dict:
     lines = [dict(line) for line in sheet_map["lines"]]
     check(lines, periods)
     used = used_rows(lines, periods)
+    from . import pnl_lines
+    uses = pnl_lines.uses(lines, periods)
     series = {s["row"] for s in kpi_series(lines, periods, scale)}
     for line in lines:
         line["pending"] = pending(line, used)
         line["series"] = line["row"] in series
         line["used"] = line["row"] in used
-        feeds = line["meaning"] in FEEDS and line["role"] not in ("rate",) + NOT_LINES and _has_values(line)
-        line["not_used"] = not_used(line) if feeds and not line["used"] else None
+        line["use"] = uses.get(line["row"])
+        line["period"] = pnl_lines.rate_period(line, periods)
     order = sorted(lines, key=lambda x: (0 if any(c in x["checks"] for c in FAILED_CHECKS) else 1 if x["pending"] else 2,
                                          x["row"]))
     months = [p for p in periods if p["grain"] == "month"]
@@ -1079,7 +1108,7 @@ def view(sheet_map: Dict, fiscal_year_end: int, scale: float) -> Dict:
             "periods": [{"col": get_column_letter(p["col"]), "header": p["header"], "grain": p["grain"], "tag": p["tag"]}
                         for p in periods],
             "lines": [{k: x.get(k) for k in ("row", "label", "indent", "role", "meaning", "basis", "tag", "parent_row", "source",
-                                             "confidence", "decision", "checks", "pending", "series", "used", "not_used")}
+                                             "confidence", "decision", "checks", "pending", "series", "used", "use", "period")}
                       for x in order],
             "ai_read": bool(sheet_map.get("ai_read")),
             "pending": sum(1 for x in lines if x["pending"]), "too_long": bool(sheet_map.get("too_long")),
@@ -1091,15 +1120,17 @@ def view(sheet_map: Dict, fiscal_year_end: int, scale: float) -> Dict:
 
 def feed(sheet_map: Dict, fiscal_year_end: int, scale: float, meta: Dict, as_of: Optional[str] = None) -> Dict:
     """What compute reads from the stored map: {"pnl": monthly P&L rows or None, "rows": the P&L lines' rows, "yearly": the yearly
-    input or None}. Never a split of a year or a quarter into months. `as_of` is the audit's one as-of month (YYYY-MM-DD or YYYY-MM):
+    input or None, "lines": the findings and plan cells of the lines (pnl_lines.analyse)}. Never a split of a year or a quarter into months. `as_of` is the audit's one as-of month (YYYY-MM-DD or YYYY-MM):
     the yearly input's actual columns end on or before it, the columns after it are plan."""
     periods = with_periods(sheet_map["periods"], fiscal_year_end)
     lines = sheet_map["lines"]
     pnl = monthly_pnl(lines, periods, scale)
+    from . import pnl_lines
     return {"pnl": pnl["rows"] if pnl else None,
             "rows": sorted({r for rows in (pnl or {}).get("lines", {}).values() for r in rows}),
             "revenue_row": ((pnl or {}).get("lines", {}).get("revenue") or [None])[0],
-            "yearly": None if pnl else yearly_input(lines, periods, scale, meta, as_of)}
+            "yearly": None if pnl else yearly_input(lines, periods, scale, meta, as_of),
+            "lines": pnl_lines.analyse(sheet_map, fiscal_year_end, scale, meta, as_of)}
 
 
 def claims(sheet_map: Dict, ds: Dict, fiscal_year_end: int) -> Optional[Dict]:

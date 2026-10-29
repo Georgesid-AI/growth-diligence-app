@@ -16,6 +16,7 @@ import test_llm_gateway as t  # noqa: E402
 from app import column_rules as cr  # noqa: E402
 from app.llm import gateway  # noqa: E402
 from app.structures import redact  # noqa: E402
+from app.structures import pnl_lines as pl  # noqa: E402
 from app.structures import sheet as sh  # noqa: E402
 from test_chat_upload import AUDIT, COMPANY, upload, view  # noqa: E402
 
@@ -78,7 +79,8 @@ def test_a_sage_statement_reads_one_period_only_and_asks_for_a_monthly_export():
     assert [(p["header"], p["grain"]) for p in read["periods"]] == [("Period To Date", "period_to_date"), ("Year To Date", "ytd")]
     view = sh.view(sh.build(read), 12, 1)
     assert view["one_period"] and view["grain"] == "yearly" and not view["monthly_pnl"]
-    assert sh.feed(sh.build(read), 12, 1, {}) == {"pnl": None, "rows": [], "revenue_row": None, "yearly": None}
+    assert sh.feed(sh.build(read), 12, 1, {}) == {"pnl": None, "rows": [], "revenue_row": None, "yearly": None,
+                                                  "lines": {"basis": "yearly", "findings": [], "plan": []}}
     lines = lines_by_label(view)
     assert lines["Total Sales"]["role"] == "total" and lines["Sales Type A"]["parent_row"] == 7, "a Total adds up the lines above it"
     assert lines["Total Overheads"]["checks"] == {} and lines["Salaries"]["parent_row"] == 16
@@ -617,7 +619,7 @@ def test_a_label_with_forecast_budget_plan_or_target_tags_its_row_over_its_colum
         "forecast", "budget", "budget", "forecast", "actual", "actual"]
 
 
-def test_only_the_monthly_line_feeds_the_engine_the_others_say_not_used_and_are_never_summed():
+def test_only_the_monthly_line_feeds_the_engine_the_others_show_their_use_and_are_never_summed():
     m = bases_map(content=(MAPPING / BASES).read_bytes() + COST_ROWS.encode())
     periods = sh.with_periods(m["periods"], 12)
     assert [x["row"] for x in sh.pick(m["lines"], "revenue")] == [3], "not the ytd, ltm, quarterly or forecast line"
@@ -625,11 +627,11 @@ def test_only_the_monthly_line_feeds_the_engine_the_others_say_not_used_and_are_
     assert [r["revenue"] for r in pnl] == [100 + 10 * i for i in range(12)], "never 100 + 100 + ... summed with the ytd line"
     assert pnl[0]["cost_of_revenue"] == 40 and pnl[0]["sm_expense"] == 30
     view = lines_by_label(sh.view(m, 12, 1))
-    assert view["Revenue (monthly)"]["used"] and view["Revenue (monthly)"]["not_used"] is None
-    assert {k: view[k]["not_used"] for k in ("Revenue current year (YTD)", "Revenue last 12 months (LTM)", "Revenue - quarterly",
-                                             "Forecast revenue")} == {
-        "Revenue current year (YTD)": "ytd", "Revenue last 12 months (LTM)": "ltm", "Revenue - quarterly": "quarter",
-        "Forecast revenue": "forecast"}
+    assert view["Revenue (monthly)"]["used"] and view["Revenue (monthly)"]["use"] == "series"
+    assert {k: view[k]["use"] for k in ("Revenue current year (YTD)", "Revenue last 12 months (LTM)", "Revenue - quarterly",
+                                        "Forecast revenue")} == {
+        "Revenue current year (YTD)": "recompute check", "Revenue last 12 months (LTM)": "recompute check",
+        "Revenue - quarterly": "excluded", "Forecast revenue": "series"}, "checked against the months, left out, or a plan series: never Not used"
     assert not any(view[k]["used"] for k in ("Revenue current year (YTD)", "Revenue last 12 months (LTM)", "Forecast revenue"))
     assert periods[0]["grain"] == "month"
 
@@ -692,7 +694,7 @@ def test_a_stored_map_from_before_basis_and_tag_is_still_read():
     for line in m["lines"]:
         line.pop("basis"), line.pop("tag")
     view = sh.view(m, 12, 1)
-    assert all(line["not_used"] is None for line in view["lines"]) and view["series"] >= 1
+    assert all(line["use"] in (None, *pl.USES) for line in view["lines"]) and view["series"] >= 1
 
 
 def test_a_reply_basis_is_used_but_a_cue_in_the_label_wins_and_a_reply_without_one_keeps_pythons():
@@ -712,7 +714,7 @@ def test_the_analyst_changes_a_basis_in_one_click_and_the_saved_map_keeps_it(api
     r = api.post(f"/api/audits/{AUDIT}/datasets/pnl/lines", json=[{"row": 3, "action": "change", "basis": "ytd"}])
     assert r.status_code == 200
     changed = lines_by_label(r.json()["sheet_map"])["Revenue (monthly)"]
-    assert (changed["basis"], changed["not_used"], changed["decision"]) == ("ytd", "ytd", "change")
+    assert (changed["basis"], changed["use"], changed["decision"]) == ("ytd", "recompute check", "change")
     assert api.post(f"/api/audits/{AUDIT}/datasets/pnl/lines", json=[{"row": 3, "action": "change", "basis": "yearly"}]).status_code == 400
 
 

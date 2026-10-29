@@ -17,7 +17,7 @@ from . import claim_matching as cm
 TOLERANCE = Decimal("0.02")         # provisional (design note section 1): abs(parts - total) <= 2% of abs(total); a zero total needs equality
 TOLERANCE_TEXT = "±2%"
 ANNUAL = 12                          # months in an annual total
-FLOW_TYPES = ("revenue", "costs", "gross_profit", "ebitda", "net_profit")        # an amount over a period: the parts add up
+FLOW_TYPES = ("revenue", "costs", "cost_of_revenue", "s_and_m", "opex", "gross_profit", "ebitda", "net_profit")        # an amount over a period: the parts add up
 BALANCE_TYPES = ("arr", "mrr", "cash", "customers", "users")                     # a level at a date: the year-end observation stands for the year
 BALANCE_METRICS = ("ARR", "MRR", "Customer count")     # the metric the register tests the claim against decides its kind when it has one
 FLOW_METRICS = ("Revenue",)

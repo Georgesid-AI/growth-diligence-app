@@ -281,6 +281,7 @@ SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # inter
                                    "source_period", "metric_periods",       # dates-and-periods.md sections 2-3: months as text, no figure
                                    "won_deal_closes",                       # crm-dedup-clustering.md: data_integrity reads a closed sentence
                                    "yearly_basis",                          # chat-upload.md section 26.8: no narrative reads it
+                                   "pnl_lines",                             # docs/design/pnl-lines.md: line labels and plan cells of the file; no narrative reads it
                                    "recognition",                           # revenue-file-recognition.md section 9: closed words and counts, in no slice
                                    "as_of_month"})                          # the analyst's setting: the model is told evidence_to and last_month_status instead
 SERVER_ONLY_FIELDS = frozenset({
@@ -1005,6 +1006,58 @@ def test_the_yearly_basis_block_never_reaches_a_narrative_payload():
     from schemas.metrics import MetricsPayload
     assert "yearly_basis" in MetricsPayload.model_fields and "yearly_basis" in SERVER_ONLY_TOP_LEVEL
     assert "yearly_basis" not in gateway.OUTBOUND_TOP_LEVEL and "yearly_basis" not in gateway.OUTBOUND_FIELDS
+
+
+# docs/design/pnl-lines.md: the statement's findings carry the file's own line labels and its plan cells. The block is server-only, pure Python, and
+# never reaches a narrative payload, a log line or the provider (rules 14 and 17).
+PNL_SENTINEL = "Falcon Orchid ledger line"
+
+
+def _results_with_pnl_lines():
+    results = copy.deepcopy(RESULTS)
+    cite = {**SOURCE, "file": "falcon.csv", "rule": "Sum check"}
+    results["pnl_lines"] = {
+        "basis": "yearly", "source": cite,
+        "findings": [{"kind": "sum", "line": PNL_SENTINEL, "period": "FY 2021", "gap": 7_654_321.0, "gap_points": None, "source": cite,
+                      "text": f"{PNL_SENTINEL} differs from the sum of its lines by 7,654,321 in FY 2021"}],
+        "plan": [{"metric": "Revenue", "period": "FY 2022", "period_start": "2022-01", "period_end": "2022-12", "value": 8_765_432.0, "cell": "E3",
+                  "source_text": "File Falcon!E3 (plan)", "measure": "growth", "implied": 0.6, "observed": 0.875, "gap_points": -27.5,
+                  "compared": "FY 2021 → FY 2022 against FY 2020 → FY 2021", "reason": None, "source": cite}]}
+    return results
+
+
+def test_the_pnl_lines_block_is_declared_server_only_and_in_no_step_slice():
+    from schemas.metrics import MetricsPayload
+    assert "pnl_lines" in MetricsPayload.model_fields and "pnl_lines" in SERVER_ONLY_TOP_LEVEL
+    assert "pnl_lines" not in gateway.OUTBOUND_TOP_LEVEL and "pnl_lines" not in gateway.OUTBOUND_FIELDS
+    for step in gateway.STEP_CONFIG:
+        assert "pnl_lines" not in gateway._slice_for_step(_results_with_pnl_lines(), step), f"{step} slices the statement block"
+
+
+def test_the_pnl_lines_block_never_reaches_a_narrative_payload_or_the_provider():
+    db = t.FakeDB()
+    doc = copy.deepcopy(t.RESULTS_DOC)
+    doc["results"] = _results_with_pnl_lines()
+    db["audits"].docs.append(doc)
+    needles = ("pnl_lines", PNL_SENTINEL, "7,654,321", "7654321", "8765432", "falcon.csv", "File Falcon!E3")
+    for step in gateway.STEP_CONFIG:
+        computed = asyncio.run(gateway.load_computed_results(db, RUN_ID, step))
+        sent = json.dumps(gateway.build_outbound(computed, {}), ensure_ascii=False)
+        for needle in needles:
+            assert needle not in sent, f"{step}: {needle!r} reached the outbound payload"
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    for needle in needles:
+        assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"
+
+
+def test_the_pnl_lines_module_imports_nothing_from_the_gateway_and_writes_no_log_line():
+    tree = ast.parse((BACKEND / "app" / "structures" / "pnl_lines.py").read_text(encoding="utf-8"))
+    offenders = [f"{m} -> {n}" for m, n in _imports(tree) if (set(re.split(r"[.\s\"'()]+", m)) | {n}) & {"llm", "gateway", "anthropic", "server", "logging"}]
+    assert not offenders, "pnl_lines reaches for the gateway or logs:\n  " + "\n  ".join(offenders)
+    calls = [ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr in ("debug", "info", "warning", "error", "exception", "critical", "log")]
+    assert not calls, f"pnl_lines writes a log line: {calls}"
 
 
 def test_the_sheet_lines_log_line_names_the_run_the_type_and_two_counts():
@@ -3965,3 +4018,39 @@ def test_the_deck_actuals_reasons_and_details_hold_figures_and_closed_words_and_
     assert noted == deck_actuals.mark_note({"basis": "projection"}) and sentinel not in noted
     assert deck_actuals.DIFFERS_REASON.format(deck="€1", file="€2") == "deck differs from file: deck €1, file €2"
     assert "app.llm" not in inspect.getsource(deck_actuals) and "gateway" not in inspect.getsource(deck_actuals)
+
+
+# docs/design/pnl-lines.md: a statement whose lines block fails to compute is reported as Missing. The entry crosses to the growth_engine step
+# (gateway._GAP_FIELDS): its metric, status and reason may carry the exception class name and nothing else (rule 14).
+PNL_ERROR_SENTINEL = "Heron Quartz ledger 9,876,543"
+
+
+def _results_with_a_failed_statement(monkeypatch):
+    import growth_engine as ge
+    from claim_matching_support import engine_results   # noqa: F401  (loads the sample engine run's imports)
+
+    def boom(statement, pnl_src):
+        raise ValueError(f"{PNL_ERROR_SENTINEL} in {pnl_src.get('file')} {statement}")
+    monkeypatch.setattr(ge, "compute_pnl_lines", boom)
+    import pandas as pd
+    empty = pd.DataFrame()
+    rev = pd.DataFrame([("C1", "2024-01-01", 1000, "EUR")], columns=["customer_id", "invoice_date", "amount", "currency"])
+    rev["_row"] = [2]
+    config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2026-12-31", "fx": {"EUR": 1.0}, "billing_terms": {},
+              "default_l": 1, "as_of_month": None}
+    errors = []
+    results = ge.compute_all_raw(rev, empty, empty, config, {"pnl": {"file": "heron.csv", "sheet": "Heron"}}, on_error=errors.append,
+                                 statement={"lines": [{"label": PNL_ERROR_SENTINEL}]})
+    return results, errors
+
+
+def test_the_pnl_lines_calculation_error_entry_carries_the_exception_class_name_and_nothing_else(monkeypatch):
+    results, errors = _results_with_a_failed_statement(monkeypatch)
+    assert [type(e).__name__ for e in errors] == ["ValueError"] and results["pnl_lines"] is None
+    entry = next(m for m in results["missing_data"] if m["metric"] == "P&L lines (calculation error)")
+    assert entry["reason"] == "The calculation stopped on an unexpected ValueError; reported as Missing, not estimated"
+    sent = gateway._slice_for_step({"missing_data": [entry]}, "growth_engine")["missing_data"]
+    assert sent == [{"metric": "P&L lines (calculation error)", "status": "Missing", "reason": entry["reason"]}], "nothing but those three fields"
+    wire = json.dumps(sent)
+    for needle in (PNL_ERROR_SENTINEL, "9,876,543", "heron.csv", "Heron"):
+        assert needle not in wire, f"{needle!r} reaches the model through the calculation-error entry"

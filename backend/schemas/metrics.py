@@ -24,7 +24,9 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 13         # 13: deck actuals (docs/design/deck-actuals.md, 2026-10-28): `yearly_basis.years[].revenue_cells` names the cells a deck figure is reconciled with; results stored under 12 read "Stale – re-run audit". 12: one as-of month (docs/specs/dates-and-periods.md section 2, 2026-10-28): the as-of month always counts as complete, `source_period.status` is always Complete and `complete_by` "as_of", the last month is no longer left out of NRR, gross churn and growth, and the fiscal year-end sets the months of a yearly column; results stored under 11 read "Stale – re-run audit".
+CONTRACT_VERSION = 14         # 14: P&L lines (docs/design/pnl-lines.md): the new server-only block `pnl_lines` (findings of the sum, recompute and sign checks, plan cells with implied against observed rate) and `yearly_basis.years.cac_payback_label` ("yearly, revenue-based"); S&M leaves out the sub-lines mapped to overhead (internal events); results stored under 13 read "Stale – re-run audit".
+                              # 13: deck actuals (docs/design/deck-actuals.md, 2026-10-28): `yearly_basis.years[].revenue_cells` names the cells a deck figure is reconciled with; results stored under 12 read "Stale – re-run audit".
+                              # 12: one as-of month (docs/specs/dates-and-periods.md section 2, 2026-10-28): the as-of month always counts as complete, `source_period.status` is always Complete and `complete_by` "as_of", the last month is no longer left out of NRR, gross churn and growth, and the fiscal year-end sets the months of a yearly column; results stored under 11 read "Stale – re-run audit".
                               # 11: the page reader's answer form (docs/design/page-image.md sections 4 and 5): claims carry label_text, segment, share_of and is_quote; label and
                               #    period corrections run on a blank field only and "sign not on page" no longer changes a value, so claim matches stored under 10 read "Stale – re-run audit"; no engine block changes.
                               # 10: the yearly-basis block names two annual payback proxies, the S&M scope and the fiscal year (docs/specs/forecast-and-payback.md section 4.5); 9: the simplified flow (docs/design/simplified-flow.md): claims enter the register without an approval, a stated figure the app cannot test
@@ -579,6 +581,7 @@ class YearlyYear(Block):
     net_new_arr: Optional[Currency] = None
     cac_payback_net_new_arr_months: Optional[Months] = None
     cac_payback_net_new_arr_reason: Optional[str] = None
+    cac_payback_label: Optional[str] = None         # 13: "yearly, revenue-based" (docs/design/pnl-lines.md section 6)
     basis: str
     source: Citation
 
@@ -616,6 +619,43 @@ class YearlyBasis(Block):
     track_record: List[YearlyTrack]
     reported_vs_file: List[YearlyReported]
     missing: List[YearlyMissing]
+    source: Citation
+
+
+# ---------------------------------------------------------------------------
+# P&L lines (docs/design/pnl-lines.md): the integrity findings of a statement's lines and its plan cells. Server-only.
+# ---------------------------------------------------------------------------
+class PnlFinding(Block):
+    kind: Literal["sum", "sign", "recompute"]
+    line: str
+    period: str
+    gap: Optional[Currency] = None                  # a money gap, in the reporting currency
+    gap_points: Optional[Ratio] = None              # a rate gap, in percentage points
+    text: str
+    source: Citation
+
+
+class PnlPlan(Block):
+    metric: str
+    period: str
+    period_start: str                               # the plan year's first and last month, "YYYY-MM"; deck forecasts match through yearly_year
+    period_end: str
+    value: Currency
+    cell: str
+    source_text: str                                # "File <sheet>!<cell> (plan)"
+    measure: Literal["growth", "share of revenue"]
+    implied: Optional[GapFraction]
+    observed: Optional[GapFraction]
+    gap_points: Optional[Ratio]
+    compared: str
+    reason: Optional[str]
+    source: Citation
+
+
+class PnlLines(Block):
+    basis: Literal["yearly", "monthly"]
+    findings: List[PnlFinding]
+    plan: List[PnlPlan]
     source: Citation
 
 
@@ -662,7 +702,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[13]
+    contract_version: Literal[14]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]
@@ -687,6 +727,7 @@ class MetricsPayload(Block):
     questions_for_management: List[Question]
     source_period: Optional[SourcePeriod] = None
     metric_periods: Dict[str, MetricPeriod] = Field(default_factory=dict)
+    pnl_lines: Optional[PnlLines] = None            # 13: a P&L read as a statement, yearly or monthly (docs/design/pnl-lines.md); server-only
     yearly_basis: Optional[YearlyBasis] = None      # a P&L read as a statement with actual years and no monthly P&L (section 26.8)
     recognition: Optional[RecognitionSummary] = None    # a recognised file with no customer rows supplies the revenue series (section 9)
 

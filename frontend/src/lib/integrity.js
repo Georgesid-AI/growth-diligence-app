@@ -4,6 +4,7 @@
  */
 export const INTEGRITY_HEADING = "Data integrity";
 export const RESULTS_HEADING = "Results of completed checks";
+export const STATEMENT_HEADING = "P&L lines: findings";
 export const COVERAGE_HEADING = "Assessment coverage";
 export const REQUESTS_HEADING = "Data requests";
 export const RESULT_COLUMNS = ["Check", "Result", "Finding", "Source"];

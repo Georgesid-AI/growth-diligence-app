@@ -188,12 +188,17 @@ export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "line
   + `${plural(c.company, "company name", "company names")}. Withheld: ${plural(c.columns, "column", "columns")}, ${plural(c.long, "long cell", "long cells")}.`;
 export const S30B_HEADERS = ["Line", "Role", "Meaning", "Basis", "Used", "Confidence", "Checks"];
 export const CONFIRM_ALL = "Confirm all";
-// Not used: <basis or tag> for a line the calculations could read but do not (a ytd line beside the monthly one, a forecast row).
-export const usedText = (line) => (line.used ? "Yes" : line.not_used ? `Not used: ${line.not_used}` : "No");
+// docs/design/pnl-lines.md sections 1 and 8: every mapped line has a use, assigned by its mapped role: series, sum check, recompute check or
+// excluded. A heading or a note has none. Never "Not used".
+export const usedText = (line) => line.use || "—";
 const CHECKS = {
   total_mismatch: (p) => `Total ≠ sum of sub-lines (${p.join(", ")})`,
   no_breakdown: (p) => `No breakdown (${p.join(", ")})`,
-  sign_differs: () => "Sign differs from sub-lines",
+  sign_differs: (p) => `Sign differs from sub-lines (${p.join(", ")})`,
+  growth_mismatch: (p) => `Growth ≠ revenue row (${p.join(", ")})`,
+  margin_mismatch: (p) => `% ≠ money rows (${p.join(", ")})`,
+  gross_margin_mismatch: (p) => `Gross margin ≠ revenue − cost (${p.join(", ")})`,
+  result_mismatch: (p) => `Result ≠ line above plus the lines between (${p.join(", ")})`,
   sign_convention: () => "Costs written as negatives",
   ytd_mismatch: (p) => `YTD ≠ sum of months (${p.join(", ")})`,
   ltm_mismatch: (p) => `LTM ≠ last 12 months (${p.join(", ")})`,

@@ -113,10 +113,11 @@ def _yearly_raw() -> dict:
     name = "yearly_pnl_by_product.csv"
     s = cr.read_workbook((BACKEND / "tests" / "fixtures" / "mapping" / name).read_bytes(), name)[0]
     cfg = _config(uploads=uploads)
-    yearly = sh.feed(sh.build(sh.read(s.grid, s.fmt, 12)), 12, 1000, {"file": name, "sheet": "CSV"}, cfg["as_of_month"])["yearly"]
+    fed = sh.feed(sh.build(sh.read(s.grid, s.fmt, 12)), 12, 1000, {"file": name, "sheet": "CSV"}, cfg["as_of_month"])
+    yearly = fed["yearly"]
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
     return ge.compute_all_raw(norm["revenue"], norm["crm"], pd.DataFrame(), cfg, sources,
-                              files=server.candidate_views(uploads), yearly=yearly)
+                              files=server.candidate_views(uploads), yearly=yearly, statement=fed["lines"])
 
 
 def all_raws() -> dict:
@@ -171,7 +172,8 @@ def test_the_sample_run_exercises_the_blocks_the_contract_exists_for():
 CITED_BLOCKS = ("arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate", "acv_path", "segment_paths",
                 "anomalies", "mrr_series", "revenue_series", "customers_series", "cohort_retention",
                 "won_deal_closes",                                  # docs/specs/crm-dedup-clustering.md: the won deals' rows
-                "yearly_basis")                                     # chat-upload.md section 26.8: the statement's line rows
+                "yearly_basis",                                     # chat-upload.md section 26.8: the statement's line rows
+                "pnl_lines")                                        # docs/design/pnl-lines.md: the rows of the findings and plan cells
 CITATION_BESIDE_BLOCK = {"new_mrr_by_quarter": "new_mrr_by_quarter_source"}      # a dict keyed by quarter has no room for a key
 NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry both sides' citations",
                    "founder_win_rate": "optional twin of win_rate", "missing_data": "gaps, no figure",
@@ -189,6 +191,7 @@ def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_en
     decided = set(CITED_BLOCKS) | set(CITATION_BESIDE_BLOCK) | set(CITATION_BESIDE_BLOCK.values()) | set(NO_OWN_CITATION)
     assert fields == decided, f"decide whether these blocks cite a source: {sorted(fields ^ decided)}"
     assert stored_form(all_raws()["sample-yearly"])["yearly_basis"]["years"], "fixture: the yearly run holds the block"
+    assert stored_form(all_raws()["sample-yearly"])["pnl_lines"]["plan"], "fixture: the yearly run holds the statement block"
     for run in ("sample", "sample-yearly", "demo0-no-pnl", "demo1-no-crm", "demo1-14-months"):
         stored = stored_form(all_raws()[run])
         for block in CITED_BLOCKS:
@@ -211,7 +214,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 13 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 14 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -551,7 +554,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 13 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 14 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"

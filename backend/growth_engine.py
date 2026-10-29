@@ -1412,6 +1412,7 @@ def dedupe_deals(deals: pd.DataFrame):
 # statement, when no monthly P&L is mapped. Never a split of a year into months; every figure and row carries its basis.
 # ---------------------------------------------------------------------------
 YEARLY_BASIS = "yearly basis, not monthly"
+CAC_PAYBACK_LABEL = "yearly, revenue-based"      # docs/design/pnl-lines.md section 6: the name of a payback read from yearly columns
 NEEDS_MONTHLY = "Missing: monthly P&L / revenue by customer, last 24 months"
 YEARLY_FIELD_NAMES = {"revenue": "Revenue", "cost_of_revenue": "Cost of revenue", "sm_expense": "S&M expense",
                       "gross_margin": "Gross margin", "opex": "Operating expenses", "ebitda": "EBITDA"}
@@ -1508,7 +1509,8 @@ def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dic
                "arr_year_end": _round(arr_end) if arr_end is not None else None,
                "arr_prior_year_end": _round(arr_prior) if arr_prior is not None else None,
                "net_new_arr": _round(net_new) if net_new is not None else None,
-               "cac_payback_net_new_arr_months": None, "cac_payback_net_new_arr_reason": None, "basis": YEARLY_BASIS}
+               "cac_payback_net_new_arr_months": None, "cac_payback_net_new_arr_reason": None, "cac_payback_label": CAC_PAYBACK_LABEL,
+               "basis": YEARLY_BASIS}
         prev_gm = _gross_margin(prev["fields"])[0] if prev else None
         if gm is not None and prev_gm is not None:
             row["gross_margin_change"] = _round(gm - prev_gm, 4)
@@ -1557,6 +1559,34 @@ def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dic
             "missing": [{"metric": name, "text": NEEDS_MONTHLY} for name, found in needs if not found],
             "source": _yearly_source(yearly, [f"A{r}" for r in yearly.get("rows") or ()],
                                      "Actual-tagged year columns of the P&L read as a statement, the rows of its lines")}
+
+
+PNL_LINES_RULE = ("P&L lines (docs/design/pnl-lines.md): every mapped line has a use by its mapped role; a total is checked against its sub-lines "
+                  "(0.5%), a % row against the money rows (1 point); a plan cell is tested as implied against observed rate")
+
+
+def compute_pnl_lines(statement: dict, pnl_src: dict) -> dict:
+    """The statement block (docs/design/pnl-lines.md): the integrity findings of the lines (sum, recompute, sign) and the plan cells of the
+    yearly columns after the as-of month, each with its cell. `statement` is structures/pnl_lines.analyse. Server-only."""
+    def source(row, cell, rule):
+        s = SourceRef(pnl_src.get("file") or "pnl", pnl_src.get("sheet"))
+        s.add_rows([row])
+        return s.to_dict(f"{rule}; cell {cell}")
+    found = [{"kind": f["kind"], "line": f["line"], "period": f["period"], "text": f["text"],
+              "gap": _round(f["gap"]) if f["unit"] == "currency" else None,
+              "gap_points": _round(f["gap"], 2) if f["unit"] == "points" else None,
+              "source": source(f["row"], f["cell"], f["rule"])} for f in statement["findings"]]
+    plan = [{"metric": c["metric"], "period": c["period"], "period_start": c["period_start"], "period_end": c["period_end"],
+             "value": _round(c["value"]), "cell": c["cell"], "source_text": c["source_text"], "measure": c["measure"],
+             "implied": _round(c["implied"], 4) if c["implied"] is not None else None,
+             "observed": _round(c["observed"], 4) if c["observed"] is not None else None,
+             "gap_points": _round(c["gap_points"], 2) if c["gap_points"] is not None else None,
+             "compared": c["compared"], "reason": c["reason"], "source": source(c["row"], c["cell"], "Plan cell (never Verified)")}
+            for c in statement["plan"]]
+    rows = sorted({r for f in statement["findings"] for r in (f["row"],)} | {c["row"] for c in statement["plan"]})
+    top = SourceRef(pnl_src.get("file") or "pnl", pnl_src.get("sheet"))
+    top.add_rows(rows)
+    return {"basis": statement["basis"], "findings": found, "plan": plan, "source": top.to_dict(PNL_LINES_RULE)}
 
 
 # ---------------------------------------------------------------------------
@@ -1739,10 +1769,11 @@ def resolve_missing(missing_data: list, results: dict, files: dict | None, **ctx
 
 
 def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
-                    files: dict | None = None, on_error=None, yearly: dict | None = None):
+                    files: dict | None = None, on_error=None, yearly: dict | None = None, statement: dict | None = None):
     """Run the full engine, before the contract (see compute_all). `sources` maps dataset -> {file, sheet}; `files` is every
     upload read as each dataset type (see can_compute), for compute-before-Missing. `yearly` is the actual years of a P&L read
-    as a statement (chat-upload.md section 26.8), read only when no monthly P&L is given.
+    as a statement (chat-upload.md section 26.8), read only when no monthly P&L is given. `statement` is the P&L lines block of a
+    statement file (structures/pnl_lines.analyse): its findings and plan cells, monthly or yearly.
     A metric whose calculation raises is reported as Missing and the rest still compute;
     `on_error(exc)`, if given, receives each such exception (the server logs it)."""
     billing_terms = config.get("billing_terms", {})
@@ -2070,12 +2101,24 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                 "metric": "Yearly-basis metrics (calculation error)", "status": MISSING_STATUS,
                 "reason": f"The calculation stopped on an unexpected {type(exc).__name__}; reported as Missing, not estimated",
                 "unlocked_by": "Not computable from the data as supplied; the server log has the run id", "file": yearly.get("file")})
+    if statement:
+        try:
+            results["pnl_lines"] = compute_pnl_lines(statement, pnl_src)
+        except Exception as exc:            # Missing, never the whole run
+            if on_error:
+                on_error(exc)
+            results["pnl_lines"] = None
+            results["missing_data"].append({
+                "metric": "P&L lines (calculation error)", "status": MISSING_STATUS,
+                "reason": f"The calculation stopped on an unexpected {type(exc).__name__}; reported as Missing, not estimated",
+                "unlocked_by": "Not computable from the data as supplied; the server log has the run id", "file": pnl_src.get("file")})
     return results
 
 
 def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
-                files: dict | None = None, on_error=None, yearly: dict | None = None):
+                files: dict | None = None, on_error=None, yearly: dict | None = None, statement: dict | None = None):
     """The engine's output as stored: `compute_all_raw` built into schemas.metrics.MetricsPayload
     (docs/specs/interface-contracts.md). Percents are fractions; counts and days are integers, rounded once, here.
     A field the metric functions emit that the model does not declare raises a ValidationError."""
-    return contract.build(compute_all_raw(rev, deals, pnl, config, sources, files=files, on_error=on_error, yearly=yearly))
+    return contract.build(compute_all_raw(rev, deals, pnl, config, sources, files=files, on_error=on_error, yearly=yearly,
+                                          statement=statement))

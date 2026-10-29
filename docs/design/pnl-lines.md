@@ -105,7 +105,8 @@ S&M = Sales + Marketing totals, minus internal events. Gross margin from the
 file. New revenue = revenue in year N minus revenue in year N−1 (no
 customer-level data). Result labelled "yearly, revenue-based", never "months".
 Where a monthly revenue file exists, the monthly payback stands and the
-yearly one is shown as a check.
+yearly one is shown as a check. The yearly basis exists only when there is no
+monthly P&L.
 
 ## 7. Matching deck figures to yearly columns
 
@@ -130,3 +131,19 @@ growth rate row reads yearly; the revenue growth recompute is within
 tolerance; FY 2022–FY 2024 revenue cells are plan claims with implied growth
 next to observed; the deck's FY 2022 revenue forecast is compared with the
 file's FY 2022 plan.
+
+## 10. Built 2026-10-28 (sections 1-8)
+
+Code: `backend/app/structures/pnl_lines.py` (uses, periods, checks, plan cells), `sheet.view` (`use`, `period` per line), `sheet.feed` (`lines`),
+`growth_engine.compute_pnl_lines` and `yearly_basis.years.cac_payback_label`, `claim_matching.plan_candidates` / `_compare_plan` / `yearly_year(plan=True)`,
+`integrity.statement_findings`, `UploadChat.jsx` (one Type line), `SheetMap.jsx` (Used column). Engine contract 13. Decided in the build (rule 19):
+- A use comes from the mapped role (role, meaning, parent, basis, the numbers), never from the label. The model's reply schema is unchanged: R&D, G&A,
+  other income, D&A and tax are not meanings of their own; a line mapped to no meaning and no parent is excluded, a total of parts is a sum check
+  unless the engine reads it as a value.
+- Money tolerance is the sum check's own 0.5% (`sheet.TOLERANCE`); the rate tolerance is the register's ±1 point (`claim_matching.RATE_TOLERANCE_PP`).
+- Result lines below EBITDA (EBT, net income) are found by the numbers (equal to the line above plus the lines between, in half of the periods) and are
+  recomputed as written; plan cells are read from yearly columns only.
+- Internal events are S&M-excluded when the sub-line is mapped to overhead (opex) under an S&M total; the label rule that maps "internal events" to
+  overhead sits at the mapping step (`sheet.meaning_of`).
+- The deck forecast is compared with the plan line for revenue, gross profit and EBITDA claims; a cost forecast names no one plan line.
+- The yearly revenue-based payback reads "CAC payback FY 2021: 12.5 months (yearly, revenue-based)": unit kept, label kept (George, 2026-10-29).
