@@ -67,7 +67,7 @@ from schemas.metrics import safe_problems
 from .. import allowance, disclosure, formatting, readings
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
-from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, PAGE_CLAIMS, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileRecognitionReply,
+from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, PAGE_CLAIMS, SHEET_READING, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileRecognitionReply,
                       FileTypeReply, LabellingReply, Narrative, NarrativeResponse, PageClaimsReply, SheetStructureReply, StructureRead, StructureReply,
                       UsageResponse, narrative_output_schema)
 
@@ -1006,8 +1006,16 @@ async def log_call(
                                          cost_usd=float(estimated_cost_usd))
 
 
+_DATE_SUFFIX = re.compile(r"-\d{8}$")
+
+
+def price_model(model: str) -> str:
+    """The price-table entry of a model id: a dated version ("claude-sonnet-5-5-20260101") is priced as its family member."""
+    return _DATE_SUFFIX.sub("", model or "")
+
+
 def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    price = MODEL_PRICING_USD.get(model)
+    price = MODEL_PRICING_USD.get(model) or MODEL_PRICING_USD.get(price_model(model))
     if not price:
         return 0.0
     return (input_tokens / 1_000_000) * price["input"] + (
@@ -1460,6 +1468,26 @@ STRUCTURE_MODEL = "claude-sonnet-5-5"
 # default (STRUCTURE_MODEL); a name outside the allow-list blocks every page read, at startup (server.py) and before each read.
 PAGE_READER_MODELS = re.compile(r"claude-(?:sonnet|opus)(?:-\d+)+(?:-\d{8})?")
 PAGE_READER_BLOCKED = "AI read: blocked – model not permitted"
+# The sheet reader (docs/design/read-check-review.md sections 3, 4, 9; CLAUDE.md rule 16 as amended for PR 2): one call per spreadsheet, every
+# non-empty cell of every recognised sheet, masked, the prompt `sheet_reading` of the store (the repository holds a test stub only). The
+# model is a dated version (SHEET_READER_MODEL), never a moving alias, so a stored reading names the model that made it
+# (section 9). Only the Sonnet and Opus families may read a file in full (rule 31's allow-list, for the same zero-data-retention reason).
+SHEET_READING_PROMPT = "sheet_reading"
+SHEET_READER_ENV = "SHEET_READER_MODEL"
+DATED_READER_MODEL = re.compile(r"claude-(?:sonnet|opus)(?:-\d+)+-\d{8}")
+SHEET_READER_BLOCKED = "AI read: blocked – the sheet reader model must be a dated Sonnet or Opus version (SHEET_READER_MODEL)"
+SHEET_READING_INPUT_CAP = 40_000        # tokens of the masked cells, by the provider's token counter: above it the file is refused, nothing is cut
+SHEET_READING_MAX_TOKENS = 16_000       # the file map's reply
+SHEET_READING_TIMEOUT_SECONDS = 300.0   # a long map takes minutes to write
+SHEET_READING_TOO_LARGE = ("This file is too large to read in full (the limit is {limit:,} tokens of cells). "
+                           "Remove the sheets that are not needed or split the file, then upload it again.")
+SHEET_READING_CUT = ("The reading of this file was cut off because the file has too many rows to map in one read. "
+                     "Remove the sheets that are not needed or split the file, then upload it again.")
+SHEET_READING_LOCK_ROUNDS = 5
+# The spreadsheet mapping path of PR 1 and before (file_type, file_recognition, sheet_structure and the column mapping) stays behind a flag
+# for PR 2 only (read-check-review.md section 13): READER_V1=off turns its model calls off, anything else leaves them on. Its three calls
+# are unchanged and still do not learn names.
+OLD_SHEET_CALLS = frozenset({FILE_TYPE, FILE_RECOGNITION, SHEET_STRUCTURE, "column_mapping"})
 STRUCTURE_PROMPT = "structure_reading"
 PAGE_CLAIMS_PROMPT = "deck_reading"       # the page reader's prompt in the store (docs/specs/prompt-store.md); the repo holds a stub
 FILE_TYPE_PROMPT = "file_type"
@@ -1483,6 +1511,27 @@ def page_reader_problem() -> Optional[str]:
         return None
     logger.error("page reader model %s not permitted", name[:80])
     return PAGE_READER_BLOCKED
+
+
+def reader_v1_enabled() -> bool:
+    """READER_V1: "off" turns the old spreadsheet mapping calls off; any other value, or none, leaves them on (the default)."""
+    return os.environ.get("READER_V1", "").strip().lower() != "off"
+
+
+def sheet_reader_model() -> str:
+    """The model the sheet reader is configured to use: SHEET_READER_MODEL, stripped; "" when none is set."""
+    return os.environ.get(SHEET_READER_ENV, "").strip()
+
+
+def sheet_reader_problem() -> Optional[str]:
+    """None when the sheet reader's model is a dated Sonnet or Opus version the price table knows, else the panel line
+    SHEET_READER_BLOCKED, after logging `sheet reader model <name> not permitted` as an error. A moving alias, a name without a date and a
+    model outside the two families are all refused, before anything is masked, drawn or sent."""
+    name = sheet_reader_model()
+    if DATED_READER_MODEL.fullmatch(name) and price_model(name) in MODEL_PRICING_USD:
+        return None
+    logger.error("sheet reader model %s not permitted", name[:80] or "(none)")
+    return SHEET_READER_BLOCKED
 
 
 def deck_pipeline() -> str:
@@ -1578,7 +1627,7 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         return "empty"
     if _CONTROL.search(text):
         return "raw_bytes"
-    if structure_type != PAGE_CLAIMS and _FILE_NAME.search(text):          # a page goes as printed
+    if structure_type not in (PAGE_CLAIMS, SHEET_READING) and _FILE_NAME.search(text):          # a page goes as printed; a cell may name a file
         return "file_name"
     company = context.get("company_name")
     if structure_type == PAGE_CLAIMS:
@@ -1594,6 +1643,16 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         if any(len(c["text"]) > STRUCTURE_CELL_MAX for cells in pages.values() for c in cells):
             return "cell_too_long"
         return None
+    if structure_type == SHEET_READING:
+        # Every non-empty cell of every recognised sheet (read-check-review.md section 8): one `A1: value` line each, masked by the one
+        # module, so running it again must change nothing; nothing personal may stand in it; nothing is cut, the token cap refuses.
+        problem = structure_redact.reading_text_problem(text)
+        if problem:
+            return problem
+        again, _ = structure_redact.mask_reading(text, company, mapping)
+        if again != text:
+            return "redaction_changed"
+        return "personal_data" if structure_redact.personal_items(text) else None
     if structure_type == SHEET_STRUCTURE:
         # Every text cell of one sheet, never a figure, at most 400 rows with text, the withhold rule and the redaction run again.
         problem = structure_redact.sheet_text_problem(text)
@@ -1651,6 +1710,23 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     return None
 
 
+def parse_file_map_reply(reply: str, text: str):
+    """Validate a sheet reading's reply (read-check-review.md section 4), or raise GatewayError("parse_failed"): the contract's FileMap
+    (closed words, cell patterns, no extra keys) and nothing else here: every cell a reading cites is opened by app/checks.py, which
+    decides, so a citation outside the sheet is a rejection with its reason and not a parse failure. A sheet named that was not sent is
+    one failure."""
+    from schemas.metrics import FileMap
+    try:
+        parsed = FileMap.model_validate(json.loads((reply or "").strip()))
+    except Exception as exc:
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc),
+                           fields=_schema_fields(exc))
+    sent = {s["name"] for s in (structure_redact.parse_reading_text(text) or [])}
+    if parsed.kind != "sheet" or any(s.sheet not in sent for s in parsed.sheets):
+        raise GatewayError("parse_failed", "reply names a sheet that was not sent", check="other")
+    return parsed
+
+
 def _cited_cells(text: str, structure_type: str) -> set:
     """The cell ids a reply may cite: every cell of a deck structure, the header cells of a sheet, every cell of a page batch by
     its page id."""
@@ -1683,6 +1759,8 @@ def _schema_check(exc: Exception) -> str:
 def parse_structure_reply(reply: str, structure_type: str, text: str):
     """The validated reply for the type Python sent, or raise GatewayError("parse_failed"): a labelling reply for
     a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping, the file-type word for a file."""
+    if structure_type == SHEET_READING:
+        return parse_file_map_reply(reply, text)
     if structure_type == SHEET_STRUCTURE:
         return parse_sheet_reply(reply, text)
     if structure_type == PAGE_CLAIMS:
@@ -1905,6 +1983,8 @@ def _reading(output: dict) -> dict:
     """The fields of a stored or new reply: a deck structure's labels and pairs, a column mapping's items."""
     if output.get("type") == FILE_RECOGNITION:
         return {"recognition": output}
+    if "map_version" in output:
+        return {"file_map": output}
     if "file_type" in output:
         return {"file_type": output["file_type"]}
     if "header_row" in output:
@@ -1919,7 +1999,7 @@ def _reading(output: dict) -> dict:
 async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
-    on_rate_limit=None, images: Optional[List[bytes]] = None,
+    on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -1948,14 +2028,24 @@ async def read_structure(
     read, else the result is "blocked" and nothing is sent. The image tokens (the call's count with the images minus its count
     without) and their cost are reported apart from the text's, and logged beside them.
 
+    A sheet reading (SHEET_READING, read-check-review.md sections 3, 4 and 9) sends every non-empty cell of every recognised sheet,
+    masked here (name learning included), with the prompt `sheet_reading` and the dated model SHEET_READER_MODEL. The reading is stored
+    once under the file's hash (`file_hash`), the prompt version and the model, never edited; the same file read again, in any audit,
+    gets the stored reading and makes no provider call. `recheck` ([{"item", "reason"}]) asks for a second reading of the items a check
+    rejected, with the reasons attached; it is stored beside the first reading, once per item and reason. The result carries the
+    reading in masked space (`file_map`) and the masked text (`payload`, in memory only) for the checks. A file over SHEET_READING_INPUT_CAP
+    tokens is refused with a message; nothing is cut or sampled.
+
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
     stands. The output is not Verified here: the caller joins each label to Python's item and
     verifies it.
     """
     import asyncio
     sleep = sleep or asyncio.sleep
-    if structure_type not in STRUCTURE_TYPES and structure_type not in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION, PAGE_CLAIMS):
+    if structure_type not in STRUCTURE_TYPES and structure_type not in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION, PAGE_CLAIMS, SHEET_READING):
         return _structure_result("not_read", structure_type, f"unknown structure type {structure_type!r}")
+    if structure_type in OLD_SHEET_CALLS and not reader_v1_enabled():
+        return _structure_result("not_read", structure_type, NOT_READ)
     context = await load_structure_context(db, audit_id)
     if context.get("structure_reading_consent") is not True:
         return _structure_result("no_consent", structure_type, "AI-assisted reading is off for this audit")
@@ -1969,6 +2059,18 @@ async def read_structure(
             # The target, and every company name under a company-name header the map does not hold: each gets the next Client-NN.
             mapping = await redaction.add_customers(db, audit_id, [n for n in [context.get("company_name"), *learned] if n])
         text, masked_counts = structure_redact.mask_pages(text, context.get("company_name"), mapping)
+    if structure_type == SHEET_READING and isinstance(text, str):
+        # The same, for a spreadsheet: a text cell under a company-name header the map does not hold is added to it (the next Client-NN),
+        # then the cells are masked, the target's own name included. A figure is never rewritten.
+        if not file_hash:
+            return _structure_result("not_read", structure_type, "refused: no_file_hash")
+        blocked = sheet_reader_problem()
+        if blocked:
+            return _structure_result("blocked", structure_type, blocked)
+        learned = structure_redact.reading_company_names(text, context.get("company_name"), mapping)
+        if context.get("company_name") or learned:
+            mapping = await redaction.add_customers(db, audit_id, [n for n in [context.get("company_name"), *learned] if n])
+        text, masked_counts = structure_redact.mask_reading(text, context.get("company_name"), mapping)
     problem = structure_text_problem(text, structure_type, context, mapping)
     if problem:
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
@@ -1979,23 +2081,40 @@ async def read_structure(
         if blocked:
             return _structure_result("blocked", structure_type, blocked)
         model = page_reader_model()
+    elif structure_type == SHEET_READING:
+        model, images = sheet_reader_model(), None
     else:
         images = None
     try:
         prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
-                                              PAGE_CLAIMS: PAGE_CLAIMS_PROMPT}.get(structure_type, STRUCTURE_PROMPT))
+                                              PAGE_CLAIMS: PAGE_CLAIMS_PROMPT, SHEET_READING: SHEET_READING_PROMPT}.get(structure_type, STRUCTURE_PROMPT))
     except prompt_store.PromptMissing:
         if structure_type == PAGE_CLAIMS:
             logger.warning("%s prompt missing: run_id=%s step=%s", PAGE_CLAIMS_PROMPT, audit_id, STRUCTURE_STEP)
         return _structure_result("not_read", structure_type, PROMPT_MISSING_TEXT if structure_type == PAGE_CLAIMS else NOT_READ)
-    if model not in MODEL_PRICING_USD:
+    if price_model(model) not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)
     key = structure_key(text, structure_type, prompt_store.cache_tag(prompt), model, images)
     digest = content_hash(text)
     base = {"key": key, "prompt_version": prompt.version, "model": model}
     system = prompt.text
+    reading_key = readings.reading_key(file_hash, prompt.version, model) if structure_type == SHEET_READING else None
+    recheck_id = content_hash(cache.canonical_json(recheck)) if recheck else None
 
-    if use_cache:
+    if structure_type == SHEET_READING:
+        # Stored once, keyed on the file and the versions (section 9): the reading of this file is looked up before anything is counted
+        # or sent. A hit makes no provider call, whichever audit asked first. A second reading of rejected items is stored beside it.
+        kept = await readings.get_reread(db, reading_key, "batch", recheck_id) if recheck else await readings.get(db, file_hash, prompt.version, model)
+        if kept:
+            await readings.use(db, audit_id, reading_key)
+            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
+                           estimated_cost_usd=0.0, cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id,
+                           structure_type=structure_type)
+            logger.info("sheet reading stored: run_id=%s step=%s hash=%s", audit_id, STRUCTURE_STEP, digest)
+            stored_map = kept["output"] if recheck else kept["file_map"]
+            return _structure_result("read", structure_type, cache_hit=True, masked=masked_counts, payload=text, reading_key=reading_key,
+                                     file_map=_mask_map(stored_map, context.get("company_name"), mapping), **base)
+    elif use_cache:
         hit = await cache.get_structure(db, audit_id, key)
         if hit:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
@@ -2005,21 +2124,24 @@ async def read_structure(
             return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
                                      masked=masked_counts, **_reading(hit["output"]), **base)
 
-    user_payload = cache.canonical_json({"type": structure_type, "text": text})
+    user_payload = cache.canonical_json({"type": structure_type, "text": text, **({"recheck": recheck} if recheck else {})})
     image_tokens = 0
-    adapter = adapter or AnthropicAdapter()
+    adapter = adapter or (AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS) if structure_type == SHEET_READING else AnthropicAdapter())
     sheet = structure_type == SHEET_STRUCTURE
     input_cap, max_tokens = (SHEET_INPUT_CAP, SHEET_MAX_TOKENS) if sheet else (STRUCTURE_INPUT_CAP, STRUCTURE_MAX_TOKENS)
     if structure_type == FILE_RECOGNITION:
         input_cap, max_tokens = RECOGNITION_INPUT_CAP, RECOGNITION_MAX_TOKENS
     if structure_type == PAGE_CLAIMS:
         input_cap, max_tokens = PAGE_INPUT_CAP, PAGE_MAX_TOKENS
+    if structure_type == SHEET_READING:
+        input_cap, max_tokens = SHEET_READING_INPUT_CAP, SHEET_READING_MAX_TOKENS
     try:
         # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > input_cap:
-            return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
+            reason = SHEET_READING_TOO_LARGE.format(limit=input_cap) if structure_type == SHEET_READING else TOO_LARGE
+            return _structure_result("too_large", structure_type, reason, input_tokens=0, masked=masked_counts, **base)
         counted = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=system,
                                       user_payload=user_payload, json_schema=schemas.output_schema(structure_type))
         if images:
@@ -2039,11 +2161,12 @@ async def read_structure(
         return _structure_result("not_read", structure_type, NOT_READ, **base)
 
     parallel = structure_type == PAGE_CLAIMS
+    lock_rounds = PAGE_LOCK_ROUNDS if parallel else SHEET_READING_LOCK_ROUNDS if structure_type == SHEET_READING else 1
     token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
     # One structure call per audit at a time: wait for the one in flight, then take the lock. The page reads of a deck queue for it
     # one after another, each holding it for its checks only, so they wait as many rounds as there are reads beside it.
     rounds = 0
-    while token is None and rounds < (PAGE_LOCK_ROUNDS if parallel else 1):
+    while token is None and rounds < lock_rounds:
         rounds += 1
         await guards.wait_for_inflight(db, audit_id, STRUCTURE_STEP)
         token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
@@ -2106,22 +2229,37 @@ async def read_structure(
             rejected = None
             if code == "parse_failed" and structure_type == PAGE_CLAIMS:
                 rejected = check if fields == "-" else f"{check}: {fields}"
-            return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, NOT_READ,
+            if code == "parse_failed" and structure_type == SHEET_READING:
+                rejected = check if fields == "-" else f"{check}: {fields}"
+            reason = SHEET_READING_CUT if structure_type == SHEET_READING and code == "truncated" else NOT_READ
+            return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, reason,
                                      input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, rejected=rejected,
                                      image_tokens=image_billed, image_cost_usd=image_cost, **base)
         cost = estimate_cost_usd(model, in_tok, out_tok)
         image_billed = min(in_tok, image_tokens * sent_calls)           # a reasked call bills its images again
         image_cost = estimate_cost_usd(model, image_billed, 0)
-        model_type = parsed.type if parsed.type != structure_type else None      # a sheet's type is fixed by its schema
+        model_type = getattr(parsed, "type", structure_type)
+        model_type = model_type if model_type != structure_type else None      # a sheet's type is fixed by its schema
         output = parsed.model_dump()
         if structure_type == PAGE_CLAIMS:
             output = redaction.restore_deep(output, mapping)         # display un-masks on the server: the tokens go back to the names
         stored = output
         if structure_type == FILE_RECOGNITION and output.get("revenue_row"):
             stored = {**output, "revenue_row": {"row": output["revenue_row"]["row"]}}        # the label echo is never kept (5.5)
-        await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
-                               model_type=model_type, output=stored, prompt_version=prompt.version,
-                               input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page, pages=pages, model=model)
+        if structure_type == SHEET_READING:
+            # Written once beside the file's hash (section 9), names restored: the token map goes with the audit, a reading may outlive it.
+            restored = redaction.restore_deep(output, mapping)
+            if recheck:
+                await readings.put_reread(db, reading=reading_key, item="batch", reason=recheck_id, prompt_version=prompt.version, model=model,
+                                          output=restored, input_tokens=in_tok, output_tokens=out_tok, cost=cost)
+            else:
+                await readings.put(db, file_hash=file_hash, prompt_version=prompt.version, model=model, reading=restored,
+                                   input_tokens=in_tok, output_tokens=out_tok, cost=cost)
+                await readings.use(db, audit_id, reading_key)
+        else:
+            await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
+                                   model_type=model_type, output=stored, prompt_version=prompt.version,
+                                   input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page, pages=pages, model=model)
         await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
                        input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, cache_hit=False,
                        status="ok", content_hash=digest, deck_id=deck_id, structure_type=structure_type,
@@ -2129,9 +2267,10 @@ async def read_structure(
         logger.info("structure read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f type_change=%s",
                     audit_id, STRUCTURE_STEP, digest, in_tok, out_tok, cost,
                     f"{structure_type}->{model_type}" if model_type else "none")
+        extra = {"payload": text, "reading_key": reading_key} if structure_type == SHEET_READING else {}
         return _structure_result("read", structure_type, model_type=model_type, **_reading(output),
                                  input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost,
-                                 image_tokens=image_billed, image_cost_usd=image_cost, masked=masked_counts, **base)
+                                 image_tokens=image_billed, image_cost_usd=image_cost, masked=masked_counts, **extra, **base)
     except Exception as exc:  # never let structure reading block an upload
         logger.error("unexpected structure failure: run_id=%s step=%s error=%s", audit_id, STRUCTURE_STEP,
                      type(exc).__name__)
@@ -2141,6 +2280,20 @@ async def read_structure(
             _inflight_tokens[audit_id] = max(0, _inflight_tokens.get(audit_id, 0) - reserved)
         if token is not None:
             await guards.release(db, audit_id, STRUCTURE_STEP, token)
+
+
+def _mask_map(stored: dict, company_name: Optional[str], mapping: Dict[str, str]) -> dict:
+    """A stored reading (names restored) in this audit's masked space: every string of it masked as a cell is, so the checks compare it
+    with the cells of the file as masked for this audit."""
+    def walk(node):
+        if isinstance(node, dict):
+            return {k: walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        if isinstance(node, str):
+            return structure_redact.mask_text(node, company_name, mapping)
+        return node
+    return walk(stored)
 
 
 async def _store_structure(db, *, audit_id, key, digest, structure_type, model_type, output, prompt_version,
@@ -2195,7 +2348,7 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
         name = r.get("step")
         if name == STRUCTURE_STEP:
             kind = r.get("structure_type")
-            name = "deck_structure" if r.get("deck_id") else kind if kind in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION) else "column_mapping"
+            name = "deck_structure" if r.get("deck_id") else kind if kind in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION, SHEET_READING) else "column_mapping"
         step = by_step.setdefault(name, DeckUsage())
         step.calls += 0 if r.get("cache_hit") else 1
         step.cache_hits += 1 if r.get("cache_hit") else 0

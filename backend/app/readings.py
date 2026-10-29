@@ -57,7 +57,7 @@ async def put(db, *, file_hash: str, prompt_version: str, model: str, reading: d
     kept = await db[READINGS].find_one({"key": key}, {"_id": 0})
     if kept:
         return kept
-    doc = {"key": key, "file_hash": file_hash, "prompt_version": prompt_version, "model": model, "reading": copy.deepcopy(reading),
+    doc = {"key": key, "file_hash": file_hash, "prompt_version": prompt_version, "model": model, "file_map": copy.deepcopy(reading),
            "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6),
            "created_at": _now()}
     try:

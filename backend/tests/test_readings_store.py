@@ -27,7 +27,7 @@ def test_a_reading_is_written_once_and_a_second_write_returns_the_first_unchange
     other["sheets"][0]["rows"][0]["role"] = "revenue"
     second = run(readings.put(db, file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=other))
     assert len(db[readings.READINGS].docs) == 1
-    assert second["reading"]["sheets"][0]["rows"][0]["role"] == "bookings" == first["reading"]["sheets"][0]["rows"][0]["role"]
+    assert second["file_map"]["sheets"][0]["rows"][0]["role"] == "bookings" == first["file_map"]["sheets"][0]["rows"][0]["role"]
 
 
 def test_a_new_prompt_or_model_version_is_stored_beside_the_old_reading_and_the_old_one_stays():
@@ -48,8 +48,8 @@ def test_an_override_is_a_dated_record_of_its_own_and_the_stored_reading_is_not_
                                   old="bookings", new="revenue", who="analyst", why="bookings row is recognised revenue"))
     assert db[readings.READINGS].docs[0] == before
     assert {"reading", "item", "old", "new", "who", "at", "why"} <= set(o)
-    register = readings.effective(stored["reading"], run(readings.overrides_for(db, "a1")))
-    assert register["sheets"][0]["rows"][0]["role"] == "revenue" and stored["reading"]["sheets"][0]["rows"][0]["role"] == "bookings"
+    register = readings.effective(stored["file_map"], run(readings.overrides_for(db, "a1")))
+    assert register["sheets"][0]["rows"][0]["role"] == "revenue" and stored["file_map"]["sheets"][0]["rows"][0]["role"] == "bookings"
 
 
 def test_overrides_apply_in_the_order_they_were_made_and_a_dead_path_is_skipped():

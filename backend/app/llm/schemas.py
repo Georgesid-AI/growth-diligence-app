@@ -864,6 +864,9 @@ class StructureRead(BaseModel):
     prompt_version: Optional[str] = None
     model: Optional[str] = None
     masked: Optional[dict] = None           # a page read: counts of what masking removed or tokenised in the text sent (numbers only)
+    file_map: Optional[dict] = None         # a sheet reading (the contract's FileMap) in masked space; the stored copy has the names restored
+    reading_key: Optional[str] = None       # ... and its identity: file hash + prompt version + model (app/readings.py)
+    payload: Optional[str] = Field(default=None, exclude=True)      # the masked cell text a sheet reading sent: in memory for the checks, never serialised
 
 
 class DeckUsage(BaseModel):

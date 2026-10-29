@@ -4278,3 +4278,43 @@ def test_only_the_gateway_module_talks_to_the_provider():
         if re.search(r"(?m)^\s*(?:import|from)\s+anthropic\b|api\.anthropic\.com|messages\.create|httpx|requests\.post", source):
             offenders.append(path.name)
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# The sheet reader (read-check-review.md sections 3, 8 and 9; rule 16 as amended for PR 2). The reader's own tests are in
+# test_sheet_reading.py and test_reading_masking.py; the boundary facts are pinned here, where rule 14 looks for them.
+# ---------------------------------------------------------------------------
+def test_sheet_reading_sends_only_masked_cells_and_the_provider_adapter_refuses_what_is_not(monkeypatch):
+    import test_sheet_reading as sr
+    monkeypatch.setenv("SHEET_READER_MODEL", sr.MODEL)
+    db = sr.audit_db()
+    result, adapter = sr.read(db)
+    sent = json.loads(adapter.payloads[0])
+    assert set(sent) == {"type", "text"}, "the text of the cells and its type word: no file name, no hash, no audit, no company"
+    assert result.status == "read"
+    blob = "\n".join(str(p) for p in adapter.payloads) + json.dumps(adapter.requests[0]["json_schema"])
+    for secret in (sr.COMPANY, sr.EMAIL, "Pat Sample", "Zenith", sr.HASH, "a1"):
+        assert secret not in blob
+    for leaky in (f"sheet 1: S\nA1: {sr.EMAIL}", "sheet 1: S\nA1: GB82 WEST 1234 5698 7654 32", "sheet 1: S\nA1: +44 20 7946 0958"):
+        with pytest.raises(gateway.GatewayError):
+            gateway._assert_masked(leaky)
+
+
+def test_sheet_reading_keeps_no_text_in_a_log_a_call_record_or_beside_the_structure_cache(caplog):
+    import logging
+
+    import test_sheet_reading as sr
+    caplog.set_level(logging.DEBUG)
+    os.environ["SHEET_READER_MODEL"] = sr.MODEL
+    try:
+        db = sr.audit_db()
+        sr.read(db)
+    finally:
+        del os.environ["SHEET_READER_MODEL"]
+    stored = {name: json.dumps(c.docs, default=str) for name, c in db._cols.items()}
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    for secret in ("Zenith", "Pat Sample", sr.EMAIL, "447223", "451000"):
+        assert secret not in logged and secret not in stored["llm_calls"]
+    holders = {n for n, blob in stored.items() if "447223" in blob or "451000" in blob}
+    assert holders == set(), "model output carries cell references, never the cell values it was sent: " + str(holders)
+    assert set(stored["llm_calls"] and json.loads(stored["llm_calls"])[0]) >= {"content_hash", "structure_type", "prompt_version", "model"}
