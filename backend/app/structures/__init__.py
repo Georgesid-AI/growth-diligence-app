@@ -133,6 +133,15 @@ def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns:
     return headers, samples, profiles
 
 
+async def learn_company_names(db, audit_id: str, cells: List[Dict], company_name: Optional[str], mapping: Dict[str, str]
+                              ) -> Dict[str, str]:
+    """The audit's map with every company name under a company-name header in `cells` that it did not hold yet (the next Client-NN
+    each, saved on the audit record). Called before a payload is masked, so no company name leaves the server under such a header."""
+    swapped, _ = redact.pseudonymise_cells(cells, mapping, company_name)
+    names = redact.new_company_names(swapped, company_name)
+    return await llm_redaction.add_customers(db, audit_id, names) if names else mapping
+
+
 def column_mapping_text(columns: List[str], rows: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
                         customer_columns: Tuple[str, ...] = (), withheld: Tuple[str, ...] = (),
                         hints: Optional[Dict[str, Tuple[str, int]]] = None) -> str:
@@ -301,6 +310,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
         if stopped_message:
             statuses.append({"status": STOPPED, "reason": stopped_message})
             continue
+        mapping = await learn_company_names(db, audit_id, structure["cells"], audit.get("company_name"), mapping)
         cells, _ = redact.redact_structure(structure["cells"], audit.get("company_name"), mapping, deck=True)
         redacted = {**structure, "cells": cells}
         listed = structure_items.list_items(redacted)

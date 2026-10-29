@@ -188,7 +188,7 @@ def test_two_concurrent_page_reads_never_draw_at_the_same_time(monkeypatch):
 # ---------------------------------------------------------------------------
 # Section 2: pages go as printed; the pipeline rows keep their printed names
 # ---------------------------------------------------------------------------
-def test_pipeline_rows_keep_their_printed_names_under_a_customer_header():
+def test_pipeline_rows_keep_their_printed_names_in_the_register_while_the_header_names_go_as_tokens():
     parsed = deck([(50, 560, 20, "Sales pipeline"), (50, 520, 12, "Top customers"), (250, 520, 12, "Deal size"),
                    (50, 500, 12, "Acme Retail"), (250, 500, 12, "EUR 1.2M"), (50, 480, 12, "Globex Corp"), (250, 480, 12, "EUR 0.8M")])
     grid, = pages.page_grids(parsed["blocks"])
@@ -199,7 +199,8 @@ def test_pipeline_rows_keep_their_printed_names_under_a_customer_header():
     db, adapter = _page_db(parsed), t.FakeAdapter(replies=[json.dumps(reply)])
     assert run_deck(db, adapter) == "read"
     sent = json.loads(adapter.payloads[0])["text"]
-    assert "Acme Retail" in sent and "Globex Corp" in sent and "[redacted]" not in sent
+    assert "Acme Retail" not in sent and "Globex Corp" not in sent and "[redacted]" not in sent, "names under the header go as tokens"
+    assert sent.count("Client-0") == 2
     rows = db[CANDIDATES_COLLECTION].docs
     assert sorted(r["label_from"] for r in rows) == ["Acme Retail", "Globex Corp"], "the printed names, not placeholders"
     assert all("[redacted]" not in json.dumps(r) and "Client-" not in json.dumps(r) for r in rows)

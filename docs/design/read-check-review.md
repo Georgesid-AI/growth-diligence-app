@@ -205,10 +205,17 @@ Applied to every payload that leaves the server, spreadsheets and deck pages
 alike. No new dependency.
 
 - Personal data: removed, never sent, never stored in a payload. Regex for
-  emails, phone numbers, IBANs and ID-shaped strings. Columns whose label
-  signals people (owner, contact, manager, rep, signatory) masked as
-  whole columns. A column headed name, customer, account, company or client
-  holds company names: tokenised, never withheld (George, review of PR 204).
+  emails, phone numbers, IBANs and ID-shaped strings. Spreadsheet columns
+  whose header signals people (owner, contact, manager, rep, signatory)
+  masked as whole columns. Deck page text never uses the people-header rule:
+  a page title such as "Key contacts" blanks nothing below it; page text gets
+  the regex removals, first-name personal names and the token map only.
+  A column headed name, customer, account, company or client holds company
+  names: tokenised, never withheld (George, review of PR 204). A text cell
+  under such a header that is not yet in the audit's token map is added to
+  it when the payload is masked and gets the next Client-NN, whether or not
+  the audit knew the name before. A cell with a digit in it (a label with a
+  figure) is not read as a name.
 - Company and customer names: replaced by consistent per-audit tokens
   (Client-01, Product-A). Same name → same token in every file of the audit.
   The token map lives on the audit record only. Display un-masks on the

@@ -1022,8 +1022,9 @@ async def _read_statement(a: dict, sheet: "cr.Sheet", digest: str, kpi: bool = F
                 "ai": "stored", **units}
     if a.get("structure_reading_consent") is not True:
         return {"map": {**sheet_mod.build(reading), "counts": None}, "ai": "no_consent", **units}
-    text, counts = sheet_mod.skeleton(reading, a.get("company_name"), await llm_redaction.get_map(db, a["id"]),
-                                      structures.redact.file_type_withheld(a))
+    mapping = await structures.learn_company_names(db, a["id"], [c for c in reading["cells"] if len(c["text"]) <= sheet_mod.LONG_CELL],
+                                                   a.get("company_name"), await llm_redaction.get_map(db, a["id"]))
+    text, counts = sheet_mod.skeleton(reading, a.get("company_name"), mapping, structures.redact.file_type_withheld(a))
     try:
         read = await asyncio.wait_for(llm_gateway.read_structure(db, a["id"], text, "sheet_structure"), SHEET_AI_SECONDS)
     except asyncio.TimeoutError:

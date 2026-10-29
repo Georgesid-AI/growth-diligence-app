@@ -1964,8 +1964,10 @@ async def read_structure(
     if structure_type == PAGE_CLAIMS and isinstance(text, str):
         # Every payload is masked at this boundary (read-check-review.md section 8): the page text is not masked by its caller, so the
         # gateway does it, the target company's name included. The image of the page goes as drawn.
-        if context.get("company_name"):
-            mapping = await redaction.add_customers(db, audit_id, [context["company_name"]])
+        learned = structure_redact.page_company_names(text, context.get("company_name"), mapping)
+        if context.get("company_name") or learned:
+            # The target, and every company name under a company-name header the map does not hold: each gets the next Client-NN.
+            mapping = await redaction.add_customers(db, audit_id, [n for n in [context.get("company_name"), *learned] if n])
         text, masked_counts = structure_redact.mask_pages(text, context.get("company_name"), mapping)
     problem = structure_text_problem(text, structure_type, context, mapping)
     if problem:

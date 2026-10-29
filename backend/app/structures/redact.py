@@ -470,6 +470,12 @@ _ID = re.compile(r"(?<![\w-])(?:\d{3}-\d{2}-\d{4}|[A-Z]{2,3}\d{6,12}[A-Z]?|\d{6}
 # (George, review of PR 204).
 _PEOPLE_HEADER = re.compile(r"(?i)(?<![^\W\d_])(?:owners?|contacts?|managers?|reps?|representatives?|signator(?:y|ies))(?![^\W\d_])")
 PEOPLE_HEADER_MAX_WORDS = 3
+# Headers that hold company names: the word itself (name, customer, client, account, company) with at most two words before it and
+# "name" or "list" after it ("Company Name", "Top customers"), not a label that holds it ("Implied Customer Life"). A header that is
+# also a people header ("Contact name") holds people. The text under such a header is a company name: it leaves as a token (George,
+# 2026-10-29).
+_COMPANY_HEADER = re.compile(r"(?i)^\s*(?:[^\W\d_][\w.'’&-]*\s+){0,2}(?:names?|customers?|clients?|accounts?|compan(?:y|ies))"
+                             r"(?:\s+(?:names?|list))?\s*:?\s*$")
 # "+" or "0" followed by 9-15 digits in groups: +44 20 7946 0958, 020-7946-0958, (0)20 7946 0958.
 _PHONE = re.compile(r"(?<![\w+])(?:\+|(?<![\d.,])0)(?:[\s().\-/]{0,2}\d){9,15}(?![\d])")
 # A cell that is an amount, a year or a date is never a phone number.
@@ -601,6 +607,29 @@ def blank_customer_cells(cells: List[Dict], company_name: Optional[str]) -> Tupl
     return out, total
 
 
+def _company_headers(cells: List[Dict]) -> List[Dict]:
+    return [c for c in cells if _COMPANY_HEADER.search(c["text"]) and not _PEOPLE_HEADER.search(c["text"])
+            and not _PSEUDONYM.search(c["text"])]
+
+
+def _company_cell(cell: Dict, cells: List[Dict], headers: List[Dict], company_name: Optional[str]) -> bool:
+    """True when the cell is text under a company-name header that no token covers yet (a cell holding a token is already masked).
+    A cell with a digit in it is a label with a figure ("800 Paying Users"), not a name: it stays."""
+    text = cell["text"]
+    return (bool(re.search(r"[^\W\d_]", text)) and not re.search(r"\d", text) and not is_figure(text) and not _is_amount_or_date(text) and not _PSEUDONYM.search(text)
+            and not _FIRST_NAME.search(text) and not any(p in text for p in PLACEHOLDERS) and not _protected(text, company_name)
+            and cell not in headers and any(h["row"] < cell["row"] and _overlaps(h, cell) for h in headers))
+
+
+def new_company_names(cells: List[Dict], company_name: Optional[str]) -> List[str]:
+    """The company names a map does not hold yet: the text of every cell under a company-name header after the map's names are
+    swapped (the caller runs pseudonymise_cells first), whitespace folded, in order and once each. The caller adds them to the
+    audit's token map; the next masking turns them into their tokens."""
+    headers = _company_headers(cells)
+    names = (" ".join(c["text"].split()) for c in cells if headers and _company_cell(c, cells, headers, company_name))
+    return list(dict.fromkeys(names))
+
+
 def blank_people_columns(cells: List[Dict], company_name: Optional[str]) -> Tuple[List[Dict], int]:
     """(cells, columns): every text cell under a people header (owner, contact, manager, rep, signatory: the header is a short
     cell holding one of the words) becomes [person], the whole column. A customer-type header ("Customer name", "Account name") is
@@ -629,7 +658,7 @@ def redact_cells(cells: List[Dict], company_name: Optional[str]) -> Tuple[List[D
     return _redact(cells, company_name, ("email", "phone", "iban", "id", "person"))
 
 
-def _redact(cells: List[Dict], company_name: Optional[str], rules) -> Tuple[List[Dict], Dict[str, int]]:
+def _redact(cells: List[Dict], company_name: Optional[str], rules, people: bool = True) -> Tuple[List[Dict], Dict[str, int]]:
     counts = {"email": 0, "phone": 0, "person": 0, "iban": 0, "id": 0}
     out = []
     for cell in cells:
@@ -647,7 +676,7 @@ def _redact(cells: List[Dict], company_name: Optional[str], rules) -> Tuple[List
             text, n = _replace(text, _PHONE, PHONE, company_name)
             counts["phone"] += n
         if "person" in rules:
-            if _NAME_SHAPE.match(text) and _under_person_role(cell, cells) and not _protected(text, company_name):
+            if people and _NAME_SHAPE.match(text) and _under_person_role(cell, cells) and not _protected(text, company_name):
                 text, n = PERSON, 1
             else:
                 text, n = _replace(text, _FIRST_NAME, PERSON, company_name)
@@ -725,7 +754,8 @@ def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[D
 
 
 def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
-                     withheld: Tuple[str, ...] = (), deck: bool = False) -> Tuple[List[Dict], Dict[str, int]]:
+                     withheld: Tuple[str, ...] = (), deck: bool = False, people: bool = True
+                     ) -> Tuple[List[Dict], Dict[str, int]]:
     """Every redaction rule on a structure's cells: the withheld values
     (`withheld`, see file_type_withheld), then emails and phone numbers, then customer names, then
     personal names; for a deck structure (`deck`), with no customer list, the cells under a customer-type header (the whole
@@ -741,9 +771,10 @@ def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Di
         # No customer list to swap names for (a revenue file without a customer column, no CRM file): the cells under a
         # customer-type header cannot be told from a name, so none goes out.
         named, counts["customer_blanked"] = blank_customer_cells(named, company_name)
-    # People columns after the customer names, so a customer listed under a "Contact" header keeps its token.
-    named, counts["people_columns"] = blank_people_columns(named, company_name)
-    second, more = _redact(named, company_name, ("person",))
+    # People columns after the customer names, so a customer listed under a "Contact" header keeps its token. Spreadsheet column
+    # headers only (`people`): deck page text never uses the people-header rules (read-check-review.md section 8).
+    named, counts["people_columns"] = blank_people_columns(named, company_name) if people else (named, 0)
+    second, more = _redact(named, company_name, ("person",), people)
     counts["person"] = more["person"]
     return second, counts
 
@@ -958,6 +989,16 @@ def personal_items(text: str) -> List[str]:
     return found
 
 
+def page_company_names(text: str, company_name: Optional[str], mapping: Dict[str, str]) -> List[str]:
+    """The company names a page text holds under a company-name header that `mapping` does not hold yet (new_company_names, page by
+    page). The gateway adds them to the audit's map before it masks the pages."""
+    names: List[str] = []
+    for cells in (parse_page_text(text) or {}).values():
+        swapped, _ = pseudonymise_cells(cells, mapping, company_name)
+        names += new_company_names(swapped, company_name)
+    return list(dict.fromkeys(names))
+
+
 def mask_pages(text: str, company_name: Optional[str], mapping: Dict[str, str]) -> Tuple[str, Dict[str, int]]:
     """(the page text masked, the counts). The same rules as every other payload (read-check-review.md section 8): personal data
     removed, then company and customer names, the target company's own name included, replaced by their per-audit tokens
@@ -970,7 +1011,7 @@ def mask_pages(text: str, company_name: Optional[str], mapping: Dict[str, str]) 
     counts: Dict[str, int] = {"lines": 0, "company": 0}
     out = []
     for page, cells in pages.items():
-        masked, found = redact_structure(cells, company_name, mapping)
+        masked, found = redact_structure(cells, company_name, mapping, people=False)
         for key, n in found.items():
             counts[key] = counts.get(key, 0) + n
         if token:

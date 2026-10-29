@@ -44,8 +44,10 @@
     Amended 2026-10-29 (George, docs/design/read-check-review.md section 8, PR 1): masking is one module (structures/redact.py), run by the
     gateway on every payload that leaves the server. The page text of a page_claims call is masked, no longer "as printed": emails, phone
     numbers, IBANs, ID numbers and first-name personal names removed, columns headed owner, contact, manager, rep or signatory masked
-    whole (a column headed name, customer, account, company or client is tokenised, never withheld), company and customer names (the
-    target's too) replaced by per-audit tokens Client-01, Client-02 ... that are the same in every file of the audit; figures and metric
+    whole in spreadsheets only (deck page text never uses that rule; a title such as "Key contacts" blanks nothing below it), company and
+    customer names (the target's too) replaced by per-audit tokens Client-01, Client-02 ... that are the same in every file of the audit;
+    a text cell under a header that holds name, customer, client, account or company and is not yet in the map is added to it at
+    masking time and gets the next Client-NN, never [person] and never as printed (George, 2026-10-29, PR 204 review); figures and metric
     labels unchanged. The page image goes unmasked (option A). The token map lives on the audit record only (`token_map`), never in a
     log, a payload or an API response, and goes with the audit; the provider adapter refuses a payload that still holds an email, IBAN,
     ID number or "+" phone number. Counts per file on screen: lines sent, personal items removed, company names tokenised, columns

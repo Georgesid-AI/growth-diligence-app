@@ -3344,14 +3344,15 @@ def test_a_page_is_masked_at_the_gateway_but_figures_labels_and_the_image_go_as_
     result, adapter = _send_page(_structure_db(mapping), text)
     assert result.status == "read" and adapter.calls == 1, result.reason
     seen = json.loads(adapter.payloads[0])["text"]
-    for removed in ("Northwind", "Initech", "Jane Doe", "jane.doe@example.org", "7946 0958", "DE89", "AB123456789",
+    for removed in ("Northwind", "Initech", "Globex", "Jane Doe", "jane.doe@example.org", "7946 0958", "DE89", "AB123456789",
                     STRUCTURE_AUDIT["company_name"]):
         assert removed not in seen, f"{removed!r} must not leave the server"
-    for kept in ("Client-01 (12 seats)", "Client-02 ARR €1.5M", "800 Paying Users", "Customers", "Globex Corp", "[person]", "[email]",
+    for kept in ("Client-01 (12 seats)", "Client-02 ARR €1.5M", "800 Paying Users", "Customers", "[person]", "[email]",
                  "[phone]", "[iban]", "[id]", "revenue 2025: 4,200"):
         assert kept in seen, f"{kept!r} is sent as masked"
     assert result.masked["email"] == 1 and result.masked["phone"] == 1 and result.masked["iban"] == 1
-    assert result.masked["id"] == 1 and result.masked["person"] == 1 and result.masked["customer"] == 2 and result.masked["company"] == 1
+    assert result.masked["id"] == 1 and result.masked["person"] == 1 and result.masked["customer"] == 3 and result.masked["company"] == 1
+    assert re.search(r"p5r4c1: Client-\d\d\b", seen), "Globex, in no map, is learned under the Customers header"
     # The target's own name is in the map under the same rule, and a second pass changes nothing.
     assert structure_redact.mask_pages(seen, STRUCTURE_AUDIT["company_name"], {**mapping, **{STRUCTURE_AUDIT["company_name"]: "Client-03"}})[0] == seen
 
@@ -4088,26 +4089,88 @@ def test_a_sheet_with_emails_phones_and_an_iban_in_its_cells_sends_none_of_them(
     assert result.status == "refused" and result.reason == "refused: redaction_changed" and adapter.calls == 0
 
 
-def test_a_company_name_column_is_tokenised_and_only_a_people_column_is_withheld_in_what_leaves_the_server():
+def test_a_company_name_column_is_tokenised_on_a_page_and_a_people_column_is_withheld_in_a_sheet():
     """A column headed name, customer, account, company or client holds company names: they leave as their tokens, never withheld.
-    A column headed contact, owner, manager, rep or signatory is withheld whole (George, review of PR 204)."""
+    A column headed contact, owner, manager, rep or signatory is withheld whole, in a spreadsheet only (George, review of PR 204)."""
     company = ("Company Name", "Client name", "Customer name", "Account name")
     people = ("Contact name", "Deal owner")
     headers = company + people + ("ARR",)
+    names = (("Northwind Trading", "Roe, J.", "$120,000"), ("Northwind Trading renewal", "Doe, A. (EMEA)", "$80,000"))
     lines = [f"p5r1c{c}: {h}" for c, h in enumerate(headers, start=1)]
-    for r, (name, person, arr) in enumerate((("Northwind Trading", "Roe, J.", "$120,000"),
-                                             ("Northwind Trading renewal", "Doe, A. (EMEA)", "$80,000")), start=2):
+    for r, (name, person, arr) in enumerate(names, start=2):
         lines += [f"p5r{r}c{c}: {name}" for c in range(1, 5)] + [f"p5r{r}c5: {person}", f"p5r{r}c6: {person}", f"p5r{r}c7: {arr}"]
     result, adapter = _send_page(_structure_db({"Northwind Trading": "Client-01"}), "\n".join(lines))
     assert result.status == "read", result.reason
     sent = dict(line.split(": ", 1) for line in json.loads(adapter.payloads[0])["text"].splitlines())
     for c, header in enumerate(company, start=1):
         assert (sent[f"p5r2c{c}"], sent[f"p5r3c{c}"]) == ("Client-01", "Client-01 renewal"), header
-    for c, header in enumerate(people, start=5):
-        assert (sent[f"p5r2c{c}"], sent[f"p5r3c{c}"]) == ("[person]", "[person]"), header
     assert [sent[f"p5r1c{c}"] for c in range(1, 8)] == list(headers), "the headers stay"
     assert (sent["p5r2c7"], sent["p5r3c7"]) == ("$120,000", "$80,000"), "the figures stay"
-    assert result.masked["people_columns"] == 2 and result.masked["customer"] == 8
+    # The same columns in a spreadsheet: the people columns are withheld whole.
+    cells = [(1, 1, "Product P&L")] + [(2, c, h) for c, h in enumerate(headers, start=1)]
+    for r, (name, person, arr) in enumerate(names, start=3):
+        cells += [(r, c, name) for c in range(1, 5)] + [(r, 5, person), (r, 6, person)]
+    reading = {"header_row": 2, "rows": [{"row": r, "indent": 0, "num": [], "blank": []} for r in range(1, 5)], "cells": _cells(*cells)}
+    text, counts = sheet_mod.skeleton(reading, "Target Co", {"Northwind Trading": "Client-01"})
+    result, adapter = _send(_structure_db({"Northwind Trading": "Client-01"}), text, "sheet_structure")
+    assert result.reason != "refused: redaction_changed" and adapter.calls >= 1, result.reason
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert sent.count("[person]") == 4 and "Roe" not in sent and "Doe" not in sent and sent.count("Client-01") >= 8
+    assert counts["columns"] == 2
+
+
+def _lines(page, rows):
+    return "\n".join(f"p{page}r{r}c{c}: {text}" for r, row in enumerate(rows, 1) for c, text in enumerate(row, 1))
+
+
+def test_an_unknown_company_under_a_company_name_header_gets_the_next_token_and_is_added_to_the_map():
+    db = _structure_db({"Northwind Trading": "Client-01"})
+    page = _lines(5, [("Company Name", "ARR"), ("Umbrella Holdings", "$120,000"), ("Northwind Trading", "$80,000")])
+    result, adapter = _send_page(db, page)
+    assert result.status == "read", result.reason
+    sent = json.loads(adapter.payloads[0])["text"]
+    stored = db["audits"].docs[0]["token_map"]
+    token = stored["Umbrella Holdings"]
+    assert re.fullmatch(r"Client-\d\d", token) and token not in ("Client-01", stored.get(STRUCTURE_AUDIT["company_name"]))
+    assert "Umbrella" not in sent and f"p5r2c1: {token}" in sent and "p5r3c1: Client-01" in sent and "[person]" not in sent
+    assert "$120,000" in sent
+    # The same company in a second file of the audit, in another case and spacing, is the same token.
+    again, second = _send_page(db, _lines(2, [("Account", "ARR"), ("UMBRELLA   holdings", "$40,000")]))
+    assert again.status == "read", again.reason
+    assert f"p2r2c1: {token}" in json.loads(second.payloads[0])["text"]
+    assert len(set(db["audits"].docs[0]["token_map"].values())) == 3, "Northwind, the target and Umbrella: one token each"
+
+
+def test_a_label_that_holds_the_word_customer_is_no_company_name_header():
+    db = _structure_db()
+    page = _lines(5, [("Implied Customer Life", "~9 Months"), ("Avg. Monthly Revenue", "$40"), ("Gross Margin", "60%")])
+    result, adapter = _send_page(db, page)
+    assert result.status == "read", result.reason
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "p5r2c1: Avg. Monthly Revenue" in sent and "p5r3c1: Gross Margin" in sent and "Client-" not in sent.replace("Client-01", "")
+    assert set(db["audits"].docs[0]["token_map"].values()) == {"Client-01"}, "only the target is in the map"
+
+
+def test_a_different_audit_builds_its_own_token_map_for_the_same_unknown_company():
+    page = _lines(5, [("Company Name", "ARR"), ("Umbrella Holdings", "$120,000")])
+    first, other = _structure_db({"Northwind Trading": "Client-01"}), _structure_db()
+    _send_page(first, page)
+    result, adapter = _send_page(other, page)
+    assert result.status == "read", result.reason
+    assert other["audits"].docs[0]["token_map"] == {STRUCTURE_AUDIT["company_name"]: "Client-01", "Umbrella Holdings": "Client-02"}
+    assert "p5r2c1: Client-02" in json.loads(adapter.payloads[0])["text"], "a fresh map counts from Client-01"
+    assert "Northwind Trading" not in other["audits"].docs[0]["token_map"]
+
+
+def test_a_page_title_with_a_people_word_blanks_nothing_below_it_and_the_people_rule_is_for_sheets_only():
+    page = _lines(5, [("Key contacts",), ("Revenue", "$1,200,000"), ("Gross margin", "60%"), ("Reach jane.roe@example.org",),
+                      ("Call +44 20 7946 0958",), ("Initech Ltd renewed", "$15,000")])
+    result, adapter = _send_page(_structure_db({"Initech Ltd": "Client-01"}), page)
+    assert result.status == "read", result.reason
+    sent = json.loads(adapter.payloads[0])["text"].splitlines()
+    assert sent[:3] == ["p5r1c1: Key contacts", "p5r2c1: Revenue", "p5r2c2: $1,200,000"]
+    assert "p5r3c1: Gross margin" in sent and "[person]" not in "\n".join(sent)
+    assert "p5r4c1: Reach [email]" in sent and "p5r5c1: Call [phone]" in sent and "p5r6c1: Client-01 renewed" in sent
 
 
 def test_the_same_company_in_two_files_is_one_token_in_any_case_and_spacing():
