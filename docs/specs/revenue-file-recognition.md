@@ -239,17 +239,10 @@ JSON only, `extra="forbid"`, no free text, **no confidence number**:
               | "arr_mrr_snapshot" | "crm" | "pnl" | "not_revenue",
  "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"} | null,   // sheet row number and the label as sent
  "currency": "EUR" | null,                       // an ISO code, only if seen in the text
- "non_revenue_rows": [{"row": 9, "kind": "forecast" | "budget" | "bookings" | "pipeline" | "contract_value" | "run_rate"}],
- "last_actual_column": 7 | null,                 // the sheet column number, A = 1, of the last column of actual figures (amended 2026-10-28)
- "boundary_cue": {"cell": "r2c8", "text": "Forecast"} | null}   // the cell it decided by: a title or header cell with a plan word, or a row label with one
+ "non_revenue_rows": [{"row": 9, "kind": "forecast" | "budget" | "bookings" | "pipeline" | "contract_value" | "run_rate"}]}
 ```
-`last_actual_column` and `boundary_cue` are a suggestion for the as-of month, checked by Python before they are used (dates-and-periods.md §2,
-`as_of.suggestion`): the cue cell must exist on the sheet with the cue's text, the text must hold a plan word (budget, plan, forecast, FC, estimate,
-projection), and the cell must be a row label or sit above or in the header row of a column after `last_actual_column`. The columns of the text
-the model reads (`r<row>c<col>`) are numbered as the sheet numbers them (A = 1), whatever empty columns lie before the first one kept; a cue is
-written `r2c8` (or `H2`) for a title or header cell and `r12` for a row label. Both fields are kept in the stored proposal, the cue text with them
-(model JSON output, rule 17); the cue text of the detected month is also stored on the audit (`as_of_cue`) and shown on the strip. Neither field
-sets the boundary itself: the audit's one as-of month does (§6.2). A reply without them (an older cached answer) parses with both null.
+The reply holds no boundary: `last_actual_column` and `boundary_cue` (2026-10-28) are deleted (read-check-review.md section 6, PR 2); the as-of month
+comes from the sheet reader's checked evidence (dates-and-periods.md §2) and sets the boundary (§6.2). A reply that still carries either key fails to parse.
 A reply with another key, a `confidence`, a kind or type outside the lists, a row or column below 1, a currency that is not three letters, or a
 `revenue_row` without its label fails to parse (`parse_failed`, check `schema` or `metric_list`). The label echo is compared by Python with the label
 of that row and then dropped: it is never kept (§5.5). On an entity-labelled or unsure sheet the labels the model saw are "Row n", so its

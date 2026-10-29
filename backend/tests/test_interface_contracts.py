@@ -876,8 +876,9 @@ def test_run_audit_engine_on_a_stale_audit_clears_the_flag_through_to_results(ap
     assert api.get(f"/api/audits/{AUDIT_ID}").json()["results_stale"] is False
 
 
-def test_run_audit_engine_waits_for_an_as_of_month_when_the_files_gave_none_and_the_analyst_typed_none(api, monkeypatch):
-    """dates-and-periods.md section 2: no suggestion, no month; Run audit stops at the engine stage until the analyst sets one."""
+def test_run_audit_engine_runs_with_no_as_of_month_and_says_so(api, monkeypatch):
+    """read-check-review.md section 6, PR 2: no confirmed month and none typed is "not determined"; Run audit goes on and calculates
+    everything that does not depend on it, with a plain note. A typed month removes the note."""
     api.db["audits"].docs[0].update(status="mapped", as_of_month=None, as_of_by="detected")
     api.db["datasets"].docs.append({"audit_id": AUDIT_ID, "dtype": "revenue", "mapped_at": "2026-01-01"})
 
@@ -891,9 +892,11 @@ def test_run_audit_engine_waits_for_an_as_of_month_when_the_files_gave_none_and_
     monkeypatch.setattr(server, "_mapping_counts", counts)
     monkeypatch.setattr(server, "_run_compute", compute)
     out = api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()
-    assert (out["status"], out["message"]) == ("failed", run_audit.AS_OF_CHECK) and api.recomputed == []
+    assert (out["status"], out["message"]) == ("done", run_audit.NO_AS_OF) and api.recomputed == [AUDIT_ID]
+    assert "not determined" in run_audit.NO_AS_OF
     api.put(f"/api/audits/{AUDIT_ID}", json={"as_of_month": "2024-02-29"})
-    assert api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()["status"] == "done" and api.recomputed == [AUDIT_ID]
+    typed = api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()
+    assert (typed["status"], typed["message"]) == ("done", None) and api.recomputed == [AUDIT_ID, AUDIT_ID]
 
 
 def test_stale_results_read_stale_re_run_audit_on_the_review_the_verdict_and_the_memo_not_compute_the_audit_first(api):

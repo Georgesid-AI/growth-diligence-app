@@ -632,9 +632,11 @@ def blank_customer_cells(cells: List[Dict], company_name: Optional[str]) -> Tupl
     return out, total
 
 
-def _company_headers(cells: List[Dict]) -> List[Dict]:
+def _company_headers(cells: List[Dict], amounts_to: Optional[Dict[int, int]] = None) -> List[Dict]:
+    """The cells that head a column of company names. `amounts_to` ({row: the last column holding an amount}, spreadsheets only): a cell
+    with an amount to its right on its row labels a row of figures ("Customers 10981 11003 ..."), it does not head a column of names."""
     return [c for c in cells if _COMPANY_HEADER.search(c["text"]) and not _PEOPLE_HEADER.search(c["text"])
-            and not _PSEUDONYM.search(c["text"])]
+            and not _PSEUDONYM.search(c["text"]) and not (amounts_to and amounts_to.get(c["row"], 0) > c["col"])]
 
 
 def _company_cell(cell: Dict, cells: List[Dict], headers: List[Dict], company_name: Optional[str]) -> bool:
@@ -646,11 +648,11 @@ def _company_cell(cell: Dict, cells: List[Dict], headers: List[Dict], company_na
             and cell not in headers and any(h["row"] < cell["row"] and _overlaps(h, cell) for h in headers))
 
 
-def new_company_names(cells: List[Dict], company_name: Optional[str]) -> List[str]:
+def new_company_names(cells: List[Dict], company_name: Optional[str], amounts_to: Optional[Dict[int, int]] = None) -> List[str]:
     """The company names a map does not hold yet: the text of every cell under a company-name header after the map's names are
     swapped (the caller runs pseudonymise_cells first), whitespace folded, in order and once each. The caller adds them to the
     audit's token map; the next masking turns them into their tokens."""
-    headers = _company_headers(cells)
+    headers = _company_headers(cells, amounts_to)
     names = (" ".join(c["text"].split()) for c in cells if headers and _company_cell(c, cells, headers, company_name))
     return list(dict.fromkeys(names))
 
@@ -1180,6 +1182,16 @@ def reading_text_problem(text: str) -> Optional[str]:
     return None
 
 
+def _amounts_to(cells: List[Dict]) -> Dict[int, int]:
+    """{row: the last column holding an amount} of a sheet: a number that is not a year or a date, as a row of figures has them."""
+    out: Dict[int, int] = {}
+    for c in cells:
+        t = c["text"].strip()
+        if reading_figure(t) and not _YEAR_OR_DATE.match(t) and not _PERIOD_FIGURE.match(t):
+            out[c["row"]] = max(out.get(c["row"], 0), c["col"])
+    return out
+
+
 def _text_cells(cells: List[Dict]) -> List[Dict]:
     return [c for c in cells if not reading_figure(c["text"])]
 
@@ -1190,7 +1202,7 @@ def reading_company_names(text: str, company_name: Optional[str], mapping: Dict[
     names: List[str] = []
     for sheet in parse_reading_text(text) or []:
         swapped, _ = pseudonymise_cells(_text_cells(sheet["cells"]), mapping, company_name)
-        names += new_company_names(swapped, company_name)
+        names += new_company_names(swapped, company_name, _amounts_to(sheet["cells"]))
     return list(dict.fromkeys(names))
 
 

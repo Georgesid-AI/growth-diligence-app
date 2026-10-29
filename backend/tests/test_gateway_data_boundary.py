@@ -3087,21 +3087,21 @@ def test_recognition_the_columns_are_printed_as_the_sheet_counts_them_so_the_sug
     assert {int(m.group(1)) for m in (re.match(r"^s1 c(\d+) (sample|profile)", line) for line in lines) if m} <= {2, 3, 4}
 
 
-def test_recognition_a_boundary_cue_is_kept_with_the_model_reply_and_the_audit_and_reaches_no_log_line(api, caplog):
-    caplog.set_level(logging.DEBUG)
-    cue = "Forecast scenario"
-    csv = f"Test report,,,\n,Jan 2021,Feb 2021,{cue}\nRevenue,10,20,30\nCustomers,3,4,5\nChurn,1,2,3\n".encode()
-    reply = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report", "revenue_row": {"row": 3, "label": "Revenue"},
-                        "currency": None, "non_revenue_rows": [], "last_actual_column": 3, "boundary_cue": {"cell": "D2", "text": cue}})
-    api.state["adapter"] = t.FakeAdapter(replies=[reply])
-    assert chat.upload(api, "report.csv", csv).status_code == 200
-    log = "\n".join(r.getMessage() for r in caplog.records)
-    assert cue not in log, "the cue text reached a log line"
-    stored = _all_documents(api.db)
-    assert cue not in stored.get("llm_calls", ""), "the call row holds counts and hashes, never text"
-    kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
-    assert kept and kept[0]["reply"]["boundary_cue"] == {"cell": "D2", "text": cue} and kept[0]["reply"]["last_actual_column"] == 3
-    assert api.db["audits"].docs[0].get("as_of_cue") == cue, "the audit keeps the one cue its as-of month was detected by"
+def test_recognition_a_boundary_suggestion_is_no_longer_asked_for_kept_or_accepted():
+    """PR 199's last_actual_column and boundary_cue are gone (read-check-review.md section 6, PR 2): the reply is closed, so a model that still
+    sends them is refused, and the as-of month comes from the sheet reader's checked evidence."""
+    reply = {"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report", "revenue_row": {"row": 3, "label": "Revenue"},
+             "currency": None, "non_revenue_rows": []}
+    parse = lambda body: gateway.parse_structure_reply(json.dumps(body), "file_recognition", "")  # noqa: E731
+    assert parse(reply).file_type == "monthly_revenue_report"
+    for extra in ({"last_actual_column": 3}, {"boundary_cue": {"cell": "D2", "text": "Forecast"}}):
+        with pytest.raises(gateway.GatewayError):
+            parse({**reply, **extra})
+    assert "last_actual_column" not in str(schemas_for_recognition().file_recognition_output_schema())
+
+
+def schemas_for_recognition():
+    return importlib.import_module("app.llm.schemas")
 
 
 def test_recognition_the_customer_names_the_audit_already_pseudonymises_take_their_pseudonyms_in_the_title_and_headers():
@@ -3156,17 +3156,10 @@ def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_tex
         assert parse({**good, "file_type": other, "revenue_row": None, "currency": None, "non_revenue_rows": []})
     for bad in ({**good, "confidence": 90}, {**good, "note": "x"}, {**good, "file_type": "deck"}, {**good, "currency": "EURO"},
                 {**good, "non_revenue_rows": [{"row": 9, "kind": "maybe"}]}, {**good, "non_revenue_rows": [{"row": 9, "kind": "forecast", "why": "x"}]},
-                {**good, "last_actual_column": 0}, {**good, "last_actual_column": 7, "boundary_cue": {"cell": "Sheet1!H2", "text": "Forecast"}},
-                {**good, "boundary_cue": {"cell": "H2"}}, {**good, "boundary_cue": {"cell": "H2", "text": "Forecast", "why": "x"}},
-                {**good, "boundary_cue": {"cell": "H2", "text": "x" * 201}}, {**good, "boundary_cue": "H2"},
-                {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
+                {**good, "last_actual_column": 0}, {**good, "last_actual_column": 7, "boundary_cue": {"cell": "H2", "text": "Forecast"}},
+                {**good, "boundary_cue": None}, {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
         with pytest.raises(gateway.GatewayError):
             parse(bad)
-    cued = parse({**good, "last_actual_column": 7, "boundary_cue": {"cell": "H2", "text": "Forecast"}})
-    assert (cued.last_actual_column, cued.boundary_cue.cell, cued.boundary_cue.text) == (7, "H2", "Forecast")
-    assert parse({**good, "last_actual_column": None, "boundary_cue": None}).boundary_cue is None
-    for cell in ("D3", "AA12", "r3c4", "r12"):
-        assert parse({**good, "last_actual_column": 4, "boundary_cue": {"cell": cell, "text": "Plan"}})
     kinds = ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
     for kind in kinds:
         assert parse({**good, "non_revenue_rows": [{"row": 9, "kind": kind}]})

@@ -99,3 +99,20 @@ def test_the_reading_text_round_trips_and_refuses_what_is_not_one():
     assert redact.reading_text_problem("sheet 1: empty") == "no_cells"
     many = redact.reading_text([{"name": f"S{i}", "cells": cells} for i in range(redact.READING_MAX_SHEETS + 1)])
     assert redact.reading_text_problem(many) == "too_many_sheets"
+
+
+def test_a_customers_row_label_followed_by_figures_does_not_make_the_labels_below_it_names():
+    """A monthly report has "Customers 10981 11003 ..." as a row; "Logo churn %" and "Pipeline" under it are metric rows, not customers."""
+    text = text_of((1, 1, "Metric"), (1, 2, "Jan-25"), (2, 1, "Customers"), (2, 2, "10981"), (3, 1, "Logo churn %"), (3, 2, "0.1118"),
+                   (4, 1, "Pipeline"), (4, 2, "11529"))
+    (masked, counts), mapping = mask(text)
+    assert masked == text and mapping == {}
+
+
+def test_a_customer_header_with_year_headers_beside_it_still_heads_a_column_of_names():
+    """Years are not amounts: "Customer | 2023 | 2024" heads the names below it, which must leave as tokens."""
+    text = text_of((1, 1, "Customer"), (1, 2, "2023"), (1, 3, "2024"), (2, 1, "Zenith Retail Ltd"), (2, 2, "100"), (2, 3, "120"))
+    (masked, _), mapping = mask(text)
+    assert "A2: Client-01" in masked and mapping == {"Zenith Retail Ltd": "Client-01"}
+    dated = text_of((1, 1, "Customer name"), (1, 2, "2024-01-31"), (2, 1, "Birch Labs Ltd"), (2, 2, "5"))
+    assert "Birch" not in mask(dated)[0][0]

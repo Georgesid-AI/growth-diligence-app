@@ -26,6 +26,8 @@ import growth_engine as ge
 import demo_data
 from schemas import metrics as contract
 from app import as_of as as_of_mod
+from app import readings as readings_mod
+from app import sheet_reader
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
@@ -353,6 +355,7 @@ async def audit_public(a: dict) -> dict:
     a.pop("token_map", None)      # real name -> token: server side only (read-check-review.md section 8)
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
     a["as_of_by"] = _as_of_by(a)
+    a.pop("as_of_cue", None)      # the boundary-cue path of PR 199 is gone; the evidence line is `as_of_evidence`
     a["provider_zdr"] = os.environ.get("PROVIDER_ZDR", "").strip().lower() == "true"     # picks the deck sentence of the Upload page text
     a["results_stale"] = run_audit.results_stale(a)
     if a["results_stale"]:
@@ -526,6 +529,10 @@ async def update_audit(audit_id: str, payload: AuditUpdate, background: Backgrou
         # hands it back to detection on Map.
         updates["as_of_by"] = as_of_mod.ANALYST if payload.as_of_month else as_of_mod.DETECTED
         updates["as_of_month"] = payload.as_of_month or None
+        if payload.as_of_month and payload.as_of_month != a.get("as_of_month"):
+            # A typed month is a dated override of the files' proposal, a record of its own (read-check-review.md section 9).
+            await readings_mod.add_override(db, reading="audit", audit_id=audit_id, item="as_of_month", path="as_of_month",
+                                            old=a.get("as_of_month"), new=payload.as_of_month, who="analyst", why="typed in the set-up")
     if "analysis_date" in payload.model_fields_set and payload.analysis_date is None:
         updates["analysis_date"] = None     # an explicit null returns the requested analysis date to today
     consent = updates.get("structure_reading_consent")
@@ -545,7 +552,8 @@ async def update_audit(audit_id: str, payload: AuditUpdate, background: Backgrou
         await deck_render.remove(db, audit_id)      # unticked: the stored deck files go (re-upload to read pages with images after ticking again)
     if ticked_later:
         # Consent false to true (chat-upload.md section 23): every deck already uploaded is read through the normal
-        # structure path, after the response. Mapped data files are not touched.
+        # structure path, after the response. Mapped data files are not touched; the sheet reader reads their stored sheets.
+        await _queue_stored_reads(audit_id, background)
         for deck_id in await structures.queue_decks(db, audit_id):
             background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
     return await audit_public(await db.audits.find_one({"id": audit_id}))
@@ -844,16 +852,22 @@ def _as_of_by(audit: Optional[dict]) -> str:
 
 
 async def _refresh_as_of(audit_id: str) -> None:
-    """Detect the audit's one as-of month when a file is mapped (docs/specs/dates-and-periods.md section 2) and store it on the audit,
-    unless the analyst typed one. A changed month marks computed results stale; nothing recomputes on its own."""
+    """Detect the audit's one as-of month when a file is mapped or read (docs/specs/dates-and-periods.md section 2, read-check-review.md
+    section 6) and store it on the audit, unless the analyst typed one. The proposal of the files is always kept (`as_of_proposal`), beside
+    a typed month too. A changed month marks computed results stale; nothing recomputes on its own."""
     a = await db.audits.find_one({"id": audit_id})
-    if not a or _as_of_by(a) == as_of_mod.ANALYST:
+    if not a:
         return
     docs = await db.datasets.find({"audit_id": audit_id, "dtype": {"$in": ["revenue", "pnl"]}}).to_list(4)
-    found = as_of_mod.detect({d["dtype"]: d for d in docs}, _fiscal_year_end(a))
+    found = as_of_mod.detect({d["dtype"]: d for d in docs}, _fiscal_year_end(a), await sheet_reader.reads_for(db, audit_id))
     month = as_of_mod.month_end(found["month"]) if found else None
-    fields = {"as_of_month": month, "as_of_by": as_of_mod.DETECTED, "as_of_file": found["file"] if found else None,
-              "as_of_cue": found["cue"] if found else None}
+    proposal = {"month": month, "file": found["file"], "evidence": found["evidence"]} if found else None
+    if _as_of_by(a) == as_of_mod.ANALYST:
+        fields = {"as_of_proposal": proposal}
+        month = a.get("as_of_month")
+    else:
+        fields = {"as_of_month": month, "as_of_by": as_of_mod.DETECTED, "as_of_file": found["file"] if found else None,
+                  "as_of_evidence": found["evidence"] if found else None, "as_of_proposal": proposal}
     if all(a.get(k) == v for k, v in fields.items()):
         return
     stale = {"setup_stale": True} if month != a.get("as_of_month") and a.get("results") else {}
@@ -1160,8 +1174,10 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
         elif dtype is None and chosen == "revenue" and result["file_type"] == "financial_statements":
             chosen = "pnl"                         # a statement-shaped P&L stays the audit's P&L and carries the recognition (section 8)
         if dtype is None and chosen == "revenue" and result["file_type"] in rec.NO_MAPPING_TYPES and rec.has_monthly_series(result):
-            return await _store_recognised(a, audit_id, filename, len(content), digest, replace, recognition, source, background,
-                                           type_status)
+            stored = await _store_recognised(a, audit_id, filename, len(content), digest, replace, recognition, source, background,
+                                             type_status)
+            await _queue_workbook_read(a, audit_id, sheets, digest, filename, chosen, background)
+            return stored
         extra = _recognition_fields(recognition, _keeps_rows(recognition), _fiscal_year_end(a))
     view = await _load(a, audit_id, chosen, cr.best_sheet(sheets, chosen), filename, len(content), digest, replace,
                        background, source, detected == chosen, type_status, extra=extra)
@@ -1178,7 +1194,50 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
                 "recognition_proposal": rec.renumber_proposal(proposal, sheets, names), "recognition_ai": status}})
             ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
             view = await _view(audit_id, ds, view.get("version"), view.get("status", "ok"))
+    await _queue_workbook_read(a, audit_id, sheets, digest, filename, chosen, background)
     return view
+
+
+async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filename: str) -> None:
+    """The sheet reader for one stored file (read-check-review.md section 3): read, check, re-read once, store the outcome, then refresh the
+    audit's as-of month. After the upload's response, so a long map never holds the request. A failure of any kind leaves the upload as it
+    is (rule 20) and is logged by code only."""
+    try:
+        a = await db.audits.find_one({"id": audit_id})
+        if not a:
+            return
+        doc = await sheet_reader.read_file(db, a, sheets, digest, filename, _fiscal_year_end(a))
+        status = doc.get("status", "not_read")
+        await _usage_update(audit_id, lambda u: u["steps"].setdefault("sheet_reading", {}).__setitem__(
+            status, u["steps"]["sheet_reading"].get(status, 0) + 1))
+        await _refresh_as_of(audit_id)
+        logger.info("sheet reading: run_id=%s status=%s month=%s", audit_id, status, doc.get("month") or "-")
+    except Exception as exc:
+        logger.error("sheet reading failed: run_id=%s error=%s", audit_id, type(exc).__name__)
+    finally:
+        await db.audits.update_one({"id": audit_id}, {"$inc": {"sheet_reads_pending": -1}})
+
+
+async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str, filename: str, chosen: Optional[str],
+                               background: Optional[BackgroundTasks]) -> None:
+    """Queue the sheet reader for a file just stored (not a CRM export: no period columns), with the audit's consent."""
+    if chosen == "crm" or a.get("structure_reading_consent") is not True:
+        return
+    await db.audits.update_one({"id": audit_id}, {"$inc": {"sheet_reads_pending": 1}})
+    if background is None:
+        await _read_workbook_safely(audit_id, sheets, digest, filename)
+    else:
+        background.add_task(_read_workbook_safely, audit_id, sheets, digest, filename)
+
+
+async def _queue_stored_reads(audit_id: str, background: BackgroundTasks) -> None:
+    """Consent ticked after the files were uploaded: every stored file that kept its sheets is read now. A reading already stored for the
+    file makes no call."""
+    a = await db.audits.find_one({"id": audit_id})
+    for ds in await db.datasets.find({"audit_id": audit_id, "dtype": {"$in": ["revenue", "pnl"]}}).to_list(4):
+        sheets = rec.unpack_sheets(ds.get("recognition_sheets") or [])
+        if sheets and ds.get("file_hash") and a:
+            await _queue_workbook_read(a, audit_id, sheets, ds["file_hash"], ds.get("file") or "", ds["dtype"], background)
 
 
 def _model_typed_a_records_file(recognition: dict, word: Optional[str]) -> bool:
@@ -2572,11 +2631,10 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
         elif stage == "engine":
             if not mapped:
                 result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_MAPPING)
-            elif not audit.get("as_of_month"):          # no month detected and none typed: Run audit waits for the analyst (dates-and-periods.md section 2)
-                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.AS_OF_CHECK)
             else:
+                # No month confirmed and none typed: the audit runs everything that does not depend on it (read-check-review.md section 6).
                 await _run_compute(audit_id)
-                result = run_audit.stage_result(stage, run_audit.DONE)
+                result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF)
         else:
             if not audit.get("results"):
                 result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_ENGINE)
