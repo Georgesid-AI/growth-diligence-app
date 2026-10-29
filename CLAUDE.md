@@ -1,8 +1,6 @@
 # CLAUDE.md — working rules
 
 ## Architecture
-1. The architecture (docs/architecture.md) is frozen. Never change it; only execution steps may
-   change. If a fix needs an architecture change, stop and report it as an "Architecture note".
 3. Do not confuse rigor with dumb. Evidence tiers, citations and source references
    (docs/architecture.md) are the core of the audit method. Challenge how they are built, never
    whether they exist.
@@ -128,3 +126,5 @@
     (docs/design/page-image.md). The gateway refuses the step on any model outside the allow-list of Sonnet and Opus families
     (gateway.PAGE_READER_MODELS). A model off the list is logged as an error at startup and the server stays up; every page read is then
     blocked before anything is converted, drawn or sent, and the panel says "AI read: blocked – model not permitted".
+
+32. Any change to the architecture (components, what crosses the server boundary, what the model sees, storage of readings) is named in the PR description under a heading "Architecture change" and needs George's approval before merge.

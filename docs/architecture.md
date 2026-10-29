@@ -1,3 +1,5 @@
+29 Oct 2026: the architecture is no longer frozen. Changes follow CLAUDE.md rule 32. The read/check/review pipeline in docs/design/read-check-review.md supersedes the rules-based reading described below.
+
 # Architecture
 
 This is the file CLAUDE.md rules 1 and 3 freeze and rules 16–18 amend. It describes; it decides nothing. A change to
