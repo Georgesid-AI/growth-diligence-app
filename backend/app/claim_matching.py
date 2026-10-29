@@ -1083,7 +1083,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
     figure_type = _figure_type(c, text, end, as_of_i)
     sort = deck_actuals.period_sort(c, as_of)           # deck-actuals.md section 1: the figure's own period against the as-of month, never the deck's date
-    deck_actual = deck_actuals.is_deck_actual(c, sort, figure_type)
+    deck_actual = deck_actuals.is_deck_actual(c, sort, figure_type) and c.get("scenario") not in SCENARIO_CASES    # a best or worst case is listed, never matched (George, 2026-10-23): no reconcile
     forecast = figure_type == "target" and end is not None and as_of_i is not None and end > as_of_i     # the classification says so
     turn = None
     if metric_by == "python" and _is_turnover_claim(c, text) and c.get("origin") != FORECAST_FILE:   # section 11
@@ -1165,7 +1165,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out["deck_only"] = out["deck_status"] == deck_actuals.TAG
         out["source"] = deck_actuals.source_text(out)
         if deck_actual and not out["claim_direction"]:
-            out["details"] = deck_actuals.deck_block(out, c.get("label_from"))
+            out["details"] = deck_actuals.deck_block(out, c.get("label_from"), note=deck_actuals.mark_note(c))
             out["data_request"] = deck_actuals.data_request(out)
         if out["evidence_analysis"] is None and reason.startswith("Missing:") and metric in METRICS:
             item = _missing_item(results, metric)
@@ -1335,6 +1335,10 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     verified = within_tolerance(metric, gap, claimed)
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
+    if deck_actual:                             # deck-actuals.md section 2a, checked before the Definition check: data prepared by management, not a claim; it differs from the file, either way
+        out["deck_status"] = deck_actuals.DIFFERS_STATUS
+        return finish("Contradicted", deck_actuals.DIFFERS_REASON.format(deck=_format(spec["unit"], claimed, results.get("reporting_currency")),
+                                                                     file=_format(spec["unit"], observed, results.get("reporting_currency"))))
     if is_big_gap(spec["unit"], out["gap"], out["gap_normalised"]):    # section 4.1: the analyst says whether claim and figure measure the same thing
         reporting = results.get("reporting_currency")
         # an answer holds only for the figures it was given against: if any differs now, it is asked again
@@ -1347,10 +1351,6 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
                           else DEFINITION_OPEN_REASON.format(share=f"{BIG_GAP_THRESHOLD:.0%}"))
         if answer == "no":
             return finish("Unverified", DEFINITION_MISMATCH)
-    if deck_actual:                             # deck-actuals.md section 2a: data prepared by management, not a claim; it differs from the file, either way
-        out["deck_status"] = deck_actuals.DIFFERS_STATUS
-        return finish("Contradicted", deck_actuals.DIFFERS_REASON.format(deck=_format(spec["unit"], claimed, results.get("reporting_currency")),
-                                                                     file=_format(spec["unit"], observed, results.get("reporting_currency"))))
     if kind == "beat":                          # amended 2026-10-13 (George): a beat is Verified, marked (beat), not Contradicted
         return finish("Verified", f"{BEAT_PREFIX}{out['gloss']}")
     return finish("Contradicted", f"outside {out['tolerance']}: a miss")

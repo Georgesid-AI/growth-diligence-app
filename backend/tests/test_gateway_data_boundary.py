@@ -3932,23 +3932,36 @@ def test_the_not_calculated_reasons_hold_closed_words_and_a_period_token_never_t
 
 def test_the_deck_actuals_reasons_and_details_hold_figures_and_closed_words_and_the_one_label_of_the_inputs_and_reach_no_model():
     """docs/design/deck-actuals.md: "deck differs from file" and "Deck only" are closed sentences with figures; the details block is built from stored
-    data with no model call, and the label as printed is held in its inputs only (and in the segment name of a part, as the segment rule already allows)."""
+    data with no model call, and the label as printed is held in its inputs and in `not_checked` only (both shown in the register and the memo; and in the segment name of a part, as the segment rule already allows)."""
     from app import deck_actuals
-    sentinel = "Zephyr Holdings"
+    sentinel = "zephyr holdings"      # lower case: a capitalised leftover word would name a segment, and the row would stop at "segment not in the data"
     base = {"id": "x1", "status": "approved", "origin": "ai", "ai_status": "matched", "claim_type": "revenue", "currency": "EUR", "target_date": "2026-12",
             "period_text": "Dec 2026", "snippet": "EUR 100", "label_from": f"{sentinel} Revenue", "file": "deck.pptx", "order": 0, "basis": "actual",
             "sources": [{"file": "deck.pptx", "slide": 3}]}
     from app.decks import claims as deck_claims
     results = {**_results_with_the_series(), "as_of_month": "2026-12", "mrr_series": {"months": ["2026-12"], "segments": [], "source": SOURCE,
                                                                                     "data": [{"month": "2026-12", "total": 500.0}]}}
-    for value in (4800.0, 100.0):
-        out = claim_matching.build_register([deck_claims.resolve_period({**base, "value": value}, 12)], results,
+    seen = {}
+    # 100.0 reconciles, 4800.0 is far beyond 50% off (the reconcile check runs before the Definition check), 4800.0 marked a projection carries the mark
+    # note, and a period the files hold nothing for is used as it stands ("Deck only"): every closed reason string and the details text is reached.
+    cases = ((15_000_000.0, "2026-12", {}), (SERIES_SENTINEL, "2026-12", {}), (15_000_000.0, "2026-12", {"basis": "projection"}), (4800.0, "2025-12", {}))
+    for value, period, extra in cases:
+        out = claim_matching.build_register([deck_claims.resolve_period({**base, "value": value, "target_date": period, **extra}, 12)], results,
                                             {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
-        assert out["deck_status"] in (deck_actuals.DIFFERS_STATUS, deck_actuals.TAG, deck_actuals.CONSISTENT, None), out["reason"]
+        assert out["deck_status"] in (deck_actuals.DIFFERS_STATUS, deck_actuals.TAG, deck_actuals.CONSISTENT), out["reason"]
+        seen[out["deck_status"]] = out
         elsewhere = {k: v for k, v in out.items() if k not in ("details", "segment", "relationship", "gate_sentence")}
         assert sentinel not in json.dumps(elsewhere, default=str)
-        if out["details"]:
-            assert [i["label"] for i in out["details"]["inputs"]] == [f"{sentinel} Revenue"]
-            assert sentinel not in out["details"]["formula"] and sentinel not in json.dumps(out["details"]["checked"]), "formula and checks say the metric"
+        assert out["details"], "every deck actual has its block"
+        assert [i["label"] for i in out["details"]["inputs"]] == [f"{sentinel} Revenue"]
+        everything_else = {k: v for k, v in out["details"].items() if k not in ("inputs", "not_checked")}
+        assert sentinel not in json.dumps(everything_else), "formula, checks and note say the metric and closed words, never the label"
+        assert out["details"]["not_checked"] in ([], [f"{sentinel} Revenue, Dec 2026 (slide 3)"]) or out["details"]["not_checked"][0].startswith(f"{sentinel} Revenue")
+    assert set(seen) == {deck_actuals.DIFFERS_STATUS, deck_actuals.TAG, deck_actuals.CONSISTENT}, "both new reasons and the consistent row were reached"
+    assert seen[deck_actuals.DIFFERS_STATUS]["reason"].startswith(deck_actuals.DIFFERS) and seen[deck_actuals.TAG]["reason"] == deck_actuals.DECK_ONLY_REASON
+    assert " by " in seen[deck_actuals.DIFFERS_STATUS]["details"]["checked"][0] and "matches" not in seen[deck_actuals.DIFFERS_STATUS]["details"]["checked"][0]
+    noted = claim_matching.build_register([deck_claims.resolve_period({**base, "value": 15_000_000.0, "basis": "projection"}, 12)], results,
+                                          {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]["details"]["note"]
+    assert noted == deck_actuals.mark_note({"basis": "projection"}) and sentinel not in noted
     assert deck_actuals.DIFFERS_REASON.format(deck="€1", file="€2") == "deck differs from file: deck €1, file €2"
     assert "app.llm" not in inspect.getsource(deck_actuals) and "gateway" not in inspect.getsource(deck_actuals)

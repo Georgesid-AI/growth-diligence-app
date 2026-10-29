@@ -197,6 +197,7 @@ function DeckDetails({ row }) {
     <div className="text-slate-600">
       {row.deck_only && <span className="mr-1 rounded bg-amber-100 px-1 text-amber-900" data-testid="register-deck-only">deck only</span>}
       {row.deck_status === "differs" && <span className="mr-1 rounded bg-rose-100 px-1 text-rose-900" data-testid="register-deck-differs">deck differs from file</span>}
+      {d.note && <span className="mr-1 text-slate-500" data-testid="register-deck-note">{d.note}</span>}
       <details className="inline" data-testid="register-deck-details">
         <summary className="inline cursor-pointer">Metric details</summary>
         <dl className="mt-1 space-y-0.5">

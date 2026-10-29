@@ -102,6 +102,32 @@ def test_a_deck_actual_beyond_tolerance_differs_from_the_file_and_is_listed_unde
     assert vd.flagged_rows([r]) == [r] and da.DIFFERS in vd.flag_text(r)
 
 
+@pytest.mark.parametrize("mark", [{"basis": "projection"}, {"basis": "scenario"}, {"basis": "actual"}])
+@pytest.mark.parametrize("value", [400_000.0, 600_000.0])
+def test_a_past_period_figure_marked_projection_is_still_a_deck_actual_and_the_mark_is_a_note(value, mark):
+    """Review of PR 201, finding (a): the figure's own period decides, never the reader's mark."""
+    r = register([reading("c1", value, "Recognised Revenue", "FY2021", **mark)])[0]
+    assert (r["period_sort"], r["deck_status"], r["evidence_label"]) == ("actual", "differs", "Contradicted")
+    assert r["reason"].startswith(da.DIFFERS) and vd.flagged_rows([r]) == [r]
+    assert ("marks this figure as a" in r["details"].get("note", "")) == (mark["basis"] != "actual")
+
+
+def test_an_unmarked_deck_actual_has_no_mark_note():
+    assert "note" not in register([reading("c1", 600_000.0, "Recognised Revenue", "FY2021")])[0]["details"]
+
+
+@pytest.mark.parametrize("value", [1_002_756.08, 250_000.0, 15_000_000.0])
+def test_a_deck_actual_far_from_the_file_is_contradicted_with_no_card_before_the_definition_check(value):
+    """Finding (b): the reconcile-with-file check runs before the Definition check, so a figure at 2x the file (or beyond 50% off) needs no answer."""
+    r = register([reading("c1", value, "Recognised Revenue", "FY2021")])[0]
+    assert (r["deck_status"], r["evidence_label"]) == ("differs", "Contradicted") and r["reason"].startswith(da.DIFFERS)
+    assert r.get("definition_check") in (None, "") or r["definition_check"] != cm.DEFINITION_ASK
+    assert not cm.asks_analyst(r) and vd.flagged_rows([r]) == [r]
+    checked = r["details"]["checked"][0]
+    assert "differs from File P&L!E3 by" in checked and "matches" not in checked
+    assert "100%" in register([reading("c1", 1_002_756.08, "Recognised Revenue", "FY2021")])[0]["details"]["checked"][0]
+
+
 def test_a_deck_actual_within_tolerance_is_verified_and_not_flagged():
     r = register([reading("c1", 510_000.0, "Recognised Revenue", "FY2021")])[0]      # +1.7%: inside ±5%
     assert (r["deck_status"], r["evidence_label"]) == ("consistent", "Verified") and vd.flagged_rows([r]) == []
@@ -207,6 +233,39 @@ def test_the_fold_keeps_the_specific_label_the_precise_value_and_every_page_and_
     assert len(deck_claims.fold_twins(copy.deepcopy(rate))) == 2, "only money amounts fold"
 
 
+def test_figures_with_their_own_different_periods_never_form_a_split_whatever_the_arithmetic():
+    """Finding (d) a: a revenue table 2019/2020/2021 of 1M, 2M, 3M is three totals; each is Verified against its own year, with no card."""
+    revenue = {2019: 1_000_000.0, 2020: 2_000_000.0, 2021: 3_000_000.0}
+    stored = [reading(f"c{k}", v, "Revenue", f"FY{y}", cell=f"p3t1r1c{k + 1}") for k, (y, v) in enumerate(revenue.items(), 1)]
+    assert not any(c.get("split_of") for c in da.page_splits(copy.deepcopy(stored)))
+    folded = deck_claims.fold_twins(copy.deepcopy(stored))
+    rows = cm.build_register(folded, results(revenue), settings())
+    assert [(r["period"], r["evidence_label"], r["deck_status"], r["group_role"]) for r in rows] == \
+        [(f"FY{y}", "Verified", "consistent", r["group_role"]) for y, r in zip(revenue, rows)]
+    assert all(r["segment"] == "Company" or r["segment"] in (None, "Whole company") or r["group_role"] != "segment_part" for r in rows)
+    assert cards(rows, folded) == {"rows": [], "flags": [], "conflicts": [], "reviews": []}
+
+
+def test_a_part_with_no_label_of_its_own_is_an_unlabelled_segment_under_the_total_with_no_card():
+    """Finding (d) b: page 3 with "New business" unlabelled gives the seven rows of the fixture, the part named "Unlabelled part"."""
+    stored = page3()
+    stored[1] = {**stored[1], "label_from": None, "flags": ["no label read"]}
+    folded = deck_claims.fold_twins(copy.deepcopy(stored))
+    rows = cm.build_register(folded, results(), settings())
+    assert len(rows) == 7
+    part = row_of(rows, 482_475)
+    assert (part["segment"], part["group_role"], part["period"], part["deck_only"]) == (da.UNLABELLED, "segment_part", "FY2021", True)
+    assert da.UNLABELLED == "Unlabelled part"
+    assert cards(rows, folded) == {"rows": [], "flags": [], "conflicts": [], "reviews": []}
+    assert row_of(rows, FY[2021])["evidence_label"] == "Verified", "the total is still the only FY2021 company revenue"
+
+
+def test_a_part_with_the_label_of_the_total_is_an_unlabelled_segment_too():
+    stored = [reading("c1", 1_000.0, "Revenue", "FY2021"), reading("c2", 700.0, "Revenue", "FY2021"), reading("c3", 300.0, "Beta", "FY2021")]
+    parts = {c["id"]: c["split_segment"] for c in da.page_splits(copy.deepcopy(stored)) if c.get("split_of")}
+    assert parts == {"c2": da.UNLABELLED, "c3": "Beta"}
+
+
 # --- 4. segment names from the nearest label ------------------------------------------------------------------------------------------
 
 def test_a_segment_is_named_by_the_legend_item_of_its_bar_or_the_rotated_chart_label_not_by_the_page_heading():
@@ -235,3 +294,22 @@ def test_the_row_of_a_page_claim_whose_label_is_the_page_heading_takes_the_legen
     assert row["label_from"] == "Enterprise"
     item["label_text"] = "Core platform"
     assert pipeline.row_from_claim(item, grid(cells, rects), {"file": "d.pdf", "blocks": []}, 12)["label_from"] == "Core platform", "a real label stands"
+
+
+@pytest.mark.parametrize("first, second, kept", [
+    ("FINANCIAL HIGHLIGHTS", "Recognised Revenue", "Recognised Revenue"),
+    ("Recognised Revenue", "FINANCIAL HIGHLIGHTS", "Recognised Revenue"),
+    ("2021 REVENUE", "Recognised Revenue", "Recognised Revenue"),
+    ("Revenue", "Recognised Revenue", "Recognised Revenue"),
+    ("FINANCIAL HIGHLIGHTS 2021", "KEY FIGURES", "KEY FIGURES"),
+    ("KEY FIGURES", "FINANCIAL HIGHLIGHTS", "FINANCIAL HIGHLIGHTS"),
+])
+def test_the_fold_label_prefers_a_metric_name_to_a_heading_then_the_longer_metric_then_the_heading_without_digits(first, second, kept):
+    """Finding (e)."""
+    assert deck_claims.specific_label(first, second) == kept
+
+
+def test_the_fold_keeps_the_metric_name_over_a_heading_without_digits():
+    stored = [reading("c1", 501_378, "FINANCIAL HIGHLIGHTS", "FY2021"), reading("c2", 501_378.04, "Recognised Revenue", "FY2021", page=12, structure_key="page-12")]
+    one, = deck_claims.fold_twins(copy.deepcopy(stored))
+    assert one["label_from"] == "Recognised Revenue"

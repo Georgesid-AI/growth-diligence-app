@@ -1663,12 +1663,22 @@ def growth_basis(text: str) -> str:
     return found[0] if len(found) == 1 else "unknown"
 
 
+def _is_metric_name(label: str) -> bool:
+    """Whether a label is a metric name the mapping recognises ("Recognised Revenue", "ARR", "Customers", "Revenue growth"): a metric keyword and nothing
+    left that names a segment, a product or a heading word ("REVENUE OVERVIEW", "2021 REVENUE" are headings; the period alone is no segment)."""
+    from .. import claim_matching
+    return any(rx.search(label) for _, rx in _KEYWORDS) and claim_matching.label_segment(label) is None
+
+
 def specific_label(a: Optional[str], b: Optional[str]) -> Optional[str]:
-    """The more specific of two labels read for one figure: a metric name ("Recognised Revenue") over a page heading that carries the
-    year or a number ("2021 REVENUE"); of two alike, the longer; of two the same length, the first. A missing label gives the other."""
+    """The more specific of two labels read for one figure. A metric name ("Recognised Revenue", "ARR", "Customers") always wins over a heading
+    ("FINANCIAL HIGHLIGHTS", "2021 REVENUE"), whatever its length or digits; of two metric names, the longer; of two headings, the one without
+    digits, then the longer; of two alike, the first. A missing label gives the other."""
     if not a or not b:
         return a or b
-    rank = lambda text: (not re.search(r"\d", text), len(text.strip()))      # noqa: E731
+    def rank(text: str) -> tuple:
+        text = text.strip()
+        return (1, len(text), 0) if _is_metric_name(text) else (0, int(not re.search(r"\d", text)), len(text))
     return b if rank(b) > rank(a) else a
 
 

@@ -412,6 +412,14 @@ describe("deck actuals (docs/design/deck-actuals.md)", () => {
     const { host, root } = await mount([{ ...ROW, deck_status: "differs", details: DETAILS }]);
     expect(host.querySelector('[data-testid="register-deck-differs"]').textContent).toBe("deck differs from file");
     expect(host.querySelector('[data-testid="register-deck-only"]')).toBeNull();
+    expect(host.querySelector('[data-testid="register-deck-note"]')).toBeNull();
+    await act(async () => { root.unmount(); });
+  });
+
+  it("shows the note of a deck actual the reader marked a projection", async () => {
+    const note = "The deck marks this figure as a projection; its period has passed, so it is checked as an actual.";
+    const { host, root } = await mount([{ ...ROW, deck_status: "differs", details: { ...DETAILS, note } }]);
+    expect(host.querySelector('[data-testid="register-deck-note"]').textContent).toBe(note);
     await act(async () => { root.unmount(); });
   });
 });

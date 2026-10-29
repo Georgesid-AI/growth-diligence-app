@@ -14,6 +14,11 @@ month. The deck's date is never used.
   existing forecast rules (never Verified or Contradicted).
 - No readable period: one card for the analyst, "Set the period".
 
+The period alone decides. A figure the page reader marked a projection or a
+scenario, with a period that has ended, is still a deck actual; the mark is
+shown as a note on the row. (Best and worst cases keep their own rule: listed,
+never matched.)
+
 ## 2. What happens to a deck actual
 
 a) The files hold the same metric and period: reconcile. Within tolerance,
@@ -22,7 +27,10 @@ a) The files hold the same metric and period: reconcile. Within tolerance,
    "deck differs from file", shown in the register and under Worth flagging.
    (Amended 2026-10-29, George: Contradicted, not Unverified. Built for
    page-read figures only; the rules read and the analyst's own claims keep
-   their existing test.)
+   their existing test.) This check runs before the Definition check: a figure
+   far off the file is Contradicted on its own, with no card and no answer
+   needed, and its details block says "differs from File <cell> by X%", never
+   "matches".
 b) The files hold nothing for it: use it. The engine computes what the
    figures allow (customer count, concentration, growth by customer, stated
    NRR or churn). The result is labelled Unverified and carries the tag
@@ -56,15 +64,24 @@ and its metric, and sit under it in the register as a split
 (segment-partitions.md). A period or label disagreement on a segment is
 resolved by the sum; no card is raised.
 
+Two limits. Figures that each carry a period of their own, and differ from
+one another, never form a split: a revenue table of 2019, 2020 and 2021 is
+three totals, whatever the arithmetic. A part with no label of its own, or the
+same label as the total, stays a segment under the total named "Unlabelled
+part"; it is never a rival total for the total's period and raises no card.
+
 Segment names are read from the nearest label, including rotated chart
 labels and legend text, not from the page heading.
 
 ## 5. Folding two readings of one figure
 
 When two readings on one page fold into one row (same metric, same period,
-value within tolerance), the row keeps the more specific label (a metric name
-such as "Recognised Revenue" over a heading such as "2021 REVENUE") and all
-page references.
+value within tolerance), the row keeps the more specific label and all page
+references. A metric name (a label the mapping recognises as a metric:
+"Recognised Revenue", ARR, customers, growth) always wins over a heading
+("FINANCIAL HIGHLIGHTS", "2021 REVENUE"), whatever its length or digits;
+between two metric names the longer wins; between two headings the one
+without digits.
 
 ## 6. Data requests
 

@@ -26,6 +26,7 @@ HOLDS_NOTHING = ("claim period not in supplied data", "Missing:", "Not computed"
 SPLIT_RESOLVES = ("sources disagree", "source ambiguous", "source not associated", "period not on page", "year under bar differs", "label mismatch",
                   "period is a range")
 NO_LABEL = "no label read"
+UNLABELLED = "Unlabelled part"          # the name of a split part that has no label of its own (or the total's): a segment under the total, never a rival total
 DECK_ORIGINS_OUT = ("analyst", "forecast_file")
 PAGE_READER = "ai"                      # the origin of a figure the page reader read: the default path, DECK_PIPELINE=ai (the rules read keeps its tests)
 PAGE_UNITS = ("slide", "page")
@@ -54,10 +55,17 @@ def period_sort(c: dict, as_of: Optional[str]) -> Optional[str]:
 
 
 def is_deck_actual(c: dict, sort: Optional[str], figure_type: Optional[str]) -> bool:
-    """A deck actual (section 2): a figure the page reader read from a deck, for a period that has passed, not a projection or a scenario,
-    and not a figure the words of the claim make a target. The rules read (DECK_PIPELINE=rules, Add from deck) and the analyst's own claims keep their test."""
-    return sort == ACTUAL and figure_type == "actual" and c.get("origin") == PAGE_READER and c.get("basis") not in ("projection", "scenario") \
-        and c.get("scenario") in (None, "none") and c.get("value") is not None
+    """A deck actual (section 1): a figure the page reader read from a deck whose own period has passed, whatever the reader marked it (projection,
+    scenario) and whatever its words say; the mark is shown as a note (`mark_note`). The rules read (DECK_PIPELINE=rules, Add from deck) and the
+    analyst's own claims keep their test. `figure_type` is not read: the period alone decides."""
+    return sort == ACTUAL and c.get("origin") == PAGE_READER and c.get("value") is not None
+
+
+def mark_note(c: dict) -> Optional[str]:
+    """The note of a deck actual the page reader marked a projection or a scenario: the deck says so, the figure's period has passed, so it is
+    checked as an actual all the same. A closed sentence of the reader's marks, no deck text."""
+    mark = c.get("basis") if c.get("basis") in ("projection", "scenario") else "scenario" if c.get("scenario") not in (None, "none") else None
+    return f"The deck marks this figure as a {mark}; its period has passed, so it is checked as an actual." if mark else None
 
 
 def holds_nothing(reason: Optional[str]) -> bool:
@@ -107,7 +115,7 @@ def source_text(row: dict) -> Optional[str]:
 BLOCK_PARTS = ("inputs", "formula", "checked", "not_checked")
 
 
-def deck_block(row: dict, label: Optional[str], formula: Optional[str] = None) -> dict:
+def deck_block(row: dict, label: Optional[str], formula: Optional[str] = None, note: Optional[str] = None) -> dict:
     """The details block of a deck figure, built from the row alone: the deck figure with its page and label as printed, the calculation with the numbers
     filled in, what a file confirmed (with the file cell) and what none did (by page)."""
     name = label or row.get("metric") or "Figure"
@@ -124,8 +132,9 @@ def deck_block(row: dict, label: Optional[str], formula: Optional[str] = None) -
         observed = row.get("observed_value")
         shown = (f"{observed:.2f}x" if multiple else number(observed)) if observed is not None else "no figure"
         if status == DIFFERS_STATUS:
-            checked, unchecked = [f"{said} differs from {where or 'the file'} (deck {f'{value:g}x' if multiple else number(value)}, file {shown})"], []
-        elif where:
+            by = f" by {number(abs(value - observed) / abs(observed) * 100, 1)}%" if observed else ""
+            checked, unchecked = [f"{said} differs from {where or 'the file'}{by} (deck {f'{value:g}x' if multiple else number(value)}, file {shown})"], []
+        elif status == CONSISTENT and where:
             checked, unchecked = [f"{said} matches {where} ({shown})"], []
         else:
             checked, unchecked = [f"{said} checked against the files ({shown})"], []
@@ -134,7 +143,8 @@ def deck_block(row: dict, label: Optional[str], formula: Optional[str] = None) -
             formula = formula or f"{parts[0]['name']} ÷ {parts[1]['name']} = {number(parts[0]['value'])} ÷ {number(parts[1]['value'])} = {observed:.2f}x"
         formula = formula or (f"{row.get('metric') or name}, {row.get('observed_at') or period} = {shown}"
                               + (f" ({(row.get('observed_source') or {}).get('rule')})" if (row.get("observed_source") or {}).get("rule") else ""))
-    return {"inputs": inputs, "formula": formula, "checked": checked, "not_checked": unchecked}
+    block = {"inputs": inputs, "formula": formula, "checked": checked, "not_checked": unchecked}
+    return {**block, "note": note} if note else block
 
 
 def results_blocks(results: dict) -> List[dict]:
@@ -220,6 +230,15 @@ def segment_name(c: dict) -> Optional[str]:
     return cm.page_segment(c.get("page_segment"), c.get("claim_type")) or (cm.label_segment(c.get("label_from")) if c.get("claim_type") in cm.MONEY_TYPES else None)
 
 
+def _own_period(c: dict) -> Optional[tuple]:
+    return (c.get("period_start"), c.get("period_end")) if c.get("period_start") and c.get("period_end") else None
+
+
+def _periods_differ(parts: Iterable[dict]) -> bool:
+    """Whether parts that each have a period of their own have two different ones: a table of years is separate totals, whatever the arithmetic."""
+    return len({p for p in map(_own_period, parts) if p}) > 1
+
+
 def page_splits(candidates: List[dict]) -> List[dict]:
     """Two or more figures of one page that add up, within the reconciliation tolerance, to a third figure of the same page are segments of it (section 4).
     They take the total's period and metric and sit under it as a split; the disagreement of a part's period or label is settled by the sum, so the flags
@@ -243,6 +262,8 @@ def page_splits(candidates: List[dict]) -> List[dict]:
             best = None
             for size in range(2, min(len(others), SPLIT_SEARCH_MAX) + 1):
                 for subset in combinations(others[:SPLIT_SEARCH_MAX], size):
+                    if _periods_differ(out[i] for i in subset):
+                        continue
                     gap = abs(sum(_decimal(out[i]["value"]) for i in subset) - _decimal(total["value"]))
                     if gap <= SPLIT_TOLERANCE * _decimal(total["value"]) and (best is None or gap < best[0]):
                         best = (gap, subset)
@@ -259,8 +280,9 @@ def _as_part(part: dict, total: dict) -> dict:
     """The part with the total's period and metric, its own segment name, and the flags the sum settled removed."""
     printed = " ".join((part.get("label_from") or "").split())
     name = printed if printed and printed != " ".join((total.get("label_from") or "").split()) else segment_name(part)     # the label it stands under, as printed
+    name = name or UNLABELLED
     fields = {k: total.get(k) for k in ("target_date", "period_text", "period_start", "period_end", "period_read_note", "claim_type",
                                          "heading_metric", "basis", "scenario")}
-    settled = [f for f in part.get("flags") or () if f in SPLIT_RESOLVES or (f == NO_LABEL and name)]
-    return {**part, **fields, "split_of": total["id"], "split_segment": name or part.get("page_segment"),
+    settled = [f for f in part.get("flags") or () if f in SPLIT_RESOLVES or f == NO_LABEL]
+    return {**part, **fields, "split_of": total["id"], "split_segment": name,
             "flags": [f for f in part.get("flags") or () if f not in settled]}
