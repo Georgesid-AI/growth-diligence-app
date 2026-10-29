@@ -449,7 +449,7 @@ describe("the type, the sheet and the miss (2026-10-16)", () => {
     expect(S2_EXPLAINER_CONSENT).toContain("When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.");
     expect(S2_EXPLAINER_CONSENT).not.toMatch(/company name/);
     // George, 2026-10-22 (docs/design/ai-reads-rules-check.md): the page reader is named in the explainer, one sentence, last.
-    expect(S2_EXPLAINER_CONSENT).toContain(" The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction. ");
+    expect(S2_EXPLAINER_CONSENT).toContain(" The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. ");
   });
 
   test("the bubble shows the detected type with its source and a Change button, the sheet read, and the units note", async () => {
@@ -1210,8 +1210,7 @@ describe("a P&L read as a statement (section 26)", () => {
     expect(q("type-label-pnl").textContent).toContain("Type: P&L (yearly summary)");
     expect(q("sheet-map-caption-pnl").textContent).toBe('Sheet "CSV" · header on row 2 · labels in column A');
     expect(q("sheet-map-sent").textContent).toBe(S30a_sent(STATEMENT().sheet_map.counts));
-    expect(q("sheet-map-sent").textContent).toBe("Sent to the AI: 24 lines. Masked: 0 emails, 0 phone numbers, 1 name, 2 customer names, "
-      + "1 company name. Withheld: 1 column, 0 long cells.");
+    expect(q("sheet-map-sent").textContent).toBe("Sent to the AI: 24 lines. Personal items removed: 1. Company names tokenised: 3. Columns withheld: 1.");
     expect(q("line-checks-9").textContent).toBe("No breakdown (FY2021, FY2022)");
     expect(q("line-checks-8").textContent).toBe(S30C_RATE);
     expect(q("line-label-10").style.paddingLeft).toBe("12px");

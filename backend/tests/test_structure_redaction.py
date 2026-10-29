@@ -87,36 +87,36 @@ def test_the_target_company_name_is_never_rewritten():
 # ---------------------------------------------------------------------------
 # Customer names: whole words, any case, through the shared per-audit mapping
 # ---------------------------------------------------------------------------
-MAPPING = {"Northwind Trading": "Customer_01", "Acme": "Customer_02", "ABC": "Customer_03", "12345": "Customer_04",
-           "2024-01": "Customer_05", "Cust": "Customer_06", "Enterprise": "Segment A", "Acme Co": "Customer_07"}
+MAPPING = {"Northwind Trading": "Client-01", "Acme": "Client-02", "ABC": "Client-03", "12345": "Client-04",
+           "2024-01": "Client-05", "Cust": "Client-06", "Enterprise": "Segment A", "Acme Co": "Client-07"}
 
 
 def test_customer_names_are_replaced_as_whole_words_in_any_case():
     out, count = redact.pseudonymise_cells(
         _cells("Revenue from Northwind Trading Ltd", "NORTHWIND TRADING renewed", "AcmeCorp expansion"), MAPPING, "Target Ltd")
-    assert _texts(out) == ["Revenue from Customer_01 Ltd", "Customer_01 renewed", "Customer_02Corp expansion"]
+    assert _texts(out) == ["Revenue from Client-01 Ltd", "Client-01 renewed", "Client-02Corp expansion"]
     assert count == 3
 
 
 def test_short_numeric_and_date_names_the_target_name_and_pseudonyms_are_left_alone():
-    cells = _cells("ABC signed 12345 seats on 2024-01", "Acme Holdings vs Acme", "Customer_01 and Customer_02",
+    cells = _cells("ABC signed 12345 seats on 2024-01", "Acme Holdings vs Acme", "Client-01 and Client-02",
                    "Enterprise accounts")
     out, count = redact.pseudonymise_cells(cells, MAPPING, "Acme Holdings")
-    assert _texts(out) == ["ABC signed 12345 seats on 2024-01", "Acme Holdings vs Customer_02",
-                           "Customer_01 and Customer_02", "Enterprise accounts"]
-    assert count == 1, "Cust is never matched inside Customer_01; segment labels are not customer names"
+    assert _texts(out) == ["ABC signed 12345 seats on 2024-01", "Acme Holdings vs Client-02",
+                           "Client-01 and Client-02", "Enterprise accounts"]
+    assert count == 1, "Cust is never matched inside Client-01; segment labels are not customer names"
 
 
 @pytest.mark.parametrize("text, expected", [
     ("Paying customers", "Paying customers"),                      # "Cust" inside a word
     ("Acmes grew", "Acmes grew"),                                  # no boundary before the "s"
-    ("Cust", "Customer_06"),
-    ("ACME-led growth", "Customer_02-led growth"),                 # a hyphen
-    ("(Acme), Northwind Trading.", "(Customer_02), Customer_01."),  # punctuation
-    ("myAcme portal", "myCustomer_02 portal"),                     # a change of case before
-    ("ACMECorp", "Customer_02Corp"),                               # capitals, then a capitalised word
-    ("Acme Corp", "Customer_02 Corp"),                             # "Acme Co" is no whole word here; "Acme" is
-    ("Acme Co renewed", "Customer_07 renewed"),                    # the longest whole-word name wins
+    ("Cust", "Client-06"),
+    ("ACME-led growth", "Client-02-led growth"),                 # a hyphen
+    ("(Acme), Northwind Trading.", "(Client-02), Client-01."),  # punctuation
+    ("myAcme portal", "myClient-02 portal"),                     # a change of case before
+    ("ACMECorp", "Client-02Corp"),                               # capitals, then a capitalised word
+    ("Acme Corp", "Client-02 Corp"),                             # "Acme Co" is no whole word here; "Acme" is
+    ("Acme Co renewed", "Client-07 renewed"),                    # the longest whole-word name wins
 ])
 def test_a_word_boundary_is_a_space_punctuation_a_hyphen_or_a_change_of_case(text, expected):
     out, _ = redact.pseudonymise_cells(_cells(text), MAPPING, "Target Ltd")
@@ -125,13 +125,13 @@ def test_a_word_boundary_is_a_space_punctuation_a_hyphen_or_a_change_of_case(tex
 
 def test_a_whole_word_overlapping_a_non_word_match_of_the_same_name_is_still_replaced():
     # "nana" first matches inside "Banana" (no boundary); the whole word "Nana" after the change of case overlaps it.
-    out, _ = redact.pseudonymise_cells(_cells("BanaNana"), {"Nana": "Customer_01"}, "Target Ltd")
-    assert _texts(out) == ["BanaCustomer_01"]
+    out, _ = redact.pseudonymise_cells(_cells("BanaNana"), {"Nana": "Client-01"}, "Target Ltd")
+    assert _texts(out) == ["BanaClient-01"]
 
 
 def test_the_target_name_inside_a_longer_customer_name_does_not_protect_it():
-    out, _ = redact.pseudonymise_cells(_cells("Alphabet renewed", "Alpha plan"), {"Alphabet": "Customer_01"}, "Alpha")
-    assert _texts(out) == ["Customer_01 renewed", "Alpha plan"]
+    out, _ = redact.pseudonymise_cells(_cells("Alphabet renewed", "Alpha plan"), {"Alphabet": "Client-01"}, "Alpha")
+    assert _texts(out) == ["Client-01 renewed", "Alpha plan"]
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ def test_only_the_target_company_name_is_withheld_and_a_stored_client_name_is_no
     assert counts["withheld"] == 1
     again, more = redact.redact_structure(out, "Target Ltd", MAPPING, withheld)
     assert again == out and not any(more.values()), "a second pass changes nothing"
-    kept, _ = redact.pseudonymise_cells(out, {"Redacted": "Customer_09"}, "Target Ltd")
+    kept, _ = redact.pseudonymise_cells(out, {"Redacted": "Client-09"}, "Target Ltd")
     assert kept == out, "the placeholder is never rewritten, even by a name that matches it"
 
 
@@ -165,7 +165,7 @@ def test_a_second_pass_changes_nothing():
     first, _ = redact.redact_structure(cells, "Target Ltd", MAPPING)
     second, counts = redact.redact_structure(first, "Target Ltd", MAPPING)
     assert second == first and not any(counts.values())
-    assert _texts(first) == ["Contact", "[email]", "Customer_01", "[person]", "[phone]"]
+    assert _texts(first) == ["Contact", "[email]", "Client-01", "[person]", "[phone]"]
 
 
 def test_the_structure_text_carries_cells_and_spans_and_nothing_else():
@@ -187,8 +187,8 @@ def test_customers_join_the_narrative_mapping_with_the_same_pseudonyms():
         return narrative, shared, again
     narrative, shared, again = asyncio.run(run())
     assert shared[t.REAL_NAMES[0]] == narrative[t.REAL_NAMES[0]], "one customer, one pseudonym on both paths"
-    customers = [v for v in narrative.values() if v.startswith("Customer_")]
-    assert shared["Zeta Retail"] == f"Customer_{len(customers) + 1:02d}"
+    customers = [v for v in narrative.values() if v.startswith("Client-")]
+    assert shared["Zeta Retail"] == f"Client-{len(customers) + 1:02d}"
     assert again == shared, "the narrative path keeps the names the structure path added"
 
 
@@ -215,6 +215,18 @@ def test_mapping_the_revenue_and_crm_files_adds_their_customer_names(api):
     client.post("/api/audits/audit-1/datasets/crm/upload", files={"file": ("crm.csv", crm)})
     assert client.put("/api/audits/audit-1/datasets/crm/mapping",
                       json={"mapping": {"deal_id": "Deal ID"}}).status_code == 200
-    stored = db["pseudonym_map"].docs[0]["mapping"]
+    stored = db["audits"].docs[0]["token_map"]
     assert set(stored) == {"Acme", "Northwind Trading", "Zeta Retail"}, "the CRM customer column is found by alias"
-    assert sorted(stored.values()) == ["Customer_01", "Customer_02", "Customer_03"]
+    assert sorted(stored.values()) == ["Client-01", "Client-02", "Client-03"]
+
+
+def test_the_token_map_is_never_returned_by_the_api(api):
+    client, db = api
+    revenue = "Client,Invoice Date,Amount,Currency\nNorthwind Trading,2025-01-31,100,EUR\n"
+    client.post("/api/audits/audit-1/datasets/revenue/upload", files={"file": ("rev.csv", revenue)})
+    mapping = {"customer_id": "Client", "invoice_date": "Invoice Date", "amount": "Amount", "currency": "Currency"}
+    assert client.put("/api/audits/audit-1/datasets/revenue/mapping", json={"mapping": mapping}).status_code == 200
+    assert db["audits"].docs[0]["token_map"] == {"Northwind Trading": "Client-01"}
+    for url in ("/api/audits/audit-1", "/api/audits"):
+        body = client.get(url).text
+        assert "token_map" not in body and "Client-01" not in body, url

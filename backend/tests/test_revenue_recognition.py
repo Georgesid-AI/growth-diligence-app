@@ -571,7 +571,9 @@ def test_the_payload_and_the_row_labels_are_never_stored_or_logged(api, caplog):
     set_as_of(api)
     api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply()])
     upload(api, MONTHLY, monthly_bytes())
-    stored = json.dumps([api.db[n].docs for n in ("llm_structures", "llm_calls", "column_mappings", "audits")], default=str)
+    # The token map is the one stored copy of the names, on the audit record only (read-check-review.md section 8).
+    audits = [{k: v for k, v in d.items() if k != "token_map"} for d in api.db["audits"].docs]
+    stored = json.dumps([api.db[n].docs for n in ("llm_structures", "llm_calls", "column_mappings")] + [audits], default=str)
     sent = [json.loads(p)["text"] for p in adapter_of(api).payloads]
     log = "\n".join(r.getMessage() for r in caplog.records)
     secrets = ("Northwind Test Co", "Recognised revenue", "Forecast revenue", "Logo churn", "Gross margin", MONTHLY)
@@ -759,7 +761,9 @@ def test_an_entity_labelled_upload_stores_and_logs_no_customer_name(api, caplog)
     upload(api, "customer_revenue_months.csv", (FIXTURES / "customer_revenue_months.csv").read_bytes())
     decide(api, action="confirm", part="last_actual")
     sent = " ".join(json.loads(p)["text"] for p in recognition_calls(api))
-    stored = json.dumps([api.db[n].docs for n in ("llm_structures", "llm_calls", "column_mappings", "audits")], default=str)
+    # The token map is the one stored copy of the names, on the audit record only (read-check-review.md section 8).
+    audits = [{k: v for k, v in d.items() if k != "token_map"} for d in api.db["audits"].docs]
+    stored = json.dumps([api.db[n].docs for n in ("llm_structures", "llm_calls", "column_mappings")] + [audits], default=str)
     log = "\n".join(r.getMessage() for r in caplog.records)
     names = ("Alder Works", "Birch Labs", "Cedar Foods", "Dune Print", "Elm Studio", "Fern Tools", "Gorse Yard", "Heath Pumps", "Iris Optics",
              "Juniper Mills", "Margin Foods", "Larch Freight")

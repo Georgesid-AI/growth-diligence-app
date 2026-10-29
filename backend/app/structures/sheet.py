@@ -1044,7 +1044,8 @@ def skeleton(reading: Dict, company_name: Optional[str], mapping: Dict[str, str]
     text = redact.sheet_text([cells[i] for i in keep], reading["rows"], dropped)
     _, counts = redact.redact_structure([raw[i] for i in keep], company_name, mapping, withheld)   # what was masked in the text
     counts = {"lines": len(keep), "email": counts["email"], "phone": counts["phone"], "person": counts["person"],
-              "customer": counts["customer"], "company": counts["withheld"], "columns": len(held), "long": len(long_cells)}
+              "iban": counts["iban"], "id": counts["id"], "customer": counts["customer"], "company": counts["withheld"],
+              "columns": len(held) + counts["people_columns"], "long": len(long_cells)}
     return text, counts
 
 

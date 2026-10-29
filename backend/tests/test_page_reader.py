@@ -202,7 +202,7 @@ def test_pipeline_rows_keep_their_printed_names_under_a_customer_header():
     assert "Acme Retail" in sent and "Globex Corp" in sent and "[redacted]" not in sent
     rows = db[CANDIDATES_COLLECTION].docs
     assert sorted(r["label_from"] for r in rows) == ["Acme Retail", "Globex Corp"], "the printed names, not placeholders"
-    assert all("[redacted]" not in json.dumps(r) and "Customer_" not in json.dumps(r) for r in rows)
+    assert all("[redacted]" not in json.dumps(r) and "Client-" not in json.dumps(r) for r in rows)
 
 
 # ---------------------------------------------------------------------------

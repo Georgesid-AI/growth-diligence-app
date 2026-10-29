@@ -124,7 +124,7 @@ def test_batches_hold_five_pages_and_the_text_comes_through_the_one_builder_as_p
     assert text.startswith("p6r1c1 title: Traction\np6r2c1: 800 Paying Users")
     for needle in ("Jane Doe", "Max Mustermann", "Northwind Trading"):
         assert needle in text, f"{needle!r} is printed on the page and goes as printed (page-image.md section 2)"
-    assert "[person]" not in text and "Customer_01" not in text and "[redacted]" not in text
+    assert "[person]" not in text and "Client-01" not in text and "[redacted]" not in text
     cells = redact.parse_page_text(text)
     assert set(cells) == {6, 7}
     assert not [c for page in cells.values() for c in page if len(c["text"]) > 200], "a line over 200 characters is left out (1b)"
@@ -158,7 +158,9 @@ def test_with_the_switch_at_ai_the_pages_are_read_and_each_claim_is_a_row_matche
     status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     assert status == "read" and adapter.calls == 1
     sent = json.loads(adapter.payloads[0])
-    assert sent["type"] == PAGE_CLAIMS and sent["text"] == pipeline.batch_text(pipeline.batches(pages.page_grids(parsed["blocks"]))[0])
+    # The sender builds the text as printed; the gateway masks it (read-check-review.md section 8): the name is removed, the rest is as built.
+    built = pipeline.batch_text(pipeline.batches(pages.page_grids(parsed["blocks"]))[0])
+    assert sent["type"] == PAGE_CLAIMS and sent["text"] == built.replace("Jane Doe", "[person]")
     assert adapter.requests[-1]["cache_system"] is True, "the fixed prompt is marked for the prompt cache"
     rows = sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"])
     assert [(r["claim_type"], r["value"], r["ai_label"]) for r in rows] == [

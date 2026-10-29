@@ -350,6 +350,7 @@ def sanitize(obj):
 
 async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
+    a.pop("token_map", None)      # real name -> token: server side only (read-check-review.md section 8)
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
     a["as_of_by"] = _as_of_by(a)
     a["provider_zdr"] = os.environ.get("PROVIDER_ZDR", "").strip().lower() == "true"     # picks the deck sentence of the Upload page text
@@ -503,7 +504,7 @@ async def my_allowance(request: Request):
 async def list_audits(request: Request):
     who = getattr(request.state, "principal", None)
     flt = {"owner": who[1]} if who else {}
-    return await db.audits.find(flt, {"_id": 0, "results": 0, "usage": 0, "owner": 0}).sort("created_at", -1).to_list(200)
+    return await db.audits.find(flt, {"_id": 0, "results": 0, "usage": 0, "owner": 0, "token_map": 0}).sort("created_at", -1).to_list(200)
 
 
 @api.get("/audits/{audit_id}")

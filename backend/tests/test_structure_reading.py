@@ -1890,11 +1890,12 @@ def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client)
-    assert db[gateway.STRUCTURES_COLLECTION].docs and db["pseudonym_map"].docs and db["column_mappings"].docs
+    assert db[gateway.STRUCTURES_COLLECTION].docs and db["audits"].docs[0].get("token_map") and db["column_mappings"].docs
     assert all(doc.get("items") for doc in db[gateway.STRUCTURES_COLLECTION].docs if "labels" in doc["output"])
     purged = client.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": AUDIT_DOC["company_name"]}).json()
     assert purged["llm_purged"]["llm_structures"] > 0, "the replies and their item lists go with the audit"
-    for name in (gateway.STRUCTURES_COLLECTION, "pseudonym_map", "column_mappings", "llm_calls", "deck_candidates",
+    assert not any(d.get("token_map") for d in db["audits"].docs), "the token map goes with the audit"
+    for name in (gateway.STRUCTURES_COLLECTION, "column_mappings", "llm_calls", "deck_candidates",
                  "deck_text"):
         assert db[name].docs == [], name
 

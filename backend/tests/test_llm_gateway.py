@@ -313,7 +313,7 @@ def make_db(doc=None):
 # Redaction
 # ---------------------------------------------------------------------------
 def test_redaction_no_real_identifier_in_outbound_payload():
-    """No value held in pseudonym_map may appear in what leaves the server."""
+    """No value held in the audit's token map may appear in what leaves the server."""
     async def run():
         db = make_db(LEAKY_DOC)
         computed = await gateway.load_computed_results(db, RUN_ID, "growth_engine")
@@ -321,7 +321,7 @@ def test_redaction_no_real_identifier_in_outbound_payload():
         outbound = redaction.redact(computed, mapping)
 
         blob = cache.canonical_json(outbound)
-        stored = await db["pseudonym_map"].find_one({"run_id": RUN_ID})
+        stored = {"mapping": (await db["audits"].find_one({"id": RUN_ID}))["token_map"]}
 
         # Every real identifier the map knows about is gone from the payload.
         for real in stored["mapping"]:
@@ -332,7 +332,7 @@ def test_redaction_no_real_identifier_in_outbound_payload():
         return mapping
 
     mapping = asyncio.run(run())
-    assert mapping[REAL_NAMES[0]].startswith("Customer_")
+    assert mapping[REAL_NAMES[0]].startswith("Client-")
 
 
 def test_redaction_is_stable_across_calls():
@@ -349,8 +349,8 @@ def test_redaction_is_stable_across_calls():
 
 
 def test_restore_puts_real_names_back():
-    mapping = {"Acme Corporation": "Customer_01"}
-    assert redaction.restore("Customer_01 churned", mapping) == "Acme Corporation churned"
+    mapping = {"Acme Corporation": "Client-01"}
+    assert redaction.restore("Client-01 churned", mapping) == "Acme Corporation churned"
 
 
 def test_gateway_never_loads_uploaded_rows():
@@ -924,7 +924,7 @@ def test_purge_run_removes_every_artefact():
         remaining = {
             "llm_calls": len(db["llm_calls"].docs),
             "llm_narratives": len(db["llm_narratives"].docs),
-            "pseudonym_map": len(db["pseudonym_map"].docs),
+            "token_map": sum(1 for d in db["audits"].docs if d.get("token_map")),
             "llm_locks": len(db["llm_locks"].docs),
         }
         return purged, remaining
@@ -932,7 +932,7 @@ def test_purge_run_removes_every_artefact():
     purged, remaining = asyncio.run(run())
     assert purged["llm_narratives"] >= 1
     assert purged["llm_calls"] >= 1
-    assert purged["pseudonym_map"] == 1
+    assert purged["token_map"] == 1
     assert all(count == 0 for count in remaining.values()), remaining
 
 

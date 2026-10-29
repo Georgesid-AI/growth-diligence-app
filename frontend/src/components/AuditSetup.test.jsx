@@ -35,13 +35,13 @@ describe("the consent block", () => {
   const ZDR_OFF = "Deck pages are sent to Anthropic's API for reading and are not used for training.";
   const block2 = (zdr) => "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. "
     + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name. "
-    + "The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction. "
+    + "The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. "
     + `${zdr ? ZDR_ON : ZDR_OFF} Uploaded files are stored for this audit and deleted with it.`;
 
   test("block 1 is the two given paragraphs, word for word, with the tick under them", async () => {
     await mount(<ConsentBlock audit={AUDIT} setAudit={jest.fn()} />);
     expect(q("setup-consent-label").textContent).toBe(CONSENT_LABEL);
-    expect(CONSENT_LABEL).toBe("Use AI to read deck tables, charts and the text of pages that carry a figure, and to suggest column matches. Names, contact details and customer names are masked in spreadsheet data before it is sent; deck pages are sent as printed, as text and as an image, with no redaction. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.");
+    expect(CONSENT_LABEL).toBe("Use AI to read spreadsheets and deck pages. Before anything is sent, names, contact details and ID numbers are removed, and client and company names are replaced by codes that exist only in this audit. Figures and labels are sent as they are. Deck pages are also sent as an image of the page, which is not masked. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.");
     expect(q("setup-verified-line").textContent).toBe("Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.");
     expect(q("setup-verified-line").textContent).toBe(VERIFIED_LINE);
     expect(q("setup-consent-checkbox").checked).toBe(true);

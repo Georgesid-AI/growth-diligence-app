@@ -519,6 +519,15 @@ def _user_content(user_payload: str, images: Optional[List[bytes]] = None):
               for png in images), {"type": "text", "text": user_payload}]
 
 
+def _assert_masked(user_payload: str) -> None:
+    """The last line of the one masking rule (read-check-review.md section 8): no call leaves the server with an email, an IBAN,
+    an ID number or a "+" phone number in its text. Every payload passes the masker before it gets here; this refuses one that
+    did not, whatever the caller. The reason names kinds only, never the text."""
+    kinds = structure_redact.personal_items(user_payload or "")
+    if kinds:
+        raise GatewayError("unmasked_personal_data", ",".join(kinds))
+
+
 class AnthropicAdapter:
     """Thin adapter over the Anthropic Messages API.
 
@@ -578,6 +587,7 @@ class AnthropicAdapter:
         Raises `RetryableProviderError` for network/5xx so the caller can back
         off, and `GatewayError` for anything a retry would not fix.
         """
+        _assert_masked(user_payload)
         client = self._ensure_client()
         kwargs = {
             "model": model,
@@ -620,6 +630,7 @@ class AnthropicAdapter:
                      json_schema: Optional[dict], images: Optional[List[bytes]] = None) -> int:
         """The input tokens a call would bill, from the provider's token counter (no call is made).
         With no system prompt and no schema it counts `user_payload` alone."""
+        _assert_masked(user_payload)
         client = self._ensure_client()
         extra = {}
         if system is not None:
@@ -1055,7 +1066,7 @@ async def generate_narrative(
     except GatewayError as exc:
         return _unavailable(run_id, step, str(exc), metrics)
 
-    # Last-line assertion: nothing from pseudonym_map may appear outbound.
+    # Last-line assertion: nothing from the audit's token map may appear outbound.
     leaks = redaction.find_leaks(outbound, mapping)
     if leaks:
         logger.error("redaction leak for run %s: %d identifier(s)", run_id, len(leaks))
@@ -1326,7 +1337,7 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
         return NarrativeResponse(
             run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
         )
-    mapping = await redaction.get_or_create_map(db, run_id, computed)
+    mapping = await redaction.get_or_create_map(db, run_id, computed, save=False)
     try:
         outbound = build_outbound(computed, mapping)
     except GatewayError:
@@ -1396,8 +1407,7 @@ async def narratives_for_run(db, run_id: str) -> list:
 async def estimate_narratives(db, run_id: str) -> dict:
     """What "Write all narratives" would run: for each enabled step, whether a narrative is already stored (no call) and whether it
     can be written now. No amount: cost is not shown to testers (usage-and-allowance.md section 9). It reads the same payload a
-    generation builds, from the stored results; it makes no call and writes nothing but the pseudonym map a generation would also
-    write."""
+    generation builds, from the stored results; it makes no call and writes nothing (the token map is built in memory)."""
     steps = []
     model = None
     try:
@@ -1413,7 +1423,7 @@ async def estimate_narratives(db, run_id: str) -> dict:
             prompt = await prompt_store.load(db, config["prompt"])
             if problems or model is None:
                 raise GatewayError("unavailable")
-            outbound = build_outbound(computed, await redaction.get_or_create_map(db, run_id, computed))
+            outbound = build_outbound(computed, await redaction.get_or_create_map(db, run_id, computed, save=False))
             key = cache.cache_key(run_id, step, prompt_store.cache_tag(prompt), model, outbound)
             if await cache.get(db, key):
                 entry["cached"] = True
@@ -1950,6 +1960,13 @@ async def read_structure(
     if context.get("structure_reading_consent") is not True:
         return _structure_result("no_consent", structure_type, "AI-assisted reading is off for this audit")
     mapping = await redaction.get_map(db, audit_id)
+    masked_counts = None
+    if structure_type == PAGE_CLAIMS and isinstance(text, str):
+        # Every payload is masked at this boundary (read-check-review.md section 8): the page text is not masked by its caller, so the
+        # gateway does it, the target company's name included. The image of the page goes as drawn.
+        if context.get("company_name"):
+            mapping = await redaction.add_customers(db, audit_id, [context["company_name"]])
+        text, masked_counts = structure_redact.mask_pages(text, context.get("company_name"), mapping)
     problem = structure_text_problem(text, structure_type, context, mapping)
     if problem:
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
@@ -1984,7 +2001,7 @@ async def read_structure(
                            cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
             logger.info("structure cache hit: run_id=%s step=%s hash=%s type=%s", audit_id, STRUCTURE_STEP, digest, structure_type)
             return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
-                                     **_reading(hit["output"]), **base)
+                                     masked=masked_counts, **_reading(hit["output"]), **base)
 
     user_payload = cache.canonical_json({"type": structure_type, "text": text})
     image_tokens = 0
@@ -2095,6 +2112,8 @@ async def read_structure(
         image_cost = estimate_cost_usd(model, image_billed, 0)
         model_type = parsed.type if parsed.type != structure_type else None      # a sheet's type is fixed by its schema
         output = parsed.model_dump()
+        if structure_type == PAGE_CLAIMS:
+            output = redaction.restore_deep(output, mapping)         # display un-masks on the server: the tokens go back to the names
         stored = output
         if structure_type == FILE_RECOGNITION and output.get("revenue_row"):
             stored = {**output, "revenue_row": {"row": output["revenue_row"]["row"]}}        # the label echo is never kept (5.5)
@@ -2110,7 +2129,7 @@ async def read_structure(
                     f"{structure_type}->{model_type}" if model_type else "none")
         return _structure_result("read", structure_type, model_type=model_type, **_reading(output),
                                  input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost,
-                                 image_tokens=image_billed, image_cost_usd=image_cost, **base)
+                                 image_tokens=image_billed, image_cost_usd=image_cost, masked=masked_counts, **base)
     except Exception as exc:  # never let structure reading block an upload
         logger.error("unexpected structure failure: run_id=%s step=%s error=%s", audit_id, STRUCTURE_STEP,
                      type(exc).__name__)
@@ -2203,17 +2222,17 @@ async def purge_run(db, run_id: str) -> dict:
     """Remove every LLM artefact for a run.
 
     Called from the existing delete-audit action so deleting an audit leaves no
-    narratives, no call log and no pseudonym mapping behind.
+    narratives, no call log and no token map behind.
     """
     narratives = await cache.delete_run(db, run_id)
     calls = await db[CALLS_COLLECTION].delete_many({"run_id": run_id})
-    pseudonyms = await db[redaction.PSEUDONYM_COLLECTION].delete_many({"run_id": run_id})
+    tokens = await db[redaction.AUDITS_COLLECTION].update_one({"id": run_id}, {"$unset": {redaction.TOKEN_MAP_FIELD: ""}})
     locks = await db[guards.LOCKS_COLLECTION].delete_many({"run_id": run_id})
     structures = await cache.delete_structures(db, run_id)
     return {
         "llm_narratives": narratives,
         "llm_calls": getattr(calls, "deleted_count", 0),
-        "pseudonym_map": getattr(pseudonyms, "deleted_count", 0),
+        "token_map": getattr(tokens, "modified_count", 0),
         "llm_locks": getattr(locks, "deleted_count", 0),
         "llm_structures": structures,
     }
