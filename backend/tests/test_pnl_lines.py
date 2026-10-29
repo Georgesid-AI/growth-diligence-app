@@ -270,12 +270,12 @@ def test_the_yearly_cac_payback_leaves_internal_events_out_of_sm_and_is_labelled
     assert metrics.YearlyBasis.model_validate(results_for()["yearly_basis"])
 
 
-def test_the_register_words_the_yearly_payback_as_yearly_revenue_based_never_months():
+def test_the_register_words_the_yearly_payback_in_months_labelled_yearly_revenue_based():
     r = results_for()
     deck = payback_claim("CAC payback 12.5 months in FY2021: sales and marketing spend over revenue growth, gross margin adjusted", 12.5, 2021)
     row = cm.build_register([deck], r, settings(AS_OF))[0]
     first = row["calc_lines"][0]
-    assert first.startswith("CAC payback FY 2021 (yearly, revenue-based): 12.5 = 12 × S&M €540,000 ÷ (revenue growth €700,000") and "months" not in first
+    assert first.startswith("CAC payback FY 2021: 12.5 months (yearly, revenue-based) = 12 × S&M €540,000 ÷ (revenue growth €700,000")
     assert row["evidence_label"] == "Verified" and row["observed_value"] == 12.51
 
 

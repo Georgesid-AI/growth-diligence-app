@@ -1589,14 +1589,15 @@ def _annual_payback(out: dict, results: dict, text: str, start: int, end: int):
                 year.get("cac_payback_net_new_arr_reason"), year.get("net_new_arr")))
     lines, details = [], ["annual payback = 12 × S&M ÷ (incremental annual recurring value × gross margin)"]
     for denominator, proxy, months, reason, amount in proxies:
-        # docs/design/pnl-lines.md section 6: the revenue-growth proxy is the yearly, revenue-based payback and is never worded in months
-        head = f"CAC payback {name} ({YEARLY_REVENUE_BASED})" if denominator == payback_definition.REVENUE_GROWTH \
-            else f"Annual payback {name} ({proxy})"
+        # docs/design/pnl-lines.md section 6: the revenue-growth proxy is the yearly, revenue-based payback; its unit stays, its label follows
+        revenue = denominator == payback_definition.REVENUE_GROWTH
+        label = f" ({YEARLY_REVENUE_BASED})" if revenue else ""
+        head = f"CAC payback {name}" if revenue else f"Annual payback {name} ({proxy})"
         if months is not None:
-            lines.append(f"{head}: {months:.1f}{'' if denominator == payback_definition.REVENUE_GROWTH else ' months'} = 12 × S&M "
+            lines.append(f"{head}: {months:.1f} months{label} = 12 × S&M "
                          f"{money(year['sm_expense'])} ÷ ({denominator} {money(amount)} × gross margin {gm * 100:.1f}%)")
         else:
-            lines.append(f"{head}: not calculated – {reason}")
+            lines.append(f"{head}{label}: not calculated – {reason}")
     scope = year.get("sm_scope") or "unknown"
     claimed = payback_definition.claimed_definition(text)
     lines += [f"S&M scope: {scope}", "Claim definition: " + ", ".join(claimed[k] or "not stated" for k in ("denominator", "margin", "cost"))]

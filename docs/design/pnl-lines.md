@@ -105,7 +105,8 @@ S&M = Sales + Marketing totals, minus internal events. Gross margin from the
 file. New revenue = revenue in year N minus revenue in year N−1 (no
 customer-level data). Result labelled "yearly, revenue-based", never "months".
 Where a monthly revenue file exists, the monthly payback stands and the
-yearly one is shown as a check.
+yearly one is shown as a check. The yearly basis exists only when there is no
+monthly P&L.
 
 ## 7. Matching deck figures to yearly columns
 
@@ -145,4 +146,4 @@ Code: `backend/app/structures/pnl_lines.py` (uses, periods, checks, plan cells),
 - Internal events are S&M-excluded when the sub-line is mapped to overhead (opex) under an S&M total; the label rule that maps "internal events" to
   overhead sits at the mapping step (`sheet.meaning_of`).
 - The deck forecast is compared with the plan line for revenue, gross profit and EBITDA claims; a cost forecast names no one plan line.
-- The yearly revenue-based payback is worded without "months" in the register; the net-new-ARR proxy keeps its wording.
+- The yearly revenue-based payback reads "CAC payback FY 2021: 12.5 months (yearly, revenue-based)": unit kept, label kept (George, 2026-10-29).

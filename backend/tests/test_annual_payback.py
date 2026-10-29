@@ -179,7 +179,7 @@ def test_a_matching_definition_that_misses_is_contradicted_by_the_ordinary_rules
 def test_the_two_proxies_are_listed_for_the_claim_in_its_calculation_lines():
     row = row_of(payback_claim(MATCHING_ARR, 16), results=payback_results())
     text = " | ".join(row["calc_lines"])
-    assert "CAC payback FY2024 (yearly, revenue-based): 24.0 =" in text and "Annual payback FY2024 (net-new-ARR proxy): 16.0 months" in text
+    assert "CAC payback FY2024: 24.0 months (yearly, revenue-based) =" in text and "Annual payback FY2024 (net-new-ARR proxy): 16.0 months" in text
     assert "S&M scope: sales and marketing" in text and "Claim definition: net new ARR, gross margin, sales and marketing" in text
     assert all("; " not in line for line in row["calc_lines"] + row["calc_details"])
     assert any("12 × S&M" in d for d in row["calc_details"])
@@ -230,7 +230,7 @@ def test_a_year_with_no_value_for_the_matching_proxy_says_why_and_never_falls_ba
     row = row_of(payback_claim(MATCHING_ARR, 16), results=results)
     assert row["evidence_label"] == "Unverified" and row["reason"] == "annual payback not calculated for FY2024: net new ARR not positive"
     assert row["observed_value"] is None
-    assert "CAC payback FY2024 (yearly, revenue-based): 24.0 =" in " | ".join(row["calc_lines"])
+    assert "CAC payback FY2024: 24.0 months (yearly, revenue-based) =" in " | ".join(row["calc_lines"])
 
 
 def test_a_calendar_quarter_claim_keeps_the_monthly_path():
