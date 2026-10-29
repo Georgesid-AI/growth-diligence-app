@@ -10,7 +10,7 @@ export const ZDR_SENTENCE_OFF = "Deck pages are sent to Anthropic's API for read
 export const s2Explainer = (zdr) =>
   "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. "
   + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name. "
-  + "The AI reads every page of uploaded decks, as printed, to find plan figures: the text of each page that carries a figure and one image of the whole page, with no redaction. "
+  + "The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. "
   + `${zdr ? ZDR_SENTENCE_ON : ZDR_SENTENCE_OFF} `
   + "Uploaded files are stored for this audit and deleted with it.";
 export const S3_EXPLAINER_NO_CONSENT =
@@ -183,9 +183,8 @@ export const S14_same = (version) => `Same file as before: saved mapping v${vers
 
 // S30a-h (2026-10-18, section 26): a P&L read as a statement, one row per line. Wording chosen under rule 19 for George's review.
 const plural = (n, one, many) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
-export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Masked: ${plural(c.email, "email", "emails")}, `
-  + `${plural(c.phone, "phone number", "phone numbers")}, ${plural(c.person, "name", "names")}, ${plural(c.customer, "customer name", "customer names")}, `
-  + `${plural(c.company, "company name", "company names")}. Withheld: ${plural(c.columns, "column", "columns")}, ${plural(c.long, "long cell", "long cells")}.`;
+export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Personal items removed: ${c.email + c.phone + c.person + (c.iban || 0) + (c.id || 0)}. `
+  + `Company names tokenised: ${c.customer + c.company}. Columns withheld: ${c.columns}.`;
 export const S30B_HEADERS = ["Line", "Role", "Meaning", "Basis", "Used", "Confidence", "Checks"];
 export const CONFIRM_ALL = "Confirm all";
 // docs/design/pnl-lines.md sections 1 and 8: every mapped line has a use, assigned by its mapped role: series, sum check, recompute check or

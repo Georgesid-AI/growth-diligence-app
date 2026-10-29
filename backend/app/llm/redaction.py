@@ -1,10 +1,10 @@
 """Pseudonymisation of customer / company identifiers and segment names.
 
 Nothing that identifies a real customer may reach the provider. Before a payload
-leaves the server every identifier is swapped for a stable per-run pseudonym
-(`Customer_01`, `Customer_02`, ...) and every segment name for a stable label
-(`Segment A`, `Segment B`, ...). The mapping lives in Mongo (`pseudonym_map`,
-keyed by run_id) and is never included in an outbound payload.
+leaves the server every identifier is swapped for a stable per-audit token
+(`Client-01`, `Client-02`, ...) and every segment name for a stable label
+(`Segment A`, `Segment B`, ...). The mapping lives on the audit record (`token_map`)
+and is never included in an outbound payload, a log line or an API response.
 
 Matching is whole-token: an identifier is replaced only where it stands as its
 own word, never inside a longer word, a date or a number ("12" leaves "2026-12"
@@ -17,7 +17,10 @@ shown, so the dashboard still reads in real names.
 import re
 from typing import Any, Dict, Iterable, List
 
-PSEUDONYM_COLLECTION = "pseudonym_map"
+AUDITS_COLLECTION = "audits"
+TOKEN_MAP_FIELD = "token_map"
+# The map's former home (one document per run). Delete audit still empties it; startup drops it once it is empty.
+LEGACY_MAP_COLLECTION = "pseudonym_map"
 
 # Keys whose values are treated as identifiers wherever they appear in the
 # computed-results payload.
@@ -29,7 +32,8 @@ IDENTIFIER_KEYS = {
 # Containers whose dict keys are segment names rather than field names.
 SEGMENT_CONTAINERS = {"by_segment", "segments"}
 
-_CUSTOMER_PREFIX = "Customer_"
+TOKEN_PREFIX = "Client-"          # Client-01, Client-02 ... (read-check-review.md section 8)
+_CUSTOMER_PREFIX = TOKEN_PREFIX
 _SEGMENT_PREFIX = "Segment "
 
 
@@ -115,56 +119,76 @@ def collect_identifiers(payload: Any) -> List[str]:
     return sorted(found)
 
 
-async def get_or_create_map(db, run_id: str, payload: Any) -> Dict[str, str]:
-    """Return {real_name: pseudonym} for this run, creating it on first use.
+def norm(name: str) -> str:
+    """A name as the map compares it: case- and whitespace-insensitive."""
+    return " ".join(str(name).split()).casefold()
 
-    Stored server-side only. Callers must never place this dict, its keys, or
-    any value derived from its keys into an outbound payload.
+
+def _token_count(mapping: Dict[str, str]) -> int:
+    return len({v for v in mapping.values() if v.startswith(TOKEN_PREFIX)})
+
+
+def assign(mapping: Dict[str, str], names: Iterable[str], segments: bool = False) -> bool:
+    """Give every new name the next token and return whether the map changed. A name that differs from a mapped one only by case or
+    whitespace is kept as another spelling of the same token ("ACME  Ltd" and "Acme Ltd" are Client-01), so the same company is one
+    token in every file of the audit. Segments get Segment A, B ..."""
+    seen: Dict[str, str] = {norm(real): token for real, token in mapping.items()}
+    changed = False
+    for name in names:
+        key = norm(name)
+        if not key:
+            continue
+        if key in seen:
+            if name not in mapping:
+                mapping[name], changed = seen[key], True
+            continue
+        if segments:
+            token = _segment_label(sum(1 for v in set(mapping.values()) if v.startswith(_SEGMENT_PREFIX)) + 1)
+        else:
+            token = _pseudonym(_token_count(mapping) + 1)
+        mapping[name], seen[key], changed = token, token, True
+    return changed
+
+
+async def _stored(db, run_id: str) -> Dict[str, str]:
+    doc = await db[AUDITS_COLLECTION].find_one({"id": run_id}, {"_id": 0, TOKEN_MAP_FIELD: 1})
+    return dict((doc or {}).get(TOKEN_MAP_FIELD) or {})
+
+
+async def _save(db, run_id: str, mapping: Dict[str, str]) -> None:
+    await db[AUDITS_COLLECTION].update_one({"id": run_id}, {"$set": {TOKEN_MAP_FIELD: mapping}})
+
+
+async def get_or_create_map(db, run_id: str, payload: Any, save: bool = True) -> Dict[str, str]:
+    """Return {real_name: token} for this audit, creating it on first use.
+
+    Stored on the audit record only (field `token_map`, never returned by the API, never logged), removed with the audit. Callers must
+    never place this dict, its keys, or any value derived from its keys into an outbound payload. With `save` off the map is built in
+    memory only (an estimate or a memo reads the audit and writes nothing).
     """
-    doc = await db[PSEUDONYM_COLLECTION].find_one({"run_id": run_id}, {"_id": 0})
-    mapping: Dict[str, str] = dict(doc["mapping"]) if doc else {}
-
-    new = [i for i in collect_identifiers(payload) if i not in mapping]
-    new_segments = [s for s in collect_segment_names(payload) if s not in mapping and s not in new]
-    if new or new_segments:
-        customers = sum(1 for v in mapping.values() if v.startswith(_CUSTOMER_PREFIX))
-        for offset, real in enumerate(new, start=customers + 1):
-            mapping[real] = _pseudonym(offset)
-        segments = sum(1 for v in mapping.values() if v.startswith(_SEGMENT_PREFIX))
-        for offset, real in enumerate(new_segments, start=segments + 1):
-            mapping[real] = _segment_label(offset)
-        await db[PSEUDONYM_COLLECTION].update_one(
-            {"run_id": run_id},
-            {"$set": {"run_id": run_id, "mapping": mapping}},
-            upsert=True,
-        )
+    mapping = await _stored(db, run_id)
+    changed = assign(mapping, collect_identifiers(payload))
+    changed = assign(mapping, [s for s in collect_segment_names(payload) if s not in mapping], segments=True) or changed
+    if changed and save:
+        await _save(db, run_id, mapping)
     return mapping
 
 
 async def add_customers(db, run_id: str, names: Iterable[str]) -> Dict[str, str]:
-    """Add customer names to the run's mapping and return it (llm-structure-reading.md section 3).
+    """Add customer and company names to the audit's map and return it (llm-structure-reading.md section 3).
 
-    The structure path shares this mapping with the narrative path, so a customer has the same
-    pseudonym on both: every name in the revenue file's mapped customer column and in the CRM file's
-    customer column. New names get the next Customer_NN in sorted order; a name already mapped keeps
-    its pseudonym. Stored server-side only, removed by Delete audit (purge_run).
+    Every path shares this map, so a name has the same token in every file of the audit and on the narrative path. New names get
+    the next Client-NN in sorted order; a name already mapped, in any case or spacing, keeps its token.
     """
-    doc = await db[PSEUDONYM_COLLECTION].find_one({"run_id": run_id}, {"_id": 0})
-    mapping: Dict[str, str] = dict(doc["mapping"]) if doc else {}
-    new = sorted({str(n).strip() for n in names if n is not None and str(n).strip()} - set(mapping))
-    if new:
-        customers = sum(1 for v in mapping.values() if v.startswith(_CUSTOMER_PREFIX))
-        for offset, real in enumerate(new, start=customers + 1):
-            mapping[real] = _pseudonym(offset)
-        await db[PSEUDONYM_COLLECTION].update_one(
-            {"run_id": run_id}, {"$set": {"run_id": run_id, "mapping": mapping}}, upsert=True)
+    mapping = await _stored(db, run_id)
+    if assign(mapping, sorted({" ".join(str(n).split()) for n in names if n is not None and str(n).strip()})):
+        await _save(db, run_id, mapping)
     return mapping
 
 
 async def get_map(db, run_id: str) -> Dict[str, str]:
-    """The run's mapping as stored, without adding anything."""
-    doc = await db[PSEUDONYM_COLLECTION].find_one({"run_id": run_id}, {"_id": 0})
-    return dict(doc["mapping"]) if doc else {}
+    """The audit's map as stored, without adding anything."""
+    return await _stored(db, run_id)
 
 
 def redact(payload: Any, mapping: Dict[str, str]) -> Any:
@@ -200,7 +224,7 @@ def restore(text: str, mapping: Dict[str, str]) -> str:
     """Put real identifiers back into model output, server-side."""
     if not mapping:
         return text
-    return substitute(text, {v: k for k, v in mapping.items()})
+    return substitute(text, {v: k for k, v in reversed(list(mapping.items()))})       # the first spelling of a name wins
 
 
 def restore_deep(node: Any, mapping: Dict[str, str]) -> Any:

@@ -41,6 +41,17 @@
     listed in the review tab, not in the main claims list. A page call is outside the USD 5 daily cap and inside the tester's
     monthly allowance, as a mapping call is. The logging rule (17) is unchanged: no deck text, no page image in logs or MongoDB;
     model JSON output may be stored. The owner page shows image tokens and image cost apart from text tokens and cost.
+    Amended 2026-10-29 (George, docs/design/read-check-review.md section 8, PR 1): masking is one module (structures/redact.py), run by the
+    gateway on every payload that leaves the server. The page text of a page_claims call is masked, no longer "as printed": emails, phone
+    numbers, IBANs, ID numbers and first-name personal names removed, columns headed owner, contact, manager, rep or signatory masked
+    whole in spreadsheets only (deck page text never uses that rule; a title such as "Key contacts" blanks nothing below it), company and
+    customer names (the target's too) replaced by per-audit tokens Client-01, Client-02 ... that are the same in every file of the audit;
+    a text cell under a header that holds name, customer, client, account or company and is not yet in the map is added to it at
+    masking time and gets the next Client-NN, never [person] and never as printed (George, 2026-10-29, PR 204 review); figures and metric
+    labels unchanged. The page image goes unmasked (option A). The token map lives on the audit record only (`token_map`), never in a
+    log, a payload or an API response, and goes with the audit; the provider adapter refuses a payload that still holds an email, IBAN,
+    ID number or "+" phone number. Counts per file on screen: lines sent, personal items removed, company names tokenised, columns
+    withheld.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt
@@ -122,9 +133,8 @@
     reads them from there only. The repository holds stubs only: short texts marked "test only" in
     backend/tests/fixtures/prompts/, which tests load into a fake store. Tests do not assert a prompt's wording.
 31. The page reader (`page_claims`) runs only on a ZDR-eligible model (Sonnet or Opus, never Fable or Mythos), because deck pages go to
-    it as printed, without customer-name masking, under the API organisation's zero-data-retention arrangement
+    it as masked text plus the unmasked page image, under the API organisation's zero-data-retention arrangement
     (docs/design/page-image.md). The gateway refuses the step on any model outside the allow-list of Sonnet and Opus families
     (gateway.PAGE_READER_MODELS). A model off the list is logged as an error at startup and the server stays up; every page read is then
     blocked before anything is converted, drawn or sent, and the panel says "AI read: blocked – model not permitted".
-
 32. Any change to the architecture (components, what crosses the server boundary, what the model sees, storage of readings) is named in the PR description under a heading "Architecture change" and needs George's approval before merge.

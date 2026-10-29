@@ -2,9 +2,10 @@
 
 # Architecture
 
-This is the file CLAUDE.md rules 1 and 3 freeze and rules 16–18 amend. It describes; it decides nothing. A change to
-what is written here is an architecture change: a session that needs one stops and reports an "Architecture note"
-(rule 1). Execution steps live in docs/specs/ and may change.
+This is the file CLAUDE.md rules 16–18 amend. It describes; it decides nothing. A change to what is written here is an
+architecture change (components, what crosses the server boundary, what the model sees, storage of readings): the PR that makes it
+names it under the heading "Architecture change" in its description and needs George's approval before merge (rule 32). Execution
+steps live in docs/specs/ and may change.
 
 ## Components
 
@@ -18,7 +19,7 @@ what is written here is an architecture change: a session that needs one stops a
 | LLM gateway | `backend/app/llm/` | The only component allowed to call a model provider (`gateway.py`). Prompts are versioned documents in the MongoDB collection `prompts`, uploaded on the owner page and read by the gateway only (`prompt_store.py`); a missing prompt means no model call; cache keys carry text, type, prompt tag, model and schema hash (`cache.py`); guards hold the per-audit lock, the daily spend cap and the retry policy (`guards.py`); the per-audit pseudonym map (`redaction.py`); strict output schemas (`schemas.py`). |
 | Supporting modules | `backend/app/` | `formatting.py`, `disclosure.py` (the AI-provenance block), `narrative_export.py`, `logsafety.py` (no secret reaches a log line). |
 | Interface contracts | `backend/schemas/` | `metrics.py`: `MetricsPayload`, the one description of the calc engine's output (units, citations), validated by the engine, the gateway and the export (docs/specs/interface-contracts.md). |
-| Storage | MongoDB | `audits`, `datasets`, `deck_text` (parsed text and structures), `deck_files` (the uploaded deck file, in parts, kept only while consent is ticked and the page pipeline is on, so that page images can be drawn from it; deleted with its deck and with the audit), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `pseudonym_map`, `column_mappings`, `prompts` (the model prompts; no `audit_id`), `access_tokens` (tester-phase token hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures); never a token; removed at the move to accounts; no `audit_id`). Delete audit removes an audit's documents in every collection that holds any; `prompts` and `access_tokens` hold no audit data and stay. |
+| Storage | MongoDB | `audits` (with the audit's `token_map`: real company and customer name → Client-NN, server side only, never in a log, a payload or an API response), `datasets`, `deck_text` (parsed text and structures), `deck_files` (the uploaded deck file, in parts, kept only while consent is ticked and the page pipeline is on, so that page images can be drawn from it; deleted with its deck and with the audit), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `column_mappings`, `prompts` (the model prompts; no `audit_id`), `access_tokens` (tester-phase token hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures); never a token; removed at the move to accounts; no `audit_id`). Delete audit removes an audit's documents in every collection that holds any; `prompts` and `access_tokens` hold no audit data and stay. |
 | Manual tooling | `scripts/consistency_run.py` | Live consistency runs (paid), `--fake` replays, `--diagnostic` and `--probe` on the 10 public test decks. Reports are committed to docs/test-runs/. |
 
 ## The amendment of 2026-10-22
@@ -26,7 +27,7 @@ what is written here is an architecture change: a session that needs one stops a
 George approved (22 Oct 2026, decision 1b on PR #158, docs/design/ai-reads-rules-check.md) widening the deck boundary for one new
 step. For the `page_claims` step only, the default path since 22 Oct 2026 (`DECK_PIPELINE=ai`; the former rules read of
 docs/specs/deck-parser.md section 2 is the fallback behind `DECK_PIPELINE=rules`, kept until the first tester decks are read; George,
-2026-10-22), the model may receive every deck page that carries a figure written in digits, as printed with no redaction (rule 16): the page's
+2026-10-22), the model may receive every deck page that carries a figure written in digits, as masked text with the page image unmasked (rule 16, amended 2026-10-29): the page's
 text lines, prose lines included, as extracted text with cell positions (`p<page>r<row>c<col>: <text>`, the page grid of
 `app/decks/pages.py`), at most 5 pages per call, and one PNG of the whole page in the same request (a page the file cannot be drawn
 for goes as text alone). A page with no such figure never goes; number-words do not count as figures. The reply
@@ -97,8 +98,8 @@ Two paths reach the gateway and each has its own fields (docs/specs/deck-parser.
   headers, row labels, indents, num/blank markers), after redaction and the withhold rule; never any figure; at most 400
   labelled rows per sheet. For the `file_recognition` step only (the amendment of 2026-10-19 above): the row labels of a
   metric-labelled sheet, "Row n" for every other sheet, never a figure beyond the per-column sample. For the `page_claims` step
-  only (the amendment of 2026-10-22 above, behind `DECK_PIPELINE`): a deck page that carries a figure as digits, as printed (text lines,
-  prose included, and one image of the whole page), at most 5 pages per call; never a page without such a figure.
+  only (the amendment of 2026-10-22 above, behind `DECK_PIPELINE`): a deck page that carries a figure as digits, with its text lines masked (prose
+  included) and one unmasked image of the whole page, at most 5 pages per call; never a page without such a figure.
 
 What is stored (rule 17): model JSON output with cell references, the item list without raw text, prompt version,
 model version, content hash, token counts and cost. Never deck text sent to the model. The one stored copy of client data is the uploaded

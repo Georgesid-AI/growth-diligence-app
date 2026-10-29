@@ -350,6 +350,7 @@ def sanitize(obj):
 
 async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
+    a.pop("token_map", None)      # real name -> token: server side only (read-check-review.md section 8)
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
     a["as_of_by"] = _as_of_by(a)
     a["provider_zdr"] = os.environ.get("PROVIDER_ZDR", "").strip().lower() == "true"     # picks the deck sentence of the Upload page text
@@ -503,7 +504,7 @@ async def my_allowance(request: Request):
 async def list_audits(request: Request):
     who = getattr(request.state, "principal", None)
     flt = {"owner": who[1]} if who else {}
-    return await db.audits.find(flt, {"_id": 0, "results": 0, "usage": 0, "owner": 0}).sort("created_at", -1).to_list(200)
+    return await db.audits.find(flt, {"_id": 0, "results": 0, "usage": 0, "owner": 0, "token_map": 0}).sort("created_at", -1).to_list(200)
 
 
 @api.get("/audits/{audit_id}")
@@ -1021,8 +1022,9 @@ async def _read_statement(a: dict, sheet: "cr.Sheet", digest: str, kpi: bool = F
                 "ai": "stored", **units}
     if a.get("structure_reading_consent") is not True:
         return {"map": {**sheet_mod.build(reading), "counts": None}, "ai": "no_consent", **units}
-    text, counts = sheet_mod.skeleton(reading, a.get("company_name"), await llm_redaction.get_map(db, a["id"]),
-                                      structures.redact.file_type_withheld(a))
+    mapping = await structures.learn_company_names(db, a["id"], [c for c in reading["cells"] if len(c["text"]) <= sheet_mod.LONG_CELL],
+                                                   a.get("company_name"), await llm_redaction.get_map(db, a["id"]))
+    text, counts = sheet_mod.skeleton(reading, a.get("company_name"), mapping, structures.redact.file_type_withheld(a))
     try:
         read = await asyncio.wait_for(llm_gateway.read_structure(db, a["id"], text, "sheet_structure"), SHEET_AI_SECONDS)
     except asyncio.TimeoutError:
@@ -1974,6 +1976,9 @@ async def list_deck_candidates(audit_id: str):
         reads = d.pop("page_reads", None) or []
         d["pages_read"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") == "read")
         d["pages_rejected"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") not in ("read", "stopped"))
+        # What masking took out of the page text sent (George, 2026-10-29, review of PR 204): counts only.
+        d["personal_removed"] = sum((r.get("masked") or {}).get("personal", 0) for r in reads)
+        d["names_replaced"] = sum((r.get("masked") or {}).get("names", 0) for r in reads)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000))
     # The claims Python enters on its own read as approved ("auto"), the ones a check asks about as pending (simplified-flow.md section 2).
@@ -4063,6 +4068,11 @@ async def check_page_reader_model():
 @app.on_event("startup")
 async def ensure_llm_indexes():
     await llm_gateway.guards.ensure_indexes(db)
+
+
+@app.on_event("startup")
+async def drop_legacy_token_map():
+    await llm_gateway.drop_legacy_map(db)        # the former pseudonym_map collection goes once Delete audit has emptied it
 
 
 @app.on_event("shutdown")

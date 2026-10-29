@@ -401,9 +401,14 @@ export function aiReadStatus(deck) {
   }
 }
 
-/** "N pages parsed · M with figures · AI read: <status>". The page count is the file's, parsed, never "read". */
+const READ_DONE = ["read", "not_read", "stopped", "prompt_missing"];
+
+/** "N pages parsed · M with figures · AI read: <status>", and once the read is done, " · personal items removed: p · company names
+ *  tokenised: c" from the server's masking counts (George, 2026-10-29, review of PR 204). The page count is the file's, parsed, never "read". */
 export function deckReadLine(deck) {
-  return `${deck.pages} ${deck.page_unit || "page"}s parsed · ${deck.figure_pages} with figures · AI read: ${aiReadStatus(deck)}`;
+  const masked = READ_DONE.includes(deck.ai_status) && Number.isFinite(deck.personal_removed)
+    ? ` · personal items removed: ${deck.personal_removed} · company names tokenised: ${deck.names_replaced || 0}` : "";
+  return `${deck.pages} ${deck.page_unit || "page"}s parsed · ${deck.figure_pages} with figures · AI read: ${aiReadStatus(deck)}${masked}`;
 }
 
 /** The upload row's text: the one it got at upload, until the stored deck of a page read is known; then the same line the panel shows

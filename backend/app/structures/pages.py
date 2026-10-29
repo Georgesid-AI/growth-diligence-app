@@ -340,6 +340,10 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                                           per_call=1, skip=done_before, parallel=PARALLEL_PAGES, progress=progress):
         numbers = [page_grids_mod.page_number(g) for g in batch]
         entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
+        if result.masked:
+            # The deck line's two masking counts (read-check-review.md section 8): numbers only, never what was removed.
+            entry["masked"] = {"personal": redact.personal_count(result.masked),
+                               "names": result.masked.get("customer", 0) + result.masked.get("company", 0)}
         if result.rejected:
             entry["rejected"] = result.rejected
             for page in numbers:        # the validator's reason (closed words), never the reply text

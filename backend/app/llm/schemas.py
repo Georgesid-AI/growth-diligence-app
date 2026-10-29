@@ -829,6 +829,7 @@ class StructureRead(BaseModel):
     image_cost_usd: float = 0.0             # ... and of estimated_cost_usd
     prompt_version: Optional[str] = None
     model: Optional[str] = None
+    masked: Optional[dict] = None           # a page read: counts of what masking removed or tokenised in the text sent (numbers only)
 
 
 class DeckUsage(BaseModel):
