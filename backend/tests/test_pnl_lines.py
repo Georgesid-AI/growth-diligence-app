@@ -398,10 +398,10 @@ def test_internal_events_are_read_from_the_mapped_role_not_counted_in_sm():
 
 # --- 7. the contract -------------------------------------------------------------------------------------------------------------------
 
-def test_the_contract_moves_to_13_and_results_stored_under_12_read_stale():
-    assert metrics.CONTRACT_VERSION == 13
-    assert ra.results_stale({"results": {"contract_version": 12}}) and ra.STALE_LABEL == "Stale – re-run audit"
-    assert not ra.results_stale({"results": {"contract_version": 13}})
+def test_the_contract_moves_to_14_and_results_stored_under_13_read_stale():
+    assert metrics.CONTRACT_VERSION == 14
+    assert ra.results_stale({"results": {"contract_version": 13}}) and ra.STALE_LABEL == "Stale – re-run audit"
+    assert not ra.results_stale({"results": {"contract_version": 14}})
 
 
 def test_the_pnl_lines_block_is_declared_and_validated():

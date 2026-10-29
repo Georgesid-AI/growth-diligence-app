@@ -702,7 +702,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[13]
+    contract_version: Literal[14]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]
