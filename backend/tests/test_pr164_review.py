@@ -203,9 +203,8 @@ def test_m2_the_model_basis_sets_no_figure_type_and_a_projection_in_the_past_sta
                                        {"fiscal_year_end": 12, "as_of_month": RUN_A["as_of_month"], "reporting_currency": "EUR",
                                         "fx": {"EUR": 1.0}})[0]
     # (an edited claim: an unedited AI suggestion is never above Unverified, decision D3, whatever its figure type)
-    # deck-actuals.md: a page-read figure of a past period is management data (it differs from the file); a projection for it stays a claim
-    assert got["evidence_label"] == "Contradicted" and got["deck_status"] is None
-    assert (same_as_actual["evidence_label"], same_as_actual["deck_status"]) == ("Unverified", "differs")
+    assert got["evidence_label"] == same_as_actual["evidence_label"] == "Contradicted", "basis changes no evidence label (rules 18, 19.1)"
+    assert (got["deck_status"], same_as_actual["deck_status"]) == (None, "differs"), "a projection is a claim; an actual differs from the file"
     assert got["figure_type"] == "actual"
 
 

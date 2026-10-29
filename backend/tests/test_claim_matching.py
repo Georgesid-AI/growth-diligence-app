@@ -607,8 +607,7 @@ def test_a_deck_reading_that_is_an_ai_suggestion_is_tested_like_any_approved_cla
             "origin": "ai", "ai_status": "unverified", "ai_label": "AI suggestion, not verified"}
     row = run_claim(base)
     assert (row["evidence_label"], row["deck_reading"], row["observed_value"]) == ("Verified", "AI suggestion, not verified", 112.68)
-    differs = run_claim({**base, "value": 120})        # deck-actuals.md: a page-read figure for a past period is data prepared by management, not a claim
-    assert (differs["evidence_label"], differs["deck_status"]) == ("Unverified", "differs")
+    assert run_claim({**base, "value": 120})["evidence_label"] == "Contradicted"
     edited = run_claim({**base, "status": "edited", "ai_status": None, "ai_label": None, "parsed": {"value": 112}})
     assert (edited["evidence_label"], edited["deck_reading"], edited["status"]) == ("Verified", "edited", "edited")
     verified = run_claim({**base, "ai_status": "verified", "ai_label": "Verified"})

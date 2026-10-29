@@ -18,8 +18,11 @@ month. The deck's date is never used.
 
 a) The files hold the same metric and period: reconcile. Within tolerance,
    the figure is Verified and the deck is consistent with the files. Beyond
-   it: "deck differs from file", shown in the register and under Worth
-   flagging.
+   it: the figure is Contradicted (the data shows it false) with the reason
+   "deck differs from file", shown in the register and under Worth flagging.
+   (Amended 2026-10-29, George: Contradicted, not Unverified. Built for
+   page-read figures only; the rules read and the analyst's own claims keep
+   their existing test.)
 b) The files hold nothing for it: use it. The engine computes what the
    figures allow (customer count, concentration, growth by customer, stated
    NRR or churn). The result is labelled Unverified and carries the tag

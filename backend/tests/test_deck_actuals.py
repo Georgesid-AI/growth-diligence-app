@@ -97,7 +97,7 @@ def test_a_figure_with_no_readable_period_asks_for_it_once():
 
 def test_a_deck_actual_beyond_tolerance_differs_from_the_file_and_is_listed_under_worth_flagging():
     r = register([reading("c1", 600_000.0, "Recognised Revenue", "FY2021")])[0]
-    assert (r["deck_status"], r["evidence_label"]) == ("differs", "Unverified"), "management data, not a claim: never Contradicted"
+    assert (r["deck_status"], r["evidence_label"]) == ("differs", "Contradicted"), "the data shows the deck figure false"
     assert r["reason"].startswith(da.DIFFERS) and "501,378" in r["reason"]
     assert vd.flagged_rows([r]) == [r] and da.DIFFERS in vd.flag_text(r)
 

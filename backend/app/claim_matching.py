@@ -1349,7 +1349,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
             return finish("Unverified", DEFINITION_MISMATCH)
     if deck_actual:                             # deck-actuals.md section 2a: data prepared by management, not a claim; it differs from the file, either way
         out["deck_status"] = deck_actuals.DIFFERS_STATUS
-        return finish("Unverified", deck_actuals.DIFFERS_REASON.format(deck=_format(spec["unit"], claimed, results.get("reporting_currency")),
+        return finish("Contradicted", deck_actuals.DIFFERS_REASON.format(deck=_format(spec["unit"], claimed, results.get("reporting_currency")),
                                                                      file=_format(spec["unit"], observed, results.get("reporting_currency"))))
     if kind == "beat":                          # amended 2026-10-13 (George): a beat is Verified, marked (beat), not Contradicted
         return finish("Verified", f"{BEAT_PREFIX}{out['gloss']}")

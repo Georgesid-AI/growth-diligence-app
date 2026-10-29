@@ -54,7 +54,7 @@ def period_sort(c: dict, as_of: Optional[str]) -> Optional[str]:
 
 
 def is_deck_actual(c: dict, sort: Optional[str], figure_type: Optional[str]) -> bool:
-    """Data prepared by management (section 2): a figure the page reader read from a deck, for a period that has passed, not a projection or a scenario,
+    """A deck actual (section 2): a figure the page reader read from a deck, for a period that has passed, not a projection or a scenario,
     and not a figure the words of the claim make a target. The rules read (DECK_PIPELINE=rules, Add from deck) and the analyst's own claims keep their test."""
     return sort == ACTUAL and figure_type == "actual" and c.get("origin") == PAGE_READER and c.get("basis") not in ("projection", "scenario") \
         and c.get("scenario") in (None, "none") and c.get("value") is not None
