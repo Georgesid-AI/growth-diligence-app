@@ -18,6 +18,7 @@ export default function RecognitionLine({ view, decide, reportingCurrency, typeS
   const d = view.dtype;
   const id = (name) => `recognition-${name}-${d}`;
   const [open, setOpen] = useState({});
+  const [showAll, setShowAll] = useState(false);       // "Show all lines": what the file supports and blocks, and the rows kept as claims
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   if (!rec) return null;
@@ -73,6 +74,7 @@ export default function RecognitionLine({ view, decide, reportingCurrency, typeS
   const currency = rec.currency || {};
   const others = rec.other_sheets || [];
   const claims = claimsText(rec.non_revenue_rows);
+  const hasMore = !!claims || !!(rec.file_type && rec.supports && rec.supports.length > 0);
   const asked = rec.money_kind && rec.money_kind.asked && !rec.money_kind.answer;
 
   return (
@@ -86,7 +88,7 @@ export default function RecognitionLine({ view, decide, reportingCurrency, typeS
         {(unclassed || open.type) && select(id("type-select"), typeOptions, pickType)}
       </div>}
       {((unclassed && offersReport(rec)) || view.mapping_dropped) && <p data-testid={id("reupload-note")}>{REUPLOAD_NOTE}</p>}
-      {rec.file_type && rec.supports && rec.supports.length > 0 && <p data-testid={id("supports")}>{supportsText(rec)}</p>}
+      {showAll && rec.file_type && rec.supports && rec.supports.length > 0 && <p data-testid={id("supports")}>{supportsText(rec)}</p>}
       {rec.series_source && (rec.tables || []).length > 1 && (
         <div>
           <p data-testid={id("tables")}>{TABLES_TEXT}</p>
@@ -140,7 +142,10 @@ export default function RecognitionLine({ view, decide, reportingCurrency, typeS
           ))}
         </div>
       )}
-      {claims && <p data-testid={id("claims")}>{claims}</p>}
+      {showAll && claims && <p data-testid={id("claims")}>{claims}</p>}
+      {hasMore && (
+        <button type="button" data-testid={id("show-all")} aria-expanded={showAll} onClick={() => setShowAll((v) => !v)}
+          className="underline hover:text-slate-900">{showAll ? "Hide extra lines" : "Show all lines"}</button>)}
       {error && <p className="text-rose-700" data-testid={id("error")}>{error}</p>}
     </div>
   );
