@@ -593,7 +593,7 @@ def test_a_saved_choice_holds_hashes_only_and_a_relationship_names_no_claim_id()
 def test_the_groups_add_three_register_fields_and_no_engine_output_field():
     from schemas import metrics
     assert cm.FIELDS[-5:-2] == ("group_id", "group_role", "relationship"), "followed by the calculation lines of forecast-and-payback.md"
-    assert metrics.CONTRACT_VERSION == 14, "contracts 10 to 14 moved for the yearly-basis block, the page answer form, the as-of month, deck actuals and P&L lines, not for the groups"
+    assert metrics.CONTRACT_VERSION == 15, "contracts 10 to 15 moved for the yearly-basis block, the page answer form, the as-of month, deck actuals and P&L lines, not for the groups"
     assert not {"group_id", "group_role", "relationship"} & set(metrics.MetricsPayload.model_fields)
 
 

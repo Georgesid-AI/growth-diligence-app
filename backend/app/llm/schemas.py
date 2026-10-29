@@ -559,12 +559,46 @@ def labelling_output_schema() -> dict:
     }
 
 
+# The sheet reader (docs/design/read-check-review.md sections 3 and 4): one call per spreadsheet, the model returns the file map. The
+# provider schema is generated from the contract's FileMap, so the two cannot drift; structured outputs take no string or number
+# constraints and need every property listed as required, so those are dropped here and checked by FileMap after the reply arrives.
+SHEET_READING = "sheet_reading"
+
+
+def _provider_schema(node: Any, defs: dict) -> Any:
+    if "$ref" in node:
+        return _provider_schema(defs[node["$ref"].rsplit("/", 1)[-1]], defs)
+    if "anyOf" in node:
+        return {"anyOf": [_provider_schema(n, defs) for n in node["anyOf"]]}
+    if "const" in node:
+        return {"type": node["type"], "enum": [node["const"]]}
+    kind = node.get("type")
+    if kind == "object":
+        props = {k: _provider_schema(v, defs) for k, v in node["properties"].items()}
+        return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+    if kind == "array":
+        return {"type": "array", "items": _provider_schema(node["items"], defs)}
+    out = {"type": kind}
+    if "enum" in node:
+        out["enum"] = list(node["enum"])
+    return out
+
+
+def file_map_output_schema() -> dict:
+    """The JSON schema a sheet reading sends as `output_config.format.schema`: the contract's FileMap (schemas/metrics.py)."""
+    from schemas.metrics import FileMap
+    raw = FileMap.model_json_schema()
+    return _provider_schema(raw, raw.get("$defs", {}))
+
+
 def output_schema(structure_type: str) -> dict:
     """The schema a call sends for its type: a column mapping and a file type keep their own, every deck type is labelled."""
     if structure_type == FILE_TYPE:
         return file_type_output_schema()
     if structure_type == SHEET_STRUCTURE:
         return sheet_output_schema()
+    if structure_type == SHEET_READING:
+        return file_map_output_schema()
     if structure_type == FILE_RECOGNITION:
         return file_recognition_output_schema()
     if structure_type == PAGE_CLAIMS:

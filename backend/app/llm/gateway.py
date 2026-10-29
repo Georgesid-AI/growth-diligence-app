@@ -64,7 +64,7 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from schemas.metrics import safe_problems
 
-from .. import allowance, disclosure, formatting
+from .. import allowance, disclosure, formatting, readings
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
 from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, PAGE_CLAIMS, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileRecognitionReply,
@@ -2232,6 +2232,7 @@ async def purge_run(db, run_id: str) -> dict:
     legacy = await db[redaction.LEGACY_MAP_COLLECTION].delete_many({"run_id": run_id})
     locks = await db[guards.LOCKS_COLLECTION].delete_many({"run_id": run_id})
     structures = await cache.delete_structures(db, run_id)
+    stored = await readings.purge_audit(db, run_id)
     return {
         "llm_narratives": narratives,
         "llm_calls": getattr(calls, "deleted_count", 0),
@@ -2239,6 +2240,7 @@ async def purge_run(db, run_id: str) -> dict:
         "pseudonym_map": getattr(legacy, "deleted_count", 0),
         "llm_locks": getattr(locks, "deleted_count", 0),
         "llm_structures": structures,
+        **stored,
     }
 
 

@@ -177,5 +177,5 @@ def test_arr_and_mrr_overlap_and_the_names_read_in_a_sentence():
 # --- 3. the contract (the Uber page 20 fixture, 4 claims and 1 flag, stays pinned by test_checker.py) ----------------------------------------------------------------------------------------
 
 def test_the_engine_contract_is_9():
-    assert metrics.CONTRACT_VERSION == 14 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 15 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
 

@@ -542,5 +542,5 @@ def test_l2_a_version_4_audit_is_stale_until_run_audit_calculates_it_again_with_
     assert res.status_code == 200
     again = res.json()["results"]
     from schemas.metrics import CONTRACT_VERSION
-    assert again["contract_version"] == CONTRACT_VERSION == 14 and again["recognition"]["series_basis"] == "row"
+    assert again["contract_version"] == CONTRACT_VERSION == 15 and again["recognition"]["series_basis"] == "row"
     assert again["revenue_series"]["basis"] == "row" and again["revenue_series"]["data"]
