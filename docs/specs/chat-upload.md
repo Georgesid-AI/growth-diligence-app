@@ -1206,7 +1206,8 @@ audit (claims stage), for every deck still waiting or missing its prompt. The de
 "{N} pages parsed · {M} with figures · AI read: {status}" ({N} the file's pages, parsed, never "read"; {M} the pages with a figure written
 in digits, before redaction), with the status "waiting for revenue file", "queued", "page n of N" (n the page being read, N the pages that
 go), or "done, {n} read, {r} rejected" (n the pages whose batch the model answered, r the pages of a batch whose reply was refused or not
-read; a batch stopped by the token cap is in neither, its message follows). Consent off: "not run (AI-assisted reading is off)" on the
+read; a batch stopped by the token cap is in neither, its message follows). Once the read is done the line ends " · personal items removed:
+{p} · company names tokenised: {c}", the masking counts of the page text sent (George, 2026-10-29, review of PR 204). Consent off: "not run (AI-assisted reading is off)" on the
 upload row, S26 in the run log. Under `DECK_PIPELINE=rules` the upload row reads "{N} pages parsed · {C} candidate claims".
 
 **Cost.** A page call is exempt from the USD 5 daily cap and counted in the tester's monthly allowance, as a mapping call is

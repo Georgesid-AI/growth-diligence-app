@@ -193,6 +193,9 @@ class FakeCollection:
     async def count_documents(self, flt):
         return sum(1 for d in self.docs if _matches(d, flt))
 
+    async def drop(self):
+        self.docs, self.dropped = [], True
+
     def aggregate(self, pipeline):
         docs = self.docs
         total = 0.0

@@ -19,6 +19,8 @@ from typing import Any, Dict, Iterable, List
 
 AUDITS_COLLECTION = "audits"
 TOKEN_MAP_FIELD = "token_map"
+# The map's former home (one document per run). Delete audit still empties it; startup drops it once it is empty.
+LEGACY_MAP_COLLECTION = "pseudonym_map"
 
 # Keys whose values are treated as identifiers wherever they appear in the
 # computed-results payload.

@@ -464,9 +464,11 @@ _IBAN = re.compile(r"(?<![\w])[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-
 # (two or three capitals then 6-12 digits, optionally one closing capital), or a 10-digit national number written as 6 + 4 digits
 # with a slash ("750101/1234"). A bare run of digits is a figure and is never read as an ID.
 _ID = re.compile(r"(?<![\w-])(?:\d{3}-\d{2}-\d{4}|[A-Z]{2,3}\d{6,12}[A-Z]?|\d{6}/\d{3,4})(?![\w-])")
-# Column headers that mark a column of people (owner, contact, manager, name, rep, signatory), in any case. The word stands whole, so
-# "Reported revenue" and "Representation" are not people. A matching header of more than three words is a title, not a header.
-_PEOPLE_HEADER = re.compile(r"(?i)(?<![^\W\d_])(?:owners?|contacts?|managers?|names?|reps?|representatives?|signator(?:y|ies))(?![^\W\d_])")
+# Column headers that mark a column of people (owner, contact, manager, rep, signatory), in any case. The word stands whole, so
+# "Reported revenue" and "Representation" are not people. A matching header of more than three words is a title, not a header. "Name"
+# alone marks no people column: "Company Name", "Client name", "Customer name" and "Account name" head company names, which are tokenised
+# (George, review of PR 204).
+_PEOPLE_HEADER = re.compile(r"(?i)(?<![^\W\d_])(?:owners?|contacts?|managers?|reps?|representatives?|signator(?:y|ies))(?![^\W\d_])")
 PEOPLE_HEADER_MAX_WORDS = 3
 # "+" or "0" followed by 9-15 digits in groups: +44 20 7946 0958, 020-7946-0958, (0)20 7946 0958.
 _PHONE = re.compile(r"(?<![\w+])(?:\+|(?<![\d.,])0)(?:[\s().\-/]{0,2}\d){9,15}(?![\d])")
@@ -600,10 +602,12 @@ def blank_customer_cells(cells: List[Dict], company_name: Optional[str]) -> Tupl
 
 
 def blank_people_columns(cells: List[Dict], company_name: Optional[str]) -> Tuple[List[Dict], int]:
-    """(cells, columns): every text cell under a people header (owner, contact, manager, name, rep, signatory: the header is a short
-    cell holding one of the words) becomes [person], the whole column. A header, a figure, a year or a date, a pseudonym and a
-    placeholder stay. The count is the number of columns taken, not of cells."""
-    headers = [c for c in cells if _PEOPLE_HEADER.search(c["text"]) and len(c["text"].split()) <= PEOPLE_HEADER_MAX_WORDS]
+    """(cells, columns): every text cell under a people header (owner, contact, manager, rep, signatory: the header is a short
+    cell holding one of the words) becomes [person], the whole column. A customer-type header ("Customer name", "Account name") is
+    never a people header: its column is tokenised. A header, a figure, a year or a date, a pseudonym and a placeholder stay. The count
+    is the number of columns taken, not of cells."""
+    headers = [c for c in cells if _PEOPLE_HEADER.search(c["text"]) and not _CUSTOMER_HEADER.search(c["text"])
+               and len(c["text"].split()) <= PEOPLE_HEADER_MAX_WORDS]
     out, columns = [], set()
     for cell in cells:
         text = cell["text"]

@@ -206,8 +206,9 @@ alike. No new dependency.
 
 - Personal data: removed, never sent, never stored in a payload. Regex for
   emails, phone numbers, IBANs and ID-shaped strings. Columns whose label
-  signals people (owner, contact, manager, name, rep, signatory) masked as
-  whole columns.
+  signals people (owner, contact, manager, rep, signatory) masked as
+  whole columns. A column headed name, customer, account, company or client
+  holds company names: tokenised, never withheld (George, review of PR 204).
 - Company and customer names: replaced by consistent per-audit tokens
   (Client-01, Product-A). Same name → same token in every file of the audit.
   The token map lives on the audit record only. Display un-masks on the

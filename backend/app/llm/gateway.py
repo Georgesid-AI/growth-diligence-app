@@ -2222,17 +2222,29 @@ async def purge_run(db, run_id: str) -> dict:
     """Remove every LLM artefact for a run.
 
     Called from the existing delete-audit action so deleting an audit leaves no
-    narratives, no call log and no token map behind.
+    narratives, no call log and no token map behind, in its current field or its former collection.
     """
     narratives = await cache.delete_run(db, run_id)
     calls = await db[CALLS_COLLECTION].delete_many({"run_id": run_id})
     tokens = await db[redaction.AUDITS_COLLECTION].update_one({"id": run_id}, {"$unset": {redaction.TOKEN_MAP_FIELD: ""}})
+    legacy = await db[redaction.LEGACY_MAP_COLLECTION].delete_many({"run_id": run_id})
     locks = await db[guards.LOCKS_COLLECTION].delete_many({"run_id": run_id})
     structures = await cache.delete_structures(db, run_id)
     return {
         "llm_narratives": narratives,
         "llm_calls": getattr(calls, "deleted_count", 0),
         "token_map": getattr(tokens, "modified_count", 0),
+        "pseudonym_map": getattr(legacy, "deleted_count", 0),
         "llm_locks": getattr(locks, "deleted_count", 0),
         "llm_structures": structures,
     }
+
+
+async def drop_legacy_map(db) -> int:
+    """The one-off step that retires the former `pseudonym_map` collection (rule 22): it is dropped once Delete audit has emptied it.
+    Returns the documents left; the log line carries that count only, never a name."""
+    left = await db[redaction.LEGACY_MAP_COLLECTION].count_documents({})
+    if left == 0:
+        await db[redaction.LEGACY_MAP_COLLECTION].drop()
+    logger.info("legacy pseudonym_map: %d document(s) left%s", left, "" if left else ", collection dropped")
+    return left

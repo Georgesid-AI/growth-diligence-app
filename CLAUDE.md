@@ -43,12 +43,13 @@
     model JSON output may be stored. The owner page shows image tokens and image cost apart from text tokens and cost.
     Amended 2026-10-29 (George, docs/design/read-check-review.md section 8, PR 1): masking is one module (structures/redact.py), run by the
     gateway on every payload that leaves the server. The page text of a page_claims call is masked, no longer "as printed": emails, phone
-    numbers, IBANs, ID numbers and first-name personal names removed, columns headed owner, contact, manager, name, rep or signatory masked
-    whole, company and customer names (the target's too) replaced by per-audit tokens Client-01, Client-02 ... that are the same in every
-    file of the audit; figures and metric labels unchanged. The page image goes unmasked (option A). The token map lives on the audit
-    record only (`token_map`), never in a log, a payload or an API response, and goes with the audit; the provider adapter refuses a payload
-    that still holds an email, IBAN, ID number or "+" phone number. Counts per file on screen: lines sent, personal items removed,
-    company names tokenised, columns withheld.
+    numbers, IBANs, ID numbers and first-name personal names removed, columns headed owner, contact, manager, rep or signatory masked
+    whole (a column headed name, customer, account, company or client is tokenised, never withheld), company and customer names (the
+    target's too) replaced by per-audit tokens Client-01, Client-02 ... that are the same in every file of the audit; figures and metric
+    labels unchanged. The page image goes unmasked (option A). The token map lives on the audit record only (`token_map`), never in a
+    log, a payload or an API response, and goes with the audit; the provider adapter refuses a payload that still holds an email, IBAN,
+    ID number or "+" phone number. Counts per file on screen: lines sent, personal items removed, company names tokenised, columns
+    withheld.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt

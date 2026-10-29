@@ -1975,6 +1975,9 @@ async def list_deck_candidates(audit_id: str):
         reads = d.pop("page_reads", None) or []
         d["pages_read"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") == "read")
         d["pages_rejected"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") not in ("read", "stopped"))
+        # What masking took out of the page text sent (George, 2026-10-29, review of PR 204): counts only.
+        d["personal_removed"] = sum((r.get("masked") or {}).get("personal", 0) for r in reads)
+        d["names_replaced"] = sum((r.get("masked") or {}).get("names", 0) for r in reads)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000))
     # The claims Python enters on its own read as approved ("auto"), the ones a check asks about as pending (simplified-flow.md section 2).
@@ -4064,6 +4067,11 @@ async def check_page_reader_model():
 @app.on_event("startup")
 async def ensure_llm_indexes():
     await llm_gateway.guards.ensure_indexes(db)
+
+
+@app.on_event("startup")
+async def drop_legacy_token_map():
+    await llm_gateway.drop_legacy_map(db)        # the former pseudonym_map collection goes once Delete audit has emptied it
 
 
 @app.on_event("shutdown")

@@ -4075,45 +4075,53 @@ def test_a_sheet_with_emails_phones_and_an_iban_in_its_cells_sends_none_of_them(
                                (3, 1, "Revenue"), (4, 1, "Reach us at jane.roe@example.org or +44 20 7946 0958"),
                                (5, 1, "Bank DE89 3704 0044 0532 0130 00"), (6, 1, "Tax no AB123456789"))}
     text, counts = sheet_mod.skeleton(reading, "Target Co", {})
-    for item in PERSONAL:
-        assert item not in text, item
-    assert "[email]" in text and "[phone]" in text and "[iban]" in text and "[id]" in text
     assert counts["lines"] == 7 and counts["email"] == 1 and counts["phone"] == 1 and counts["iban"] == 1 and counts["id"] == 1
-    # The gateway runs the same masking again: the masked text passes, the same text unmasked is refused and nothing is sent.
-    db = _structure_db()
-    ok_adapter = t.FakeAdapter(replies=[STRUCTURE_REPLY])
-    assert asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], text, "sheet_structure", adapter=ok_adapter,
-                                              sleep=t._noop_sleep)).reason != "refused: redaction_changed"
+    # The gateway runs the same masking again: the masked text goes out, the same text unmasked is refused and nothing is sent.
+    result, adapter = _send(_structure_db(), text, "sheet_structure")
+    assert result.reason != "refused: redaction_changed" and adapter.calls >= 1
+    sent = json.loads(adapter.payloads[0])["text"]
+    for item in PERSONAL:
+        assert item not in sent, item
+    assert "[email]" in sent and "[phone]" in sent and "[iban]" in sent and "[id]" in sent
     raw = text.replace("[email]", PERSONAL[0]).replace("[iban]", PERSONAL[2])
     result, adapter = _send(_structure_db(), raw, "sheet_structure")
     assert result.status == "refused" and result.reason == "refused: redaction_changed" and adapter.calls == 0
 
 
-def test_a_column_headed_owner_contact_manager_name_rep_or_signatory_is_masked_whole():
-    headers = ("Account Owner", "contact", "Sales MANAGER", "Customer name", "Rep", "Signatory")
-    cells = _cells(*[(1, c, h) for c, h in enumerate(headers, start=1)],
-                   *[(r, c, f"Person Lastname{r}{c}") for r in (2, 3) for c in range(1, 7)],
-                   (2, 7, "Reported revenue"), (3, 7, "Representation fees"))
-    cells += _cells((4, 7, "Retained"))
-    out, counts = structure_redact.redact_structure(cells, "Target Co", {})
-    body = [c["text"] for c in out if 2 <= c["row"] <= 3 and c["col"] <= 6]
-    assert body == ["[person]"] * 12 and counts["people_columns"] == 6
-    assert [c["text"] for c in out if c["col"] == 7] == ["Reported revenue", "Representation fees", "Retained"], "a word inside a word is no header"
-    assert [c["text"] for c in out if c["row"] == 1] == list(headers), "the header and the metric labels stay"
+def test_a_company_name_column_is_tokenised_and_only_a_people_column_is_withheld_in_what_leaves_the_server():
+    """A column headed name, customer, account, company or client holds company names: they leave as their tokens, never withheld.
+    A column headed contact, owner, manager, rep or signatory is withheld whole (George, review of PR 204)."""
+    company = ("Company Name", "Client name", "Customer name", "Account name")
+    people = ("Contact name", "Deal owner")
+    headers = company + people + ("ARR",)
+    lines = [f"p5r1c{c}: {h}" for c, h in enumerate(headers, start=1)]
+    for r, (name, person, arr) in enumerate((("Northwind Trading", "Roe, J.", "$120,000"),
+                                             ("Northwind Trading renewal", "Doe, A. (EMEA)", "$80,000")), start=2):
+        lines += [f"p5r{r}c{c}: {name}" for c in range(1, 5)] + [f"p5r{r}c5: {person}", f"p5r{r}c6: {person}", f"p5r{r}c7: {arr}"]
+    result, adapter = _send_page(_structure_db({"Northwind Trading": "Client-01"}), "\n".join(lines))
+    assert result.status == "read", result.reason
+    sent = dict(line.split(": ", 1) for line in json.loads(adapter.payloads[0])["text"].splitlines())
+    for c, header in enumerate(company, start=1):
+        assert (sent[f"p5r2c{c}"], sent[f"p5r3c{c}"]) == ("Client-01", "Client-01 renewal"), header
+    for c, header in enumerate(people, start=5):
+        assert (sent[f"p5r2c{c}"], sent[f"p5r3c{c}"]) == ("[person]", "[person]"), header
+    assert [sent[f"p5r1c{c}"] for c in range(1, 8)] == list(headers), "the headers stay"
+    assert (sent["p5r2c7"], sent["p5r3c7"]) == ("$120,000", "$80,000"), "the figures stay"
+    assert result.masked["people_columns"] == 2 and result.masked["customer"] == 8
 
 
 def test_the_same_company_in_two_files_is_one_token_in_any_case_and_spacing():
     db = _structure_db()
-    first = asyncio.run(redaction.add_customers(db, STRUCTURE_AUDIT["id"], ["Northwind Trading", "Globex Corp"]))
-    second = asyncio.run(redaction.add_customers(db, STRUCTURE_AUDIT["id"], ["NORTHWIND   trading", "Initech Ltd", "northwind trading"]))
-    tokens = {name: token for name, token in second.items()}
-    assert first == {"Globex Corp": "Client-01", "Northwind Trading": "Client-02"}, "new names take the next token in sorted order"
-    assert tokens["NORTHWIND trading"] == "Client-02" == tokens["northwind trading"] and tokens["Northwind Trading"] == "Client-02"
-    assert tokens["Initech Ltd"] == "Client-03" and sorted(set(tokens.values())) == ["Client-01", "Client-02", "Client-03"]
-    # Every spelling is masked to the same token in the text of either file, whatever its case or spacing.
-    cells = _cells((1, 1, "NORTHWIND  Trading renewed"), (2, 1, "northwind trading"), (3, 1, "Northwind Trading"))
-    out, counts = structure_redact.redact_structure(cells, "Target Co", second)
-    assert [c["text"] for c in out] == ["Client-02 renewed", "Client-02", "Client-02"] and counts["customer"] == 3
+    asyncio.run(redaction.add_customers(db, STRUCTURE_AUDIT["id"], ["Northwind Trading", "Globex Corp"]))     # the revenue file's customers
+    asyncio.run(redaction.add_customers(db, STRUCTURE_AUDIT["id"], ["NORTHWIND   trading", "Initech Ltd"]))  # the CRM file's
+    # Each deck page goes in its own call; every spelling of a company leaves the server as its one token, in either call.
+    first, a = _send_page(db, "p5r1c1 title: Top accounts\np5r2c1: NORTHWIND  Trading renewed at $120,000\np5r3c1: Globex Corp $80,000")
+    second, b = _send_page(db, "p2r1c1: northwind trading\np2r2c1: Northwind Trading $40,000\np2r3c1: Initech Ltd signed $15,000")
+    assert first.status == second.status == "read", (first.reason, second.reason)
+    sent = [json.loads(adapter.payloads[0])["text"] for adapter in (a, b)]
+    assert sent[0].splitlines()[1:] == ["p5r2c1: Client-02 renewed at $120,000", "p5r3c1: Client-01 $80,000"]
+    assert sent[1].splitlines() == ["p2r1c1: Client-02", "p2r2c1: Client-02 $40,000", "p2r3c1: Client-03 signed $15,000"]
+    assert not [name for text in sent for name in ("northwind", "globex", "initech") if name in text.casefold()]
 
 
 def test_the_token_map_stays_on_the_audit_record_out_of_logs_payloads_and_the_api(caplog):
@@ -4136,13 +4144,40 @@ def test_the_token_map_stays_on_the_audit_record_out_of_logs_payloads_and_the_ap
     assert "Client-0" not in stored or "Northwind" not in stored
 
 
+def test_delete_audit_removes_a_legacy_map_document_and_startup_drops_the_collection_once_empty(api, caplog):
+    """The map's former collection (pseudonym_map, one document per run): Delete audit removes the audit's document and leaves another
+    audit's; the startup step keeps the collection while it holds a document and drops it once empty. Its log line carries a count,
+    never a name (rule 22)."""
+    import server
+    from test_chat_upload import AUDIT, COMPANY
+    caplog.set_level(logging.DEBUG)
+    legacy = api.db[redaction.LEGACY_MAP_COLLECTION]
+    legacy.docs += [{"run_id": AUDIT, "mapping": {"Northwind Trading": "Customer_01"}},
+                    {"run_id": "other-audit", "mapping": {"Globex Corp": "Customer_01"}}]
+    r = api.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": COMPANY})
+    assert r.status_code == 200, r.text
+    assert r.json()["llm_purged"]["pseudonym_map"] == 1 and [d["run_id"] for d in legacy.docs] == ["other-audit"]
+    asyncio.run(server.drop_legacy_token_map())
+    assert legacy.docs and not getattr(legacy, "dropped", False), "a collection still holding a map is kept"
+    asyncio.run(gateway.purge_run(api.db, "other-audit"))         # the last audit from before the move is deleted
+    asyncio.run(server.drop_legacy_token_map())
+    assert legacy.docs == [] and legacy.dropped
+    lines = [r.getMessage() for r in caplog.records if "pseudonym_map" in r.getMessage()]
+    assert lines == ["legacy pseudonym_map: 1 document(s) left", "legacy pseudonym_map: 0 document(s) left, collection dropped"]
+    assert "Northwind" not in caplog.text and "Globex" not in caplog.text
+
+
 def test_display_unmasks_the_model_reply_on_the_server():
     reply = json.dumps({"type": PAGE_CLAIMS, "claims": [
         {"metric": "revenue", "value": 4200, "value_high": None, "unit": "USD", "unit_other": None, "period": "2025",
-         "basis": "actual", "scenario": "none", "value_cell": "p5r2c1", "label_cell": "p5r1c1", "period_cell": None}]})
+         "basis": "actual", "scenario": "none", "value_cell": "p5r2c1", "label_cell": "p5r1c1", "period_cell": None,
+         "label_text": "Client-01 revenue", "segment": "Client-01"}]})
     page = "p5r1c1 title: Northwind Trading revenue\np5r2c1: $4,200"
     result, adapter = _send_page(_structure_db({"Northwind Trading": "Client-01"}), page, reply)
-    assert result.status == "read" and "Northwind" not in json.dumps(json.loads(adapter.payloads[0]))
+    assert result.status == "read", result.reason
+    assert json.loads(adapter.payloads[0])["text"] == "p5r1c1 title: Client-01 revenue\np5r2c1: $4,200"
+    claim, = result.claims
+    assert (claim["label_text"], claim["segment"]) == ("Northwind Trading revenue", "Northwind Trading"), "the tokens go back to the names"
     assert result.masked["customer"] == 1
 
 

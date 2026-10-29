@@ -183,6 +183,21 @@ def test_status_waiting_queued_page_n_of_n_and_done_are_listed_with_their_counts
     assert (done["ai_status"], done["pages_read"], done["pages_rejected"]) == ("read", 1, 0)
 
 
+def test_the_deck_line_counts_what_masking_took_out_of_the_pages_sent_as_numbers_only(reading, monkeypatch):
+    """George, 2026-10-29 (review of PR 204): the deck line ends with the personal items removed and the company names tokenised in the
+    page text sent; the page read keeps the two counts, never what was removed."""
+    page = FIGURE_PAGE + [(50, 440, 12, "Fixture Target Ltd grew 40% in 2025"), (50, 420, 12, "Jane Doe, jane.roe@example.org")]
+    monkeypatch.setattr(sys.modules[__name__], "DECK", pdf_page(page))
+    upload_file(reading, "revenue.csv")
+    upload_deck(reading)
+    sent = json.loads(page_calls(reading)[0])["text"]
+    assert "jane.roe" not in sent and "Jane Doe" not in sent and "Fixture Target" not in sent
+    stored, = deck_doc(reading)["page_reads"]
+    assert stored["masked"] == {"personal": 2, "names": 1}
+    done = listed(reading)
+    assert (done["ai_status"], done["personal_removed"], done["names_replaced"]) == ("read", 2, 1)
+
+
 def test_a_reply_the_validator_rejects_is_counted_as_rejected_pages(reading):
     reading.state["adapter"] = t.FakeAdapter(replies=["{not json"])
     upload_file(reading, "revenue.csv")
