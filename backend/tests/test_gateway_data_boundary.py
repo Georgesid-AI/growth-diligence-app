@@ -4018,3 +4018,39 @@ def test_the_deck_actuals_reasons_and_details_hold_figures_and_closed_words_and_
     assert noted == deck_actuals.mark_note({"basis": "projection"}) and sentinel not in noted
     assert deck_actuals.DIFFERS_REASON.format(deck="€1", file="€2") == "deck differs from file: deck €1, file €2"
     assert "app.llm" not in inspect.getsource(deck_actuals) and "gateway" not in inspect.getsource(deck_actuals)
+
+
+# docs/design/pnl-lines.md: a statement whose lines block fails to compute is reported as Missing. The entry crosses to the growth_engine step
+# (gateway._GAP_FIELDS): its metric, status and reason may carry the exception class name and nothing else (rule 14).
+PNL_ERROR_SENTINEL = "Heron Quartz ledger 9,876,543"
+
+
+def _results_with_a_failed_statement(monkeypatch):
+    import growth_engine as ge
+    from claim_matching_support import engine_results   # noqa: F401  (loads the sample engine run's imports)
+
+    def boom(statement, pnl_src):
+        raise ValueError(f"{PNL_ERROR_SENTINEL} in {pnl_src.get('file')} {statement}")
+    monkeypatch.setattr(ge, "compute_pnl_lines", boom)
+    import pandas as pd
+    empty = pd.DataFrame()
+    rev = pd.DataFrame([("C1", "2024-01-01", 1000, "EUR")], columns=["customer_id", "invoice_date", "amount", "currency"])
+    rev["_row"] = [2]
+    config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2026-12-31", "fx": {"EUR": 1.0}, "billing_terms": {},
+              "default_l": 1, "as_of_month": None}
+    errors = []
+    results = ge.compute_all_raw(rev, empty, empty, config, {"pnl": {"file": "heron.csv", "sheet": "Heron"}}, on_error=errors.append,
+                                 statement={"lines": [{"label": PNL_ERROR_SENTINEL}]})
+    return results, errors
+
+
+def test_the_pnl_lines_calculation_error_entry_carries_the_exception_class_name_and_nothing_else(monkeypatch):
+    results, errors = _results_with_a_failed_statement(monkeypatch)
+    assert [type(e).__name__ for e in errors] == ["ValueError"] and results["pnl_lines"] is None
+    entry = next(m for m in results["missing_data"] if m["metric"] == "P&L lines (calculation error)")
+    assert entry["reason"] == "The calculation stopped on an unexpected ValueError; reported as Missing, not estimated"
+    sent = gateway._slice_for_step({"missing_data": [entry]}, "growth_engine")["missing_data"]
+    assert sent == [{"metric": "P&L lines (calculation error)", "status": "Missing", "reason": entry["reason"]}], "nothing but those three fields"
+    wire = json.dumps(sent)
+    for needle in (PNL_ERROR_SENTINEL, "9,876,543", "heron.csv", "Heron"):
+        assert needle not in wire, f"{needle!r} reaches the model through the calculation-error entry"

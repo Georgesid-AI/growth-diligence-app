@@ -19,6 +19,7 @@ GRAIN_WORDS = {"year": "yearly", "half": "half-yearly", "quarter": "quarterly", 
 ANNUALISED = "annualised"
 # The recompute of a % row: the money rows it is computed from (pick() by meaning), by the meaning of the % row.
 MARGIN_MEANINGS = ("gross_margin", "ebitda", "opex")
+_GROWTH_WORDS = re.compile(r"\b(?:growth|yoy|mom|qoq|change|changes|delta|chg)\b")      # a row with one of these is a rate of change
 PLAN_MONEY = ("revenue", "cost_of_revenue", "sm_expense", "opex")       # a plan cell tested as growth
 PLAN_MARGIN = ("gross_margin", "ebitda")                                 # a plan cell tested as a share of revenue
 SUM_RULE = "Sum check: a total against the sum of its sub-lines, within 0.5%"
@@ -43,10 +44,31 @@ def _money_line(line: Dict) -> bool:
 # ---------------------------------------------------------------------------
 # Periods (section 2)
 # ---------------------------------------------------------------------------
+def is_growth_row(line: Dict) -> bool:
+    """A % row read as a growth or change rate: its meaning is growth_rate or its label holds growth, YoY, MoM, change or delta. "OPEX %"
+    and "Gross margin %" are shares and are not."""
+    return line["role"] == "rate" and (line["meaning"] == "growth_rate" or bool(_GROWTH_WORDS.search(sh._norm(line["label"]))))
+
+
+def growth_base(line: Dict, lines: List[Dict]) -> Optional[tuple]:
+    """(base lines, meaning) a growth row is the growth of: the row's own meaning when it names a line ("OPEX growth %" → opex), else the
+    words left of its label once the growth words and the % are taken out ("Customer growth %" → customers, "Revenue growth rate" →
+    revenue). None when it names no line of the file: the row is then not recomputed, and never against revenue by default."""
+    meanings = [line["meaning"]] if line["meaning"] not in ("growth_rate", "other") else []
+    stem = re.sub(r"\s+", " ", _GROWTH_WORDS.sub(" ", re.sub(r"[%()]|\brate\b|\bpct\b", " ", sh._norm(line["label"])))).strip()
+    if stem:
+        meanings += [m for m in (sh.meaning_of(stem)[0], sh.meaning_of(stem + "s")[0]) if m not in ("other", "growth_rate")]
+    for meaning in meanings:
+        chosen = [x for x in sh.pick(lines, meaning) if x is not line]
+        if chosen:
+            return chosen, meaning
+    return None
+
+
 def rate_period(line: Dict, periods: List[Dict]) -> Optional[str]:
     """The period a rate row speaks for: a growth rate inherits the grain of the columns it has figures in ("yearly" for a yearly file,
     never "monthly"); a margin % row is a ratio and has none (None), as has a line that is no rate."""
-    if line["role"] != "rate" or line["meaning"] != "growth_rate":
+    if not is_growth_row(line):
         return None
     grains = {p["grain"] for k, p in enumerate(periods) if line["values"][k] is not None}
     return GRAIN_WORDS.get(next(iter(grains))) if len(grains) == 1 else None
@@ -154,10 +176,12 @@ def recompute_checks(lines: List[Dict], periods: List[Dict]) -> List[Dict]:
     def rev(k):
         return _sum_of(revenue, k, "revenue", lines) if revenue else None
 
-    def rate(line, code, k, expected):
+    def rate(line, code, k, expected, absolute=False):
         actual = line["values"][k]
         if expected is None or actual is None:
             return
+        if absolute:                                    # a cost % row is read by size: OPEX and OPEX % both negative raise nothing
+            actual, expected = abs(actual), abs(expected)
         gap = (actual - expected) * 100
         if round(abs(gap), 9) > tolerance:
             out.append({"row": line["row"], "code": code, "period": periods[k]["header"], "expected": expected, "actual": actual,
@@ -167,10 +191,13 @@ def recompute_checks(lines: List[Dict], periods: List[Dict]) -> List[Dict]:
         if line["role"] != "rate" or not _present(line):
             continue
         for k in range(len(periods)):
-            if line["meaning"] == "growth_rate":
+            if is_growth_row(line):
+                base = growth_base(line, lines)         # the growth of its own base line, at the columns' period (section 2)
                 j = _previous(periods, k)
-                a, b = rev(k), rev(j) if j is not None else None
-                rate(line, "growth_mismatch", k, a / b - 1 if a is not None and b else None)
+                if base is None or j is None:
+                    continue
+                a, b = _sum_of(base[0], k, base[1], lines), _sum_of(base[0], j, base[1], lines)
+                rate(line, "growth_mismatch", k, a / b - 1 if a is not None and b is not None and b > 0 else None)
             elif line["meaning"] in MARGIN_MEANINGS:
                 r = rev(k)
                 if not r:
@@ -183,7 +210,7 @@ def recompute_checks(lines: List[Dict], periods: List[Dict]) -> List[Dict]:
                     chosen = sh.pick(lines, line["meaning"])
                     v = _sum_of(chosen, k, line["meaning"], lines) if chosen else None
                     value = None if v is None else v / r
-                rate(line, "margin_mismatch", k, value)
+                rate(line, "margin_mismatch", k, value, absolute=line["meaning"] == "opex")
 
     def money(line, code, k, expected):
         actual = line["values"][k]
@@ -243,11 +270,13 @@ def findings(lines: List[Dict], periods: List[Dict], scale: float) -> List[Dict]
     for g in sum_gaps(lines, periods):
         line = by_row[g["row"]]
         sign = g["code"] == "sign_differs"
-        text = f"{line['label']} differs from the sum of its lines by {_amount(g['gap'] * scale)} in {g['period']}"
         if sign:
-            text += " (its sign is the opposite of its lines)"
+            text = (f"{line['label']}: sign differs from its lines in {g['period']} "
+                    f"(total {g['total'] * scale:,.0f}, lines {g['parts'] * scale:,.0f})")
+        else:
+            text = f"{line['label']} differs from the sum of its lines by {_amount(g['gap'] * scale)} in {g['period']}"
         out.append({"kind": "sign" if sign else "sum", "line": line["label"], "row": line["row"], "period": g["period"],
-                    "gap": g["gap"] * scale, "unit": "currency", "text": text,
+                    "gap": None if sign else g["gap"] * scale, "unit": "currency", "text": text,
                     "cell": _cells(periods, line, [g["period"]])[0], "rule": SUM_RULE})
     for g in recompute_checks(lines, periods):
         line = by_row[g["row"]]

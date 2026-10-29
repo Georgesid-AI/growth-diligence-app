@@ -13,6 +13,7 @@ import growth_engine as ge
 from claim_matching_support import engine_results  # noqa: F401  (shared fixture module import order)
 from forecast_support import claim, long_results, payback_claim, settings
 
+from app import claim_groups as cg
 from app import claim_matching as cm
 from app import integrity
 from app import run_audit as ra
@@ -120,13 +121,23 @@ def test_columns_after_the_as_of_month_are_plan_whatever_the_header_says_and_a_b
 
 # --- 3. integrity findings -------------------------------------------------------------------------------------------------------------
 
-def test_the_sum_check_reports_the_opex_sign_gap():
+def test_the_sign_finding_says_sign_differs_with_the_two_amounts_not_a_sum_gap():
     found = [f for f in analysis()["findings"] if f["line"] == "OPEX total"]
     assert {f["period"] for f in found} == {"FY 2019", "FY 2020", "FY 2021", "FY 2022", "FY 2023", "FY 2024"}
     fy21 = next(f for f in found if f["period"] == "FY 2021")
-    assert fy21["kind"] == "sign" and fy21["gap"] == 3_000_000
-    assert fy21["text"].startswith("OPEX total differs from the sum of its lines by 3,000,000 in FY 2021") and "sign" in fy21["text"]
-    assert fy21["cell"] == "D12"
+    assert fy21["kind"] == "sign" and fy21["gap"] is None
+    assert fy21["text"] == "OPEX total: sign differs from its lines in FY 2021 (total 1,500,000, lines -1,500,000)"
+    assert "3,000,000" not in fy21["text"] and fy21["cell"] == "D12"
+
+
+def test_a_total_and_its_lines_of_one_sign_raise_no_finding_whatever_the_convention():
+    negative = analysis(edit("OPEX total,600,940,1500,2080,2760,3520", "OPEX total,-600,-940,-1500,-2080,-2760,-3520"))["findings"]
+    assert [f for f in negative if f["line"] == "OPEX total"] == [], "total and lines both negative: the sum check compares by size"
+
+
+def test_a_total_that_differs_from_its_lines_by_more_than_the_sign_stays_a_sum_finding():
+    found = [f for f in analysis(edit("OPEX total,600,940,1500,", "OPEX total,600,940,1700,"))["findings"] if f["period"] == "FY 2021"]
+    assert [f["kind"] for f in found if f["line"] == "OPEX total"] == ["sum"]
 
 
 def test_a_clean_file_has_no_finding_but_the_sign_gap():
@@ -148,6 +159,38 @@ def test_the_growth_row_recomputes_within_the_rate_tolerance():
     far = [f for f in analysis(edit("0.875,0.6,0.5", "0.875,0.65,0.5"))["findings"] if f["line"] == "Revenue growth rate"]
     assert len(far) == 1 and far[0]["kind"] == "recompute" and far[0]["period"] == "FY 2022"
     assert far[0]["unit"] == "points" and far[0]["gap"] == pytest.approx(5.0) and "5.0 points" in far[0]["text"]
+
+
+GROWTH_OPEX = "OPEX growth %,,0.5667,0.5957,0.3867,0.3269,0.2754\n"
+GROWTH_CUSTOMERS = "Customers,10,20,30,40,50,60\nCustomer growth %,,1.0,0.5,0.3333,0.25,0.2\n"
+
+
+def test_a_growth_row_is_recomputed_against_its_own_base_line_at_the_columns_period():
+    opex = analysis(edit("OPEX %,", GROWTH_OPEX + "OPEX %,"))
+    assert not [f for f in opex["findings"] if f["line"] == "OPEX growth %"], "OPEX growth is OPEX 940 / 600 - 1, not a share of revenue"
+    assert view(edit("OPEX %,", GROWTH_OPEX + "OPEX %,"))["OPEX growth %"]["period"] == "yearly"
+    customers = analysis(edit("OPEX %,", GROWTH_CUSTOMERS + "OPEX %,"))
+    assert not [f for f in customers["findings"] if f["line"] == "Customer growth %"], "customer growth is not revenue growth"
+    assert view(edit("OPEX %,", GROWTH_CUSTOMERS + "OPEX %,"))["Customer growth %"]["period"] == "yearly"
+
+
+def test_a_growth_row_that_differs_from_the_growth_of_its_base_is_a_finding():
+    wrong = GROWTH_OPEX.replace("0.5957", "0.7957")
+    found = [f for f in analysis(edit("OPEX %,", wrong + "OPEX %,"))["findings"] if f["line"] == "OPEX growth %"]
+    assert [(f["period"], f["unit"]) for f in found] == [("FY 2021", "points")] and found[0]["gap"] == pytest.approx(20.0, abs=0.1)
+    assert "recomputed 59.6%" in found[0]["text"]
+
+
+def test_a_growth_row_that_names_no_line_of_the_file_is_not_checked_against_revenue():
+    assert not [f for f in analysis(edit("OPEX %,", "Net adds growth %,,0.9,0.9,0.9,0.9,0.9\nOPEX %,"))["findings"] if f["line"] == "Net adds growth %"]
+
+
+def test_opex_and_opex_percent_both_written_negative_raise_no_finding():
+    both = edit("OPEX %,1.5,1.175,1.0,0.8667,0.7667,0.704", "OPEX %,-1.5,-1.175,-1.0,-0.8667,-0.7667,-0.704")
+    both = both.replace(b"OPEX total,600,940,1500,2080,2760,3520", b"OPEX total,-600,-940,-1500,-2080,-2760,-3520")
+    assert not [f for f in analysis(both)["findings"] if f["line"] in ("OPEX total", "OPEX %")]
+    wrong = analysis(edit("OPEX %,1.5,1.175,1.0,", "OPEX %,-1.5,-1.175,-1.3,"))["findings"]
+    assert [f["period"] for f in wrong if f["line"] == "OPEX %"] == ["FY 2021"], "a real gap in size is still found"
 
 
 def test_margin_rows_and_result_lines_are_recomputed_from_the_money_rows():
@@ -203,7 +246,48 @@ def test_a_plan_claim_enters_the_register_unverified_with_its_source_and_a_value
     assert all(x["evidence_label"] == "Unverified" for x in plan.values()), "never Verified or Contradicted"
     assert rev["value_at_stake_arr"] == 2_400_000 and rev["figure_type"] == "target"
     assert "Implied growth FY 2021 → FY 2022: 60.0%" in rev["calc_lines"][1] and "Gap: -27.5 points" in rev["calc_lines"]
-    assert not any(x["value_at_stake_arr"] for x in plan.values() if x["claim_type"] == "costs"), "a cost has no ARR link"
+    assert not any(x["value_at_stake_arr"] for x in plan.values() if x["claim_type"] in ("cost_of_revenue", "s_and_m", "opex")), "a cost has no ARR link"
+
+
+def test_plan_rows_carry_the_claim_type_of_their_line_and_are_never_rivals_for_one_year():
+    r = results_for()
+    rows = cm.build_register([], r, settings(AS_OF, target_arr=10_000_000, target_date="2027-12-31"))
+    plan = [x for x in rows if x["deck_reading"] == cm.PLAN_READING]
+    assert {x["claim_type"] for x in plan} == {"revenue", "cost_of_revenue", "s_and_m", "opex", "gross_profit", "ebitda"}
+    assert len(plan) == 18 and "costs" not in {x["claim_type"] for x in plan}
+    assert not [x for x in plan if x["group_role"] is not None], "no 'choose the one to use' card from plan rows"
+    assert not [x for x in plan if cg.is_ineligible(x)]
+    assert all(x["rank"] for x in plan) and len({x["rank"] for x in plan}) == len(plan), "every plan row is ranked"
+
+
+def test_confirming_the_forecast_table_folds_its_rows_into_the_plan_rows_and_keeps_the_ranking():
+    r = results_for()
+    cells = {(c["metric"], c["period"]): c["cell"] for c in r["pnl_lines"]["plan"]}
+    table = []
+    for n, (metric, ctype) in enumerate((("Revenue", "revenue"), ("Gross margin", "gross_profit"), ("EBITDA", "ebitda")), 1):
+        for period, year in (("FY 2022", "2022"), ("FY 2023", "2023"), ("FY 2024", "2024")):
+            cell = cells[(metric, period)]
+            table.append(claim(f"{metric} {period}", 1.0, period.replace(" ", ""), year, claim_type=ctype, id=f"f{n}{year}", origin=cm.FORECAST_FILE,
+                               basis="projection", sources=[{"file": FIXTURE, "sheet": "CSV", "cell": cell}]))
+    st = settings(AS_OF, target_arr=10_000_000, target_date="2027-12-31")
+    before, after = cm.build_register([], r, st), cm.build_register(table, r, st)
+    plan = [x for x in after if x["deck_reading"] == cm.PLAN_READING]
+    assert len(plan) == 18 and not [x for x in after if x["deck_reading"] == cm.FORECAST_READING], "one claim, not two"
+    revenue = next(x for x in plan if x["claim_type"] == "revenue" and x["period"] == "FY 2022")
+    assert revenue["page_ref"] == "File CSV!E3 (plan), CSV!E3 (forecast table)"
+    assert vd.proposal(after) == vd.proposal(before) and len(vd.proposal(after)) == 5, "the top five is populated"
+
+
+def test_a_plan_rows_id_is_its_sheet_line_and_period_so_a_shifted_column_keeps_it():
+    def plan_ids(content):
+        r = results_for(content)
+        return {(x["claim_type"], x["period"]): (x["claim_id"], x["page_ref"]) for x in cm.build_register([], r, settings(AS_OF))
+                if x["deck_reading"] == cm.PLAN_READING}
+    shifted = b"\n".join(row.replace(b",", b",,", 1) if row else row for row in SOURCE.split(b"\n"))      # one empty column inserted after the labels
+    before, after = plan_ids(SOURCE), plan_ids(shifted)
+    assert before[("revenue", "FY 2024")][0] == after[("revenue", "FY 2024")][0] == "plan:CSV:revenue:FY2024"
+    assert before[("revenue", "FY 2024")][1] == "File CSV!G3 (plan)" and after[("revenue", "FY 2024")][1] == "File CSV!H3 (plan)", "the cell moved"
+    assert {k: v[0] for k, v in before.items()} == {k: v[0] for k, v in after.items()}
 
 
 def test_a_deck_forecast_within_tolerance_makes_one_claim_with_two_sources():
@@ -226,6 +310,26 @@ def test_a_deck_forecast_beyond_tolerance_is_flagged_plan_in_file_differs_from_p
     assert plan in vd.flagged_rows(rows), "listed under Worth flagging"
     assert any(x["claim_id"] == "x1" for x in rows), "the deck claim stays"
     assert not [x for x in vd.flagged_rows(rows) if x["claim_id"] == "x1"]
+
+
+def test_a_deck_percentage_is_compared_with_the_plans_implied_percentage_not_its_money_figure():
+    r = results_for()
+    deck = claim("EBITDA margin 7% in FY2024", 7, "FY2024", "2024", claim_type="ebitda", currency=None, unit="%", basis="projection")
+    rows = cm.build_register([deck], r, settings(AS_OF))
+    one = next(x for x in rows if x["claim_id"] == "x1")
+    assert any("6.6%" in line and "within ±1 pp" in line for line in one["calc_lines"]), one["calc_lines"]
+    assert not [x for x in rows if x["claim_id"] == "plan:CSV:ebitda:FY2024"], "within tolerance: one claim, two sources"
+    assert not [x for x in vd.flagged_rows(rows) if x["claim_type"] == "ebitda"] and "File CSV!G" in one["page_ref"]
+    far = claim("EBITDA margin 12% in FY2024", 12, "FY2024", "2024", claim_type="ebitda", currency=None, unit="%", basis="projection")
+    plan = next(x for x in cm.build_register([far], r, settings(AS_OF)) if x["claim_id"] == "plan:CSV:ebitda:FY2024")
+    assert plan["reason"] == f"{cm.PLAN_DIFFERS}: file implied share of revenue 6.6%, deck 12.0% (-5.4 points)"
+
+
+def test_a_deck_money_figure_is_compared_with_the_plans_money_figure():
+    r = results_for()
+    deck = claim("EBITDA of €330k in FY2024", 330_000, "FY2024", "2024", claim_type="ebitda", basis="projection")
+    rows = cm.build_register([deck], r, settings(AS_OF))
+    assert not [x for x in rows if x["claim_id"] == "plan:CSV:ebitda:FY2024"] and "within" in " ".join(next(x for x in rows if x["claim_id"] == "x1")["calc_lines"])
 
 
 def test_a_cost_forecast_of_the_deck_is_not_compared_with_a_plan_line():

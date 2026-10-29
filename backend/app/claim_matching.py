@@ -83,8 +83,11 @@ PLAN_FILE = "plan_file"
 PLAN_READING = "plan-file"
 PLAN_NOTE = "plan in the file: never Verified or Contradicted; its implied rate is tested against the observed rate"
 PLAN_DIFFERS = "plan in file differs from plan in deck"
-PLAN_CLAIM_TYPES = {"Revenue": "revenue", "Cost of revenue": "costs", "S&M expense": "costs", "Operating expenses": "costs",
-                    "Gross margin": "gross_profit", "EBITDA": "ebitda"}
+PLAN_CLAIM_TYPES = {"Revenue": "revenue", "Cost of revenue": "cost_of_revenue", "S&M expense": "s_and_m", "Operating expenses": "opex",
+                    "Gross margin": "gross_profit", "EBITDA": "ebitda"}      # one claim type per line: lines are never rivals for one year
+PLAN_PERCENT_TYPES = {"share of revenue": {"gross_profit": "gross_profit", "gross_margin": "gross_profit", "ebitda": "ebitda"},      # plan measure → {deck type: plan type}
+                      "growth": {"revenue": "revenue", "revenue_growth": "revenue"}}
+PLAN_PERCENT_DECK = ("gross_margin", "revenue_growth")        # the percentage claim types that are not also money types
 PLAN_DECK_TYPES = ("revenue", "gross_profit", "ebitda")        # the claim types whose deck forecast names one plan line (a cost claim does not)
 FORECAST_NOTE = "Read from the forecast file, not yet tested against data"      # George, 2026-10-16
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
@@ -134,7 +137,7 @@ METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "M
                      "Win rate": "all closed"}
 POPULATION_TYPES = ("customers", "users", "user_growth")
 # The types whose figure is an amount: with no currency and no unit, the currency is the field still unknown.
-MONEY_TYPES = ("revenue", "arr", "mrr", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline", "pricing")
+MONEY_TYPES = ("revenue", "arr", "mrr", "costs", "cost_of_revenue", "s_and_m", "opex", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline", "pricing")
 # The types whose period may stay unknown (the plan's table: optional or "–").
 PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product", "pricing")
 PERIOD_MISSING = "period missing; set it with Edit"
@@ -1194,7 +1197,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
                    claimed_converted_high=high * fx["rate"] if high is not None else None)
     if c.get("origin") == PLAN_FILE:           # docs/design/pnl-lines.md section 4: never Verified or Contradicted; implied against observed rate
         out.update(metric=None, metric_set_by=None, direction=None, tolerance=None)
-        out.update(calc_lines=_plan_lines(c["plan"], results.get("reporting_currency")),
+        out.update(plan_measure=c["plan"]["measure"], plan_implied=c["plan"]["implied"],
+                   calc_lines=_plan_lines(c["plan"], results.get("reporting_currency")),
                    calc_details=["implied growth = plan ÷ the year before − 1; implied share = plan ÷ that year's revenue; "
                                  "observed = the last two actual years (the last actual year for a share); gap in points"])
         finish("Unverified", PLAN_NOTE)
@@ -2007,24 +2011,40 @@ def _rank(rows: List[dict]) -> List[dict]:
     return ordered
 
 
-def plan_candidates(results: Optional[dict], taken: Iterable[Tuple[Optional[str], Optional[str]]] = ()) -> List[dict]:
+def plan_candidates(results: Optional[dict]) -> List[dict]:
     """The plan cells of the statement (`pnl_lines.plan`) as candidates of origin PLAN_FILE, each with its source "File <sheet>!<cell> (plan)".
-    A cell already saved as a claim of the forecast table (`taken`: its sheet and cell) is left out."""
+    The id is the cell's own identity (sheet, line, period), so it holds when a column moves. A forecast-table claim of the same cell is
+    folded into it by `_fold_forecast_table`."""
     block = (results or {}).get("pnl_lines") or {}
     file = (block.get("source") or {}).get("file")
     out = []
-    for n, p in enumerate(block.get("plan") or (), 1):
+    for p in block.get("plan") or ():
         sheet = p["source"].get("sheet")
-        if p["metric"] not in PLAN_CLAIM_TYPES or (sheet, p["cell"]) in set(taken):
+        if p["metric"] not in PLAN_CLAIM_TYPES:
             continue
         last = calendar.monthrange(int(p["period_end"][:4]), int(p["period_end"][5:7]))[1]
-        out.append({"id": f"plan#{n}", "claim_type": PLAN_CLAIM_TYPES[p["metric"]], "value": p["value"], "value_high": None, "unit": None,
+        out.append({"id": f"plan:{sheet}:{PLAN_CLAIM_TYPES[p['metric']]}:{p['period'].replace(' ', '')}", "claim_type": PLAN_CLAIM_TYPES[p["metric"]], "value": p["value"], "value_high": None, "unit": None,
                     "currency": results.get("reporting_currency"), "target_date": p["period_end"][:4], "period_text": p["period"],
                     "period_start": f"{p['period_start']}-01", "period_end": f"{p['period_end']}-{last:02d}", "snippet": p["metric"],
                     "label_from": None, "file": file, "sources": [{"file": file, "sheet": sheet, "cell": p["cell"], "kind": "plan",
                                                                    "plan_ref": p["source_text"]}],
                     "origin": PLAN_FILE, "status": "approved", "basis": "projection", "scenario": "none", "plan": p})
     return out
+
+
+def _fold_forecast_table(claims: List[dict], plans: List[dict]) -> List[dict]:
+    """A claim of the confirmed forecast table that reads a plan cell is the plan row itself (docs/design/pnl-lines.md section 4): one claim,
+    two sources. The table row leaves the list and its cell joins the plan row's sources, so the plan row keeps its place in the ranking."""
+    by_cell = {(p["sources"][0].get("sheet"), p["sources"][0].get("cell")): p for p in plans}
+    kept = []
+    for c in claims:
+        srcs = c.get("sources") or ()
+        plan = by_cell.get((srcs[0].get("sheet"), srcs[0].get("cell"))) if len(srcs) == 1 and c.get("origin") == FORECAST_FILE else None
+        if plan is None:
+            kept.append(c)
+            continue
+        plan["sources"].append({**srcs[0], "plan_ref": f"{srcs[0].get('sheet')}!{srcs[0].get('cell')} (forecast table)"})
+    return kept
 
 
 def _plan_lines(p: dict, currency: Optional[str]) -> List[str]:
@@ -2051,7 +2071,7 @@ def _compare_plan(rows: List[dict], results: dict) -> List[dict]:
         return rows
     currency, gone = results.get("reporting_currency"), set()
     for deck in rows:
-        if deck.get("deck_reading") == PLAN_READING or deck.get("claim_type") not in PLAN_DECK_TYPES or deck.get("figure_type") != "target" \
+        if deck.get("deck_reading") == PLAN_READING or deck.get("claim_type") not in PLAN_DECK_TYPES + PLAN_PERCENT_DECK or deck.get("figure_type") != "target" \
                 or deck.get("claimed_value") is None or deck.get("segment") not in (None, WHOLE) or not deck.get("period_start") \
                 or not deck.get("period_end"):
             continue
@@ -2060,24 +2080,40 @@ def _compare_plan(rows: List[dict], results: dict) -> List[dict]:
             if why:
                 deck["calc_lines"] = list(deck.get("calc_lines") or []) + [f"Plan in file: {why}"]
             continue
+        percent = deck.get("unit") == "%"
         for plan in plans:
-            if plan["claim_type"] != deck["claim_type"] or plan["period"] != year["period"] or plan["claim_id"] in gone:
+            if plan["period"] != year["period"] or plan["claim_id"] in gone:
                 continue
-            claimed = deck["claimed_converted"] if deck.get("claimed_converted") is not None else deck["claimed_value"]
-            if deck.get("currency") not in (None, currency) and deck.get("claimed_converted") is None:
-                continue
-            gap = plan["claimed_value"] - claimed
-            if within_tolerance("Revenue", gap, claimed):
+            if percent:         # like with like (PR 200 review, N1): a deck margin or growth against the plan's implied rate, in points
+                shares = PLAN_PERCENT_TYPES[plan["plan_measure"]]
+                implied = plan.get("plan_implied")
+                if deck["claim_type"] not in shares or plan["claim_type"] != shares[deck["claim_type"]] or implied is None:
+                    continue
+                claimed, filed = deck["claimed_value"], implied * 100
+                gap = filed - claimed
+                within, shown = abs(gap) <= RATE_TOLERANCE_PP, lambda v: f"{_one_place(v)}%"      # noqa: E731
+                tol, size = RATE_TOLERANCE_TEXT, f"{gap:+.1f} points"
+                what = f"implied {'growth' if plan['plan_measure'] == 'growth' else 'share of revenue'} "
+            else:
+                if plan["claim_type"] != deck["claim_type"] or deck["claim_type"] not in PLAN_DECK_TYPES:
+                    continue
+                claimed = deck["claimed_converted"] if deck.get("claimed_converted") is not None else deck["claimed_value"]
+                if deck.get("currency") not in (None, currency) and deck.get("claimed_converted") is None:
+                    continue
+                filed = plan["claimed_value"]
+                gap = filed - claimed
+                within, shown = within_tolerance("Revenue", gap, claimed), lambda v: _money(v, currency)      # noqa: E731
+                tol, size = tolerance_text("Revenue"), f"{gap / abs(claimed):+.0%}" if claimed else ""
+                what = ""
+            if within:
                 deck["page_ref"] = ", ".join(x for x in (deck.get("page_ref"), plan["page_ref"]) if x)
                 deck["calc_lines"] = list(deck.get("calc_lines") or []) + [
-                    f"Plan in file: {_money(plan['claimed_value'], currency)} at {plan['page_ref']}, within {tolerance_text('Revenue')} of the deck"]
+                    f"Plan in file: {what}{shown(filed)} at {plan['page_ref']}, within {tol} of the deck"]
                 gone.add(plan["claim_id"])
             else:
-                text = (f"{PLAN_DIFFERS}: file {_money(plan['claimed_value'], currency)}, deck {_money(claimed, currency)}"
-                        f" ({gap / abs(claimed):+.0%})" if claimed else f"{PLAN_DIFFERS}")
+                text = f"{PLAN_DIFFERS}: file {what}{shown(filed)}, deck {shown(claimed)} ({size})" if size else f"{PLAN_DIFFERS}"
                 plan.update(reason=text, gloss=text)
-                deck["calc_lines"] = list(deck.get("calc_lines") or []) + [f"Plan in file: {_money(plan['claimed_value'], currency)} at "
-                                                                            f"{plan['page_ref']} – {PLAN_DIFFERS}"]
+                deck["calc_lines"] = list(deck.get("calc_lines") or []) + [f"Plan in file: {what}{shown(filed)} at {plan['page_ref']} – {PLAN_DIFFERS}"]
     return [r for r in rows if r["claim_id"] not in gone]
 
 
@@ -2094,9 +2130,10 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
     candidates = with_confidence([c for c in candidates if c.get("claim_type") not in OTHER_TYPES],
                                  peers if peers is not None else candidates)
     claims = _expand(candidates)
+    plans = _expand(plan_candidates(results))                   # the statement's plan cells (docs/design/pnl-lines.md section 4)
+    claims = _fold_forecast_table(claims, plans)
     others = _expand(peers) if peers is not None else claims
-    taken = {(src.get("sheet"), src.get("cell")) for c in candidates if c.get("origin") == FORECAST_FILE for src in c.get("sources") or ()}
-    claims += _expand(plan_candidates(results, taken))          # the statement's plan cells (docs/design/pnl-lines.md section 4)
+    claims += plans
     rows = [_value_at_stake(_mark_auto(_row(c, results, settings, others), c), results, settings) for c in claims]
     rows = _rank(_compare_plan(rows, results))
     _overlaps(rows)

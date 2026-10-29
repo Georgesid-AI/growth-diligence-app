@@ -719,7 +719,9 @@ def check(lines: List[Dict], periods: List[Dict]) -> None:
             tolerance = TOLERANCE * abs(value) + 1e-9
             if abs(sum(found) - value) <= tolerance:
                 continue
-            if abs(-sum(found) - value) <= tolerance or abs(sum(abs(v) for v in found) - abs(value)) <= tolerance:
+            # The block's own sign convention: a total and its lines of one sign add up by size; only a total whose sign is the opposite of
+            # every one of its lines is a sign finding (docs/design/pnl-lines.md section 3).
+            if abs(sum(abs(v) for v in found) - abs(value)) <= tolerance and all(v * value <= 0 for v in found):
                 total["checks"].setdefault("sign_differs", []).append(p["header"])
             else:
                 total["checks"].setdefault("total_mismatch", []).append(p["header"])
