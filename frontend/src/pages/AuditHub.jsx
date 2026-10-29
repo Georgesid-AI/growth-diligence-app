@@ -15,9 +15,8 @@ import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
 import { setCalculatePressed } from "@/lib/chatUpload";
 import { RUN_LABEL, runFromList } from "@/lib/runAudit";
 import { S18_TITLE, S18_BODY, S18_MISMATCH } from "@/lib/chatUpload";
-import { fmtCurrency } from "@/lib/format";
 import { describeRequestError } from "@/lib/requestError";
-import { DEFAULT_FISCAL_YEAR_END, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS, NOT_SET, formatCreated, requiredFieldError } from "@/lib/auditForm";
+import { DEFAULT_FISCAL_YEAR_END, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS, formatCreated, requiredFieldError } from "@/lib/auditForm";
 
 export default function AuditHub() {
   const nav = useNavigate();
@@ -95,8 +94,7 @@ export default function AuditHub() {
         <div>
           <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">Audit Hub</h1>
           <p className="text-slate-600 mt-2 text-sm max-w-2xl">
-            Deterministic growth diligence. Every metric is computed in Python from your source rows —
-            nothing is guessed, and every number traces back to its file, sheet and rows.
+            Every number comes from your files. Each metric is calculated in Python from the rows you upload, never estimated, and shows the file, sheet and rows it came from.
           </p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
@@ -179,11 +177,6 @@ export default function AuditHub() {
               </div>
 
               <dl className="mt-4 pt-4 border-t border-[#E5E7EB] grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs" data-testid={`audit-facts-${a.id}`}>
-                <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Target ARR</dt>
-                <dd className="font-mono text-slate-900" data-testid="audit-target-arr">{Number(a.target_arr) ? fmtCurrency(a.target_arr, a.reporting_currency) : NOT_SET}</dd>
-                <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Target date</dt>
-                <dd className="font-mono text-slate-900" data-testid="audit-target-date">{a.target_date || NOT_SET}</dd>
-                <dd className="col-span-2 h-3" aria-hidden="true" data-testid="audit-facts-gap" />
                 <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Created</dt>
                 <dd className="font-mono text-slate-900" data-testid="audit-created">{formatCreated(a.created_at)}</dd>
               </dl>

@@ -57,7 +57,9 @@ async function unmount() {
   host.remove();
   root = null;
 }
-async function mount(recognition, over) {
+const showAll = async () => { const b = q("recognition-show-all-revenue"); if (b) await click(b); };
+
+async function mount(recognition, over, { open = true } = {}) {
   await unmount();         // a test may mount several states one after the other
   const { RecognitionLine } = load();
   decide = jest.fn().mockResolvedValue({});
@@ -65,8 +67,23 @@ async function mount(recognition, over) {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => { root.render(<RecognitionLine view={view(recognition, over)} decide={decide} />); });
+  if (open) await showAll();
 }
 afterEach(unmount);
+
+describe("the default view hides the supports and claims lines behind Show all lines", () => {
+  test("closed: the type, row, last column and currency only; open: the supports and claims lines too", async () => {
+    await mount(AUTO, undefined, { open: false });
+    expect(q("recognition-supports-revenue")).toBeNull();
+    expect(q("recognition-claims-revenue")).toBeNull();
+    expect(host.textContent).not.toMatch(/Supports:|are not used as revenue/);
+    expect(q("recognition-row-revenue")).not.toBeNull();
+    expect(q("recognition-show-all-revenue").textContent).toBe("Show all lines");
+    await click(q("recognition-show-all-revenue"));
+    expect(q("recognition-supports-revenue")).not.toBeNull();
+    expect(q("recognition-claims-revenue")).not.toBeNull();
+  });
+});
 
 describe("the detected-type line", () => {
   test("shows the type with how it was found and a Change button that offers the other five types", async () => {

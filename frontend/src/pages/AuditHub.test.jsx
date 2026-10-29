@@ -258,24 +258,19 @@ describe("the audit tile (docs/specs/chat-upload.md section 24)", () => {
   const tile = (id) => q(`audit-row-${id}`);
   const field = (id, key) => tile(id).querySelector(`[data-testid="${key}"]`).textContent;
 
-  test("it shows Target ARR, Target date, an empty line, then Created with date and time", () => {
+  test("it shows Created with date and time, and no Target ARR or Target date", () => {
     expect(field("a1", "audit-created")).toBe("18 Oct 2026, 14:32");
-    expect(field("a1", "audit-target-arr")).toMatch(/2,?500,?000/);
-    expect(field("a1", "audit-target-date")).toBe("2027-06-30");
-    expect([...tile("a1").querySelectorAll("dt")].map((d) => d.textContent)).toEqual(["Target ARR", "Target date", "Created"]);
-    // one empty line between Target date and Created
-    const kids = [...q("audit-facts-a1").children].map((c) => c.getAttribute("data-testid") || c.tagName);
-    expect(kids.indexOf("audit-facts-gap")).toBe(kids.indexOf("audit-target-date") + 1);
-    expect(q("audit-facts-a1").children[kids.indexOf("audit-facts-gap")].textContent).toBe("");
+    expect([...tile("a1").querySelectorAll("dt")].map((d) => d.textContent)).toEqual(["Created"]);
+    expect(tile("a1").textContent).not.toMatch(/Target|n\.a\.(?!$)/);
+    expect(tile("a1").querySelector('[data-testid="audit-target-arr"]')).toBeNull();
+    expect(tile("a1").querySelector('[data-testid="audit-target-date"]')).toBeNull();
     expect(field("a2", "audit-created")).toBe("5 Jan 2026, 09:07");
+    expect(field("a3", "audit-created")).toBe("n.a.");
   });
 
-  test("a Target ARR that is 0, null or missing, and a Target date that is not set, read n.a.", () => {
-    expect(field("a2", "audit-target-arr")).toBe("n.a.");
-    expect(field("a2", "audit-target-date")).toBe("n.a.");
-    expect(field("a3", "audit-target-arr")).toBe("n.a.");
-    expect(field("a3", "audit-target-date")).toBe("n.a.");
-    expect(field("a3", "audit-created")).toBe("n.a.");
+  test("the intro text is the agreed sentence", () => {
+    expect(host.querySelector("h1").nextElementSibling.textContent.trim()).toBe(
+      "Every number comes from your files. Each metric is calculated in Python from the rows you upload, never estimated, and shows the file, sheet and rows it came from.");
   });
 
   test("a time with an offset is shown in the viewer's local time", () => {
