@@ -223,10 +223,15 @@ def test_a_reply_naming_a_sheet_that_was_not_sent_is_a_parse_failure_and_the_cel
 def test_nothing_sent_reaches_the_call_log_or_the_log_lines(caplog):
     caplog.set_level(logging.DEBUG)
     db = audit_db()
-    read(db)
+    db["audits"].docs.append({"id": "a2", "company_name": COMPANY, "structure_reading_consent": True})
+    _, adapter = read(db)
+    read(db, "a2", adapter=adapter)                          # the stored reading, served to another audit: its call record is logged too
+    assert [c["cache_hit"] for c in db["llm_calls"].docs] == [False, True]
     blob = json.dumps(db["llm_calls"].docs, default=str) + "\n".join(r.getMessage() for r in caplog.records)
     for secret in ("Zenith", "Pat Sample", EMAIL, "447223", "Orchid", "Revenue"):
         assert secret not in blob
+    sent = json.loads(adapter.payloads[0])["text"].split("\n")
+    assert not [line for line in sent if line in blob] and "sheet 1:" not in blob, "not even the masked text of the cells is logged"
     assert db["llm_calls"].docs[0]["structure_type"] == "sheet_reading" and db["llm_calls"].docs[0]["status"] == "ok"
     assert "llm_structures" not in {n for n, c in db._cols.items() if c.docs}, "the reading lives in `readings`, not beside the structure cache"
 

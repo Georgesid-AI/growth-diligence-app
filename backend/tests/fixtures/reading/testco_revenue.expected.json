@@ -1,0 +1,6 @@
+{
+ "file": "sample_data/revenue.csv",
+ "as_of_month": null,
+ "read": false,
+ "note": "One row per invoice: a records layout is not a recognised sheet, so it is not sent (reading_input.recognised_sheets)."
+}

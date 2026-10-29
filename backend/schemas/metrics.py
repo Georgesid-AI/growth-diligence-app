@@ -678,7 +678,7 @@ MAP_ACTUAL_PLAN = ("actual", "plan", "variance", "mixed")
 MAP_UNITS = ("money", "count", "rate")
 MAP_GRANULARITY = ("monthly", "quarterly", "yearly")
 # The kinds of evidence a reader gives for the last actual column (section 6). Code has a test for every kind but "layout".
-EVIDENCE_KINDS = ("row_ends", "equals_range", "label_contains", "repeated_values", "round_values", "layout")
+EVIDENCE_KINDS = ("row_ends", "equals_range", "label_contains", "repeated_values", "round_values", "range_empty", "layout")
 _CELL = r"[A-Z]{1,3}[1-9]\d{0,6}"
 CELL_PATTERN = rf"^{_CELL}$"
 RANGE_PATTERN = rf"^{_CELL}(:{_CELL})?$"
@@ -695,7 +695,8 @@ class MapEvidence(MapBlock):
     """One piece of evidence for the last actual column. The fields a kind uses are filled, the others null: row_ends (`row`, `column`: the
     values of the row stop at the column), equals_range (`cells`, `other_cells`: two ranges of the same shape hold the same values),
     label_contains (`cell`, `word`: the cell's text holds the word), repeated_values (`cells`: every value of the range is the same),
-    round_values (`cells`, `multiple`: every value is a multiple of it), layout (words only, nothing to open)."""
+    round_values (`cells`, `multiple`: every value is a multiple of it), range_empty (`cells`: every cell of the range is blank), layout (words only,
+    nothing to open)."""
     kind: Literal[EVIDENCE_KINDS]
     text: str = Field(max_length=MAP_TEXT_MAX)
     row: Optional[int] = Field(default=None, ge=1)

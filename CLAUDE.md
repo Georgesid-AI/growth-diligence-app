@@ -54,7 +54,7 @@
     withheld.
     Amended 2026-10-29 (read-check-review.md sections 3, 4, 8 and 9, PR 2; for George's approval before merge, rule 32): a new step
     `sheet_reading`. With the audit's consent, one call per uploaded spreadsheet, the model may receive every non-empty cell of every
-    recognised sheet (a sheet of one row per invoice is not one) as `A1 ref: value` lines under `sheet n: name` lines, figures included,
+    recognised sheet (a ledger of more than 40 rows, one per invoice, is not one) as `A1 ref: value` lines under `sheet n: name` lines, figures included,
     after the masking of PR 1 (name learning included; a metric vocabulary the masker never tokenises: revenue, ARR, churn and the
     like), no sampling and no truncation; above 40,000 tokens of cells the file is refused with a message. It runs on a dated Sonnet or
     Opus version only (`SHEET_READER_MODEL`; never an alias, never "latest"), with the `sheet_reading` prompt of the store (rule 26). The

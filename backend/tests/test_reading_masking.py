@@ -116,3 +116,14 @@ def test_a_customer_header_with_year_headers_beside_it_still_heads_a_column_of_n
     assert "A2: Client-01" in masked and mapping == {"Zenith Retail Ltd": "Client-01"}
     dated = text_of((1, 1, "Customer name"), (1, 2, "2024-01-31"), (2, 1, "Birch Labs Ltd"), (2, 2, "5"))
     assert "Birch" not in mask(dated)[0][0]
+
+
+def test_a_merged_cell_carries_its_span_after_its_text_and_the_span_survives_masking():
+    cells = [{"row": 3, "col": 2, "text": "Q1 2024", "col_span": 3}, {"row": 3, "col": 5, "text": "Q2 2024", "col_span": 3, "row_span": 2},
+             {"row": 4, "col": 2, "text": "Zenith Retail Ltd (B4:D4)"}]
+    text = redact.reading_text([{"name": "S", "cells": cells}])
+    assert "B3: Q1 2024 (B3:D3)" in text and "E3: Q2 2024 (E3:G4)" in text
+    assert redact.parse_reading_text(text)[0]["cells"][:2] == cells[:2]
+    (masked, _), _ = mask(text)
+    assert "B3: Q1 2024 (B3:D3)" in masked and redact.parse_reading_text(masked)[0]["cells"][0]["col_span"] == 3
+    assert redact.parse_reading_text("sheet 1: S\nB3: x (B3:A3)") is None, "a span that runs backwards is not a reading text"

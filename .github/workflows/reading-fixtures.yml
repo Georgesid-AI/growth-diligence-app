@@ -1,0 +1,50 @@
+name: reading-fixtures
+
+# Reads each synthetic fixture once with the real model and compares the reading with its expected map
+# (docs/design/read-check-review.md section 10). Runs only when the reading path changes: the prompt stub, the gateway and its model string,
+# the masker, the schema, the checks, the fixtures. No such PR merges without it passing; a changed expected map needs the owner's approval,
+# recorded in the PR. Without ANTHROPIC_API_KEY (a fork, or the secret not yet added) it skips with a notice.
+on:
+  pull_request:
+    paths:
+      - "backend/app/llm/**"
+      - "backend/app/checks.py"
+      - "backend/app/sheet_reader.py"
+      - "backend/app/readings.py"
+      - "backend/app/structures/redact.py"
+      - "backend/app/structures/reading_input.py"
+      - "backend/schemas/metrics.py"
+      - "backend/tests/fixtures/reading/**"
+      - "backend/tests/fixtures/prompts/sheet_reading.md"
+      - "backend/tests/reading_fixtures.py"
+      - "scripts/run_reading_fixtures.py"
+      - "scripts/build_reading_fixtures.py"
+      - ".github/workflows/reading-fixtures.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  reading:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SHEET_READING_PROMPT: ${{ secrets.SHEET_READING_PROMPT }}
+      SHEET_READER_MODEL: ${{ vars.SHEET_READER_MODEL }}
+    steps:
+      - name: Skip without the API key
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "::notice title=Reading fixtures skipped::ANTHROPIC_API_KEY is not set, so no fixture was read. Add it to the repository secrets (and SHEET_READING_PROMPT, and the SHEET_READER_MODEL variable)."
+      - uses: actions/checkout@v5
+        if: env.ANTHROPIC_API_KEY != ''
+      - uses: actions/setup-python@v7
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+        if: env.ANTHROPIC_API_KEY != ''
+      # One provider call per fixture, no re-read: the cap of section 10. Skips itself, exit 0, when the prompt or the model is not set.
+      - run: python scripts/run_reading_fixtures.py
+        if: env.ANTHROPIC_API_KEY != ''

@@ -188,6 +188,13 @@ def test_a_unit_or_scale_that_differs_is_not_compared_percentages_stored_as_frac
     assert text_percent["outcome"] == checks.CONFIRMED, "a percent written as text is the same fraction"
 
 
+def test_a_figure_whose_cell_was_masked_before_reading_cannot_be_compared():
+    got = item(check(fmap(figures=[figure(5)]), build({(4, 4): "[email]"})), FIG)
+    assert (got["outcome"], got["reason"]) == (checks.CANNOT, "Depends on a name that was masked before reading.")
+    row_cell = item(check(fmap(), build({(4, 5): "[person]"})), "row:Report:4")
+    assert (row_cell["outcome"], row_cell["reason"]) == (checks.CANNOT, "Depends on a name that was masked before reading.")
+
+
 def test_a_name_masked_before_reading_cannot_be_compared():
     grid = build({(2, 8): "[person]"})
     ev = [piece("label_contains", cell="H2", word="Forecast", text="Forecast title")]
@@ -292,12 +299,21 @@ def test_a_wrong_header_period_for_the_last_actual_column_gives_no_month_whateve
     (piece("repeated_values", cells="B4:G4", text="repeated"), checks.REJECTED),
     (piece("round_values", cells="H4:M4", multiple=10, text="round"), checks.CONFIRMED),
     (piece("round_values", cells="B4:G4", multiple=100, text="round"), checks.REJECTED),
+    (piece("range_empty", cells="H6:M6", text="no customers after June"), checks.CONFIRMED),
+    (piece("range_empty", cells="G6:M6", text="no customers after June"), checks.REJECTED),
     (piece("row_ends", row=6, column="Z"), checks.REJECTED),
     (piece("equals_range", cells="H4:M4"), checks.CANNOT),
     (piece("label_contains", cell="H2"), checks.CANNOT),
 ])
 def test_each_kind_of_structural_evidence_is_opened_and_tested(evidence, expected):
     assert item(check(fmap(sheet_map(evidence=[evidence]))), "evidence:Report:0")["outcome"] == expected
+
+
+def test_a_range_that_should_be_empty_names_the_first_cell_that_is_not():
+    got = item(check(fmap(sheet_map(evidence=[piece("range_empty", cells="G6:M6")]))), "evidence:Report:0")
+    assert (got["outcome"], got["reason"]) == (checks.REJECTED, "Reading says G6:M6 is empty; cell G6 holds 25.")
+    before = check(fmap(sheet_map(evidence=[piece("range_empty", cells="C6:F6")])))
+    assert item(before, "evidence:Report:0")["supports"] is False, "blank cells before the boundary say nothing about it"
 
 
 def test_a_label_word_counts_after_whitespace_and_case():
@@ -389,3 +405,29 @@ def test_a_rejected_piece_of_evidence_is_asked_about_as_the_sheets_last_actual_c
     second = fmap(sheet_map(evidence=[piece("row_ends", row=6, column="G")]))
     merged = checks.merge_reread(first, second, ["last_actual:Report"])
     assert months(check(merged)) == [("2024-06", "G")]
+
+
+def test_a_merged_quarter_header_is_the_header_of_each_column_it_covers():
+    """Test 4: the quarter sits in the first cell of its span; the other cells of the span are blank in the file."""
+    text = redact.reading_text([{"name": "Report", "cells": [
+        {"row": 1, "col": 1, "text": "Report"}, {"row": 2, "col": 1, "text": "Metric"}, {"row": 2, "col": 2, "text": "Q1 2024", "col_span": 3},
+        {"row": 2, "col": 5, "text": "Q2 2024", "col_span": 3}, {"row": 3, "col": 1, "text": "Revenue"},
+        *({"row": 3, "col": c, "text": str(100 + c)} for c in range(2, 8))]}])
+    smap = sheet_map(rows=[row(row=3, cells="B3:G3", label_cell="A3")], header_row=2, first_period_col="B", last_period_col="E",
+                     granularity="quarterly", last_actual=False)
+    smap["currency"] = None
+
+    def fig(cell, value, period):
+        return figure(value, cell=cell, period=period)
+    m = fmap(smap, [fig("C3", 103, "2024-Q1"), fig("D3", 104, "2024-Q1"), fig("F3", 106, "2024-Q2"), fig("D3", 104, "2024-Q2")])
+    got = checks.check_map(checks.Cells(text), m, 12)
+    outcomes = [i["outcome"] for i in got["items"] if i["kind"] == "figure"]
+    assert outcomes == [checks.CONFIRMED, checks.CONFIRMED, checks.CONFIRMED, checks.REJECTED], got["items"]
+    assert [i["reason"] for i in got["items"] if i["outcome"] == checks.REJECTED] == ["Reading says 2024-Q2; cell D2 is the header for 2024-Q1."]
+    assert item(got, "periods:Report")["outcome"] == checks.CONFIRMED
+
+
+def test_without_a_span_a_blank_header_cell_is_blank_and_never_borrows_a_neighbour():
+    grid = build({(HEADER, 4): None})
+    got = item(check(fmap(figures=[figure(ACTUAL[2], period="2024-03")]), grid), FIG)
+    assert (got["outcome"], got["reason"]) == (checks.REJECTED, "Reading says 2024-03; cell D3 is the header for nothing.")

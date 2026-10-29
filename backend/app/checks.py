@@ -53,6 +53,7 @@ R_SHAPE = "Reading says {a} equals {b}; the ranges differ in shape."
 R_CONTAINS = "Reading says cell {ref} contains \"{word}\"; it holds {cell}."
 R_REPEATS = "Reading says {cells} repeats one value; cell {ref} holds {cell} against {first}."
 R_ROUND = "Reading says {cells} are multiples of {multiple}; cell {ref} holds {cell}."
+R_EMPTY = "Reading says {cells} is empty; cell {ref} holds {cell}."
 R_NUMBER = "Reading says a number; cell {ref} holds {cell}."
 NOTHING = "nothing"
 
@@ -74,11 +75,24 @@ class SheetCells:
     def __init__(self, name: str, cells: List[Dict]):
         self.name = name
         self.cells = {(c["row"], c["col"]): c["text"] for c in cells}
+        self.spans = [(c["row"], c["col"], c["row"] + c.get("row_span", 1) - 1, c["col"] + c.get("col_span", 1) - 1)
+                      for c in cells if c.get("row_span", 1) > 1 or c.get("col_span", 1) > 1]
         self.max_row = max((r for r, _ in self.cells), default=0)
         self.max_col = max((c for _, c in self.cells), default=0)
 
     def get(self, row: int, col: int) -> Optional[str]:
         return self.cells.get((row, col))
+
+    def header(self, row: int, col: int) -> Optional[str]:
+        """The text a header cell shows: its own, or that of the merged cell that covers it (a month over its three columns, a quarter over
+        its three months)."""
+        own = self.cells.get((row, col))
+        if own is not None and own.strip():
+            return own
+        for r1, c1, r2, c2 in self.spans:
+            if r1 <= row <= r2 and c1 <= col <= c2:
+                return self.cells.get((r1, c1))
+        return own
 
 
 class Cells:
@@ -263,8 +277,10 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
         return {**base, "outcome": REJECTED, "reason": R_VALUE.format(value=shown(reading), ref=cell_ref, cell=cell_shown(text))}
     period, smap = figure.get("period"), sheet_maps.get(sheet_name)
     if period and smap:
-        head_ref = ref_of(smap["header_row"], col)
-        head_text = sheet.get(smap["header_row"], col)
+        down = periods_down(smap)
+        head_row, head_col = (row, redact.col_number(smap["label_col"])) if down else (smap["header_row"], col)
+        head_ref = ref_of(head_row, head_col)
+        head_text = sheet.header(head_row, head_col)
         found = period_in_form(header_period(head_text, fye), period)
         if found != period:
             return {**base, "outcome": REJECTED, "reason": R_PERIOD.format(period=period, ref=head_ref, header=describe_header(head_text, period, fye))}
@@ -274,6 +290,13 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
 # ---------------------------------------------------------------------------
 # One row, and the structural claims of rows: variance and parts
 # ---------------------------------------------------------------------------
+def periods_down(smap: Dict) -> bool:
+    """True when the periods run down the sheet (one row per month, a metric per column): every mapped row is a column of figures
+    (`by_column`), and the period of a figure is the label-column cell of its own row."""
+    rows = smap.get("rows") or []
+    return bool(rows) and all(r.get("by_column") for r in rows)
+
+
 def _period_cols(smap: Dict) -> List[int]:
     return list(range(redact.col_number(smap["first_period_col"]), redact.col_number(smap["last_period_col"]) + 1))
 
@@ -438,6 +461,11 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
                                                 other=cell_shown(tb)), ref_of(ra, ca))
         return confirmed(after, piece["cells"])
     values = [(r, c, sheet.get(r, c)) for r, c in range_cells(rng) if not _empty(sheet.get(r, c))]
+    if kind == "range_empty":
+        if values:
+            return rejected(R_EMPTY.format(cells=piece["cells"], ref=ref_of(values[0][0], values[0][1]), cell=cell_shown(values[0][2])),
+                            ref_of(values[0][0], values[0][1]))
+        return confirmed(after, piece["cells"])
     if kind == "repeated_values":
         first = values[0][2] if values else None
         for r, c, t in values[1:]:
@@ -475,7 +503,7 @@ def check_last_actual(smap: Dict, sheet: SheetCells, fye: int) -> Tuple[List[Dic
     head_ref = ref_of(smap["header_row"], col)
     items: List[Dict] = []
     past = _outside(sheet, smap["header_row"], col)
-    head_text = sheet.get(smap["header_row"], col)
+    head_text = sheet.header(smap["header_row"], col)
     parsed = header_period(head_text, fye)
     if past:
         items.append(_item(key, "last_actual", REJECTED, past, smap["sheet"], head_ref))
@@ -522,13 +550,28 @@ def check_currency(smap: Dict, sheet: SheetCells) -> Optional[Dict]:
 def check_periods(smap: Dict, sheet: SheetCells, fye: int) -> Dict:
     """The first and last period columns: both headers are opened and each must name a period."""
     key = f"periods:{smap['sheet']}"
+    if periods_down(smap):
+        # Periods down the sheet: the first and last cells of the first mapped column's range, in the label column, each name a period.
+        rng = parse_range(smap["rows"][0].get("cells"))
+        if rng is None:
+            return _item(key, "periods", CANNOT, C_NO_REF, smap["sheet"])
+        for row_ in (rng[0], rng[2]):
+            ref = ref_of(row_, redact.col_number(smap["label_col"]))
+            past = _outside(sheet, row_, redact.col_number(smap["label_col"]))
+            if past:
+                return _item(key, "periods", REJECTED, past, smap["sheet"], ref)
+            text = sheet.header(row_, redact.col_number(smap["label_col"]))
+            if header_period(text, fye) is None:
+                return _item(key, "periods", REJECTED, R_PERIOD.format(period=smap["granularity"], ref=ref, header=cell_shown(text)),
+                             smap["sheet"], ref)
+        return _item(key, "periods", CONFIRMED, None, smap["sheet"])
     for letters in (smap["first_period_col"], smap["last_period_col"]):
         col = redact.col_number(letters)
         ref = ref_of(smap["header_row"], col)
         past = _outside(sheet, smap["header_row"], col)
         if past:
             return _item(key, "periods", REJECTED, past, smap["sheet"], ref)
-        text = sheet.get(smap["header_row"], col)
+        text = sheet.header(smap["header_row"], col)
         if header_period(text, fye) is None:
             return _item(key, "periods", REJECTED, R_PERIOD.format(period=smap["granularity"], ref=ref, header=cell_shown(text)), smap["sheet"], ref)
     return _item(key, "periods", CONFIRMED, None, smap["sheet"])

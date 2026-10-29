@@ -1,0 +1,37 @@
+[
+ {
+  "name": "monthly_report",
+  "expected": "monthly_report.expected.json",
+  "file": "monthly_report.xlsx"
+ },
+ {
+  "name": "yearly_pnl",
+  "expected": "yearly_pnl.expected.json",
+  "file": "yearly_pnl.xlsx"
+ },
+ {
+  "name": "actual_budget_variance",
+  "expected": "actual_budget_variance.expected.json",
+  "file": "actual_budget_variance.xlsx"
+ },
+ {
+  "name": "budget_separate_sheet",
+  "expected": "budget_separate_sheet.expected.json",
+  "file": "budget_separate_sheet.xlsx"
+ },
+ {
+  "name": "deck_rotated_axis",
+  "expected": "deck_rotated_axis.expected.json",
+  "file": "deck_rotated_axis.pptx"
+ },
+ {
+  "name": "testco_pnl",
+  "expected": "testco_pnl.expected.json",
+  "file": "sample_data/pnl.csv"
+ },
+ {
+  "name": "testco_revenue",
+  "expected": "testco_revenue.expected.json",
+  "file": "sample_data/revenue.csv"
+ }
+]

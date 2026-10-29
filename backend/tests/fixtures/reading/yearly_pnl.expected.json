@@ -1,0 +1,229 @@
+{
+ "file": "yearly_pnl.xlsx",
+ "as_of_month": "2024-12",
+ "sheets": [
+  {
+   "sheet": "P&L",
+   "last_actual_column": "E",
+   "revenue_row": 4,
+   "granularity": "yearly"
+  }
+ ],
+ "roles": [
+  {
+   "sheet": "P&L",
+   "row": 4,
+   "role": "revenue"
+  },
+  {
+   "sheet": "P&L",
+   "row": 5,
+   "role": "cost_of_revenue"
+  },
+  {
+   "sheet": "P&L",
+   "row": 6,
+   "role": "sales_marketing"
+  }
+ ],
+ "figures": [
+  {
+   "metric": "revenue",
+   "value": 4102337.0,
+   "period": "2024",
+   "sheet": "P&L",
+   "cell": "E4"
+  },
+  {
+   "metric": "revenue",
+   "value": 5200000.0,
+   "period": "2025",
+   "sheet": "P&L",
+   "cell": "F4"
+  }
+ ],
+ "file_map": {
+  "map_version": 1,
+  "kind": "sheet",
+  "sheets": [
+   {
+    "sheet": "P&L",
+    "header_row": 3,
+    "label_col": "A",
+    "first_period_col": "B",
+    "last_period_col": "F",
+    "granularity": "yearly",
+    "currency": "EUR",
+    "currency_cell": "A1",
+    "last_actual": {
+     "column": "E",
+     "period": "2024",
+     "evidence": [
+      {
+       "kind": "equals_range",
+       "text": "The FY2025 column equals the operating plan",
+       "row": null,
+       "column": null,
+       "cell": null,
+       "cells": "F4:F6",
+       "other_cells": "F9:F11",
+       "word": null,
+       "multiple": null
+      },
+      {
+       "kind": "round_values",
+       "text": "The FY2025 column is round, the actual years are not",
+       "row": null,
+       "column": null,
+       "cell": null,
+       "cells": "F4:F6",
+       "other_cells": null,
+       "word": null,
+       "multiple": 100000
+      }
+     ]
+    },
+    "rows": [
+     {
+      "row": 4,
+      "label_cell": "A4",
+      "role": "revenue",
+      "metric": "revenue",
+      "basis": "yearly",
+      "actual_plan": "mixed",
+      "boundary_col": "E",
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B4:F4",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "revenue label and numbers across the period columns"
+     },
+     {
+      "row": 5,
+      "label_cell": "A5",
+      "role": "cost_of_revenue",
+      "metric": "cost_of_revenue",
+      "basis": "yearly",
+      "actual_plan": "mixed",
+      "boundary_col": "E",
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B5:F5",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "cost_of_revenue label and numbers across the period columns"
+     },
+     {
+      "row": 6,
+      "label_cell": "A6",
+      "role": "sales_marketing",
+      "metric": "sm_expense",
+      "basis": "yearly",
+      "actual_plan": "mixed",
+      "boundary_col": "E",
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B6:F6",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "sales_marketing label and numbers across the period columns"
+     },
+     {
+      "row": 9,
+      "label_cell": "A9",
+      "role": "forecast",
+      "metric": "revenue",
+      "basis": "yearly",
+      "actual_plan": "plan",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "F9:F9",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "forecast label and numbers across the period columns"
+     },
+     {
+      "row": 10,
+      "label_cell": "A10",
+      "role": "forecast",
+      "metric": "cost_of_revenue",
+      "basis": "yearly",
+      "actual_plan": "plan",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "F10:F10",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "forecast label and numbers across the period columns"
+     },
+     {
+      "row": 11,
+      "label_cell": "A11",
+      "role": "forecast",
+      "metric": "sm_expense",
+      "basis": "yearly",
+      "actual_plan": "plan",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "F11:F11",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "forecast label and numbers across the period columns"
+     }
+    ]
+   }
+  ],
+  "figures": [
+   {
+    "metric": "revenue",
+    "value": 4102337.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024",
+    "basis": "yearly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": "P&L",
+     "cell": "E4",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2024 column"
+   },
+   {
+    "metric": "revenue",
+    "value": 5200000.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2025",
+    "basis": "yearly",
+    "actual_plan": "plan",
+    "segment": null,
+    "source": {
+     "sheet": "P&L",
+     "cell": "F4",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2025 column"
+   }
+  ]
+ }
+}

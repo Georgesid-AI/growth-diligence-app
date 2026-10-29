@@ -1091,10 +1091,11 @@ def page_text_problem(text: str) -> Optional[str]:
 #     sheet 1: Monthly report
 #     A1: Revenue
 #     C1: 447223.43
+#     B3: Jan-24 (B3:D3)           a merged cell carries its span after its text, as a page cell does
 # ---------------------------------------------------------------------------
 READING_MAX_SHEETS = 12
 _READ_SHEET = re.compile(r"^sheet (?P<n>[1-9]\d*): (?P<name>.*)$")
-_READ_CELL = re.compile(r"^(?P<ref>[A-Z]{1,3}[1-9]\d*): (?P<text>.*)$")
+_READ_CELL = re.compile(r"^(?P<ref>[A-Z]{1,3}[1-9]\d*): (?P<text>.*?)(?: \((?P=ref):(?P<end>[A-Z]{1,3}[1-9]\d*)\))?$")
 _PLAIN_NUMBER = re.compile(r"^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$")
 _TRUE_FALSE = re.compile(r"^(?:TRUE|FALSE)$")
 
@@ -1142,7 +1143,9 @@ def reading_text(sheets: List[Dict]) -> str:
         for c in sorted(sheet["cells"], key=lambda c: (c["row"], c["col"])):
             text = cell_text(c)
             if text:
-                lines.append(f"{cell_ref(c['row'], c['col'])}: {text}")
+                rows, cols = c.get("row_span", 1), c.get("col_span", 1)
+                span = f" ({cell_ref(c['row'], c['col'])}:{cell_ref(c['row'] + rows - 1, c['col'] + cols - 1)})" if rows > 1 or cols > 1 else ""
+                lines.append(f"{cell_ref(c['row'], c['col'])}: {text}{span}")
     return "\n".join(lines)
 
 
@@ -1163,7 +1166,16 @@ def parse_reading_text(text: str) -> Optional[List[Dict]]:
             if (row, col) in seen:
                 return None
             seen.add((row, col))
-            sheets[-1]["cells"].append({"row": row, "col": col, "text": cell.group("text")})
+            parsed = {"row": row, "col": col, "text": cell.group("text")}
+            if cell.group("end"):
+                end_row, end_col = split_ref(cell.group("end"))
+                if end_row < row or end_col < col:
+                    return None
+                if end_row > row:
+                    parsed["row_span"] = end_row - row + 1
+                if end_col > col:
+                    parsed["col_span"] = end_col - col + 1
+            sheets[-1]["cells"].append(parsed)
         else:
             return None
     return sheets or None
