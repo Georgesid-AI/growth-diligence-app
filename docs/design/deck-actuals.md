@@ -79,7 +79,9 @@ When two readings on one page fold into one row (same metric, same period,
 value within tolerance), the row keeps the more specific label and all page
 references. A metric name (a label the mapping recognises as a metric:
 "Recognised Revenue", ARR, customers, growth) always wins over a heading
-("FINANCIAL HIGHLIGHTS", "2021 REVENUE"), whatever its length or digits;
+("FINANCIAL HIGHLIGHTS", "2021 REVENUE"; a label with overview, highlights,
+summary, snapshot, at a glance, key figures, financials or dashboard is a
+heading), whatever its length or digits;
 between two metric names the longer wins; between two headings the one
 without digits.
 

@@ -1663,11 +1663,15 @@ def growth_basis(text: str) -> str:
     return found[0] if len(found) == 1 else "unknown"
 
 
+# Words that make a label a page heading, never a metric name ("REVENUE OVERVIEW", "Key figures"; George, 2026-10-29).
+_HEADING_LABEL_WORDS = re.compile(r"(?i)\b(?:overview|highlights?|summary|snapshot|at a glance|key figures|financials|dashboard)\b")
+
+
 def _is_metric_name(label: str) -> bool:
     """Whether a label is a metric name the mapping recognises ("Recognised Revenue", "ARR", "Customers", "Revenue growth"): a metric keyword and nothing
     left that names a segment, a product or a heading word ("REVENUE OVERVIEW", "2021 REVENUE" are headings; the period alone is no segment)."""
     from .. import claim_matching
-    return any(rx.search(label) for _, rx in _KEYWORDS) and claim_matching.label_segment(label) is None
+    return not _HEADING_LABEL_WORDS.search(label) and any(rx.search(label) for _, rx in _KEYWORDS) and claim_matching.label_segment(label) is None
 
 
 def specific_label(a: Optional[str], b: Optional[str]) -> Optional[str]:
