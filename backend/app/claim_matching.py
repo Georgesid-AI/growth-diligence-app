@@ -15,7 +15,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from . import forecast_calc, payback_definition
+from . import deck_actuals, forecast_calc, payback_definition
 from .decks.claims import BASIS_CONFLICT, CASES as SCENARIO_CASES, review_flags
 
 # The register's fields, in the order of the spec's section 6 (and the CSV header of section 7).
@@ -29,14 +29,16 @@ FIELDS = (
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
     "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "definition_check",
     "definition_question", "period_coverage", "months_missing", "growth_basis", "population", "figure_type", "required_unknown",
-    "auto_approval", "basis", "scenario", "group_id", "group_role", "relationship", "calc_lines", "calc_details",
+    "auto_approval", "basis", "scenario", "period_sort", "deck_status", "deck_only", "source", "details", "data_request",
+    "group_id", "group_role", "relationship", "calc_lines", "calc_details",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
 FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
                           "observed_value", "gap", "gap_normalised", "value_at_stake_arr",
                           "shortfall", "gate_threshold"})
 INT_FIELDS = frozenset({"rank"})
-BOOL_FIELDS = frozenset({"gate_saved", "key_gate", "gate_needed", "as_of_defaulted"})
+BOOL_FIELDS = frozenset({"gate_saved", "key_gate", "gate_needed", "as_of_defaulted", "deck_only"})
+JSON_FIELDS = frozenset({"details"})        # the details block of docs/design/deck-actuals.md section 3: JSON text in the baseline CSV
 LIST_FIELDS = frozenset({"overlaps_with", "months_missing", "required_unknown", "calc_lines", "calc_details"})
 SOURCE_FIELDS = frozenset({"observed_source"})
 
@@ -189,7 +191,12 @@ METRICS: Dict[str, dict] = {
     "ARR growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="ARR"),
     "MRR growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="MRR"),
     "Customer growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="Customer count"),
+    # docs/design/deck-actuals.md: a deck's "3.3 x" is the revenue of a year over the revenue of the year before, recomputed from the files, tested at ±5%
+    "Revenue growth multiple": dict(kind="multiple", unit="x", direction="higher", seg=False, missing=("arr / mrr",), base="Revenue"),
 }
+GROWTH_MULTIPLE = "Revenue growth multiple"
+MULTIPLE_RULE = "Growth multiple = revenue of the year ÷ revenue of the year before"
+YEARLY_REVENUE_KEY = "yearly_basis.years.revenue"
 # The metric_periods block each metric's figures are read from (dates-and-periods.md section 3); the revenue-file ones end at the
 # latest valid source period.
 PERIOD_BLOCK = {"Revenue": "revenue_series", "ARR": "mrr_series", "MRR": "mrr_series", "Customer count": "customers_series",
@@ -290,6 +297,8 @@ def _claim_unit(c: dict) -> Optional[str]:
     unit = (c.get("unit") or "").strip().lower()
     if unit == "%":
         return "%"
+    if unit in ("x", "×"):
+        return "x"
     if re.fullmatch(r"(?:day|week|month|year)s?", unit):
         return unit.rstrip("s") + "s"
     if re.fullmatch(r"hours?", unit):
@@ -350,6 +359,8 @@ def gloss(unit: str, kind: str, gap: float, currency: Optional[str], direction: 
     elif unit == "count":
         n = f"{size:,.0f}"
         amount = f"{n} customer{'' if n == '1' else 's'}"
+    elif unit == "x":
+        amount = f"{size:.2f}x"
     else:
         amount = _money(size, currency, whole_millions=kind == "to go")
     text = f"{amount} {higher if above else lower}"
@@ -367,6 +378,8 @@ def _format(unit: str, value: float, currency: Optional[str]) -> str:
         return f"{_one_place(value)}%"
     if unit in ("days", "months"):
         return f"{_one_place(value)} {unit}"
+    if unit == "x":
+        return f"{value:.2f}x"
     return f"{value:,.0f}"
 
 
@@ -488,6 +501,7 @@ def _missing(results: dict, metric: str) -> Optional[str]:
 # MetricsPayload declares (`*` for a data key).
 EVIDENCE: Dict[str, Tuple[str, str, Optional[str]]] = {
     "Revenue": ("Revenue by month", "revenue_series.data.total", "revenue_series.data.{seg}"),
+    GROWTH_MULTIPLE: ("Revenue by month", "revenue_series.data.total", None),
     "ARR": ("Monthly MRR by Segment", "mrr_series.data.total", "mrr_series.data.{seg}"),
     "MRR": ("Monthly MRR by Segment", "mrr_series.data.total", "mrr_series.data.{seg}"),
     "Customer count": ("Customers", "customers_series.data.total", "customers_series.data.{seg}"),
@@ -566,7 +580,7 @@ def _missing_item(results: dict, metric: str) -> Optional[dict]:
 
 def format_figure(unit: Optional[str], value: float, currency: Optional[str], unit_text: Optional[str] = None) -> str:
     """A figure in the unit it is measured in (the metric's unit, or the claim's own): the register's one number format."""
-    if unit in ("currency", "%", "days", "months", "count"):
+    if unit in ("currency", "%", "days", "months", "count", "x"):
         return _format(unit, value, currency)
     return f"{value:g} {unit}" if unit else f"{value:g}{' ' + unit_text if unit_text else ''}"
 
@@ -743,7 +757,7 @@ _LABEL_WORDS = frozenset((
     "forecast forecasts projected projection projections plan planned budget target targets actual actuals expected base case best worst "
     "realistic scenario run rate year years month months quarter quarters fy ytd ttm ending end of the and in per for vs to from at on with "
     "mix split breakdown share contribution overview summary key kpi kpis metric metrics financial financials figures numbers highlights "
-    "performance average avg gross").split())
+    "performance average avg gross recognised recognized").split())
 _LABEL_DIMENSIONS = frozenset((
     "product products segment segments customer customers client clients region regions channel channels line lines market markets tier tiers "
     "plan plans country countries geography use cohort cohorts vertical verticals type types category categories business unit units").split())
@@ -866,6 +880,8 @@ def _keyword_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Op
                   else "Win rate" if _WIN_RATE.search(text) else "CAC payback" if _PAYBACK.search(text) else None)
     elif claim_type == "gross_margin":
         metric = "Gross margin"
+    elif claim_type in ("revenue_growth", "growth") and claim_unit == "x":      # deck-actuals.md: "3.3 x" is a multiple of the year before
+        metric = GROWTH_MULTIPLE if claim_type == "revenue_growth" or _REVENUE.search(text) else None
     elif claim_type in ("revenue_growth", "growth"):     # dates-and-periods.md section 5: growth of the series the claim names
         if _MRR.search(text) and not _NEW_MRR.search(text):
             metric = "MRR growth"
@@ -1061,11 +1077,13 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         named = [s for s in revenue_segments if re.search(rf"(?i)(?<!\w){re.escape(s)}(?!\w)", text)]
         # a name in the data wins; two named is the whole company; with none, the segment the page reader printed (George, 2026-10-27), else the
         # label of a money figure may name a product, customer or use case
-        found = None if named else (page_segment(c.get("page_segment"), c.get("claim_type"))
+        found = None if named else (c.get("split_segment") or page_segment(c.get("page_segment"), c.get("claim_type"))
                                     or (label_segment(c.get("label_from")) if c.get("claim_type") in MONEY_TYPES else None))
         segment, segment_by = (named[0] if len(named) == 1 else found or WHOLE), "python"
     start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
     figure_type = _figure_type(c, text, end, as_of_i)
+    sort = deck_actuals.period_sort(c, as_of)           # deck-actuals.md section 1: the figure's own period against the as-of month, never the deck's date
+    deck_actual = deck_actuals.is_deck_actual(c, sort, figure_type) and c.get("scenario") not in SCENARIO_CASES    # a best or worst case is listed, never matched (George, 2026-10-23): no reconcile
     forecast = figure_type == "target" and end is not None and as_of_i is not None and end > as_of_i     # the classification says so
     turn = None
     if metric_by == "python" and _is_turnover_claim(c, text) and c.get("origin") != FORECAST_FILE:   # section 11
@@ -1111,7 +1129,9 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         from .decks.claims import growth_basis
         stated = c.get("growth_basis") if c.get("growth_basis") in GROWTH_BASES else None
         out["growth_basis"] = inputs.get("growth_basis") or stated or growth_basis(text)
-    out.update(population=population, figure_type=figure_type)
+    if metric == GROWTH_MULTIPLE:                  # a multiple of the year before has no basis to choose
+        out["growth_basis"] = None
+    out.update(population=population, figure_type=figure_type, period_sort=sort, deck_only=False)
     # the required fields still Unknown, in the order of the plan's table (claim-types-and-correction.md section 1)
     required = []
     if currency_unknown:
@@ -1137,7 +1157,16 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
             reason = QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"]))
         if label == "Unsupported" and reason != NO_CLAIMED_VALUE:       # evidence-labels.md section 2: a stated figure the app cannot test is Unverified
             label = "Unverified"
+        if deck_actual and label == "Unverified" and deck_actuals.holds_nothing(reason):        # deck-actuals.md section 2b: used as it stands, tagged
+            reason, out["deck_status"] = deck_actuals.DECK_ONLY_REASON, deck_actuals.TAG
+        elif deck_actual and label == "Verified" and not reason.startswith(BEAT_PREFIX):        # section 2a: the deck is consistent with the files
+            out["deck_status"] = deck_actuals.CONSISTENT
         out.update(evidence_label=label, reason=reason)
+        out["deck_only"] = out["deck_status"] == deck_actuals.TAG
+        out["source"] = deck_actuals.source_text(out)
+        if deck_actual and not out["claim_direction"]:
+            out["details"] = deck_actuals.deck_block(out, c.get("label_from"), note=deck_actuals.mark_note(c))
+            out["data_request"] = deck_actuals.data_request(out)
         if out["evidence_analysis"] is None and reason.startswith("Missing:") and metric in METRICS:
             item = _missing_item(results, metric)
             if item:
@@ -1219,6 +1248,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         observed, observed_at, source, why = _annual_payback(out, results, text, start, end)
         if not isinstance(observed, str):
             cov.update(coverage=COVERED, missing=[])
+    elif spec["kind"] == "multiple":                    # deck-actuals.md: recomputed from the revenue of the two years
+        observed, observed_at, source, why = _multiple(results, start, end, span, cov)
     elif spec["kind"] == "growth":                      # dates-and-periods.md section 5: tested on its basis only
         if out["growth_basis"] not in GROWTH_BASES:
             return finish("Unverified", GROWTH_UNKNOWN_REASON)
@@ -1263,7 +1294,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unsupported", why or "not computed")
 
     out.update(observed_value=observed, observed_at=observed_at, observed_source=source)
-    found = None if annual else evidence_key(metric, segment, observed_at, (results.get("cac_payback") or {}).get("default_l", 1))
+    found = None if annual else (ANNUAL_ANALYSIS, YEARLY_REVENUE_KEY) if (source or {}).get("cells") else \
+        evidence_key(metric, segment, observed_at, (results.get("cac_payback") or {}).get("default_l", 1))
     if found:
         out.update(evidence_analysis=found[0], evidence_source_key=found[1])
         if observed is not None:
@@ -1303,6 +1335,10 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     verified = within_tolerance(metric, gap, claimed)
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
+    if deck_actual:                             # deck-actuals.md section 2a, checked before the Definition check: data prepared by management, not a claim; it differs from the file, either way
+        out["deck_status"] = deck_actuals.DIFFERS_STATUS
+        return finish("Contradicted", deck_actuals.DIFFERS_REASON.format(deck=_format(spec["unit"], claimed, results.get("reporting_currency")),
+                                                                     file=_format(spec["unit"], observed, results.get("reporting_currency"))))
     if is_big_gap(spec["unit"], out["gap"], out["gap_normalised"]):    # section 4.1: the analyst says whether claim and figure measure the same thing
         reporting = results.get("reporting_currency")
         # an answer holds only for the figures it was given against: if any differs now, it is asked again
@@ -1562,6 +1598,54 @@ def _after_data(span: "_Span", end: int, as_of_i: int, cov: dict) -> str:
     return f"Unverified|{NOT_COVERED_REASON.format(detail=detail)}"
 
 
+def _yearly_revenue(results: dict, start: Optional[int], end: Optional[int]) -> Optional[dict]:
+    """The revenue of a fiscal year the yearly P&L holds (its column ends in the claim's month): {"value", "source"}, the source naming the file, the
+    sheet and the cells of the revenue line; None when the P&L holds no such column or no revenue for it (docs/design/deck-actuals.md section 2)."""
+    if start is None or end is None:
+        return None
+    year, _ = yearly_year(results, start, end)
+    if not year or year.get("revenue") is None:
+        return None
+    src = year.get("source") or {}
+    cells = list(year.get("revenue_cells") or [])
+    return {"value": year["revenue"], "name": year["period"],
+            "source": {"file": src.get("file"), "sheet": src.get("sheet"), "rows": src.get("rows"),
+                       "rule": f"Revenue of {year['period']} from the yearly P&L", "cells": cells}}
+
+
+def _revenue_over(results: dict, start: int, end: int, span: "_Span") -> Optional[dict]:
+    """The company's revenue over the months start..end: the monthly series when it holds every month, else the yearly P&L's column for the year."""
+    figures = _Figures(results, "Revenue", WHOLE)
+    got = figures.monthly()
+    if got is not None and got[0]:
+        values, source, _ = got
+        months = list(range(start, end + 1))
+        if all(span.has(m, values) and values.get(_ms(m)) is not None for m in months):
+            return {"value": round(sum(values[_ms(m)] for m in months), 2), "name": f"{_label_of(start)}–{_label_of(end)}", "source": source}
+    return _yearly_revenue(results, start, end)
+
+
+def _multiple(results: dict, start: Optional[int], end: Optional[int], span: "_Span", cov: dict):
+    """(observed, observed_at, source, reason) of a growth multiple (docs/design/deck-actuals.md): the revenue of the claim's twelve months over the revenue
+    of the twelve months before, from the files; the source names the cells of both years. Returns what `_observe` returns."""
+    if start is None or end is None:
+        return f"Unverified|{PERIOD_NOT_READ}", None, None, None
+    if end - start != 11:
+        return "Unsupported|a growth multiple is tested for a twelve-month period", None, None, None
+    now, before = _revenue_over(results, start, end, span), _revenue_over(results, start - 12, end - 12, span)
+    if now is None or before is None:
+        return None, "missing", None, None
+    if not before["value"] or before["value"] <= 0:
+        return f"Unverified|{GROWTH_BASE_REASON}", None, None, None
+    cov.update(coverage=COVERED, missing=[])
+    src, prior = now["source"] or {}, before["source"] or {}
+    cells = [*(prior.get("cells") or ()), *(src.get("cells") or ())]
+    source = {"file": src.get("file"), "sheet": src.get("sheet"), "rows": src.get("rows"), "rule": MULTIPLE_RULE, **({"cells": cells} if cells else {}),
+              "inputs": [{"name": f"{now['name']} revenue", "value": now["value"]}, {"name": f"{before['name']} revenue", "value": before["value"]}]}
+    observed = round(now["value"] / before["value"], 4)
+    return observed, f"{_ms(start)} to {_ms(end)} vs {_ms(start - 12)} to {_ms(end - 12)}", source, None
+
+
 def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int], end: Optional[int], as_of_i: Optional[int],
              span: Optional["_Span"] = None, cov: Optional[dict] = None, forecast: bool = False):
     """(observed, observed_at, source, reason) read as table 2b says, with the claim-period coverage of dates-and-periods.md
@@ -1620,6 +1704,10 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
 
     if kind == "sum":
         got = figures.monthly()
+        yearly = _yearly_revenue(figures.results, start, end) if metric == "Revenue" and figures.whole and not forecast else None
+        if got is None and yearly:                          # no monthly series: the yearly P&L's column for the year (deck-actuals.md section 2)
+            cov.update(coverage=COVERED, missing=[])
+            return yearly["value"], f"{_ms(start)} to {_ms(end)}", yearly["source"], None
         if got is None:
             return None, "missing", None, None
         values, source, why = got
@@ -1637,6 +1725,9 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
             period = list(range(start, end + 1))
             used = [m for m in period if span.has(m, values) and values.get(_ms(m)) is not None]
             absent = [m for m in period if m not in used]
+            if not used and yearly:                         # the monthly series holds none of the year, the yearly P&L holds all of it
+                cov.update(coverage=COVERED, missing=[])
+                return yearly["value"], f"{_ms(start)} to {_ms(end)}", yearly["source"], None
             if not used:
                 return _not_covered(span, period, cov), None, None, None
             if absent:                                     # some months of the period are in the data: the figure over them

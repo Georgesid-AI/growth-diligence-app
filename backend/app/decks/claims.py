@@ -55,6 +55,7 @@ import calendar
 import copy
 import re
 from datetime import date
+from decimal import Decimal
 from math import floor, hypot, log10
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -1662,19 +1663,69 @@ def growth_basis(text: str) -> str:
     return found[0] if len(found) == 1 else "unknown"
 
 
+# Words that make a label a page heading, never a metric name ("REVENUE OVERVIEW", "Key figures"; George, 2026-10-29).
+_HEADING_LABEL_WORDS = re.compile(r"(?i)\b(?:overview|highlights?|summary|snapshot|at a glance|key figures|financials|dashboard)\b")
+
+
+def _is_metric_name(label: str) -> bool:
+    """Whether a label is a metric name the mapping recognises ("Recognised Revenue", "ARR", "Customers", "Revenue growth"): a metric keyword and nothing
+    left that names a segment, a product or a heading word ("REVENUE OVERVIEW", "2021 REVENUE" are headings; the period alone is no segment)."""
+    from .. import claim_matching
+    return not _HEADING_LABEL_WORDS.search(label) and any(rx.search(label) for _, rx in _KEYWORDS) and claim_matching.label_segment(label) is None
+
+
 def specific_label(a: Optional[str], b: Optional[str]) -> Optional[str]:
-    """The more specific of two labels read for one figure: a metric name ("Recognised Revenue") over a page heading that carries the
-    year or a number ("2021 REVENUE"); of two alike, the longer; of two the same length, the first. A missing label gives the other."""
+    """The more specific of two labels read for one figure. A metric name ("Recognised Revenue", "ARR", "Customers") always wins over a heading
+    ("FINANCIAL HIGHLIGHTS", "2021 REVENUE"), whatever its length or digits; of two metric names, the longer; of two headings, the one without
+    digits, then the longer; of two alike, the first. A missing label gives the other."""
     if not a or not b:
         return a or b
-    rank = lambda text: (not re.search(r"\d", text), len(text.strip()))      # noqa: E731
+    def rank(text: str) -> tuple:
+        text = text.strip()
+        return (1, len(text), 0) if _is_metric_name(text) else (0, int(not re.search(r"\d", text)), len(text))
     return b if rank(b) > rank(a) else a
 
 
+FOLD_TOLERANCE = Decimal("0.02")        # two readings of one money figure fold when within the reconciliation tolerance of the larger (claim_groups.same_figure)
+
+
+def _fold_key(c: Dict) -> Optional[tuple]:
+    """What two readings of one figure share: deck, type, currency, unit, period, segment, basis and case. None for a reading that cannot fold: not a
+    money amount, a range, a table row's values by period, no period, or any reading but the page reader's (the rules read and the analyst keep their rows)."""
+    if c.get("value") is None or c.get("value_high") is not None or c.get("by_period") or not c.get("currency") or not c.get("target_date") \
+            or c.get("origin") != "ai" or c.get("ai_status") not in ("matched", "verified") or c.get("status") == "rejected":
+        return None
+    return (c.get("deck_id"), c.get("claim_type"), c.get("currency"), c.get("unit"), c.get("period_start"), c.get("period_end"),
+            c.get("page_segment"), c.get("basis"), c.get("scenario"))
+
+
+def _same_money(a: Dict, b: Dict) -> bool:
+    x, y = Decimal(str(a["value"])), Decimal(str(b["value"]))
+    return abs(x - y) <= FOLD_TOLERANCE * max(abs(x), abs(y))
+
+
+def _joined(first: Dict, c: Dict) -> Dict:
+    """Two readings of one figure as one: the copy the analyst has answered stands, else the first; it takes both sources (all page references), the more
+    specific label (specific_label) and the more precise value (the one with more decimals; of two alike, the winner's)."""
+    sources = list(first.get("sources") or []) + [s for s in c.get("sources") or [] if s not in (first.get("sources") or [])]
+    winner = c if first.get("status") == "pending" and c.get("status") != "pending" else first
+    out = {**winner, "sources": sources, "label_from": specific_label(first.get("label_from"), c.get("label_from"))}
+    if first.get("value") is not None and c.get("value") is not None and _decimals(c["value"]) > _decimals(first["value"]) == _decimals(winner["value"]):
+        out["value"] = c["value"]
+    elif first.get("value") is not None and c.get("value") is not None and _decimals(first["value"]) > _decimals(c["value"]) == _decimals(winner["value"]):
+        out["value"] = first["value"]
+    return out
+
+
 def fold_twins(candidates: List[Dict]) -> List[Dict]:
-    """The stored copies of one candidate shown once: two documents of the same deck, page reply (`structure_key`), order and cell are one
-    figure written twice (two reads of a deck at once; live bug, 2026-10-28). The copy the analyst has answered stands, else the first;
-    it takes the other's sources, so both page references stay, and the more specific of the two labels (specific_label). Candidates with no structure key (the parser's, the analyst's) are left alone."""
+    """The stored copies of one candidate shown once, and the readings of one figure shown once (docs/design/deck-actuals.md section 5).
+    First: two documents of the same deck, page reply (`structure_key`), order and cell are one figure written twice (two reads of a deck at once;
+    live bug, 2026-10-28); candidates with no structure key (the parser's, the analyst's) are left alone. Then: two readings of a money figure of one
+    deck with the same metric, period, segment and currency, values within the reconciliation tolerance, are one row, wherever they stand (a bar's
+    total and a table's, a table again on a later page). The copy the analyst has answered stands, else the first; it takes the other's sources, so
+    all page references stay, the more specific label (specific_label) and the more precise value. Last: figures of a page that add up to another
+    figure of the page are its segments (deck_actuals.page_splits)."""
+    from .. import deck_actuals
     kept: Dict[tuple, Dict] = {}
     out: List[Dict] = []
     for c in candidates:
@@ -1687,12 +1738,21 @@ def fold_twins(candidates: List[Dict]) -> List[Dict]:
             kept[key] = c
             out.append(c)
             continue
-        sources = list(first.get("sources") or []) + [s for s in c.get("sources") or [] if s not in (first.get("sources") or [])]
-        winner = c if first.get("status") == "pending" and c.get("status") != "pending" else first
-        winner = {**winner, "sources": sources, "label_from": specific_label(first.get("label_from"), c.get("label_from"))}
+        winner = _joined(first, c)
         kept[key] = winner
         out[out.index(first)] = winner
-    return out
+    folded: List[Dict] = []
+    buckets: Dict[tuple, List[int]] = {}
+    for c in out:
+        key = _fold_key(c)
+        into = next((i for i in buckets.get(key, ()) if _same_money(folded[i], c)), None) if key is not None else None
+        if into is None:
+            if key is not None:
+                buckets.setdefault(key, []).append(len(folded))
+            folded.append(c)
+        else:
+            folded[into] = _joined(folded[into], c)
+    return deck_actuals.page_splits(folded)
 
 
 def same_claim(a: Dict, b: Dict) -> Optional[Dict]:

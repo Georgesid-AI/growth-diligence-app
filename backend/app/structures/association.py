@@ -241,6 +241,20 @@ class Layout:
         texts = {self.by_id[i]["text"].strip().lower() for i in found}
         return {"cells": sorted(found), "ambiguous": len(texts) > 1}
 
+    def nearest_label(self, cell: Dict) -> Optional[str]:
+        """The text of the label nearest a printed value, for the name of a segment (docs/design/deck-actuals.md section 4): the legend item of the
+        colour of the bar it stands on, else the rotated chart label level with the bars; never the page heading. None when there is none or the
+        evidence is ambiguous (several different items)."""
+        for found in (self.segment_label(cell), self.axis_titles(cell)):
+            if found["cells"] and not found["ambiguous"]:
+                return self.by_id[found["cells"][0]]["text"].strip()
+        return None
+
+    def is_heading(self, text: Optional[str]) -> bool:
+        """Whether a text is the page's heading: the same words as a title or a top-band line of the page."""
+        said = " ".join((text or "").casefold().split())
+        return bool(said) and any(" ".join(c["text"].casefold().split()) == said for c in self.cells if c.get("title") or c.get("top_band"))
+
     def _chart_extent(self, cell: Dict) -> Optional[Tuple[float, float, float, float]]:
         """The box around the bars of the chart a figure is printed in, else None."""
         box = _box(cell.get("at"))

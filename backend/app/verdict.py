@@ -8,6 +8,7 @@ are computed from the integrity checks and the metrics (CLAUDE.md rules 14, 17, 
 from __future__ import annotations
 
 import csv
+import json
 import io
 import re
 from datetime import datetime, timedelta
@@ -158,13 +159,13 @@ def flagged_rows(rows: List[dict], listed: Iterable[str] = ()) -> List[dict]:
     """The register rows Worth flagging names, by rank: every Verified beat outside tolerance, and every row whose Definition check
     the analyst answered Yes (claim-matching.md section 4.1), except the ones already `listed` (by the banner)."""
     skip = set(listed)
-    return [r for r in rows if r["claim_id"] not in skip and (cm.is_beat(r) or r.get("definition_check") == "yes")]
+    return [r for r in rows if r["claim_id"] not in skip and (cm.is_beat(r) or r.get("definition_check") == "yes" or r.get("deck_status") == "differs")]
 
 
 def flag_text(row: dict) -> str:
     """A row of `flagged_rows` with its label and gloss: "Customer count, Feb 2024: Verified, 1 customer more (beat)."; a confirmed
     definition says so after it. The gloss is the register's own text, so the memo's number check reads its figures as stored."""
-    text = f"{claim_name(row)}: {row['evidence_label']}, {row['gloss']}."
+    text = f"{claim_name(row)}: {row['reason']}." if row.get("deck_status") == "differs" else f"{claim_name(row)}: {row['evidence_label']}, {row['gloss']}."
     return f"{text} {DEFINITION_CONFIRMED}" if row.get("definition_check") == "yes" else text
 
 
@@ -611,6 +612,8 @@ def _cell(value) -> str:
         return ""
     if isinstance(value, bool):
         return str(value).lower()
+    if isinstance(value, dict) and "inputs" in value:      # the details block (deck-actuals.md section 3): JSON, read back as it was written
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
     if isinstance(value, dict):
         return " · ".join("" if value.get(k) is None else str(value[k]) for k in ("file", "sheet", "rows", "rule"))
     if isinstance(value, list):
@@ -641,6 +644,8 @@ def _read(field: str, text: str):
         return text.split("; ")
     if field in cm.BOOL_FIELDS:
         return text == "true"
+    if field in cm.JSON_FIELDS:
+        return json.loads(text)
     if field in cm.SOURCE_FIELDS:
         parts = (text.split(" · ", 3) + ["", "", "", ""])[:4]
         return dict(zip(("file", "sheet", "rows", "rule"), (p or None for p in parts)))

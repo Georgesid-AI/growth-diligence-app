@@ -713,6 +713,7 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
                  "implied_take_rate_source turnover_suggested deck_revenue_note definition_check definition_question "
                  "period_coverage months_missing growth_basis population figure_type required_unknown auto_approval basis scenario "
+                 "period_sort deck_status deck_only source details data_request "
                  "group_id group_role relationship calc_lines calc_details").split()
     assert list(register(RUNS["A"])[0]) == section_6 == list(cm.FIELDS)
 
@@ -738,7 +739,7 @@ def test_the_as_of_month_set_on_the_audit_is_not_defaulted():
     assert row["as_of_defaulted"] is False
 
 
-SEGMENT_TEXT = ("segment", "relationship", "gate_sentence")      # the fields that carry the segment a cited label names, or a sentence built from it
+SEGMENT_TEXT = ("segment", "relationship", "gate_sentence", "details")      # the fields that carry the segment a cited label names, or a sentence built from it
 
 
 def test_no_deck_text_reaches_a_register_row():

@@ -1504,6 +1504,7 @@ def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dic
                "sm_expense": _round(sm["value"]) if sm else None, "sm_scope": (sm.get("scope") or "unknown") if sm else None,
                "gross_margin_pct": _round(gm, 4) if gm is not None else None,
                "gross_margin_change": None, "cac_payback_months": None, "cac_payback_reason": None,
+               "revenue_cells": list((fields.get("revenue") or {}).get("cells") or []),
                "arr_year_end": _round(arr_end) if arr_end is not None else None,
                "arr_prior_year_end": _round(arr_prior) if arr_prior is not None else None,
                "net_new_arr": _round(net_new) if net_new is not None else None,

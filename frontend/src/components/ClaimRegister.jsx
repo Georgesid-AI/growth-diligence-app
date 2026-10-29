@@ -185,6 +185,29 @@ function RowDetails({ row, rows, ccy, results, save }) {
 }
 
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
+const DETAIL_PARTS = [["Inputs", "inputs"], ["Formula", "formula"], ["Checked against files", "checked"], ["Not checked", "not_checked"]];
+const inputText = (i) => `${i.label} ${typeof i.value === "number" ? i.value.toLocaleString("en-US", { maximumFractionDigits: 2 }) : i.value}${i.page ? ` (${i.page})` : ""}`;
+
+/** The "deck only" tag and the details block of a deck figure (docs/design/deck-actuals.md section 3): inputs, formula, checked, not checked. */
+function DeckDetails({ row }) {
+  const d = row.details;
+  if (!d) return null;
+  const text = { inputs: d.inputs.map(inputText).join("; "), formula: d.formula, checked: d.checked.join("; ") || "—", not_checked: d.not_checked.join("; ") || "—" };
+  return (
+    <div className="text-slate-600">
+      {row.deck_only && <span className="mr-1 rounded bg-amber-100 px-1 text-amber-900" data-testid="register-deck-only">deck only</span>}
+      {row.deck_status === "differs" && <span className="mr-1 rounded bg-rose-100 px-1 text-rose-900" data-testid="register-deck-differs">deck differs from file</span>}
+      {d.note && <span className="mr-1 text-slate-500" data-testid="register-deck-note">{d.note}</span>}
+      <details className="inline" data-testid="register-deck-details">
+        <summary className="inline cursor-pointer">Metric details</summary>
+        <dl className="mt-1 space-y-0.5">
+          {DETAIL_PARTS.map(([title, key]) => <div key={key}><dt className="inline font-medium">{title}: </dt><dd className="inline" data-testid={`deck-details-${key}`}>{text[key]}</dd></div>)}
+        </dl>
+      </details>
+    </div>
+  );
+}
+
 export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
@@ -265,6 +288,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                   <tr>
                     <td colSpan={REGISTER_COLUMNS.length} className="pb-2 px-3 text-[11px] text-slate-500 space-y-1" data-testid="register-detail">
                       {row.relationship && <div className="text-slate-600" data-testid="register-relationship">{row.relationship}</div>}
+                      <DeckDetails row={row} />
                       <div className="text-xs text-slate-700 space-y-1">
                         {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
                         {row.definition_check && <DefinitionCell row={row} onAnswer={answerDefinition} />}

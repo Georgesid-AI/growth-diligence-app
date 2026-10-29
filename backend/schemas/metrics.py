@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 12         # 12: one as-of month (docs/specs/dates-and-periods.md section 2, 2026-10-28): the as-of month always counts as complete, `source_period.status` is always Complete and `complete_by` "as_of", the last month is no longer left out of NRR, gross churn and growth, and the fiscal year-end sets the months of a yearly column; results stored under 11 read "Stale – re-run audit".
+CONTRACT_VERSION = 13         # 13: deck actuals (docs/design/deck-actuals.md, 2026-10-28): `yearly_basis.years[].revenue_cells` names the cells a deck figure is reconciled with; results stored under 12 read "Stale – re-run audit". 12: one as-of month (docs/specs/dates-and-periods.md section 2, 2026-10-28): the as-of month always counts as complete, `source_period.status` is always Complete and `complete_by` "as_of", the last month is no longer left out of NRR, gross churn and growth, and the fiscal year-end sets the months of a yearly column; results stored under 11 read "Stale – re-run audit".
                               # 11: the page reader's answer form (docs/design/page-image.md sections 4 and 5): claims carry label_text, segment, share_of and is_quote; label and
                               #    period corrections run on a blank field only and "sign not on page" no longer changes a value, so claim matches stored under 10 read "Stale – re-run audit"; no engine block changes.
                               # 10: the yearly-basis block names two annual payback proxies, the S&M scope and the fiscal year (docs/specs/forecast-and-payback.md section 4.5); 9: the simplified flow (docs/design/simplified-flow.md): claims enter the register without an approval, a stated figure the app cannot test
@@ -565,6 +565,7 @@ class YearlyYear(Block):
     period_start: Optional[str] = None              # the fiscal year's first and last month, "YYYY-MM" (10: forecast-and-payback.md section 4.5)
     period_end: Optional[str] = None
     revenue: Optional[Currency]
+    revenue_cells: Optional[List[str]] = None       # 13: the cells of the revenue line for the year ("E3"), so a deck figure cites its file cell
     new_revenue: Optional[Currency]
     sm_pct_revenue: Optional[GapFraction]           # S&M ÷ revenue: a young company can spend more than it earns
     sm_expense: Optional[Currency] = None           # the year's S&M, and what the line covers: a marketing-only line is never total S&M
@@ -661,7 +662,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[12]
+    contract_version: Literal[13]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]

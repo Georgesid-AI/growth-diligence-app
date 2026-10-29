@@ -34,7 +34,7 @@ def test_an_approved_ai_claim_that_beats_the_data_is_a_verified_beat():
     revenue = {"claim_type": "revenue", "snippet": "Revenue", "currency": "EUR", "target_date": "2024-02", **AI}
     observed = run_claim({**revenue, "value": 1})["observed_value"]
     row = run_claim({**revenue, "value": observed * 0.8})
-    assert (row["evidence_label"], row["gap_kind"]) == ("Verified", "beat") and row["reason"].startswith(cm.BEAT_PREFIX)
+    assert (row["evidence_label"], row["deck_status"]) == ("Contradicted", "differs"), "deck-actuals.md 2a: beyond tolerance either way, the deck differs from the file"
 
 
 # --- 2. value at stake ----------------------------------------------------------------------------------------------------

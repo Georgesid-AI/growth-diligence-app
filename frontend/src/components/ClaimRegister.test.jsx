@@ -389,3 +389,37 @@ test("no contradicted claim: no banner is rendered in the register", async () =>
   const { host } = await mount([ROW]);
   expect(host.querySelector('[data-testid="contradiction-banner"]')).toBeNull();
 });
+
+describe("deck actuals (docs/design/deck-actuals.md)", () => {
+  const DETAILS = { inputs: [{ label: "Recognised Revenue", value: 90000, page: "p3" }], formula: "Revenue, FY2018 = 90,000 as printed on page 3",
+                    checked: ["nothing in the files for this period"], not_checked: ["Recognised Revenue, FY2018 (p3)"] };
+
+  it("shows the deck only tag, the source and the four parts of the details block", async () => {
+    const { host, root } = await mount([{ ...ROW, deck_only: true, deck_status: "deck only", source: "Deck p3", details: DETAILS, observed_citation: null }]);
+    expect(host.querySelector('[data-testid="register-deck-only"]').textContent).toBe("deck only");
+    expect(host.querySelector('[data-testid$="source-ref"]').textContent).toBe("Deck p3");
+    expect(host.querySelector('[data-testid="deck-details-inputs"]').textContent).toBe("Recognised Revenue 90,000 (p3)");
+    expect(host.querySelector('[data-testid="deck-details-formula"]').textContent).toContain("90,000");
+    expect(host.querySelector('[data-testid="deck-details-checked"]').textContent).toBe("nothing in the files for this period");
+    expect(host.querySelector('[data-testid="deck-details-not_checked"]').textContent).toContain("(p3)");
+    await act(async () => { root.unmount(); });
+  });
+
+  it("shows no tag and no block on a row without details, and the differs tag on a differing deck actual", async () => {
+    const plain = await mount([ROW]);
+    expect(plain.host.querySelector('[data-testid="register-deck-details"]')).toBeNull();
+    await act(async () => { plain.root.unmount(); });
+    const { host, root } = await mount([{ ...ROW, deck_status: "differs", details: DETAILS }]);
+    expect(host.querySelector('[data-testid="register-deck-differs"]').textContent).toBe("deck differs from file");
+    expect(host.querySelector('[data-testid="register-deck-only"]')).toBeNull();
+    expect(host.querySelector('[data-testid="register-deck-note"]')).toBeNull();
+    await act(async () => { root.unmount(); });
+  });
+
+  it("shows the note of a deck actual the reader marked a projection", async () => {
+    const note = "The deck marks this figure as a projection; its period has passed, so it is checked as an actual.";
+    const { host, root } = await mount([{ ...ROW, deck_status: "differs", details: { ...DETAILS, note } }]);
+    expect(host.querySelector('[data-testid="register-deck-note"]').textContent).toBe(note);
+    await act(async () => { root.unmount(); });
+  });
+});
