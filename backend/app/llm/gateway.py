@@ -2056,7 +2056,7 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
             try:
                 reply, in_tok, out_tok = await _to_thread(
                     adapter.complete, model=model, system=system if system is not None else prompt.text, user_payload=payload,
-                    max_tokens=max_tokens, temperature=None, json_schema=schema, **cached)
+                    max_tokens=max_tokens, temperature=0 if structure_type == SHEET_READING else None, json_schema=schema, **cached)
             except (RetryableProviderError, GatewayError):
                 raise
             except Exception as raw:
