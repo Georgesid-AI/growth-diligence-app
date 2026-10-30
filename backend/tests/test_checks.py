@@ -100,6 +100,15 @@ def test_a_value_within_tolerance_is_confirmed_and_raises_no_card():
     assert got["outcome"] == checks.CONFIRMED and got["reason"] is None
 
 
+def test_a_figure_with_no_unit_is_not_given_one_from_its_metric_name():
+    """The reader states the unit. A churn rate or a customer count with no unit is compared with no tolerance at all: cannot check."""
+    for metric, value, cell in (("churn_rate", 0.05, "0.045"), ("customers", 101, "100"), ("revenue", 100_000, "100500")):
+        got = item(check(fmap(figures=[figure(value, unit=None, metric=metric)]), build({(4, 4): cell})), f"figure:Report:D4:{metric}")
+        assert (got["outcome"], got["reason"]) == (checks.CANNOT, "No unit given; not compared."), metric
+    text = item(check(fmap(figures=[figure(5, unit=None)]), build({(4, 4): "tbc"})), FIG)
+    assert text["outcome"] == checks.REJECTED, "a cell that is no number is wrong whatever the unit"
+
+
 @pytest.mark.parametrize("unit, reading, cell, outcome", [
     ("money", 100_000, "100500", checks.CONFIRMED),            # 0.5 % of the cell is 502.5
     ("money", 100_000, "100600", checks.REJECTED),
@@ -354,7 +363,7 @@ def test_the_outcomes_are_three_and_no_check_changes_a_citation():
 
 
 def test_every_cannot_check_reason_is_one_of_the_five_or_the_two_missing_inputs_and_every_other_failure_is_a_rejection():
-    five = {checks.C_LAYOUT, checks.C_NO_REF, checks.C_MASKED, checks.C_NO_TEXT.format(n=7), checks.C_VARIANCE_ROWS, checks.C_SEGMENT_TOTAL}
+    five = {checks.C_LAYOUT, checks.C_NO_REF, checks.C_MASKED, checks.C_NO_TEXT.format(n=7), checks.C_VARIANCE_ROWS, checks.C_SEGMENT_TOTAL, checks.C_NO_UNIT}
     grid = build({(2, 8): "[email]"})
     m = fmap(sheet_map(evidence=[piece("layout"), piece("label_contains", cell="H2", word="x"), piece("equals_range", cells="H4:M4")],
                        rows=[row(), row(row=5, label_cell=None, cells=None)]),

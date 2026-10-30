@@ -47,6 +47,7 @@ C_MASKED = "Depends on a name that was masked before reading."
 # --- Two more "nothing to compare against" cases (review of PR 205, F2): the arithmetic input the reading did not give. ---
 C_VARIANCE_ROWS = "variance row without its two source rows"
 C_SEGMENT_TOTAL = "segment row without its total row"
+C_NO_UNIT = "No unit given; not compared."
 # --- Wording for rejections the note does not list (for the owner's approval; same discipline: a template, formatted from code). ---
 R_ROW = "Reading cites {ref}; the sheet ends at row {last}."
 R_NO_SHEET = "Reading cites sheet {name}; the file has no such sheet."
@@ -61,12 +62,11 @@ R_NUMBER = "Reading says a number; cell {ref} holds {cell}."
 R_ACTUAL_PLAN = "figure marked {marked}; column {column} is {found} for this row"
 NOTHING = "nothing"
 
-# The plan words of a boundary (budget, plan, forecast, FC, estimate, projection and their plain forms).
-PLAN_WORD = re.compile(r"(?i)(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|forecast(?:s|ed)?|fc|estimates?|estimated|projections?|projected)(?![^\W\d_])")
+# The plan words a `label_contains` piece of evidence may cite (budget, plan, forecast, FC, estimate, projection and their plain forms). It
+# verifies the word the reader cited: it never finds a boundary, a column or a title of its own.
+PLAN_WORD_CHECK = re.compile(r"(?i)(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|forecast(?:s|ed)?|fc|estimates?|estimated|projections?|projected)(?![^\W\d_])")
 _PLACEHOLDER = re.compile("|".join(re.escape(p) for p in redact.PLACEHOLDERS))
 _NUMBER = re.compile(r"^\(?[-+−]?\s*[£$€¥]?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*%?\)?$|^[-+]?\.\d+$|^[-+]?\d+\.?\d*[eE][-+]?\d+$")
-_RATE_METRICS = ("churn_rate", "growth_rate", "gross_margin")
-_COUNT_METRICS = ("customers", "users", "headcount", "subscriptions")
 _RANGE = re.compile(r"^([A-Z]{1,3})([1-9]\d*)(?::([A-Z]{1,3})([1-9]\d*))?$")
 
 
@@ -231,15 +231,7 @@ def describe_header(text: Optional[str], like: str, fye: int) -> str:
 # ---------------------------------------------------------------------------
 # One figure: the value cell, then the period of its column
 # ---------------------------------------------------------------------------
-def _unit_of(figure: Dict) -> str:
-    if figure.get("unit"):
-        return figure["unit"]
-    if figure.get("metric") in _RATE_METRICS:
-        return "rate"
-    return "count" if figure.get("metric") in _COUNT_METRICS else "money"
-
-
-def _scale_apart(reading: float, cell: float) -> bool:
+def _scale_check(reading: float, cell: float) -> bool:
     """True when the reading would match the cell within the money tolerance if it were written in another power of ten (thousands
     against units, a percent against a fraction): the unit or scale differs, not the value."""
     if reading == 0 or cell == 0:
@@ -299,11 +291,13 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
     if _masked(text):
         return {**base, "outcome": CANNOT, "reason": C_MASKED}
     number = to_number(text)
-    unit = _unit_of(figure)
+    unit = figure.get("unit")
     if number is None:
         return {**base, "outcome": REJECTED, "reason": R_VALUE.format(value=shown(reading), ref=cell_ref, cell=cell_shown(text))}
+    if unit not in ("money", "count", "rate"):
+        return {**base, "outcome": CANNOT, "reason": C_NO_UNIT}          # the reader states the unit; the metric name does not choose it
     if not compare(unit, reading, number):
-        if _scale_apart(reading, number):
+        if _scale_check(reading, number):
             return {**base, "outcome": CANNOT, "reason": C_SCALE.format(ref=cell_ref, cell=cell_shown(text), value=shown(reading))}
         return {**base, "outcome": REJECTED, "reason": R_VALUE.format(value=shown(reading), ref=cell_ref, cell=cell_shown(text))}
     period, smap = figure.get("period"), sheet_maps.get(sheet_name)
@@ -335,6 +329,12 @@ def _period_cols(smap: Dict) -> List[int]:
     return list(range(redact.col_number(smap["first_period_col"]), redact.col_number(smap["last_period_col"]) + 1))
 
 
+def numbers_expected_check(row: Dict) -> bool:
+    """Whether the reading's own claim about a row means its cells are numbers: it gave a unit, or a role that is a measure (every role but
+    "other"). The reader made the claim; a text cell in the range then contradicts it."""
+    return row.get("unit") in ("money", "count", "rate") or row.get("role") not in ("other", None)
+
+
 def check_row(smap: Dict, row: Dict, sheet: SheetCells) -> Dict:
     key = f"row:{smap['sheet']}:{row['row']}"
     base = {"key": key, "kind": "row", "sheet": smap["sheet"], "cell": row.get("label_cell") or row.get("cells"), "row": row["row"],
@@ -349,7 +349,7 @@ def check_row(smap: Dict, row: Dict, sheet: SheetCells) -> Dict:
             return {**base, "outcome": REJECTED, "reason": past}
     if rng is None:
         return {**base, "outcome": CANNOT, "reason": C_LAYOUT}
-    numeric = row.get("unit") in ("money", "count", "rate") or row.get("role") not in ("other", None)
+    numeric = numbers_expected_check(row)
     seen = 0
     for r, c in range_cells(rng):
         text = sheet.get(r, c)
@@ -486,7 +486,7 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
         row, col = pos
         # A title points at one column, the one right after the boundary period (a merged title holds its text in its first column). A row label points at none.
         above = row <= smap["header_row"] and col == boundary_col + 1
-        return confirmed(bool(PLAN_WORD.search(piece["word"])) and above, piece["cell"])
+        return confirmed(bool(PLAN_WORD_CHECK.search(piece["word"])) and above, piece["cell"])
     rng = parse_range(piece.get("cells"))
     if rng is None:
         return {**base, "outcome": CANNOT, "reason": C_NO_REF}

@@ -86,8 +86,10 @@ def test_the_rules_boundary_cue_path_and_the_last_unmarked_column_fallback_are_g
     info = rec.analyse(cr.read_workbook(YEARLY_FORECAST.encode(), "pnl.csv")[0], 12)
     assert rec._boundary(info, None)["column"] is None and rec._boundary(info, None)["reason"] == "no_as_of"
     assert rec._boundary(info, "2021-12")["month"] == "2021-12"
-    assert sh.is_actual(sh.period_of("2023 Actual", 12), None) is True and sh.is_actual(sh.period_of("FY2023", 12), None) is False
-    assert sh.is_actual(sh.period_of("2023F", 12), None) is False and sh.is_actual(sh.period_of("FY2023", 12), "2023-12") is True
+    for header in ("2023 Actual", "FY2023", "2023A", "2023F"):
+        assert sh.is_actual(sh.period_of(header, 12), None) is False, "with no as-of month no column is actual, whatever its header says"
+    assert sh.is_actual(sh.period_of("FY2023", 12), "2023-12") is True and sh.is_actual(sh.period_of("2023F", 12), "2023-12") is False
+    assert sh.is_actual(sh.period_of("2023 Actual", 12), "2023-12") is True and sh.is_actual(sh.period_of("2024 Actual", 12), "2023-12") is False
 
 
 def test_the_later_month_of_the_two_files_wins_and_the_evidence_belongs_to_the_file_it_came_from():

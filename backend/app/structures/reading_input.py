@@ -1,7 +1,8 @@
 """The cells a sheet reading sends, as the uploaded file holds them (docs/design/read-check-review.md section 3).
 
-Every non-empty cell of every recognised sheet, with its spreadsheet reference: nothing sampled, nothing cut. A recognised sheet is one
-that is not a ledger (see `recognised_sheets`). The text is unmasked here: the gateway masks it (name learning included) before it leaves.
+Every non-empty cell of every sheet that has a grid, with its spreadsheet reference: nothing sampled, nothing cut. No rule decides what a
+sheet is (a ledger, say): the reader reads it, and a file over the token cap is refused with its message. The text is unmasked here: the
+gateway masks it (name learning included) before it leaves.
 Pure: no database, no model.
 """
 import math
@@ -9,11 +10,7 @@ import re
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
-from .. import recognition as rec
 from . import redact
-
-RECORD_LAYOUT = "records"
-RECORD_ROWS = 40         # a sheet the rules read as one row per record is a ledger above this many rows: it is not sent (it would be the whole ledger)
 
 
 def cell_text(value) -> str:
@@ -55,17 +52,15 @@ def sheet_cells(sheet) -> List[Dict]:
     return out
 
 
-def recognised_sheets(sheets, fiscal_year_end: int = 12) -> List:
-    """The sheets a reading covers: those with a grid, except a ledger. The rules read a sheet they cannot place (an actual | budget | variance
-    layout, say) as one row per record, so a sheet read that way is skipped only when it is long: above RECORD_ROWS rows it is an invoice
-    list, which the reader would only ever refuse for its size. Short or not, a sheet the rules read as periods is always read."""
-    return [s for s in sheets if s.grid and (rec.analyse(s, fiscal_year_end).get("layout") != RECORD_LAYOUT or len(s.grid) <= RECORD_ROWS)]
+def recognised_sheets(sheets) -> List:
+    """The sheets a reading covers: every sheet with a grid."""
+    return [s for s in sheets if s.grid]
 
 
-def reading_text(sheets, fiscal_year_end: int = 12) -> Optional[str]:
-    """The unmasked reading text of a workbook's recognised sheets, or None when none is recognised or none holds a cell."""
+def reading_text(sheets) -> Optional[str]:
+    """The unmasked reading text of a workbook's sheets, or None when none holds a cell."""
     parts = []
-    for sheet in recognised_sheets(sheets, fiscal_year_end):
+    for sheet in recognised_sheets(sheets):
         cells = sheet_cells(sheet)
         if cells:
             parts.append({"name": sheet.sheet, "cells": cells})

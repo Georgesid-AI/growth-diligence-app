@@ -195,7 +195,10 @@ def test_the_test_companys_pnl_has_periods_down_the_sheet_and_its_month_comes_fr
     assert fixture["expected_map"]["as_of_source"] == "rules"
     assert rf.compare(fixture["expected_map"], "2024-03", {"sheets": []}), "a month the rules path does not give is a difference"
     revenue = rf.manifest()[-1]
-    assert reading_input.reading_text(cr.read_workbook(rf.path_of(revenue).read_bytes(), "revenue.csv")) is None, "invoices are not sent"
+    sheet = cr.read_workbook(rf.path_of(revenue).read_bytes(), "revenue.csv")
+    sent = redact.parse_reading_text(reading_input.reading_text(sheet))
+    assert len(sent) == 1 and len(sent[0]["cells"]) == len(reading_input.sheet_cells(sheet[0])), \
+        "no rule decides a sheet is a ledger: an invoice list is sent like any sheet, every cell"
 
 
 def test_the_deck_fixture_has_rotated_axis_labels_and_parts_that_sum_to_its_headline():

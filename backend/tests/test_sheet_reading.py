@@ -300,3 +300,16 @@ def test_a_second_reading_of_rejected_items_is_stored_beside_the_first_and_made_
     assert adapter.calls == 1 and b.cache_hit is True, "the same item with the same reason is never read again"
     assert len(db[readings.READINGS].docs) == 1 and len(db[readings.REREADS].docs) == 1
     assert db[readings.READINGS].docs[0]["file_map"] == copy.deepcopy(db[readings.READINGS].docs[0]["file_map"])
+
+
+def test_no_rule_decides_that_a_sheet_is_a_ledger_and_every_sheet_with_cells_is_sent():
+    """Item 7 of the review of PR 205: the rules' record-layout test is gone; a long invoice list is sent whole like any sheet (the token
+    cap refuses a file that is too large, with its message)."""
+    from app.structures import reading_input
+    from app import column_rules as cr
+    rows = ["Customer,Invoice Date,Amount"] + [f"C-{i:03d},2024-01-{1 + i % 28:02d},{100 + i}" for i in range(120)]
+    sheets = cr.read_workbook("\n".join(rows).encode(), "invoices.csv")
+    sent = redact.parse_reading_text(reading_input.reading_text(sheets))
+    assert len(sent) == 1 and len(sent[0]["cells"]) == 121 * 3
+    assert not hasattr(reading_input, "RECORD_ROWS") and not hasattr(reading_input, "RECORD_LAYOUT")
+    assert "import recognition" not in open(reading_input.__file__, encoding="utf-8").read(), "the rules' reading of a sheet decides nothing here"

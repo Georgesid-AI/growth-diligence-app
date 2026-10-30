@@ -46,7 +46,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     or {"status": <gateway status or "none">, "reason": message} when nothing was read: no recognised sheet ("none"), no consent, no model,
     no prompt, a file over the limit, a reply that did not validate."""
     audit_id = audit["id"]
-    text = reading_input.reading_text(sheets, fiscal_year_end)
+    text = reading_input.reading_text(sheets)
     if text is None:
         return {"status": "none", "reason": "No sheet with period columns to read."}
     try:

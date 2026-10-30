@@ -938,11 +938,10 @@ PLAN_TAGS = ("forecast", "budget")
 def is_actual(period: Dict, as_of: Optional[str]) -> bool:
     """The statement feed's rule for a dated column (docs/specs/dates-and-periods.md section 2): actual when its header is not marked
     forecast or budget and its period ends on or before the audit's as-of month; every column after that month is plan, whatever
-    its tag. With no as-of month a column is actual only when its own header says so ("2023 Actual"): the last unmarked column is no
-    fallback (read-check-review.md section 6, PR 2)."""
-    if not period.get("end") or period["tag"] in PLAN_TAGS:
+    its tag. With no as-of month no column is actual: a header word decides nothing (read-check-review.md section 6, review of PR 205)."""
+    if not period.get("end") or period["tag"] in PLAN_TAGS or as_of is None:
         return False
-    return period["tag"] == "actual" if as_of is None else period["end"] <= as_of[:7]
+    return period["end"] <= as_of[:7]
 
 
 def yearly_input(lines: List[Dict], periods: List[Dict], scale: float, meta: Dict, as_of: Optional[str] = None) -> Optional[Dict]:
