@@ -59,7 +59,7 @@ R_REPEATS = "Reading says {cells} repeats one value; cell {ref} holds {cell} aga
 R_ROUND = "Reading says {cells} are multiples of {multiple}; cell {ref} holds {cell}."
 R_EMPTY = "Reading says {cells} is empty; cell {ref} holds {cell}."
 R_NUMBER = "Reading says a number; cell {ref} holds {cell}."
-R_ACTUAL_PLAN = "figure marked {marked}; column {column} is {found} for this row"
+R_ACTUAL_PLAN = "Figure marked {marked}; column {column} is {found} for this row."
 NOTHING = "nothing"
 
 # The plan words a `label_contains` piece of evidence may cite (budget, plan, forecast, FC, estimate, projection and their plain forms). It

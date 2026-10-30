@@ -572,9 +572,9 @@ def test_the_variance_columns_of_actual_budget_variance_triples_are_tested_the_s
 def test_a_figure_marked_actual_after_its_rows_boundary_or_plan_before_it_is_rejected():
     after = item(check(fmap(figures=[figure(PLAN[7], cell="I4", period="2024-08", actual_plan="actual")]),
                        build()), "figure:Report:I4:revenue")
-    assert (after["outcome"], after["reason"]) == (checks.REJECTED, "figure marked actual; column I is plan for this row")
+    assert (after["outcome"], after["reason"]) == (checks.REJECTED, "Figure marked actual; column I is plan for this row.")
     before = item(check(fmap(figures=[figure(ACTUAL[2], cell="D4", period="2024-03", actual_plan="plan")])), FIG)
-    assert (before["outcome"], before["reason"]) == (checks.REJECTED, "figure marked plan; column D is actual for this row")
+    assert (before["outcome"], before["reason"]) == (checks.REJECTED, "Figure marked plan; column D is actual for this row.")
     ok = check(fmap(figures=[figure(ACTUAL[2], cell="D4", period="2024-03", actual_plan="actual"),
                              figure(PLAN[7], cell="I4", period="2024-08", actual_plan="plan"),
                              figure(ACTUAL[5], cell="G4", period="2024-06", actual_plan="actual")]))
