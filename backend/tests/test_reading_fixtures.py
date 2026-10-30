@@ -326,3 +326,22 @@ def test_the_workflow_runs_only_on_the_reading_path_and_skips_without_the_key():
     assert any("scripts/run_reading_fixtures.py" in step.get("run", "") for step in job["steps"])
     tests_flow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY" not in tests_flow, "the general checks stay free of secrets"
+
+
+def test_the_job_starts_from_an_empty_store_and_fails_with_a_clear_line_when_a_fixture_is_served_from_storage(monkeypatch, capsys):
+    runner = load_runner()
+    db = runner.empty_store("TEST ONLY prompt")
+    assert [d["name"] for d in db["prompts"].docs] == ["sheet_reading"]
+    assert all(not db[c].docs for c in readings.COLLECTIONS), "no stored reading at the start of a run"
+    # a store that already holds a reading is never what the job reads from: the job builds its own, so a cache hit can only be a bug
+    monkeypatch.setattr(gateway, "AnthropicAdapter", FixtureRouter())
+    served = gateway.StructureRead(status="read", type="sheet_reading", cache_hit=True)
+
+    async def stored(*a, **k):
+        return served
+    monkeypatch.setattr(gateway, "read_structure", stored)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    assert runner.main() == 1
+    out = capsys.readouterr().out
+    assert out.count("served from storage, not read by the model") == len(SHEETS) and "fixture(s) differ" in out

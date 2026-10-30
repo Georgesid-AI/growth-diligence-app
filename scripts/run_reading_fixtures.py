@@ -12,7 +12,7 @@ notice, exit 0, when any is absent:
 
 The cap is one provider call per fixture per run: each file is read once, with no re-read, and the first reading is what is compared. The
 reading goes through the same gateway as the product (masking, token cap, allow-listed model, prompt from a store), with an in-memory store holding
-the prompt. A difference, a refusal or a failed read exits 1. Cost: a few cents per run. Prints a table and the reason text of every cannot-check item (fixtures are synthetic).
+the prompt and nothing else: every run starts from an empty store, and a fixture served from storage instead of the model fails the job. A difference, a refusal or a failed read exits 1. Cost: a few cents per run. Prints a table and the reason text of every cannot-check item (fixtures are synthetic).
 """
 import asyncio
 import hashlib
@@ -47,16 +47,25 @@ class OneCall:
         return self.adapter.count_tokens(**kw)
 
 
+def empty_store(prompt_text: str):
+    """A fresh in-memory store holding the `sheet_reading` prompt and no stored reading, so each run reads every fixture with the model."""
+    import test_llm_gateway as t
+    from app import readings
+    db = t.FakeDB()
+    db["prompts"].docs[:] = [{"name": "sheet_reading", "version": "v1", "text": prompt_text, "uploaded_at": "2026-01-01T00:00:00+00:00",
+                              "sha256": hashlib.sha256(prompt_text.encode()).hexdigest()}]
+    for collection in readings.COLLECTIONS:
+        assert not db[collection].docs, f"the job's store must start without {collection}"
+    return db
+
+
 async def read_all() -> int:
     import reading_fixtures as rf
-    import test_llm_gateway as t
     from app import checks, column_rules as cr
     from app.llm import gateway
     from app.llm.schemas import SHEET_READING
     from app.structures import reading_input
-    db = t.FakeDB()
-    db["prompts"].docs[:] = [{"name": "sheet_reading", "version": "v1", "text": os.environ["SHEET_READING_PROMPT"], "uploaded_at": "2026-01-01T00:00:00+00:00",
-                              "sha256": hashlib.sha256(os.environ["SHEET_READING_PROMPT"].encode()).hexdigest()}]
+    db = empty_store(os.environ["SHEET_READING_PROMPT"])
     failed = 0
     print(f"{'fixture':26} {'status':10} {'month':8} {'tokens in/out':14} differences")
     for fixture in rf.sheet_fixtures():
@@ -67,6 +76,10 @@ async def read_all() -> int:
         text = reading_input.reading_text(sheets)
         adapter = OneCall(gateway.AnthropicAdapter(timeout=gateway.SHEET_READING_TIMEOUT_SECONDS))
         read = await gateway.read_structure(db, audit, text, SHEET_READING, file_hash=hashlib.sha256(path.read_bytes()).hexdigest(), adapter=adapter)
+        if read.cache_hit:
+            failed += 1
+            print(f"{name:26} {'stored':10} {'-':8} {'-':14} served from storage, not read by the model: a stored reading must never be reused here")
+            continue
         if read.status != "read":
             failed += 1
             print(f"{name:26} {read.status:10} {'-':8} {'-':14} {read.reason}")
