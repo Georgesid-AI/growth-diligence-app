@@ -1528,10 +1528,28 @@ def sheet_reader_problem() -> Optional[str]:
     SHEET_READER_BLOCKED, after logging `sheet reader model <name> not permitted` as an error. A moving alias, a name without a date and a
     model outside the two families are all refused, before anything is masked, drawn or sent."""
     name = sheet_reader_model()
-    if name in SHEET_READER_MODELS and name in MODEL_PRICING_USD:
+    if _sheet_reader_model_ok(name):
         return None
     logger.error("sheet reader model %s not permitted", name[:80] or "(none)")
     return SHEET_READER_BLOCKED
+
+
+def _sheet_reader_model_ok(name: str) -> bool:
+    return name in SHEET_READER_MODELS and name in MODEL_PRICING_USD
+
+
+async def sheet_reader_startup_problem(db) -> Optional[str]:
+    """None when the sheet reader can run, else one line naming what is missing: the `sheet_reading` prompt in the store, the model, or both.
+    For the startup log only; the strip keeps saying "not read" and every read is still refused where it is made."""
+    missing = []
+    try:
+        await prompt_store.load(db, SHEET_READING_PROMPT)
+    except prompt_store.PromptMissing:
+        missing.append(f"prompt {SHEET_READING_PROMPT} is not in the store")
+    name = sheet_reader_model()
+    if not _sheet_reader_model_ok(name):
+        missing.append(f"model {name[:80] or '(none)'} is not on the allow-list ({SHEET_READER_ENV})")
+    return "; ".join(missing) or None
 
 
 def deck_pipeline() -> str:

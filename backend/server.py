@@ -4124,6 +4124,18 @@ async def check_page_reader_model():
 
 
 @app.on_event("startup")
+async def check_sheet_reader():
+    """Log one error line when the sheet reader's prompt or model is missing. The app starts either way; spreadsheets show "not read"."""
+    try:
+        problem = await llm_gateway.sheet_reader_startup_problem(db)
+    except Exception as exc:                                       # a store that cannot be read at startup must not stop the server
+        logger.error("sheet reader check failed at startup: error=%s", type(exc).__name__)
+        return
+    if problem:
+        logger.error("sheet reader will not read: %s", problem)
+
+
+@app.on_event("startup")
 async def ensure_llm_indexes():
     await llm_gateway.guards.ensure_indexes(db)
 

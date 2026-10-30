@@ -313,3 +313,35 @@ def test_no_rule_decides_that_a_sheet_is_a_ledger_and_every_sheet_with_cells_is_
     assert len(sent) == 1 and len(sent[0]["cells"]) == 121 * 3
     assert not hasattr(reading_input, "RECORD_ROWS") and not hasattr(reading_input, "RECORD_LAYOUT")
     assert "import recognition" not in open(reading_input.__file__, encoding="utf-8").read(), "the rules' reading of a sheet decides nothing here"
+
+
+def test_startup_logs_one_line_naming_what_is_missing_and_the_app_still_starts(monkeypatch, caplog):
+    import server
+    assert server.check_sheet_reader in server.app.router.on_startup, "the check is registered to run when the app starts"
+    db = t.FakeDB()
+    db["prompts"].docs[:] = [d for d in db["prompts"].docs if d["name"] != "sheet_reading"]     # no sheet_reading prompt in the store
+    monkeypatch.setattr(server, "db", db)
+    monkeypatch.setenv("SHEET_READER_MODEL", "claude-haiku-4-5")
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(server.check_sheet_reader())
+    lines = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(lines) == 1 and "sheet_reading" in lines[0] and "claude-haiku-4-5" in lines[0]
+    # prompt present and model allowed: quiet
+    caplog.clear()
+    monkeypatch.setenv("SHEET_READER_MODEL", MODEL)
+    asyncio.run(__import__("app.llm.prompt_store", fromlist=["upload"]).upload(db, "sheet_reading", "TEST ONLY prompt"))
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(server.check_sheet_reader())
+    assert not caplog.records
+
+
+def test_startup_check_stays_up_when_the_store_cannot_be_read(monkeypatch, caplog):
+    import server
+
+    class Broken:
+        def __getitem__(self, name):
+            raise RuntimeError("store down")
+    monkeypatch.setattr(server, "db", Broken())
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(server.check_sheet_reader())               # does not raise
+    assert [r.getMessage() for r in caplog.records] == ["sheet reader check failed at startup: error=RuntimeError"]
