@@ -6,13 +6,25 @@ name: reading-fixtures
 # recorded in the PR. Without ANTHROPIC_API_KEY (a fork, or the secret not yet added) it skips with a notice.
 on:
   pull_request:
+    # Keep the backend/app and schema lines equal to .github/reading-path.txt (tests/test_reading_path.py).
     paths:
       - "backend/app/llm/**"
-      - "backend/app/checks.py"
       - "backend/app/sheet_reader.py"
       - "backend/app/readings.py"
-      - "backend/app/structures/redact.py"
-      - "backend/app/structures/reading_input.py"
+      - "backend/app/checks.py"
+      - "backend/app/recognition.py"
+      - "backend/app/column_rules.py"
+      - "backend/app/__init__.py"
+      - "backend/app/forecast_calc.py"
+      - "backend/app/forecast_claims.py"
+      - "backend/app/formatting.py"
+      - "backend/app/claim_groups.py"
+      - "backend/app/claim_matching.py"
+      - "backend/app/deck_actuals.py"
+      - "backend/app/payback_definition.py"
+      - "backend/app/decks/**"
+      - "backend/app/structures/**"
+      - "backend/schemas/__init__.py"
       - "backend/schemas/metrics.py"
       - "backend/tests/fixtures/reading/**"
       - "backend/tests/fixtures/prompts/sheet_reading.md"

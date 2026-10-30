@@ -305,7 +305,7 @@ def test_the_workflow_runs_only_on_the_reading_path_and_skips_without_the_key():
     flow = yaml.safe_load((ROOT / ".github" / "workflows" / "reading-fixtures.yml").read_text(encoding="utf-8"))
     triggers = flow.get("on") or flow.get(True)
     paths = triggers["pull_request"]["paths"]
-    for needed in ("backend/app/llm/**", "backend/app/checks.py", "backend/app/structures/redact.py", "backend/schemas/metrics.py",
+    for needed in ("backend/app/llm/**", "backend/app/checks.py", "backend/app/structures/**", "backend/app/sheet_reader.py", "backend/schemas/metrics.py",
                    "backend/tests/fixtures/reading/**", "backend/tests/fixtures/prompts/sheet_reading.md"):
         assert needed in paths, needed
     assert "push" not in triggers and set(triggers) == {"pull_request"}
