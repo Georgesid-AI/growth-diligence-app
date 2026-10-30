@@ -22,7 +22,7 @@ from app.llm import gateway  # noqa: E402
 from test_chat_upload import AUDIT, AUDIT_DOC, upload  # noqa: E402
 from test_revenue_recognition import FIXTURES, MONTHLY  # noqa: E402
 
-MODEL = "claude-sonnet-5-5-20260101"
+MODEL = "claude-sonnet-5-5"
 COMPANY = "Northwind Test Co"
 SHEET = "CSV"
 
@@ -183,7 +183,7 @@ def test_with_no_confirmed_month_there_is_none_and_the_upload_goes_on(flow):
 @pytest.mark.parametrize("setup", ["no_model", "no_consent", "model_fails", "prompt_missing"])
 def test_the_upload_goes_on_whatever_the_reader_cannot_do(flow, monkeypatch, setup):
     if setup == "no_model":
-        monkeypatch.delenv("SHEET_READER_MODEL")
+        monkeypatch.setenv("SHEET_READER_MODEL", "latest")
     elif setup == "no_consent":
         flow.db["audits"].docs[0]["structure_reading_consent"] = False
     elif setup == "model_fails":

@@ -22,7 +22,7 @@ from app.llm import gateway  # noqa: E402
 from app.structures import reading_input, redact  # noqa: E402
 from schemas.metrics import FileMap  # noqa: E402
 
-MODEL = "claude-sonnet-5-5-20260101"
+MODEL = "claude-sonnet-5-5"
 SHEETS = rf.sheet_fixtures()
 IDS = [f["name"] for f in SHEETS]
 

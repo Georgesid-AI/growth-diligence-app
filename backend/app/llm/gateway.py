@@ -1470,12 +1470,12 @@ PAGE_READER_MODELS = re.compile(r"claude-(?:sonnet|opus)(?:-\d+)+(?:-\d{8})?")
 PAGE_READER_BLOCKED = "AI read: blocked – model not permitted"
 # The sheet reader (docs/design/read-check-review.md sections 3, 4, 9; CLAUDE.md rule 16 as amended for PR 2): one call per spreadsheet, every
 # non-empty cell of every recognised sheet, masked, the prompt `sheet_reading` of the store (the repository holds a test stub only). The
-# model is a dated version (SHEET_READER_MODEL), never a moving alias, so a stored reading names the model that made it
+# model is one exact id on an allow-list (SHEET_READER_MODELS; George, 2026-10-30), never a moving alias, so a stored reading names the model that made it
 # (section 9). Only the Sonnet and Opus families may read a file in full (rule 31's allow-list, for the same zero-data-retention reason).
 SHEET_READING_PROMPT = "sheet_reading"
 SHEET_READER_ENV = "SHEET_READER_MODEL"
-DATED_READER_MODEL = re.compile(r"claude-(?:sonnet|opus)(?:-\d+)+-\d{8}")
-SHEET_READER_BLOCKED = "AI read: blocked – the sheet reader model must be a dated Sonnet or Opus version (SHEET_READER_MODEL)"
+SHEET_READER_MODELS = frozenset({"claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5", "claude-opus-5"})
+SHEET_READER_BLOCKED = "AI read: blocked – the sheet reader model is not on the allow-list (SHEET_READER_MODEL)"
 SHEET_READING_INPUT_CAP = 40_000        # tokens of the masked cells, by the provider's token counter: above it the file is refused, nothing is cut
 SHEET_READING_MAX_TOKENS = 16_000       # the file map's reply
 SHEET_READING_TIMEOUT_SECONDS = 300.0   # a long map takes minutes to write
@@ -1519,16 +1519,16 @@ def reader_v1_enabled() -> bool:
 
 
 def sheet_reader_model() -> str:
-    """The model the sheet reader is configured to use: SHEET_READER_MODEL, stripped; "" when none is set."""
-    return os.environ.get(SHEET_READER_ENV, "").strip()
+    """The model the sheet reader is configured to use: SHEET_READER_MODEL, stripped, else STRUCTURE_MODEL."""
+    return os.environ.get(SHEET_READER_ENV, "").strip() or STRUCTURE_MODEL
 
 
 def sheet_reader_problem() -> Optional[str]:
-    """None when the sheet reader's model is a dated Sonnet or Opus version the price table knows, else the panel line
+    """None when the sheet reader's model is an exact id of SHEET_READER_MODELS (Sonnet and Opus) the price table knows, else the panel line
     SHEET_READER_BLOCKED, after logging `sheet reader model <name> not permitted` as an error. A moving alias, a name without a date and a
     model outside the two families are all refused, before anything is masked, drawn or sent."""
     name = sheet_reader_model()
-    if DATED_READER_MODEL.fullmatch(name) and price_model(name) in MODEL_PRICING_USD:
+    if name in SHEET_READER_MODELS and name in MODEL_PRICING_USD:
         return None
     logger.error("sheet reader model %s not permitted", name[:80] or "(none)")
     return SHEET_READER_BLOCKED

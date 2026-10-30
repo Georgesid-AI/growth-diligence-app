@@ -13,7 +13,7 @@ from app import readings  # noqa: E402
 from app.llm import gateway  # noqa: E402
 
 READING = {"map_version": 1, "kind": "sheet", "sheets": [{"sheet": "Report", "rows": [{"row": 5, "role": "bookings"}]}], "figures": []}
-HASH, PROMPT, MODEL = "f" * 64, "store:v1", "claude-sonnet-5-5-20260101"
+HASH, PROMPT, MODEL = "f" * 64, "store:v1", "claude-sonnet-5-5"
 
 
 def run(coro):
@@ -34,7 +34,7 @@ def test_a_new_prompt_or_model_version_is_stored_beside_the_old_reading_and_the_
     db = t.FakeDB()
     run(readings.put(db, file_hash=HASH, prompt_version="store:v1", model=MODEL, reading=READING))
     run(readings.put(db, file_hash=HASH, prompt_version="store:v2", model=MODEL, reading=READING))
-    run(readings.put(db, file_hash=HASH, prompt_version="store:v1", model="claude-sonnet-5-5-20260301", reading=READING))
+    run(readings.put(db, file_hash=HASH, prompt_version="store:v1", model="claude-opus-5-5", reading=READING))
     assert len({d["key"] for d in db[readings.READINGS].docs}) == 3
     assert run(readings.get(db, HASH, "store:v1", MODEL)) is not None
     assert run(readings.get(db, "0" * 64, "store:v1", MODEL)) is None

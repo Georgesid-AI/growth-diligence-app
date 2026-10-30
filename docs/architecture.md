@@ -30,7 +30,7 @@ For George's approval before merge (rule 32; docs/design/read-check-review.md se
   non-empty cell of every recognised sheet as `A1 ref: value` lines, after the masking of PR 1, name learning included. A metric
   vocabulary (`structures/redact.METRIC_VOCABULARY`: the role and metric names of the file map and the common finance labels) is never
   tokenised, so "Revenue" under a "Customers" title goes out unchanged. No sampling, no truncation: above 40,000 tokens of cells the file
-  is refused with a message. A dated Sonnet or Opus version only (`SHEET_READER_MODEL`). The spreadsheet calls of the earlier
+  is refused with a message. An exact id from an allow-list of Sonnet and Opus ids only (`SHEET_READER_MODELS`; `SHEET_READER_MODEL` picks one, default the structure model; George, 2026-10-30). The spreadsheet calls of the earlier
   amendments stay as they are, behind `READER_V1` (off turns them off; default on), for PR 2 only; they still do not learn names.
 - **What Python does with the answer.** The model returns a file map (`schemas/metrics.FileMap`, one schema for sheets and decks).
   `app/checks.py` opens every cited cell and gives one of three outcomes: confirmed, rejected (with a reason written by code) or cannot

@@ -3,15 +3,15 @@
 
     python scripts/run_reading_fixtures.py
 
-Runs in CI only when the reading path changes (.github/workflows/reading-fixtures.yml). Needs three things from the environment and skips with a
+Runs in CI only when the reading path changes (.github/workflows/reading-fixtures.yml). Needs two things from the environment and skips with a
 notice, exit 0, when any is absent:
 
     ANTHROPIC_API_KEY     the provider key (a GitHub Actions secret)
     SHEET_READING_PROMPT  the text of the `sheet_reading` prompt (a GitHub Actions secret: the prompt is never in the repository)
-    SHEET_READER_MODEL    the dated model version to read with (a repository variable)
+    SHEET_READER_MODEL    optional: an allow-listed model id (a repository variable); the structure model when unset
 
 The cap is one provider call per fixture per run: each file is read once, with no re-read, and the first reading is what is compared. The
-reading goes through the same gateway as the product (masking, token cap, dated model, prompt from a store), with an in-memory store holding
+reading goes through the same gateway as the product (masking, token cap, allow-listed model, prompt from a store), with an in-memory store holding
 the prompt. A difference, a refusal or a failed read exits 1. Cost: a few cents per run. Prints a table; no cell text is printed.
 """
 import asyncio
@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "backend" / "tests"))
 
-NEEDED = ("ANTHROPIC_API_KEY", "SHEET_READING_PROMPT", "SHEET_READER_MODEL")
+NEEDED = ("ANTHROPIC_API_KEY", "SHEET_READING_PROMPT")
 
 
 def notice(text: str) -> None:

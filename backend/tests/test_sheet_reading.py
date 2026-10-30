@@ -1,7 +1,7 @@
 """The sheet reader through the gateway (docs/design/read-check-review.md sections 3, 8, 9; CLAUDE.md rule 16 as amended for PR 2).
 
 One model call per spreadsheet; every non-empty cell of every recognised sheet, masked by the one module (name learning included); the
-prompt `sheet_reading` from the store (a test stub here); a dated model only; the reading stored once and served to the same file in any
+prompt `sheet_reading` from the store (a test stub here); an allow-listed model id only; the reading stored once and served to the same file in any
 audit with no second call. Synthetic data only; the fake adapter counts calls and no test can reach a provider."""
 import asyncio
 import copy
@@ -22,7 +22,7 @@ from app import readings  # noqa: E402
 from app.llm import gateway, redaction  # noqa: E402
 from app.structures import redact  # noqa: E402
 
-MODEL = "claude-sonnet-5-5-20260101"
+MODEL = "claude-sonnet-5-5"
 COMPANY = "Orchid Test Co"
 EMAIL = "pat.sample@orchid-example.test"
 HASH = "a" * 64
@@ -68,7 +68,7 @@ def read(db, audit="a1", adapter=None, text=TEXT, file_hash=HASH, **kwargs):
     return result, adapter
 
 
-def test_one_call_per_spreadsheet_with_the_store_prompt_and_the_dated_model():
+def test_one_call_per_spreadsheet_with_the_store_prompt_and_the_allow_listed_model():
     db = audit_db()
     result, adapter = read(db)
     assert result.status == "read" and adapter.calls == 1
@@ -135,7 +135,7 @@ def test_a_new_prompt_version_or_model_is_a_new_reading_beside_the_old_one(monke
     asyncio.run(prompt_store.upload(db, "sheet_reading", "TEST ONLY second version"))
     read(db, adapter=adapter)
     assert adapter.calls == 2 and {d["prompt_version"] for d in db[readings.READINGS].docs} == {"v1", "v2"}
-    monkeypatch.setenv("SHEET_READER_MODEL", "claude-opus-5-5-20260401")
+    monkeypatch.setenv("SHEET_READER_MODEL", "claude-opus-5-5")
     read(db, adapter=adapter)
     assert adapter.calls == 3 and len(db[readings.READINGS].docs) == 3
 
@@ -151,9 +151,9 @@ def test_the_stored_reading_has_the_names_restored_and_the_checks_get_it_masked_
     assert result.status == "read" and result.cache_hit is False
 
 
-@pytest.mark.parametrize("model", ["", "latest", "claude-sonnet-latest", "claude-sonnet-5-5", "claude-opus-5-5", "sonnet",
-                                   "claude-haiku-4-5-20251001", "claude-sonnet-5-5-2026", "claude-sonnet-5-5-20260101-latest"])
-def test_a_model_that_is_not_a_dated_sonnet_or_opus_version_is_refused_before_anything_is_sent(monkeypatch, model):
+@pytest.mark.parametrize("model", ["latest", "claude-sonnet-latest", "sonnet", "claude-haiku-4-5", "claude-sonnet-5-5-20260101", "claude-sonnet-5-5-latest",
+                                   "claude-opus-4-5", "Claude-Sonnet-5-5"])
+def test_a_model_off_the_allow_list_is_refused_before_anything_is_sent(monkeypatch, model):
     monkeypatch.setenv("SHEET_READER_MODEL", model)
     db = audit_db()
     result, adapter = read(db)
@@ -163,17 +163,21 @@ def test_a_model_that_is_not_a_dated_sonnet_or_opus_version_is_refused_before_an
     assert "token_map" not in db["audits"].docs[0], "not even the masking ran"
 
 
-@pytest.mark.parametrize("model", ["claude-sonnet-5-5-20260101", "claude-opus-5-5-20260401", "claude-sonnet-5-20260101"])
-def test_a_dated_sonnet_or_opus_version_is_accepted_and_priced_as_its_family(monkeypatch, model):
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5", "claude-opus-5"])
+def test_an_allow_listed_id_is_accepted_and_priced(monkeypatch, model):
     monkeypatch.setenv("SHEET_READER_MODEL", model)
     assert gateway.sheet_reader_problem() is None
     assert gateway.estimate_cost_usd(model, 1_000_000, 0) == gateway.estimate_cost_usd(gateway.price_model(model), 1_000_000, 0) > 0
 
 
-def test_the_gateway_names_no_latest_alias_and_no_default_reader_model():
+def test_the_gateway_names_no_latest_alias_and_the_default_is_the_structure_model():
     source = (BACKEND / "app" / "llm" / "gateway.py").read_text(encoding="utf-8")
     assert not re.search(r"claude-(?:sonnet|opus)[\w-]*latest", source) and '"latest"' not in source
-    assert gateway.DATED_READER_MODEL.fullmatch("claude-sonnet-5-5-20260101") and not gateway.DATED_READER_MODEL.fullmatch("claude-sonnet-5-5")
+    assert gateway.SHEET_READER_MODELS == {"claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5", "claude-opus-5"}
+    assert all(m in gateway.MODEL_PRICING_USD for m in gateway.SHEET_READER_MODELS)
+    import os
+    os.environ.pop("SHEET_READER_MODEL", None)
+    assert gateway.sheet_reader_model() == gateway.STRUCTURE_MODEL and gateway.sheet_reader_problem() is None
 
 
 def test_a_file_over_the_limit_is_refused_with_a_message_and_nothing_is_cut_or_sent():

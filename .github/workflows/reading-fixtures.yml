@@ -34,7 +34,7 @@ jobs:
     steps:
       - name: Skip without the API key
         if: env.ANTHROPIC_API_KEY == ''
-        run: echo "::notice title=Reading fixtures skipped::ANTHROPIC_API_KEY is not set, so no fixture was read. Add it to the repository secrets (and SHEET_READING_PROMPT, and the SHEET_READER_MODEL variable)."
+        run: echo "::notice title=Reading fixtures skipped::ANTHROPIC_API_KEY is not set, so no fixture was read. Add it to the repository secrets (and SHEET_READING_PROMPT)."
       - uses: actions/checkout@v5
         if: env.ANTHROPIC_API_KEY != ''
       - uses: actions/setup-python@v7

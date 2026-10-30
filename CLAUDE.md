@@ -56,8 +56,8 @@
     `sheet_reading`. With the audit's consent, one call per uploaded spreadsheet, the model may receive every non-empty cell of every
     recognised sheet (a ledger of more than 40 rows, one per invoice, is not one) as `A1 ref: value` lines under `sheet n: name` lines, figures included,
     after the masking of PR 1 (name learning included; a metric vocabulary the masker never tokenises: revenue, ARR, churn and the
-    like), no sampling and no truncation; above 40,000 tokens of cells the file is refused with a message. It runs on a dated Sonnet or
-    Opus version only (`SHEET_READER_MODEL`; never an alias, never "latest"), with the `sheet_reading` prompt of the store (rule 26). The
+    like), no sampling and no truncation; above 40,000 tokens of cells the file is refused with a message. It runs on an exact Sonnet or
+    Opus id from an allow-list only (`gateway.SHEET_READER_MODELS`; `SHEET_READER_MODEL` picks one, default the structure model; never an alias, never "latest"; George, 2026-10-30), with the `sheet_reading` prompt of the store (rule 26). The
     model returns the file map (`FileMap`, schemas/metrics.py); Python opens every cited cell (app/checks.py) and decides what the cell
     cannot show to be unchecked. The spreadsheet calls of rule 16 above (file_type, structure_reading, column mapping) are unchanged,
     still learn no names, and stay behind `READER_V1` (off turns them off; default on) for PR 2 only.
