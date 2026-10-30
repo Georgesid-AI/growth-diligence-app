@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit page mockup — read, check, review</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #1a1a1a;
+    --muted: #5f6368;
+    --line: #e3e5e8;
+    --soft: #f6f7f8;
+    --link: #1f5fbf;
+    --ok: #1f7a3a;
+    --warn: #b4540a;
+    --bad: #b3261e;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "IBM Plex Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--sans); }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 28px 80px; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  p { margin: 0; }
+
+  /* top bar */
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+  .top p { max-width: 70ch; color: var(--muted); }
+  .top label { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .btn { background: var(--link); color: #fff; border: 0; border-radius: 6px; padding: 10px 18px; font: 600 15px var(--sans); cursor: pointer; white-space: nowrap; }
+  .btn.quiet { background: #fff; color: var(--ink); border: 1px solid var(--line); font-weight: 500; padding: 6px 12px; }
+
+  /* strip */
+  .strip { display: flex; flex-wrap: wrap; gap: 6px 28px; padding: 16px 0 6px; }
+  .strip div span { color: var(--muted); margin-right: 8px; }
+  .evidence { color: var(--muted); padding: 0 0 18px; border-bottom: 1px solid var(--line); }
+  .evidence b { color: var(--ok); font-weight: 600; }
+
+  /* file blocks */
+  .file { padding: 18px 0; border-bottom: 1px solid var(--line); }
+  .file h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; display: flex; gap: 12px; align-items: baseline; }
+  .file h2 small { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .summary { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .summary b { font-weight: 500; color: var(--ink); }
+  .anchors { margin: 10px 0 4px; display: grid; grid-template-columns: max-content 1fr max-content; gap: 4px 16px; align-items: baseline; }
+  .anchors .k { color: var(--muted); }
+  details summary { cursor: pointer; color: var(--link); margin-top: 8px; list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  details[open] summary { margin-bottom: 8px; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th { text-align: left; font-weight: 600; color: var(--muted); font-size: 13px; padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: help; }
+  th[title] { text-decoration: underline dotted var(--line); text-underline-offset: 4px; }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--soft); vertical-align: top; overflow-wrap: anywhere; }
+  td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.nw { white-space: nowrap; }
+  td.src { font-family: var(--mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  td.src a { color: var(--ink); }
+  td.src a b { font-weight: 600; }
+  tr.sub td:first-child { padding-left: 26px; color: var(--muted); }
+  tr.moved td:first-child::after { content: " · shown under its line"; color: var(--muted); font-size: 12px; }
+
+  /* result blocks */
+  .results { padding-top: 22px; }
+  .results h2 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
+  .results h2 .n { color: var(--muted); font-weight: 400; }
+  .results h2.ok .n { color: var(--ok); }
+  .results h2.bad .n { color: var(--bad); }
+  .results h2.warn .n { color: var(--warn); }
+  .results details summary { margin: 0; }
+
+  /* card */
+  .card { border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 6px; padding: 14px 16px; margin: 10px 0 0; max-width: 820px; }
+  .card h3 { margin: 0 0 6px; font-size: 15px; }
+  .card .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 8px 0 12px; }
+  .card .two div { background: var(--soft); border-radius: 4px; padding: 10px 12px; }
+  .card .two b { display: block; margin-bottom: 4px; }
+  .card .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* narrow screens: rows become cards */
+  @media (max-width: 900px) {
+    main { padding: 16px; }
+    .top { flex-direction: column; }
+    .anchors { grid-template-columns: 1fr; }
+    .card .two { grid-template-columns: 1fr; }
+    table.rows thead { display: none; }
+    table.rows, table.rows tbody, table.rows tr, table.rows td { display: block; width: 100%; }
+    table.rows tr { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; }
+    table.rows td { border: 0; padding: 2px 0; text-align: left; white-space: normal; }
+    table.rows td.num { text-align: left; }
+    table.rows td::before { content: attr(data-h) ": "; color: var(--muted); }
+    table.rows td.src { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+  <section class="top">
+    <div>
+      <p>The model reads each file in full. Names, contact details and ID numbers are removed first; client names are replaced by codes that exist only in this audit. Code checks every figure against its cell.</p>
+      <label><input type="checkbox" checked> AI reading</label>
+    </div>
+    <button class="btn">Run audit</button>
+  </section>
+
+  <section class="strip">
+    <div><span>Currency</span>EUR</div>
+    <div><span>Reporting period</span>Jan 2019 – May 2022</div>
+    <div><span>As-of month</span>May 2022 <a href="#">Change</a></div>
+    <div><span>FY end</span>December</div>
+  </section>
+  <p class="evidence">As-of month from revenue_2019-2022.xlsx: customers row 23 has values through AP (May 2022) and nothing after. <b>Confirmed on column AP.</b></p>
+
+  <!-- file 1: monthly revenue report -->
+  <section class="file">
+    <h2>revenue_2019-2022.xlsx <small>61 KB</small></h2>
+    <p class="summary">48 month columns · 41 rows mapped · last actual <b>May 2022</b> · <b>37</b> confirmed · 0 rejected · 1 cannot check · personal items removed 0 · company names coded 0</p>
+    <div class="anchors">
+      <span class="k">As-of month</span><span>May 2022 — customers row 23 ends at AP; recognised revenue from AQ equals the new sales row.</span><a href="#">Change</a>
+      <span class="k">Revenue row</span><span>Row 11, Recognised revenue, monthly</span><a href="#">Change</a>
+      <span class="k">Actual / plan</span><span>Actual to column AP, plan from AQ</span><a href="#">Change</a>
+    </div>
+    <details>
+      <summary>Show all lines</summary>
+      <table class="rows">
+        <colgroup><col style="width:34%"><col style="width:16%"><col style="width:14%"><col style="width:16%"><col style="width:20%"></colgroup>
+        <thead><tr>
+          <th title="The row label as it stands in the file, in file order.">Line</th>
+          <th title="What the whole row was read as: revenue, bookings, ARR, MRR, churn rate, customers, forecast, variance, other.">Read as</th>
+          <th title="How the value accumulates: monthly, quarterly, yearly, cumulative to date, last 12 months, or a rate.">Basis</th>
+          <th title="Whether the row holds actual figures, plan figures, or both with a boundary column.">Actual / plan</th>
+          <th title="The cells the values occupy. Click to open the sheet there.">Cells</th>
+        </tr></thead>
+        <tbody>
+          <tr><td data-h="Line">New sales (annual contract value)</td><td data-h="Read as">bookings</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">mixed, boundary AP</td><td data-h="Cells" class="src"><a href="#"><b>B4:AW4</b></a></td></tr>
+          <tr><td data-h="Line">Recognised revenue</td><td data-h="Read as">revenue</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">mixed, boundary AP</td><td data-h="Cells" class="src"><a href="#"><b>B11:AW11</b></a></td></tr>
+          <tr><td data-h="Line">ARR (current year)</td><td data-h="Read as">ARR</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">mixed, boundary AP</td><td data-h="Cells" class="src"><a href="#"><b>B13:AW13</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">MRR from annual subscriptions</td><td data-h="Read as">MRR, part of row 13</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Cells" class="src"><a href="#"><b>AL14:AP14</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">MRR from monthly subscriptions</td><td data-h="Read as">MRR, part of row 13</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Cells" class="src"><a href="#"><b>AL15:AP15</b></a></td></tr>
+          <tr><td data-h="Line">MRR growth % rate</td><td data-h="Read as">growth rate</td><td data-h="Basis">rate</td><td data-h="Actual / plan">mixed, boundary AP</td><td data-h="Cells" class="src"><a href="#"><b>X18:AW18</b></a></td></tr>
+          <tr><td data-h="Line">MRR churn rate</td><td data-h="Read as">churn rate</td><td data-h="Basis">rate</td><td data-h="Actual / plan">actual</td><td data-h="Cells" class="src"><a href="#"><b>AH20:AP20</b></a></td></tr>
+          <tr><td data-h="Line">Total clients achieved (lifetime)</td><td data-h="Read as">customers</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Cells" class="src"><a href="#"><b>B23:AP23</b></a></td></tr>
+          <tr><td data-h="Line">Forecast: recognised revenue (current year)</td><td data-h="Read as">forecast</td><td data-h="Basis">cumulative to date</td><td data-h="Actual / plan">plan</td><td data-h="Cells" class="src"><a href="#"><b>R30:AW30</b></a></td></tr>
+          <tr><td data-h="Line">Total recognised revenue (current year)</td><td data-h="Read as">revenue</td><td data-h="Basis">cumulative to date</td><td data-h="Actual / plan">mixed, boundary AP</td><td data-h="Cells" class="src"><a href="#"><b>B39:AW39</b></a></td></tr>
+          <tr><td data-h="Line">Recognised revenue in last 12 months</td><td data-h="Read as">revenue</td><td data-h="Basis">last 12 months</td><td data-h="Actual / plan">mixed, boundary AP</td><td data-h="Cells" class="src"><a href="#"><b>N40:AW40</b></a></td></tr>
+        </tbody>
+      </table>
+    </details>
+  </section>
+
+  <!-- file 2: yearly P&L -->
+  <section class="file">
+    <h2>pnl.xlsx <small>88 KB</small></h2>
+    <p class="summary">7 year columns · 38 rows mapped · last actual <b>FY 2021</b> · <b>29</b> confirmed · 0 rejected · 0 cannot check · personal items removed 0 · company names coded 0</p>
+    <div class="anchors">
+      <span class="k">Last actual</span><span>FY 2021 — columns E to H are headed forecast; D holds the last actual year.</span><a href="#">Change</a>
+      <span class="k">Revenue row</span><span>Row 4, Revenue (recognised), yearly</span><a href="#">Change</a>
+      <span class="k">Actual / plan</span><span>Actual to column D, plan from E</span><a href="#">Change</a>
+    </div>
+    <details open>
+      <summary>Hide all lines</summary>
+      <table class="rows">
+        <colgroup><col style="width:34%"><col style="width:16%"><col style="width:14%"><col style="width:16%"><col style="width:20%"></colgroup>
+        <thead><tr>
+          <th title="The row label as it stands in the file, in file order. A rate row is shown under the line it refers to.">Line</th>
+          <th title="What the whole row was read as.">Read as</th>
+          <th title="How the value accumulates.">Basis</th>
+          <th title="Actual, plan, or both with a boundary column.">Actual / plan</th>
+          <th title="The cells the values occupy.">Cells</th>
+        </tr></thead>
+        <tbody>
+          <tr><td data-h="Line">Revenue (recognised)</td><td data-h="Read as">revenue</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B4:H4</b></a></td></tr>
+          <tr class="sub moved"><td data-h="Line">revenue growth rate</td><td data-h="Read as">growth rate of row 4</td><td data-h="Basis">rate</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>C3:H3</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Cloud video processing credit</td><td data-h="Read as">revenue, part of row 4</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B5:H5</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Analytical suite subscriptions</td><td data-h="Read as">revenue, part of row 4</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B6:H6</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Real-time monitoring subscriptions</td><td data-h="Read as">revenue, part of row 4</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B7:H7</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Custom AI modules</td><td data-h="Read as">revenue, part of row 4</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B8:H8</b></a></td></tr>
+          <tr><td data-h="Line">Cost of goods sold</td><td data-h="Read as">cost of revenue</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B10:H10</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Cloud processing and database</td><td data-h="Read as">cost of revenue, part of row 10</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B11:H11</b></a></td></tr>
+          <tr><td data-h="Line">Gross margin (revenue − CoGS)</td><td data-h="Read as">gross margin</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B13:H13</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Gross margin as % of revenue</td><td data-h="Read as">margin rate of row 13</td><td data-h="Basis">rate</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B14:H14</b></a></td></tr>
+          <tr><td data-h="Line">OPEX total</td><td data-h="Read as">opex</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B16:H16</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">OPEX as % of revenue</td><td data-h="Read as">rate of row 16</td><td data-h="Basis">rate</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B17:H17</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Research &amp; development</td><td data-h="Read as">R&amp;D, part of row 16</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B18:H18</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Sales</td><td data-h="Read as">sales &amp; marketing, part of row 16</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B20:H20</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">Marketing</td><td data-h="Read as">sales &amp; marketing, part of row 16</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B23:H23</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">General &amp; administration</td><td data-h="Read as">G&amp;A, part of row 16</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B28:H28</b></a></td></tr>
+          <tr><td data-h="Line">EBITDA</td><td data-h="Read as">EBITDA</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B34:H34</b></a></td></tr>
+          <tr class="sub"><td data-h="Line">EBITDA as % of revenue</td><td data-h="Read as">rate of row 34</td><td data-h="Basis">rate</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B35:H35</b></a></td></tr>
+          <tr><td data-h="Line">Net income</td><td data-h="Read as">other</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">mixed, boundary D</td><td data-h="Cells" class="src"><a href="#"><b>B43:H43</b></a></td></tr>
+        </tbody>
+      </table>
+    </details>
+  </section>
+
+  <!-- file 3: deck -->
+  <section class="file">
+    <h2>Board report 2021 and 2022 plan.pdf <small>20 pages</small></h2>
+    <p class="summary">20 pages · 15 with figures · <b>15</b> read · 0 rejected · 3 cannot check · personal items removed 1 · company names coded 17 · skipped 1, 2, 7, 11, 18 (no numbers)</p>
+    <div class="anchors">
+      <span class="k">Figures</span><span>112 read, 109 found on their page, 3 from charts without text</span><a href="#">Show all</a>
+    </div>
+  </section>
+
+  <!-- results -->
+  <section class="results">
+
+    <h2 class="ok">Confirmed <span class="n">· 175</span></h2>
+    <details>
+      <summary>Show</summary>
+      <table class="rows">
+        <colgroup><col style="width:20%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:8%"><col style="width:14%"><col style="width:26%"></colgroup>
+        <thead><tr>
+          <th title="What the figure measures, e.g. recognised revenue, ARR, customers.">Metric</th>
+          <th class="num" title="The number as it stands in the file, shown rounded; the full value is kept.">Value</th>
+          <th title="The month, quarter or year this value belongs to.">Period</th>
+          <th title="How the value accumulates: monthly, quarterly, yearly, cumulative to date, or last 12 months.">Basis</th>
+          <th title="Whether the cell sits before or after the file's last actual month.">Actual / plan</th>
+          <th title="What the whole row or table was read as: revenue, bookings, ARR, churn rate, customers, forecast, variance, other.">Row</th>
+          <th title="The file, sheet and cell, or the deck page, the figure was read from. Click to see the cell.">Source</th>
+        </tr></thead>
+        <tbody>
+          <tr><td data-h="Metric">Recognised revenue</td><td data-h="Value" class="num">€78,829</td><td data-h="Period" class="nw">May 2022</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Row">revenue</td><td data-h="Source" class="src"><a href="#"><b>AP11</b> · 2019-2022 Sales · revenue_2019-2022.xlsx</a></td></tr>
+          <tr><td data-h="Metric">ARR</td><td data-h="Value" class="num">€447,223</td><td data-h="Period" class="nw">May 2022</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Row">ARR</td><td data-h="Source" class="src"><a href="#"><b>AP13</b> · 2019-2022 Sales · revenue_2019-2022.xlsx</a></td></tr>
+          <tr><td data-h="Metric">Customers</td><td data-h="Value" class="num">187</td><td data-h="Period" class="nw">May 2022</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Row">customers</td><td data-h="Source" class="src"><a href="#"><b>AP23</b> · 2019-2022 Sales · revenue_2019-2022.xlsx</a></td></tr>
+          <tr><td data-h="Metric">Revenue</td><td data-h="Value" class="num">€501,378</td><td data-h="Period" class="nw">FY 2021</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actual</td><td data-h="Row">revenue</td><td data-h="Source" class="src"><a href="#"><b>D4</b> · Profit&amp;Loss · pnl.xlsx</a></td></tr>
+          <tr><td data-h="Metric">Revenue</td><td data-h="Value" class="num">€501,378</td><td data-h="Period" class="nw">FY 2021</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actual</td><td data-h="Row">—</td><td data-h="Source" class="src"><a href="#"><b>p3</b> · Board report 2021 and 2022 plan.pdf</a></td></tr>
+          <tr><td data-h="Metric">Revenue, plan</td><td data-h="Value" class="num">€1,484,928</td><td data-h="Period" class="nw">FY 2022</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">plan</td><td data-h="Row">—</td><td data-h="Source" class="src"><a href="#"><b>p12</b> · Board report 2021 and 2022 plan.pdf</a></td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <h2 class="bad">Rejected <span class="n">· 1</span></h2>
+    <table class="rows">
+      <colgroup><col style="width:14%"><col style="width:12%"><col style="width:12%"><col style="width:22%"><col style="width:12%"><col style="width:10%"><col style="width:18%"></colgroup>
+      <thead><tr>
+        <th title="What the reading said the figure measures.">Metric</th>
+        <th class="num" title="The value and period the reader recorded.">Reading says</th>
+        <th class="num" title="What the code found when it opened the cited cell.">Cell holds</th>
+        <th title="Why the check failed: value differs, period differs, cell does not exist, or a structural check failed.">Reason</th>
+        <th title="Result of the automatic second reading: agrees with the cell, repeats the first reading, or gives a third value.">Re-read</th>
+        <th title="What happens next: corrected automatically, or a card for you to decide.">Action</th>
+        <th title="The cited file, sheet and cell, or deck page. Click to see the cell.">Source</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td data-h="Metric">ARR</td>
+          <td data-h="Reading says" class="num">€447,223<br><span style="color:var(--muted)">Apr 2022</span></td>
+          <td data-h="Cell holds" class="num">€398,736<br><span style="color:var(--muted)">Apr 2022</span></td>
+          <td data-h="Reason">Reading says €447,223; cell AO13 holds €398,736.</td>
+          <td data-h="Re-read" class="nw">Repeats first reading</td>
+          <td data-h="Action" class="nw"><a href="#">Decide</a></td>
+          <td data-h="Source" class="src"><a href="#"><b>AO13</b> · 2019-2022 Sales · revenue_2019-2022.xlsx</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="card">
+      <h3>ARR, April 2022: the reader and the file disagree</h3>
+      <div class="two">
+        <div><b>Reader, twice</b>€447,223 at AO13 — "April update ARR as stated on deck page 20".</div>
+        <div><b>Cell AO13</b>€398,736. The deck's figure sits in AP13, May 2022.</div>
+      </div>
+      <div class="actions">
+        <button class="btn quiet">Use the cell</button>
+        <button class="btn quiet">Use the reader</button>
+        <button class="btn quiet">Type a value</button>
+      </div>
+    </div>
+
+    <h2 class="warn">Cannot check <span class="n">· 4</span></h2>
+    <table class="rows">
+      <colgroup><col style="width:16%"><col style="width:12%"><col style="width:10%"><col style="width:26%"><col style="width:16%"><col style="width:20%"></colgroup>
+      <thead><tr>
+        <th title="What the figure measures.">Metric</th>
+        <th class="num" title="The value the reader recorded.">Value</th>
+        <th title="The month, quarter or year it belongs to.">Period</th>
+        <th title="Why no check was possible: layout description not a value; deck page is an image; unit or scale differs from the cell; no cell cited; depends on a masked name.">Why</th>
+        <th title="Which computed figures rely on it, so you know what is affected.">Used in</th>
+        <th title="Where it was read from. For a deck page without text, the page number only.">Source</th>
+      </tr></thead>
+      <tbody>
+        <tr><td data-h="Metric">MRR</td><td data-h="Value" class="num">€2,500</td><td data-h="Period" class="nw">Jan 2021</td><td data-h="Why">Page 8 chart has no text layer; figure read from the image.</td><td data-h="Used in">—</td><td data-h="Source" class="src"><a href="#"><b>p8</b> · Board report 2021 and 2022 plan.pdf</a></td></tr>
+        <tr><td data-h="Metric">MRR churn</td><td data-h="Value" class="num">3%</td><td data-h="Period" class="nw">Jan 2022</td><td data-h="Why">Cell AL20 holds 0.03; reading says 3%. Unit or scale differs; not compared.</td><td data-h="Used in">Churn by month</td><td data-h="Source" class="src"><a href="#"><b>AL20</b> · 2019-2022 Sales · revenue_2019-2022.xlsx</a></td></tr>
+        <tr><td data-h="Metric">Evidence, as-of month</td><td data-h="Value" class="num">—</td><td data-h="Period" class="nw">—</td><td data-h="Why">This describes the layout, not a value; no cell to open.</td><td data-h="Used in">—</td><td data-h="Source" class="src"><a href="#"><b>sheet</b> · 2019-2022 Sales · revenue_2019-2022.xlsx</a></td></tr>
+        <tr><td data-h="Metric">Pipeline, Client-04</td><td data-h="Value" class="num">€918,669</td><td data-h="Period" class="nw">FY 2022</td><td data-h="Why">Depends on a name that was masked before reading.</td><td data-h="Used in">—</td><td data-h="Source" class="src"><a href="#"><b>p16</b> · Board report 2021 and 2022 plan.pdf</a></td></tr>
+      </tbody>
+    </table>
+
+  </section>
+</main>
+</body>
+</html>
