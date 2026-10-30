@@ -113,18 +113,39 @@ export const asOfDisplay = (v) => {
   return iso ? `${MONTH_ABBR[Number(iso.slice(5, 7)) - 1][0].toUpperCase()}${MONTH_ABBR[Number(iso.slice(5, 7)) - 1].slice(1)} ${iso.slice(0, 4)}` : "";
 };
 
-/** "(detected from pnl.xlsx, cue: 'Forecast')", "(detected from revenue.csv)" or "(set by analyst)"; "" before any month is known. */
-export const asOfSourceText = (audit) => {
-  if (!audit?.as_of_month) return "";
-  if (audit.as_of_by === "analyst") return "(set by analyst)";
-  if (!audit.as_of_file) return "(detected)";
-  return `(detected from ${audit.as_of_file}${audit.as_of_cue ? `, cue: '${audit.as_of_cue}'` : ""})`;
+/** The month the files proposed ("Jun 2025") when it differs from the stored one, else "": the reader's proposal kept beside a typed month. */
+const proposedBeside = (audit) => {
+  const proposed = audit?.as_of_proposal?.month;
+  return proposed && proposed.slice(0, 7) !== String(audit?.as_of_month || "").slice(0, 7) ? asOfDisplay(proposed) : "";
 };
 
-/** The as-of value of the assumptions strip: the month with its source, "check" when files are mapped and none gave a month, else "not set". */
+/** "(detected from pnl.xlsx: Customers row stops at column H (confirmed on sheet Report, column H))", "(detected from revenue.csv)" or
+ *  "(set by analyst)", with "; the files proposed Jun 2025" when a typed month differs from the files' proposal; "" before any month is
+ *  known (read-check-review.md section 6). */
+export const asOfSourceText = (audit) => {
+  if (!audit?.as_of_month) return "";
+  if (audit.as_of_by === "analyst") return proposedBeside(audit) ? `(set by analyst; the files proposed ${proposedBeside(audit)})` : "(set by analyst)";
+  if (!audit.as_of_file) return "(detected)";
+  return `(detected from ${audit.as_of_file}${audit.as_of_evidence ? `: ${audit.as_of_evidence}` : ""})`;
+};
+
+/** The as-of value of the assumptions strip: the month with its source; "reading the files" while a reading runs; "not determined" when files
+ *  are mapped and none gave a confirmed month; else "not set". */
 export const asOfStripText = (audit) => {
   if (audit?.as_of_month) return `${asOfDisplay(audit.as_of_month)} ${asOfSourceText(audit)}`.trim();
-  return audit?.datasets?.revenue || audit?.datasets?.pnl ? "check" : "not set";
+  if (Number(audit?.sheet_reads_pending) > 0) return "reading the files";
+  return audit?.datasets?.revenue || audit?.datasets?.pnl ? "not determined" : "not set";
+};
+
+/** The evidence line under the Audit page's assumptions strip: where the as-of month comes from, in the reader's words. "" when the strip
+ *  says it all (no file named, nothing proposed). */
+export const asOfEvidenceLine = (audit) => {
+  if (!audit?.as_of_month) return "";
+  if (audit.as_of_by === "analyst") {
+    const beside = proposedBeside(audit);
+    return beside ? `Set by analyst. The files proposed ${beside}${audit.as_of_proposal?.evidence ? `: ${audit.as_of_proposal.evidence}` : ""}.` : "Set by analyst.";
+  }
+  return audit.as_of_file ? `Detected from ${audit.as_of_file}${audit.as_of_evidence ? `: ${audit.as_of_evidence}` : ""}` : "";
 };
 
 /** The revenue file's last month (YYYY-MM) as the screen knows it: the computed source period, else the mapped file's months; null before. */

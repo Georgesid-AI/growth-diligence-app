@@ -1,0 +1,142 @@
+{
+ "file": "deck_rotated_axis.pptx",
+ "as_of_month": null,
+ "sheets": [],
+ "roles": [],
+ "figures": [
+  {
+   "metric": "revenue",
+   "value": 1200.0,
+   "period": "2024",
+   "page": 2
+  },
+  {
+   "metric": "revenue",
+   "value": 300.0,
+   "period": "2024-Q1",
+   "page": 2
+  },
+  {
+   "metric": "revenue",
+   "value": 280.0,
+   "period": "2024-Q2",
+   "page": 2
+  },
+  {
+   "metric": "revenue",
+   "value": 320.0,
+   "period": "2024-Q3",
+   "page": 2
+  },
+  {
+   "metric": "revenue",
+   "value": 300.0,
+   "period": "2024-Q4",
+   "page": 2
+  }
+ ],
+ "file_map": {
+  "map_version": 1,
+  "kind": "deck",
+  "sheets": [],
+  "figures": [
+   {
+    "metric": "revenue",
+    "value": 1200.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024",
+    "basis": "yearly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": null,
+     "cell": null,
+     "page": 2,
+     "text_layer": true
+    },
+    "evidence": "Headline on page 2: FY2024 revenue 1,200"
+   },
+   {
+    "metric": "revenue",
+    "value": 300.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-Q1",
+    "basis": "quarterly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": null,
+     "cell": null,
+     "page": 2,
+     "text_layer": true
+    },
+    "evidence": "Chart data label of quarter 1 on page 2"
+   },
+   {
+    "metric": "revenue",
+    "value": 280.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-Q2",
+    "basis": "quarterly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": null,
+     "cell": null,
+     "page": 2,
+     "text_layer": true
+    },
+    "evidence": "Chart data label of quarter 2 on page 2"
+   },
+   {
+    "metric": "revenue",
+    "value": 320.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-Q3",
+    "basis": "quarterly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": null,
+     "cell": null,
+     "page": 2,
+     "text_layer": true
+    },
+    "evidence": "Chart data label of quarter 3 on page 2"
+   },
+   {
+    "metric": "revenue",
+    "value": 300.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-Q4",
+    "basis": "quarterly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": null,
+     "cell": null,
+     "page": 2,
+     "text_layer": true
+    },
+    "evidence": "Chart data label of quarter 4 on page 2"
+   }
+  ]
+ },
+ "kind": "deck",
+ "parts_sum": {
+  "headline": 1200.0,
+  "parts": [
+   300.0,
+   280.0,
+   320.0,
+   300.0
+  ],
+  "page": 2
+ },
+ "read_by": "the page reader (PR 3): not run by the sheet-reading job"
+}

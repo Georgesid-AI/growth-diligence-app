@@ -276,12 +276,12 @@ class FakeAdapter:
     text_tokens = None            # what count_tokens reports for the structure text alone (None: input_tokens)
     image_tokens = 0              # what the page images add to a call's count and bill (a call with images only)
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None, prior=None):
         self.calls += 1
         self.payloads.append(user_payload)
         self.requests = getattr(self, "requests", []) + [
             {"model": model, "max_tokens": max_tokens, "temperature": temperature, "json_schema": json_schema,
-             "cache_system": cache_system, "system": system, "images": images}]
+             "cache_system": cache_system, "system": system, "images": images, "prior": prior}]
         if self._raise_with is not None:
             raise self._raise_with
         reply = self._replies[min(self.calls - 1, len(self._replies) - 1)]
@@ -1785,7 +1785,7 @@ def test_every_field_the_prompt_names_exists_in_a_real_payload():
     fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
     fx[spec["reporting_currency"].upper()] = 1.0
     cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
-           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
     src = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
     res = server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, src))
     out = gateway.build_outbound({"reporting_currency": "EUR", "metrics": gateway._slice_for_step(res, "growth_engine")}, {})

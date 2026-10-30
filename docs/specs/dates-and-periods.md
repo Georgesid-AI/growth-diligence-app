@@ -33,29 +33,23 @@ source period: June 2019 (Complete)". The two never share a cell or a sentence.
 - One as-of month (amended 2026-10-28, "Dates foundation"): the audit holds one as-of month field (`as_of_month`, with `as_of_by`
   "detected" or "analyst" and `as_of_file`, the file it was detected from). Every place that read the set-up "As-of month" or the
   P&L "Last actual month" reads this field.
-  - Detected on Map (amended 2026-10-28, "Suggested boundary"): a revenue file of invoices gives its last month with a valid invoice
-    date and a non-zero amount. A file read as a sheet of period columns (a P&L, a monthly report, a revenue summary) gives the end
-    month of the last actual column the model suggested, and only when Python's check of the suggestion holds. The later month of
-    the two files is the as-of month.
-  - The suggestion: the structure read the model already makes on a spreadsheet (revenue-file-recognition.md §5.7) returns
-    `last_actual_column` (the sheet column number, A = 1, or null) and `boundary_cue` (`{cell, text}`: the address and exact text of
-    the title cell, header cell or row label it decided by, holding a plan word such as budget, plan, forecast, FC, estimate or
-    projection). Both are kept in the stored proposal. The columns the model reads are numbered as the sheet numbers them.
-  - The check (`as_of.suggestion`): accepted only if (1) the cue cell exists on the sheet and holds the cue's text, (2) that text holds
-    a plan word (budget, plan, forecast, FC, estimate, projection and their plain forms), (3) the cell is a row label, or sits above
-    or in the header row of a column after `last_actual_column` (a merged title counts by its last column), and (4) `last_actual_column`
-    is a dated period column of the sheet. Then the as-of month is the end month of that column (a yearly column ends in the fiscal
-    year-end month), status "detected", and the strip reads "(detected from <file>, cue: '<cue text>')".
-  - If the check fails or no suggestion comes, detection returns nothing: no month is taken from the last column with a number, and a
-    plan word on the sheet that the model did not name is no suggestion. The strip reads "As-of month: check" with the Change input,
-    and Run audit stops at its engine stage (message: type the month) until a month is set. A typed month always wins.
-  - Examples (tests): a yearly P&L with FY 2019 to FY 2024 and a "Forecast" title over the 2022 to 2024 columns gives Dec 2021; a
-    monthly report with months to Dec 2022 and a "Forecast" row label from Jan 2022 gives Dec 2021; the same sheets with no plan word
-    anywhere give "check", and so does a suggestion whose cue cell holds no plan word.
+  - Detected when a file is read (amended 2026-10-29, read-check-review.md section 6, PR 2; replaces the suggested boundary of 2026-10-28):
+    a revenue file of invoices gives its last month with a valid invoice date and a non-zero amount. A spreadsheet the sheet reader mapped
+    gives the end month of its last actual column, and only when the cell checks confirmed it: the header of that column names the period the
+    reading says (`app/checks.py`), and at least one piece of the reader's evidence (a row that ends at the column, a range after it equal
+    to a plan or sales row, a label with a plan word, a repeated or round range after it) is confirmed and points at that column. Each piece
+    is opened and tested where a test exists; a piece with no test is a layout description and cannot be checked. A rejected piece is
+    dropped and the month stands on the rest. The audit's month is the latest confirmed month across files; a yearly file with an earlier
+    boundary is no conflict and keeps its own month on its stored reading.
+  - The boundary-cue suggestion of PR 199 (`last_actual_column`, `boundary_cue`, `as_of.suggestion`) and every fallback to the last unmarked
+    column or the last column with a number are deleted. With no confirmed month and none typed the month is "not determined": the strip
+    reads "As-of month: not determined", no last actual column is named, a statement column counts as actual only when its own header says so,
+    and Run audit goes on, calculating everything that does not depend on the month (the stage says so). A typed month always wins; the
+    files' proposal is kept beside it (`as_of_proposal`) and the strip shows it.
   - A P&L stored as one row per month (a month and a revenue column) gives its last month with revenue up to the revenue file's month.
   - Stored once on the audit. A month typed by the analyst (a month-and-year input in the set-up section, "Jun 2021") is kept
-    and Map never overwrites it; clearing it hands it back to detection. The input shows "(detected from <file>, cue: '<cue text>')", "(detected from <file>)" or "(set by
-    analyst)"; the audit stores the cue as `as_of_cue`. A changed month marks computed results stale; nothing recomputes on its own.
+    and Map never overwrites it; clearing it hands it back to detection. The input shows "(detected from <file>: <evidence>)", "(detected from <file>)" or "(set by
+    analyst; the files proposed <month>)"; the audit stores the evidence as `as_of_evidence` and the proposal as `as_of_proposal`. A changed month marks computed results stale; nothing recomputes on its own.
   - The P&L's last actual column is read from this field, never chosen: the last column not marked forecast or budget that ends on
     or before the as-of month; the columns after it are plan. The P&L screen shows it read-only: "Last actual column: FY 2021
     (from as-of month Dec 2021)". The 36-period confirmation list is removed.

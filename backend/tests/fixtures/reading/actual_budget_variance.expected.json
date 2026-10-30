@@ -1,0 +1,196 @@
+{
+ "file": "actual_budget_variance.xlsx",
+ "as_of_month": "2024-06",
+ "sheets": [
+  {
+   "sheet": "Actual vs budget",
+   "last_actual_column": "Q",
+   "revenue_row": 5,
+   "granularity": "monthly"
+  }
+ ],
+ "roles": [
+  {
+   "sheet": "Actual vs budget",
+   "row": 5,
+   "role": "revenue"
+  }
+ ],
+ "figures": [
+  {
+   "metric": "revenue",
+   "value": 430250.0,
+   "period": "2024-06",
+   "sheet": "Actual vs budget",
+   "cell": "Q5"
+  }
+ ],
+ "file_map": {
+  "map_version": 1,
+  "kind": "sheet",
+  "sheets": [
+   {
+    "sheet": "Actual vs budget",
+    "header_row": 3,
+    "label_col": "A",
+    "first_period_col": "B",
+    "last_period_col": "AI",
+    "granularity": "monthly",
+    "currency": "EUR",
+    "currency_cell": "A1",
+    "last_actual": {
+     "column": "Q",
+     "period": "2024-06",
+     "evidence": [
+      {
+       "kind": "range_empty",
+       "text": "The July actual column is blank",
+       "row": null,
+       "column": null,
+       "cell": null,
+       "cells": "T5:T7",
+       "other_cells": null,
+       "word": null,
+       "multiple": null
+      },
+      {
+       "kind": "range_empty",
+       "text": "The August actual column is blank",
+       "row": null,
+       "column": null,
+       "cell": null,
+       "cells": "W5:W7",
+       "other_cells": null,
+       "word": null,
+       "multiple": null
+      }
+     ]
+    },
+    "rows": [
+     {
+      "row": 5,
+      "label_cell": "A5",
+      "role": "revenue",
+      "metric": "revenue",
+      "basis": "monthly",
+      "actual_plan": "mixed",
+      "boundary_col": "Q",
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B5:AK5",
+      "variance_of": null,
+      "variance_columns": {
+        "actual": "B",
+        "plan": "C",
+        "variance": "D",
+        "step": 3
+      },
+      "by_column": false,
+      "evidence": "Actual, Budget and Variance per month"
+     },
+     {
+      "row": 6,
+      "label_cell": "A6",
+      "role": "cost_of_revenue",
+      "metric": "cost_of_revenue",
+      "basis": "monthly",
+      "actual_plan": "mixed",
+      "boundary_col": "Q",
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B6:AK6",
+      "variance_of": null,
+      "variance_columns": {
+        "actual": "B",
+        "plan": "C",
+        "variance": "D",
+        "step": 3
+      },
+      "by_column": false,
+      "evidence": "cost_of_revenue label and numbers across the period columns"
+     },
+     {
+      "row": 7,
+      "label_cell": "A7",
+      "role": "sales_marketing",
+      "metric": "sm_expense",
+      "basis": "monthly",
+      "actual_plan": "mixed",
+      "boundary_col": "Q",
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B7:AK7",
+      "variance_of": null,
+      "variance_columns": {
+        "actual": "B",
+        "plan": "C",
+        "variance": "D",
+        "step": 3
+      },
+      "by_column": false,
+      "evidence": "sales_marketing label and numbers across the period columns"
+     }
+    ]
+   }
+  ],
+  "figures": [
+   {
+    "metric": "revenue",
+    "value": 430250.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-06",
+    "basis": "monthly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": "Actual vs budget",
+     "cell": "Q5",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2024-06 column"
+   },
+   {
+    "metric": "revenue",
+    "value": 425000.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-06",
+    "basis": "monthly",
+    "actual_plan": "plan",
+    "segment": null,
+    "source": {
+     "sheet": "Actual vs budget",
+     "cell": "R5",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2024-06 column"
+   },
+   {
+    "metric": "revenue",
+    "value": 5250.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-06",
+    "basis": "monthly",
+    "actual_plan": "variance",
+    "segment": null,
+    "source": {
+     "sheet": "Actual vs budget",
+     "cell": "S5",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2024-06 column"
+   }
+  ]
+ }
+}

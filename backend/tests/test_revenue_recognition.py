@@ -368,11 +368,14 @@ def test_the_boundary_is_the_last_column_up_to_the_as_of_month_and_the_columns_a
     assert last["column"] < 7 and got["excluded_columns"], "the months after the as-of month are not read"
 
 
-def test_with_no_as_of_month_the_boundary_is_the_rules_last_actual_column_and_waits_for_nothing(rec):
+def test_with_no_as_of_month_there_is_no_boundary_and_the_last_unmarked_column_is_no_fallback(rec):
+    """read-check-review.md section 6, PR 2: no month, no last actual column named; the file still reads the columns it marks as actual and
+    waits for nothing."""
     got = recognise(rec, MONTHLY, as_of=None, proposal=proposal())
     last = got["last_actual"]
-    assert (last["column"], last["state"], last["reason"]) == (7, "auto", None)
+    assert (last["column"], last["month"], last["label"], last["state"], last["reason"]) == (None, None, None, "auto", "no_as_of")
     assert got["revenue_row"]["state"] == "auto" and got["needs_click"] is False
+    assert [p["month"] for p in got["series"]] == [f"2025-0{m}" for m in range(1, 7)], "July to December are marked Forecast: never read"
 
 
 @pytest.mark.parametrize("column", [1, 99, 5])
@@ -676,7 +679,7 @@ def test_the_analyst_confirms_the_currency_when_the_file_names_none_and_the_as_o
         revenue_row={"row": 3, "label": "Revenue"}, currency=None, non_revenue_rows=[])])
     got = upload(api, "monthly_report_no_currency.csv", (FIXTURES / "monthly_report_no_currency.csv").read_bytes()).json()["recognition"]
     assert got["needs_click"] is True and got["currency"]["state"] == "confirm"
-    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("auto", None), "the boundary waits for nothing"
+    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("auto", "no_as_of"), "no month, no boundary, and nothing waits"
     set_as_of(api, AS_OF_YEAR_END)
     final = decide(api, action="change", part="currency", currency="EUR").json()["recognition"]
     assert final["currency"] == {"code": "EUR", "state": "you"}

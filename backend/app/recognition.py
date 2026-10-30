@@ -546,16 +546,20 @@ def _currency(info: Dict, ftype: Optional[str], reporting_currency: Optional[str
 
 
 def _boundary(info: Dict, as_of: Optional[str]) -> Dict:
-    """The last actual column and the columns after it (section 6.2, amended 2026-10-28): read from the audit's one as-of month, never
-    chosen. It is the last column not marked forecast or budget that ends on or before the as-of month; the columns after it are plan.
-    With no column up to the as-of month the file starts after it and waits ("after_as_of"). `label` is the column's header and
-    `as_of` the month it was read from, for the read-only line."""
+    """The last actual column and the columns after it (section 6.2, amended 2026-10-28 and 2026-10-29): read from the audit's one as-of
+    month, never chosen. It is the last column not marked forecast or budget that ends on or before the as-of month; the columns after it
+    are plan. With no as-of month there is no boundary and no column is named: "the last unmarked column" is no fallback (read-check-review.md
+    section 6, PR 2), the series reads the columns the file marks as actual and the audit runs what does not depend on the month. With no
+    column up to the as-of month the file starts after it and waits ("after_as_of"). `label` is the column's header and `as_of` the month
+    it was read from, for the read-only line."""
     dated = [p for p in info["periods"] if p["end"]]
     usable = [p for p in dated if p["tag"] not in EXCLUDED_TAGS]      # a forecast or budget column is never the last actual column
     base = {"candidates": [], "as_of": as_of}
     if not usable:
         return {**base, "column": None, "month": None, "label": None, "state": "click", "reason": "not_a_period"}
-    within = [p for p in usable if as_of is None or p["end"] <= as_of]
+    if as_of is None:
+        return {**base, "column": None, "month": None, "label": None, "state": "auto", "reason": "no_as_of"}
+    within = [p for p in usable if p["end"] <= as_of]
     if not within:
         return {**base, "column": usable[0]["col"], "month": usable[0]["end"], "label": usable[0].get("header"), "state": "click",
                 "reason": "after_as_of"}
@@ -1117,9 +1121,6 @@ def proposal_from(reply: Dict, sheets, company_name: Optional[str], mapping: Dic
         return None
     out = {k: reply.get(k) for k in ("sheet", "file_type", "currency")}
     out["non_revenue_rows"] = [{"row": x["row"], "kind": x["kind"]} for x in reply.get("non_revenue_rows") or []]
-    cue = reply.get("boundary_cue")
-    out["last_actual_column"] = reply.get("last_actual_column")        # a suggestion: as_of.suggestion checks it against the sheet
-    out["boundary_cue"] = {"cell": cue["cell"], "text": cue["text"]} if cue else None
     row = reply.get("revenue_row")
     out["revenue_row"] = None
     if row:

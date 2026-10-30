@@ -129,14 +129,15 @@ def _engine(rev, pnl, config, yearly=None):
 
 def test_the_cac_gap_of_a_yearly_pnl_and_the_arr_gap_of_a_monthly_total_report_read_as_the_file_is():
     import pandas as pd
-    config = {"recognition": {"file": "r.xlsx", "sheet": "S", "file_type": "monthly_revenue_report", "basis": "recognised", "periods": 0,
+    config = {"as_of_month": "2026-06-30",
+              "recognition": {"file": "r.xlsx", "sheet": "S", "file_type": "monthly_revenue_report", "basis": "recognised", "periods": 0,
                               "excluded_columns": [], "currency_confirmed": True, "series": [], "rows": []}}
     yearly = {"file": "p.xlsx", "sheet": "P", "actual": [], "rows": []}
     res = _engine(pd.DataFrame(), pd.DataFrame(), config, yearly)
     gaps = {m["metric"]: m["reason"] for m in res["missing_data"]}
     assert gaps["CAC payback"] == "P&L is yearly; CAC payback needs monthly S&M, revenue and cost of revenue"
     assert gaps["ARR / MRR"] == "revenue file is a monthly total report with no recurring split"
-    plain = _engine(pd.DataFrame(), pd.DataFrame(), {})
+    plain = _engine(pd.DataFrame(), pd.DataFrame(), {"as_of_month": "2026-06-30"})
     plain_gaps = {m["metric"]: m["reason"] for m in plain["missing_data"]}
     assert plain_gaps["CAC payback"] == "P&L not provided" and plain_gaps["ARR / MRR"] == "No usable recurring revenue rows"
 

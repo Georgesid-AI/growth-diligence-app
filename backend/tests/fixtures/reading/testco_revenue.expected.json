@@ -1,0 +1,6 @@
+{
+ "file": "sample_data/revenue.csv",
+ "as_of_month": null,
+ "read": false,
+ "note": "One row per invoice. No rule decides a sheet is a ledger, so the file is sent like any sheet; the CI job does not read it until the owner supplies the expected map of a ledger."
+}

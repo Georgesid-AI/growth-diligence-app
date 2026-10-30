@@ -1,0 +1,120 @@
+{
+ "file": "sample_data/pnl.csv",
+ "as_of_month": "2024-02",
+ "sheets": [
+  {
+   "sheet": "CSV",
+   "last_actual_column": null,
+   "revenue_row": 3,
+   "granularity": "monthly"
+  }
+ ],
+ "roles": [
+  {
+   "sheet": "CSV",
+   "row": 3,
+   "role": "revenue",
+   "by_column": true
+  }
+ ],
+ "figures": [
+  {
+   "metric": "revenue",
+   "value": 69000.0,
+   "period": "2024-02",
+   "sheet": "CSV",
+   "cell": "C15"
+  }
+ ],
+ "file_map": {
+  "map_version": 1,
+  "kind": "sheet",
+  "figures": [
+   {
+    "metric": "revenue",
+    "value": 69000.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-02",
+    "basis": "monthly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": "CSV",
+     "cell": "C15",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2024-02 column"
+   }
+  ],
+  "sheets": [
+   {
+    "sheet": "CSV",
+    "header_row": 1,
+    "label_col": "A",
+    "first_period_col": "A",
+    "last_period_col": "A",
+    "granularity": "monthly",
+    "currency": null,
+    "currency_cell": null,
+    "last_actual": null,
+    "rows": [
+     {
+      "row": 2,
+      "label_cell": "B1",
+      "role": "sales_marketing",
+      "metric": "sm_expense",
+      "basis": "monthly",
+      "actual_plan": "actual",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B2:B15",
+      "variance_of": null,
+      "by_column": true,
+      "evidence": "sales_marketing: the column headed as in the first row, one figure per month"
+     },
+     {
+      "row": 3,
+      "label_cell": "C1",
+      "role": "revenue",
+      "metric": "revenue",
+      "basis": "monthly",
+      "actual_plan": "actual",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "C2:C15",
+      "variance_of": null,
+      "by_column": true,
+      "evidence": "revenue: the column headed as in the first row, one figure per month"
+     },
+     {
+      "row": 4,
+      "label_cell": "D1",
+      "role": "cost_of_revenue",
+      "metric": "cost_of_revenue",
+      "basis": "monthly",
+      "actual_plan": "actual",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "D2:D15",
+      "variance_of": null,
+      "by_column": true,
+      "evidence": "cost_of_revenue: the column headed as in the first row, one figure per month"
+     }
+    ]
+   }
+  ]
+ },
+ "as_of_source": "rules",
+ "note": "The test company's P&L has one row per month (periods run down the sheet): its as-of month comes from the rules path (as_of.pnl_month). The reader may map it; a month it proposes must be 2024-02 or none."
+}

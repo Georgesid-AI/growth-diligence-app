@@ -1,0 +1,200 @@
+{
+ "file": "monthly_report.xlsx",
+ "as_of_month": "2024-06",
+ "sheets": [
+  {
+   "sheet": "Monthly report",
+   "last_actual_column": "G",
+   "revenue_row": 4,
+   "granularity": "monthly"
+  }
+ ],
+ "roles": [
+  {
+   "sheet": "Monthly report",
+   "row": 4,
+   "role": "revenue"
+  },
+  {
+   "sheet": "Monthly report",
+   "row": 5,
+   "role": "forecast"
+  },
+  {
+   "sheet": "Monthly report",
+   "row": 6,
+   "role": "customers"
+  },
+  {
+   "sheet": "Monthly report",
+   "row": 7,
+   "role": "forecast"
+  }
+ ],
+ "figures": [
+  {
+   "metric": "revenue",
+   "value": 447223.43,
+   "period": "2024-06",
+   "sheet": "Monthly report",
+   "cell": "G4"
+  },
+  {
+   "metric": "customers",
+   "value": 138.0,
+   "period": "2024-06",
+   "sheet": "Monthly report",
+   "cell": "G6"
+  }
+ ],
+ "file_map": {
+  "map_version": 1,
+  "kind": "sheet",
+  "sheets": [
+   {
+    "sheet": "Monthly report",
+    "header_row": 3,
+    "label_col": "A",
+    "first_period_col": "B",
+    "last_period_col": "M",
+    "granularity": "monthly",
+    "currency": "EUR",
+    "currency_cell": "A1",
+    "last_actual": {
+     "column": "G",
+     "period": "2024-06",
+     "evidence": [
+      {
+       "kind": "row_ends",
+       "text": "The Customers row stops at June",
+       "row": 6,
+       "column": "G",
+       "cell": null,
+       "cells": null,
+       "other_cells": null,
+       "word": null,
+       "multiple": null
+      },
+      {
+       "kind": "equals_range",
+       "text": "From July the Revenue row equals the plan row",
+       "row": null,
+       "column": null,
+       "cell": null,
+       "cells": "H4:M4",
+       "other_cells": "H5:M5",
+       "word": null,
+       "multiple": null
+      }
+     ]
+    },
+    "rows": [
+     {
+      "row": 4,
+      "label_cell": "A4",
+      "role": "revenue",
+      "metric": "revenue",
+      "basis": "monthly",
+      "actual_plan": "mixed",
+      "boundary_col": "G",
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B4:M4",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "revenue label and numbers across the period columns"
+     },
+     {
+      "row": 5,
+      "label_cell": "A5",
+      "role": "forecast",
+      "metric": "revenue",
+      "basis": "monthly",
+      "actual_plan": "plan",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B5:M5",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "forecast label and numbers across the period columns"
+     },
+     {
+      "row": 6,
+      "label_cell": "A6",
+      "role": "customers",
+      "metric": "customers",
+      "basis": "monthly",
+      "actual_plan": "actual",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "count",
+      "currency": "EUR",
+      "cells": "B6:G6",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "customers label and numbers across the period columns"
+     },
+     {
+      "row": 7,
+      "label_cell": "A7",
+      "role": "forecast",
+      "metric": "revenue",
+      "basis": "cumulative_to_date",
+      "actual_plan": "mixed",
+      "boundary_col": "G",
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B7:M7",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "forecast label and numbers across the period columns"
+     }
+    ]
+   }
+  ],
+  "figures": [
+   {
+    "metric": "revenue",
+    "value": 447223.43,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-06",
+    "basis": "monthly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": "Monthly report",
+     "cell": "G4",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2024-06 column"
+   },
+   {
+    "metric": "customers",
+    "value": 138.0,
+    "unit": "count",
+    "currency": null,
+    "period": "2024-06",
+    "basis": "monthly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": "Monthly report",
+     "cell": "G6",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "customers row, 2024-06 column"
+   }
+  ]
+ }
+}

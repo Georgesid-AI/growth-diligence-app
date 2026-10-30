@@ -52,13 +52,26 @@
     log, a payload or an API response, and goes with the audit; the provider adapter refuses a payload that still holds an email, IBAN,
     ID number or "+" phone number. Counts per file on screen: lines sent, personal items removed, company names tokenised, columns
     withheld.
+    Amended 2026-10-29 (read-check-review.md sections 3, 4, 8 and 9, PR 2; for George's approval before merge, rule 32): a new step
+    `sheet_reading`. With the audit's consent, one call per uploaded spreadsheet, the model may receive every non-empty cell of every
+    recognised sheet (a ledger of more than 40 rows, one per invoice, is not one) as `A1 ref: value` lines under `sheet n: name` lines, figures included,
+    after the masking of PR 1 (name learning included; a metric vocabulary the masker never tokenises: revenue, ARR, churn and the
+    like), no sampling and no truncation; above 40,000 tokens of cells the file is refused with a message. It runs on an exact Sonnet or
+    Opus id from an allow-list only (`gateway.SHEET_READER_MODELS`; `SHEET_READER_MODEL` picks one, default the structure model; never an alias, never "latest"; George, 2026-10-30), with the `sheet_reading` prompt of the store (rule 26). The
+    model returns the file map (`FileMap`, schemas/metrics.py); Python opens every cited cell (app/checks.py) and decides what the cell
+    cannot show to be unchecked. The spreadsheet calls of rule 16 above (file_type, structure_reading, column mapping) are unchanged,
+    still learn no names, and stay behind `READER_V1` (off turns them off; default on) for PR 2 only.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt
     version, model version, content hash, token counts and cost. Never deck text sent to
     the model. Delete audit removes model outputs. The one stored copy of client data is the uploaded deck file, collection
     `deck_files`, kept only while consent is ticked and DECK_PIPELINE is "ai", so that page images can be drawn from it
-    (docs/design/page-image.md); it is deleted with its deck and with the audit (rule 22). Rules 16–18: see docs/architecture.md.
+    (docs/design/page-image.md); it is deleted with its deck and with the audit (rule 22). Amended 2026-10-29 (PR 2, for George's approval): a reading of a
+    spreadsheet is stored once in `readings`, keyed on file hash + prompt version + model version, never edited, with the names restored
+    (display un-masks on the server); a second upload of the same file, in any audit, gets it with no model call. Its automatic second
+    reading, an analyst's Change and a reviewer's correction are records of their own (`reading_rereads`, `reading_overrides`). A reading
+    is kept only while an audit uses it and goes with the last audit that does (rule 22). Rules 16–18: see docs/architecture.md.
 18. Model output never becomes Verified on its own. Python must match every value to a
     source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
 

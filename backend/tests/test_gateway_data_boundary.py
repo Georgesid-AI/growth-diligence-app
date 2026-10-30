@@ -236,7 +236,7 @@ def test_demo_upload_leaks_no_file_sheet_header_or_cell_value():
     fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
     fx[spec["reporting_currency"].upper()] = 1.0
     cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
-           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
     results = server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, sources,
                                              files=server.candidate_views(uploads)))
@@ -323,7 +323,7 @@ def _engine_results(spec, inject: bool) -> dict:
     fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
     fx[spec["reporting_currency"].upper()] = 1.0
     cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
-           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
     return server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, sources,
                                           files=server.candidate_views(uploads)))
@@ -1246,8 +1246,11 @@ def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_c
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Jane Doe", "£1,200,000", "cannot read cell"):
         assert needle not in json.dumps(records, ensure_ascii=False), f"{needle!r} was stored"
+    for needle in ("Jane Doe", "£1,200,000"):
         assert needle not in logs, f"{needle!r} was logged"
     assert "reason=provider_unreachable status=529 type=overloaded_error" in logs
+    assert "message=cannot read cell … in r2c2: #" in logs, "a 4xx provider message is logged, quoted spans and figures blanked, capped"
+    assert "status=529 type=overloaded_error message=" not in logs, "a 5xx message is not logged"
 
 
 # The reason a cap refusal's "structure not read" line gives: a closed word per guard, never the guard's message.
@@ -3087,21 +3090,21 @@ def test_recognition_the_columns_are_printed_as_the_sheet_counts_them_so_the_sug
     assert {int(m.group(1)) for m in (re.match(r"^s1 c(\d+) (sample|profile)", line) for line in lines) if m} <= {2, 3, 4}
 
 
-def test_recognition_a_boundary_cue_is_kept_with_the_model_reply_and_the_audit_and_reaches_no_log_line(api, caplog):
-    caplog.set_level(logging.DEBUG)
-    cue = "Forecast scenario"
-    csv = f"Test report,,,\n,Jan 2021,Feb 2021,{cue}\nRevenue,10,20,30\nCustomers,3,4,5\nChurn,1,2,3\n".encode()
-    reply = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report", "revenue_row": {"row": 3, "label": "Revenue"},
-                        "currency": None, "non_revenue_rows": [], "last_actual_column": 3, "boundary_cue": {"cell": "D2", "text": cue}})
-    api.state["adapter"] = t.FakeAdapter(replies=[reply])
-    assert chat.upload(api, "report.csv", csv).status_code == 200
-    log = "\n".join(r.getMessage() for r in caplog.records)
-    assert cue not in log, "the cue text reached a log line"
-    stored = _all_documents(api.db)
-    assert cue not in stored.get("llm_calls", ""), "the call row holds counts and hashes, never text"
-    kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
-    assert kept and kept[0]["reply"]["boundary_cue"] == {"cell": "D2", "text": cue} and kept[0]["reply"]["last_actual_column"] == 3
-    assert api.db["audits"].docs[0].get("as_of_cue") == cue, "the audit keeps the one cue its as-of month was detected by"
+def test_recognition_a_boundary_suggestion_is_no_longer_asked_for_kept_or_accepted():
+    """PR 199's last_actual_column and boundary_cue are gone (read-check-review.md section 6, PR 2): the reply is closed, so a model that still
+    sends them is refused, and the as-of month comes from the sheet reader's checked evidence."""
+    reply = {"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report", "revenue_row": {"row": 3, "label": "Revenue"},
+             "currency": None, "non_revenue_rows": []}
+    parse = lambda body: gateway.parse_structure_reply(json.dumps(body), "file_recognition", "")  # noqa: E731
+    assert parse(reply).file_type == "monthly_revenue_report"
+    for extra in ({"last_actual_column": 3}, {"boundary_cue": {"cell": "D2", "text": "Forecast"}}):
+        with pytest.raises(gateway.GatewayError):
+            parse({**reply, **extra})
+    assert "last_actual_column" not in str(schemas_for_recognition().file_recognition_output_schema())
+
+
+def schemas_for_recognition():
+    return importlib.import_module("app.llm.schemas")
 
 
 def test_recognition_the_customer_names_the_audit_already_pseudonymises_take_their_pseudonyms_in_the_title_and_headers():
@@ -3156,17 +3159,10 @@ def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_tex
         assert parse({**good, "file_type": other, "revenue_row": None, "currency": None, "non_revenue_rows": []})
     for bad in ({**good, "confidence": 90}, {**good, "note": "x"}, {**good, "file_type": "deck"}, {**good, "currency": "EURO"},
                 {**good, "non_revenue_rows": [{"row": 9, "kind": "maybe"}]}, {**good, "non_revenue_rows": [{"row": 9, "kind": "forecast", "why": "x"}]},
-                {**good, "last_actual_column": 0}, {**good, "last_actual_column": 7, "boundary_cue": {"cell": "Sheet1!H2", "text": "Forecast"}},
-                {**good, "boundary_cue": {"cell": "H2"}}, {**good, "boundary_cue": {"cell": "H2", "text": "Forecast", "why": "x"}},
-                {**good, "boundary_cue": {"cell": "H2", "text": "x" * 201}}, {**good, "boundary_cue": "H2"},
-                {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
+                {**good, "last_actual_column": 0}, {**good, "last_actual_column": 7, "boundary_cue": {"cell": "H2", "text": "Forecast"}},
+                {**good, "boundary_cue": None}, {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
         with pytest.raises(gateway.GatewayError):
             parse(bad)
-    cued = parse({**good, "last_actual_column": 7, "boundary_cue": {"cell": "H2", "text": "Forecast"}})
-    assert (cued.last_actual_column, cued.boundary_cue.cell, cued.boundary_cue.text) == (7, "H2", "Forecast")
-    assert parse({**good, "last_actual_column": None, "boundary_cue": None}).boundary_cue is None
-    for cell in ("D3", "AA12", "r3c4", "r12"):
-        assert parse({**good, "last_actual_column": 4, "boundary_cue": {"cell": cell, "text": "Plan"}})
     kinds = ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
     for kind in kinds:
         assert parse({**good, "non_revenue_rows": [{"row": 9, "kind": kind}]})
@@ -4038,7 +4034,7 @@ def _results_with_a_failed_statement(monkeypatch):
     rev = pd.DataFrame([("C1", "2024-01-01", 1000, "EUR")], columns=["customer_id", "invoice_date", "amount", "currency"])
     rev["_row"] = [2]
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2026-12-31", "fx": {"EUR": 1.0}, "billing_terms": {},
-              "default_l": 1, "as_of_month": None}
+              "default_l": 1, "as_of_month": "2026-06-30"}
     errors = []
     results = ge.compute_all_raw(rev, empty, empty, config, {"pnl": {"file": "heron.csv", "sheet": "Heron"}}, on_error=errors.append,
                                  statement={"lines": [{"label": PNL_ERROR_SENTINEL}]})
@@ -4278,3 +4274,117 @@ def test_only_the_gateway_module_talks_to_the_provider():
         if re.search(r"(?m)^\s*(?:import|from)\s+anthropic\b|api\.anthropic\.com|messages\.create|httpx|requests\.post", source):
             offenders.append(path.name)
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# The sheet reader (read-check-review.md sections 3, 8 and 9; rule 16 as amended for PR 2). The reader's own tests are in
+# test_sheet_reading.py and test_reading_masking.py; the boundary facts are pinned here, where rule 14 looks for them.
+# ---------------------------------------------------------------------------
+def test_sheet_reading_sends_only_masked_cells_and_the_provider_adapter_refuses_what_is_not(monkeypatch):
+    import test_sheet_reading as sr
+    monkeypatch.setenv("SHEET_READER_MODEL", sr.MODEL)
+    db = sr.audit_db()
+    result, adapter = sr.read(db)
+    sent = json.loads(adapter.payloads[0])
+    assert set(sent) == {"type", "text", "answer", "schema"}, "the cells, the type word, the ask and the map's schema: no file name, no hash, no audit, no company"
+    assert sent["schema"] == gateway.schemas.file_map_schema() and adapter.requests[0]["json_schema"] is None, "the schema is text in the request, no strict output schema"
+    assert result.status == "read"
+    blob = "\n".join(str(p) for p in adapter.payloads)
+    for secret in (sr.COMPANY, sr.EMAIL, "Pat Sample", "Zenith", sr.HASH, "a1"):
+        assert secret not in blob
+    for leaky in (f"sheet 1: S\nA1: {sr.EMAIL}", "sheet 1: S\nA1: GB82 WEST 1234 5698 7654 32", "sheet 1: S\nA1: +44 20 7946 0958"):
+        with pytest.raises(gateway.GatewayError):
+            gateway._assert_masked(leaky)
+
+
+def test_sheet_reading_keeps_no_text_in_a_log_a_call_record_or_beside_the_structure_cache(caplog):
+    import logging
+
+    import test_sheet_reading as sr
+    caplog.set_level(logging.DEBUG)
+    os.environ["SHEET_READER_MODEL"] = sr.MODEL
+    try:
+        db = sr.audit_db()
+        sr.read(db)
+    finally:
+        del os.environ["SHEET_READER_MODEL"]
+    stored = {name: json.dumps(c.docs, default=str) for name, c in db._cols.items()}
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    for secret in ("Zenith", "Pat Sample", sr.EMAIL, "447223", "451000"):
+        assert secret not in logged and secret not in stored["llm_calls"]
+    holders = {n for n, blob in stored.items() if "447223" in blob or "451000" in blob}
+    assert holders == set(), "model output carries cell references, never the cell values it was sent: " + str(holders)
+    assert set(stored["llm_calls"] and json.loads(stored["llm_calls"])[0]) >= {"content_hash", "structure_type", "prompt_version", "model"}
+
+
+def test_a_failed_sheet_reading_keeps_the_raw_replies_as_sent_and_nothing_of_them_in_a_log_line(caplog):
+    """George, 2026-10-30: a reply FileMap does not validate, after the one retry, is "reading did not match the map schema"; the two raw
+    replies are stored on the reading record for diagnosis, as received (masked space: Client-NN, never the names), never restored and
+    never served as a reading; the retry sends the failed reply back to the model as its own turn, in masked space too. The log lines name
+    the reason, the count of replies, the check and the schema fields: never a reply, a value or a name."""
+    import logging
+
+    import test_sheet_reading as sr
+    bad = sr.file_map()
+    bad["sheets"][0]["header_row"] = "two"
+    bad["sheets"][0]["rows"][0]["evidence"] = "Revenue row of Client-01, see A1"
+    os.environ["SHEET_READER_MODEL"] = sr.MODEL
+    try:
+        db = sr.audit_db()
+        caplog.set_level(logging.DEBUG)
+        result, adapter = sr.read(db, adapter=t.FakeAdapter(replies=[json.dumps(bad)]))
+    finally:
+        del os.environ["SHEET_READER_MODEL"]
+    assert result.status == "not_read" and result.reason == "reading did not match the map schema" and adapter.calls == 2
+    record = db["readings"].docs[0]
+    assert record["status"] == "not_read" and record["raw_responses"] == [json.dumps(bad)] * 2, "as received, not restored"
+    stored = json.dumps(db["readings"].docs, default=str)
+    for secret in (sr.COMPANY, "Orchid", sr.EMAIL, "Pat Sample", "Zenith", "447223", "451000"):
+        assert secret not in stored, f"{secret!r} on the reading record"
+    retry = adapter.requests[1]["prior"]
+    assert [m["role"] for m in retry] == ["user", "assistant"] and retry[1]["content"] == json.dumps(bad)
+    for secret in (sr.COMPANY, "Orchid", sr.EMAIL, "Pat Sample", "Zenith"):
+        assert secret not in json.dumps(retry) + adapter.payloads[1], f"{secret!r} in the retry"
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "sheet reading not read: run_id=a1 hash=" in logged and "reason=reading did not match the map schema replies=2" in logged
+    for leak in ("two", "Revenue row", "Client-01", "A1", sr.COMPANY, "Zenith", "447223"):
+        assert leak not in logged, f"{leak!r} in a log line"
+    assert "check=schema" in logged and "fields=header_row" in logged
+    with pytest.raises(gateway.GatewayError):
+        gateway.AnthropicAdapter(api_key="k").complete(model=sr.MODEL, system="s", user_payload="{}", max_tokens=5, temperature=None, json_schema=None,
+                                                       prior=[{"role": "assistant", "content": f"see {sr.EMAIL}"}])
+
+
+def test_the_4xx_provider_message_on_a_structure_line_holds_no_cell_token_or_prompt(caplog):
+    import logging
+    anthropic = pytest.importorskip("anthropic")
+    httpx2 = pytest.importorskip("httpx2")
+    prompt_text = max((d["text"] for d in _structure_db()["prompts"].docs), key=len)         # the stub the gateway sends as the prompt
+    schema_fault = "output_config.format.schema: too many parameters with union types (18, limit 16)"
+
+    def error(message, status=400):
+        response = httpx2.Response(status, request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
+        body = {"type": "error", "error": {"type": "invalid_request_error", "message": message}}
+        return anthropic.Anthropic(api_key="test")._make_status_error(message, body=body, response=response)
+
+    def lines(raised, text):
+        db = _structure_db()
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], text, "table", adapter=t.FakeAdapter(raise_with=raised),
+                                               sleep=t._noop_sleep))
+        return [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+
+    assert lines(error(schema_fault), GOOD_ITEMS)[0].endswith(f"message={schema_fault}"), "the schema fault is what the line is for"
+    long = lines(error("x" * 1000), GOOD_ITEMS)[0]
+    assert len(long.split("message=")[1]) == gateway.PROVIDER_MESSAGE_CAP, "capped at 300 characters"
+    assert "message=" not in lines(error("overloaded", 529), GOOD_ITEMS)[0], "4xx only"
+    echoes = (f"bad value 'Jane Doe (CEO)' and £1,200,000 in {GOOD_ITEMS[:40]}", "cell Client-01 is not allowed",
+              f"system: {prompt_text[:200]}", "Bearer sk-ant-api03-secret: invalid x-api-key")
+    for message in echoes[:3]:
+        for line in lines(error(message), GOOD_ITEMS):
+            tail = line.split("message=")[1] if "message=" in line else ""
+            assert "Jane Doe" not in tail and "1,200,000" not in tail and "Client-01" not in tail, line
+            assert prompt_text[:20] not in tail and GOOD_ITEMS[:20] not in tail, line
+    assert all("message=" not in line for line in lines(error(echoes[1]), GOOD_ITEMS)), "a message holding a token is left out"
+    assert all("sk-ant" not in line for line in lines(error(echoes[3]), GOOD_ITEMS)), "a key is never logged"

@@ -1,0 +1,21 @@
+# Files whose change can change what the sheet reader reads or how a reading is checked. One path or glob per line.
+# The workflow .github/workflows/reading-fixtures.yml lists every line below in its paths filter;
+# backend/tests/test_reading_path.py asserts that, and that every module sheet_reader imports (app/llm/** is taken whole) is covered.
+backend/app/llm/**
+backend/app/sheet_reader.py
+backend/app/readings.py
+backend/app/checks.py
+backend/app/recognition.py
+backend/app/column_rules.py
+backend/app/__init__.py
+backend/app/forecast_calc.py
+backend/app/forecast_claims.py
+backend/app/formatting.py
+backend/app/claim_groups.py
+backend/app/claim_matching.py
+backend/app/deck_actuals.py
+backend/app/payback_definition.py
+backend/app/decks/**
+backend/app/structures/**
+backend/schemas/__init__.py
+backend/schemas/metrics.py

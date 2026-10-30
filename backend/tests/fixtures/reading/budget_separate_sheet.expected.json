@@ -1,0 +1,191 @@
+{
+ "file": "budget_separate_sheet.xlsx",
+ "as_of_month": "2024-06",
+ "sheets": [
+  {
+   "sheet": "Actuals",
+   "last_actual_column": "G",
+   "revenue_row": 3,
+   "granularity": "monthly"
+  },
+  {
+   "sheet": "Budget",
+   "last_actual_column": null,
+   "revenue_row": null,
+   "granularity": "monthly"
+  }
+ ],
+ "roles": [
+  {
+   "sheet": "Actuals",
+   "row": 3,
+   "role": "revenue"
+  },
+  {
+   "sheet": "Budget",
+   "row": 3,
+   "role": "forecast"
+  }
+ ],
+ "figures": [
+  {
+   "metric": "revenue",
+   "value": 431800.0,
+   "period": "2024-06",
+   "sheet": "Actuals",
+   "cell": "G3"
+  }
+ ],
+ "file_map": {
+  "map_version": 1,
+  "kind": "sheet",
+  "figures": [
+   {
+    "metric": "revenue",
+    "value": 431800.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-06",
+    "basis": "monthly",
+    "actual_plan": "actual",
+    "segment": null,
+    "source": {
+     "sheet": "Actuals",
+     "cell": "G3",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2024-06 column"
+   },
+   {
+    "metric": "revenue",
+    "value": 425000.0,
+    "unit": "money",
+    "currency": "EUR",
+    "period": "2024-06",
+    "basis": "monthly",
+    "actual_plan": "plan",
+    "segment": null,
+    "source": {
+     "sheet": "Budget",
+     "cell": "G3",
+     "page": null,
+     "text_layer": null
+    },
+    "evidence": "revenue row, 2024-06 column"
+   }
+  ],
+  "sheets": [
+   {
+    "sheet": "Actuals",
+    "header_row": 2,
+    "label_col": "A",
+    "first_period_col": "B",
+    "last_period_col": "G",
+    "granularity": "monthly",
+    "currency": "EUR",
+    "currency_cell": "A1",
+    "last_actual": {
+     "column": "G",
+     "period": "2024-06",
+     "evidence": [
+      {
+       "kind": "row_ends",
+       "text": "The Actuals sheet stops at June",
+       "row": 3,
+       "column": "G",
+       "cell": null,
+       "cells": null,
+       "other_cells": null,
+       "word": null,
+       "multiple": null
+      }
+     ]
+    },
+    "rows": [
+     {
+      "row": 3,
+      "label_cell": "A3",
+      "role": "revenue",
+      "metric": "revenue",
+      "basis": "monthly",
+      "actual_plan": "actual",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B3:G3",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "revenue label and numbers across the period columns"
+     },
+     {
+      "row": 4,
+      "label_cell": "A4",
+      "role": "customers",
+      "metric": "customers",
+      "basis": "monthly",
+      "actual_plan": "actual",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "count",
+      "currency": "EUR",
+      "cells": "B4:G4",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "customers label and numbers across the period columns"
+     }
+    ]
+   },
+   {
+    "sheet": "Budget",
+    "header_row": 2,
+    "label_col": "A",
+    "first_period_col": "B",
+    "last_period_col": "M",
+    "granularity": "monthly",
+    "currency": "EUR",
+    "currency_cell": "A1",
+    "last_actual": null,
+    "rows": [
+     {
+      "row": 3,
+      "label_cell": "A3",
+      "role": "forecast",
+      "metric": "revenue",
+      "basis": "monthly",
+      "actual_plan": "plan",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "money",
+      "currency": "EUR",
+      "cells": "B3:M3",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "forecast label and numbers across the period columns"
+     },
+     {
+      "row": 4,
+      "label_cell": "A4",
+      "role": "forecast",
+      "metric": "customers",
+      "basis": "monthly",
+      "actual_plan": "plan",
+      "boundary_col": null,
+      "segment": null,
+      "parent_row": null,
+      "unit": "count",
+      "currency": "EUR",
+      "cells": "B4:M4",
+      "variance_of": null,
+      "by_column": false,
+      "evidence": "forecast label and numbers across the period columns"
+     }
+    ]
+   }
+  ]
+ }
+}

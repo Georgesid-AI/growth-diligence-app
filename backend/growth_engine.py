@@ -975,10 +975,10 @@ def source_period(rev: pd.DataFrame, as_of) -> dict | None:
     invoice date and a non-zero amount. The as-of month always counts as complete and the months after it are plan, so the status
     is always Complete. `evidence_to` is the last month any revenue figure reads: the earlier of the as-of month and it."""
     months = revenue_months(rev)
-    if not months:
+    if not months or as_of is None:          # with no as-of month no period is complete
         return None
     month = months[-1]
-    end = min(month, as_of) if as_of is not None else month
+    end = min(month, as_of)
     return {"month": _period_str(month), "status": COMPLETE, "complete_by": "as_of", "evidence_to": _period_str(end)}
 
 
@@ -1034,7 +1034,7 @@ def metric_periods(results: dict, rev: pd.DataFrame, pnl: pd.DataFrame, deals: p
 def _resolve_as_of(as_of_str):
     """The audit's one as-of month as the server passes it (docs/specs/dates-and-periods.md section 2: detected on Map across the
     revenue file and the P&L, or typed by the analyst; stored once on the audit). The engine never picks one from the data: with
-    none, nothing is cut and the results carry no as-of month."""
+    none, no block that reads a month is computed (compute_without_as_of)."""
     if as_of_str:
         try:
             return pd.Period(str(as_of_str), "M")
@@ -1768,14 +1768,48 @@ def resolve_missing(missing_data: list, results: dict, files: dict | None, **ctx
     return missing, questions
 
 
+NO_AS_OF_REASON = "as-of month not determined"
+NO_AS_OF_UNLOCKED_BY = "Type the as-of month under the files, or upload a file whose last actual month can be confirmed"
+# The blocks that read a month: (what Missing names, the dataset it reads). With no as-of month none of them is computed.
+MONTH_BLOCKS = (("ARR / MRR", "revenue"), ("NRR (12-month)", "revenue"), ("Gross revenue churn", "revenue"),
+                ("New MRR by quarter", "revenue"), ("Path to Plan", "revenue"), ("Segment paths to target ARR", "revenue"),
+                ("MRR by segment", "revenue"), ("Revenue by month", "revenue"), ("Customers by month", "revenue"),
+                ("Cohort retention", "revenue"), ("Anomaly flags", "revenue"), ("CAC payback", "pnl"),
+                ("Revenue reconciliation", "pnl"), ("P&L lines", "pnl"), ("Yearly-basis metrics", "pnl"),
+                ("Sales cycle & win rate", "crm"), ("Won deals by close month", "crm"))
+
+
+def compute_without_as_of(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
+                          yearly: dict | None, statement: dict | None, on_error=None):
+    """The results when the audit has no confirmed and no typed as-of month. The engine never computes to the last month with data
+    and never marks a source period complete (read-check-review.md section 6): every block that reads a month goes to Missing with
+    "as-of month not determined" and no period, for each dataset the audit holds. Nothing else is computed."""
+    has = {"revenue": not rev.empty or bool(config.get("recognition")), "pnl": not pnl.empty or bool(yearly) or bool(statement),
+           "crm": not deals.empty}
+    empty = pd.DataFrame()
+    results = compute_all_raw(empty, empty, empty, {**config, "recognition": None}, sources, on_error=on_error, _undetermined=True)
+    sources = {k: dict(v) for k, v in (sources or {}).items()}
+    results["missing_data"] = [
+        {"metric": metric, "reason": NO_AS_OF_REASON, "unlocked_by": NO_AS_OF_UNLOCKED_BY,
+         "file": (sources.get(dtype) or {}).get("file"), "status": MISSING_STATUS}
+        for metric, dtype in MONTH_BLOCKS if has[dtype]]
+    results["questions_for_management"] = []
+    results["anomalies"] = None            # zero counts would read as "checked, none found"
+    return results
+
+
 def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
-                    files: dict | None = None, on_error=None, yearly: dict | None = None, statement: dict | None = None):
+                    files: dict | None = None, on_error=None, yearly: dict | None = None, statement: dict | None = None,
+                    _undetermined: bool = False):
     """Run the full engine, before the contract (see compute_all). `sources` maps dataset -> {file, sheet}; `files` is every
     upload read as each dataset type (see can_compute), for compute-before-Missing. `yearly` is the actual years of a P&L read
     as a statement (chat-upload.md section 26.8), read only when no monthly P&L is given. `statement` is the P&L lines block of a
     statement file (structures/pnl_lines.analyse): its findings and plan cells, monthly or yearly.
     A metric whose calculation raises is reported as Missing and the rest still compute;
     `on_error(exc)`, if given, receives each such exception (the server logs it)."""
+    if not _undetermined and _resolve_as_of(config.get("as_of_month")) is None:
+        return compute_without_as_of(rev if rev is not None else pd.DataFrame(), deals if deals is not None else pd.DataFrame(),
+                                     pnl if pnl is not None else pd.DataFrame(), config, sources, yearly, statement, on_error)
     billing_terms = config.get("billing_terms", {})
     fx = config.get("fx", {})
     reporting_currency = config.get("reporting_currency", "EUR")

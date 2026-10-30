@@ -214,7 +214,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 14 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 15 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -554,7 +554,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 14 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 15 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"
@@ -876,8 +876,9 @@ def test_run_audit_engine_on_a_stale_audit_clears_the_flag_through_to_results(ap
     assert api.get(f"/api/audits/{AUDIT_ID}").json()["results_stale"] is False
 
 
-def test_run_audit_engine_waits_for_an_as_of_month_when_the_files_gave_none_and_the_analyst_typed_none(api, monkeypatch):
-    """dates-and-periods.md section 2: no suggestion, no month; Run audit stops at the engine stage until the analyst sets one."""
+def test_run_audit_engine_runs_with_no_as_of_month_and_says_so(api, monkeypatch):
+    """read-check-review.md section 6, PR 2: no confirmed month and none typed is "not determined"; Run audit goes on and calculates
+    everything that does not depend on it, with a plain note. A typed month removes the note."""
     api.db["audits"].docs[0].update(status="mapped", as_of_month=None, as_of_by="detected")
     api.db["datasets"].docs.append({"audit_id": AUDIT_ID, "dtype": "revenue", "mapped_at": "2026-01-01"})
 
@@ -891,9 +892,11 @@ def test_run_audit_engine_waits_for_an_as_of_month_when_the_files_gave_none_and_
     monkeypatch.setattr(server, "_mapping_counts", counts)
     monkeypatch.setattr(server, "_run_compute", compute)
     out = api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()
-    assert (out["status"], out["message"]) == ("failed", run_audit.AS_OF_CHECK) and api.recomputed == []
+    assert (out["status"], out["message"]) == ("done", run_audit.NO_AS_OF) and api.recomputed == [AUDIT_ID]
+    assert "not determined" in run_audit.NO_AS_OF
     api.put(f"/api/audits/{AUDIT_ID}", json={"as_of_month": "2024-02-29"})
-    assert api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()["status"] == "done" and api.recomputed == [AUDIT_ID]
+    typed = api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()
+    assert (typed["status"], typed["message"]) == ("done", None) and api.recomputed == [AUDIT_ID, AUDIT_ID]
 
 
 def test_stale_results_read_stale_re_run_audit_on_the_review_the_verdict_and_the_memo_not_compute_the_audit_first(api):
@@ -921,3 +924,80 @@ def test_the_demo_audits_seeded_before_contract_5_are_reseeded_and_the_seeded_on
     import asyncio
     asyncio.run(server.seed_demo())
     assert db["audits"].docs and not any(run_audit.results_stale(a) for a in db["audits"].docs)
+
+
+# ---------------------------------------------------------------------------
+# The file map (docs/design/read-check-review.md section 4, contract 15): one schema for sheets and decks.
+# ---------------------------------------------------------------------------
+def _map_row(**over):
+    row = {"row": 5, "label_cell": "A5", "role": "revenue", "metric": "revenue", "basis": "monthly", "actual_plan": "mixed",
+           "boundary_col": "H", "segment": None, "parent_row": None, "unit": "money", "currency": "EUR", "cells": "C5:N5",
+           "variance_of": None, "by_column": False, "evidence": "Revenue label, monthly headers, plan copied after H"}
+    return {**row, **over}
+
+
+def _file_map(**over):
+    sheet = {"sheet": "Report", "header_row": 3, "label_col": "A", "first_period_col": "C", "last_period_col": "N",
+             "granularity": "monthly", "currency": "EUR", "currency_cell": "A1",
+             "last_actual": {"column": "H", "period": "2024-06", "evidence": [
+                 {"kind": "row_ends", "text": "Customers row stops at H", "row": 9, "column": "H", "cell": None, "cells": None,
+                  "other_cells": None, "word": None, "multiple": None}]},
+             "rows": [_map_row()]}
+    figure = {"metric": "revenue", "value": 447223.43, "unit": "money", "currency": "EUR", "period": "2024-06", "basis": "monthly",
+              "actual_plan": "actual", "segment": None, "source": {"sheet": "Report", "cell": "H5", "page": None, "text_layer": None},
+              "evidence": "Revenue row, June column"}
+    return {"map_version": 1, "kind": "sheet", "sheets": [sheet], "figures": [figure], **over}
+
+
+def test_the_file_map_is_one_schema_for_sheets_and_decks():
+    from schemas.metrics import FileMap
+    assert FileMap.model_validate(_file_map()).sheets[0].rows[0].role == "revenue"
+    deck = {"map_version": 1, "kind": "deck", "sheets": [], "figures": [
+        {"metric": "arr", "value": 1_200_000.0, "unit": "money", "currency": "USD", "period": "2024", "basis": "yearly",
+         "actual_plan": "actual", "segment": None, "source": {"sheet": None, "cell": None, "page": 7, "text_layer": True},
+         "evidence": "KPI panel"}]}
+    assert FileMap.model_validate(deck).figures[0].source.page == 7
+
+
+@pytest.mark.parametrize("breakage", [
+    lambda m: m["sheets"][0]["rows"][0].update(role="turnover"),                     # a role outside the list
+    lambda m: m["sheets"][0]["rows"][0].update(metric="ebitda_margin"),               # a metric the engine does not use
+    lambda m: m["sheets"][0]["rows"][0].update(actual_plan="forecast"),               # the word is plan
+    lambda m: m["sheets"][0]["rows"][0].update(basis="weekly"),
+    lambda m: m["sheets"][0]["rows"][0].update(cells="C5-N5"),                        # not a spreadsheet range
+    lambda m: m["sheets"][0]["rows"][0].update(unexpected=1),                         # no extra key
+    lambda m: m["sheets"][0].update(label_col="1"),
+    lambda m: m["sheets"][0]["last_actual"].update(period="June 2024"),
+    lambda m: m["sheets"][0]["last_actual"]["evidence"][0].update(kind="vibes"),
+    lambda m: m["figures"][0].update(value=float("nan")),
+    lambda m: m["figures"][0]["source"].update(cell="5H"),
+    lambda m: m.update(kind="workbook"),
+    lambda m: m.update(map_version=2),
+], ids=["role", "metric", "actual_plan", "basis", "range", "extra key", "column", "period", "evidence kind", "nan", "cell", "kind", "version"])
+def test_the_file_map_refuses_what_is_outside_its_closed_words(breakage):
+    from schemas.metrics import FileMap
+    m = copy.deepcopy(_file_map())
+    breakage(m)
+    with pytest.raises(ValidationError):
+        FileMap.model_validate(m)
+
+
+def test_the_file_map_roles_are_the_ones_the_design_note_lists():
+    from schemas.metrics import MAP_ROLES
+    assert MAP_ROLES == ("revenue", "bookings", "contract_value", "arr", "mrr", "churn_rate", "growth_rate", "margin_rate", "customers",
+                         "users", "cost_of_revenue", "sales_marketing", "rnd", "ga", "opex", "ebitda", "cash", "headcount", "forecast",
+                         "variance", "other")
+
+
+def test_the_schema_text_sent_for_a_sheet_reading_is_the_file_map_and_nothing_else():
+    """The JSON schema a sheet reading carries as text in its request is generated from FileMap, so the two cannot drift: every closed word
+    of one is the other's. No strict output schema is sent for the step (George, 2026-10-30: the provider refused the grammar)."""
+    from app.llm import schemas as llm_schemas
+    from schemas.metrics import MAP_ROLES, FileMap
+    sent = llm_schemas.file_map_schema()
+    assert llm_schemas.output_schema(llm_schemas.SHEET_READING) is None
+    assert sent["additionalProperties"] is False and set(sent["properties"]) == set(FileMap.model_fields), "FileMap's fields are all sent"
+    row = sent["$defs"]["MapRow"]
+    assert row["properties"]["role"]["enum"] == list(MAP_ROLES)
+    assert set(row["required"]) <= set(row["properties"]) and row["additionalProperties"] is False
+    assert "title" not in str(sent), "compact: pydantic's titles are dropped, the names, types, enums, patterns and descriptions stay"

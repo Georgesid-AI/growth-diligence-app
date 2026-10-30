@@ -19,8 +19,26 @@ steps live in docs/specs/ and may change.
 | LLM gateway | `backend/app/llm/` | The only component allowed to call a model provider (`gateway.py`). Prompts are versioned documents in the MongoDB collection `prompts`, uploaded on the owner page and read by the gateway only (`prompt_store.py`); a missing prompt means no model call; cache keys carry text, type, prompt tag, model and schema hash (`cache.py`); guards hold the per-audit lock, the daily spend cap and the retry policy (`guards.py`); the per-audit pseudonym map (`redaction.py`); strict output schemas (`schemas.py`). |
 | Supporting modules | `backend/app/` | `formatting.py`, `disclosure.py` (the AI-provenance block), `narrative_export.py`, `logsafety.py` (no secret reaches a log line). |
 | Interface contracts | `backend/schemas/` | `metrics.py`: `MetricsPayload`, the one description of the calc engine's output (units, citations), validated by the engine, the gateway and the export (docs/specs/interface-contracts.md). |
-| Storage | MongoDB | `audits` (with the audit's `token_map`: real company and customer name → Client-NN, server side only, never in a log, a payload or an API response), `datasets`, `deck_text` (parsed text and structures), `deck_files` (the uploaded deck file, in parts, kept only while consent is ticked and the page pipeline is on, so that page images can be drawn from it; deleted with its deck and with the audit), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `column_mappings`, `prompts` (the model prompts; no `audit_id`), `access_tokens` (tester-phase token hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures); never a token; removed at the move to accounts; no `audit_id`). Delete audit removes an audit's documents in every collection that holds any; `prompts` and `access_tokens` hold no audit data and stay. |
+| Storage | MongoDB | `readings`, `reading_uses`, `reading_rereads`, `reading_overrides`, `reading_checks` (a spreadsheet's stored reading and what hangs on it, `app/readings.py`, the amendment of 2026-10-29), `audits` (with the audit's `token_map`: real company and customer name → Client-NN, server side only, never in a log, a payload or an API response), `datasets`, `deck_text` (parsed text and structures), `deck_files` (the uploaded deck file, in parts, kept only while consent is ticked and the page pipeline is on, so that page images can be drawn from it; deleted with its deck and with the audit), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `column_mappings`, `prompts` (the model prompts; no `audit_id`), `access_tokens` (tester-phase token hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures); never a token; removed at the move to accounts; no `audit_id`). Delete audit removes an audit's documents in every collection that holds any; `prompts` and `access_tokens` hold no audit data and stay. |
 | Manual tooling | `scripts/consistency_run.py` | Live consistency runs (paid), `--fake` replays, `--diagnostic` and `--probe` on the 10 public test decks. Reports are committed to docs/test-runs/. |
+
+## The amendment of 2026-10-29 (read-check-review, PR 2)
+
+For George's approval before merge (rule 32; docs/design/read-check-review.md sections 3, 4, 8, 9 and 13). Three things change.
+
+- **What the model sees.** A new step, `sheet_reading` (the prompt `sheet_reading` of the store): one call per uploaded spreadsheet, every
+  non-empty cell of every recognised sheet as `A1 ref: value` lines, after the masking of PR 1, name learning included. A metric
+  vocabulary (`structures/redact.METRIC_VOCABULARY`: the role and metric names of the file map and the common finance labels) is never
+  tokenised, so "Revenue" under a "Customers" title goes out unchanged. No sampling, no truncation: above 40,000 tokens of cells the file
+  is refused with a message. An exact id from an allow-list of Sonnet and Opus ids only (`SHEET_READER_MODELS`; `SHEET_READER_MODEL` picks one, default the structure model; George, 2026-10-30). The spreadsheet calls of the earlier
+  amendments stay as they are, behind `READER_V1` (off turns them off; default on), for PR 2 only; they still do not learn names.
+- **What Python does with the answer.** The model returns a file map (`schemas/metrics.FileMap`, one schema for sheets and decks).
+  `app/checks.py` opens every cited cell and gives one of three outcomes: confirmed, rejected (with a reason written by code) or cannot
+  check (five explicit cases). A rejected item is read once more, automatically, with the reason attached. The as-of month of a file
+  stands only on evidence a check confirmed; the audit's is the latest across files; a typed month wins (`app/as_of.py`).
+- **Storage of readings.** `readings` (file hash + prompt version + model, written once, names restored), `reading_uses`,
+  `reading_rereads`, `reading_overrides`, `reading_checks` (`app/readings.py`). A reading outlives no audit that used it: Delete audit
+  removes it with the last one (rule 22).
 
 ## The amendment of 2026-10-22
 

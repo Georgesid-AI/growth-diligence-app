@@ -1,4 +1,4 @@
-import { isIsoDate, asOfInputValue, parseMonthYear, asOfSourceText, asOfDisplay, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_LABEL, VERIFIED_LINE, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS,
+import { isIsoDate, asOfInputValue, parseMonthYear, asOfSourceText, asOfEvidenceLine, asOfStripText, asOfDisplay, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_LABEL, VERIFIED_LINE, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS,
   requiredFieldError, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfWarning, revenueLastMonth } from "./auditForm";
 
 // The reported case: target 31/12/2027, as-of 30/06/2026, as the date inputs deliver them.
@@ -101,11 +101,27 @@ describe("the as-of month default and its warning line", () => {
     // a file stored by recognition alone (a monthly report with no months and no mapping) names itself the same way (PR 196 review)
     expect(asOfSourceText({ as_of_month: "2025-06-30", as_of_by: "detected", as_of_file: "monthly_report.csv" }))
       .toBe("(detected from monthly_report.csv)");
-    expect(asOfSourceText({ as_of_month: "2021-12-31", as_of_by: "detected", as_of_file: "pnl.xlsx", as_of_cue: "Forecast" }))
-      .toBe("(detected from pnl.xlsx, cue: 'Forecast')");
-    expect(asOfSourceText({ as_of_month: "2021-06-30", as_of_by: "analyst", as_of_file: "revenue.csv", as_of_cue: "Forecast" })).toBe("(set by analyst)");
+    expect(asOfSourceText({ as_of_month: "2021-12-31", as_of_by: "detected", as_of_file: "pnl.xlsx", as_of_evidence: "Forecast title over FY 2022" }))
+      .toBe("(detected from pnl.xlsx: Forecast title over FY 2022)");
+    expect(asOfSourceText({ as_of_month: "2021-06-30", as_of_by: "analyst", as_of_file: "revenue.csv", as_of_evidence: "Forecast" })).toBe("(set by analyst)");
+    expect(asOfSourceText({ as_of_month: "2021-03-31", as_of_by: "analyst", as_of_proposal: { month: "2021-06-30" } }))
+      .toBe("(set by analyst; the files proposed Jun 2021)");
+    expect(asOfSourceText({ as_of_month: "2021-06-30", as_of_by: "analyst", as_of_proposal: { month: "2021-06-30" } })).toBe("(set by analyst)");
     expect(asOfSourceText({ as_of_month: null })).toBe("");
     expect(asOfDisplay("2021-06-30")).toBe("Jun 2021");
+  });
+
+  test("the strip names no month when none is confirmed, and the evidence line carries the reader's words", () => {
+    expect(asOfStripText({ as_of_month: null, datasets: { pnl: {} } })).toBe("not determined");
+    expect(asOfStripText({ as_of_month: null, datasets: { pnl: {} }, sheet_reads_pending: 2 })).toBe("reading the files");
+    expect(asOfStripText({ as_of_month: null, datasets: {} })).toBe("not set");
+    expect(asOfEvidenceLine({ as_of_month: "2021-12-31", as_of_by: "detected", as_of_file: "pnl.xlsx", as_of_evidence: "Forecast title" }))
+      .toBe("Detected from pnl.xlsx: Forecast title");
+    expect(asOfEvidenceLine({ as_of_month: "2021-03-31", as_of_by: "analyst", as_of_proposal: { month: "2021-12-31", evidence: "Forecast title" } }))
+      .toBe("Set by analyst. The files proposed Dec 2021: Forecast title.");
+    expect(asOfEvidenceLine({ as_of_month: "2021-03-31", as_of_by: "analyst" })).toBe("Set by analyst.");
+    expect(asOfEvidenceLine({ as_of_month: null })).toBe("");
+    expect(asOfEvidenceLine({ as_of_month: "2021-12-31", as_of_by: "detected" })).toBe("");
   });
 
   test("no completeness tick is left in the labels or the help", () => {

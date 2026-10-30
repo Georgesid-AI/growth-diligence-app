@@ -495,6 +495,33 @@ _PSEUDONYM = re.compile(re.escape(TOKEN_PREFIX) + r"\d+|Segment [A-Z]+")
 CUSTOMER_PREFIX = TOKEN_PREFIX
 MIN_NAME_LENGTH = 4
 
+# The metric vocabulary (George, 2026-10-29, read-check-review.md section 8, PR 2): words the masker never LEARNS as a company name. A
+# row label such as "Revenue" under a "Customers" title is a metric, not a company; learned, the reader could not tell what the row
+# measures. It applies to learning (`_company_cell`) and to the people rules (a metric label is no person); never to a name the audit's
+# map already holds, which is swapped in every payload whatever word it is (`customer_names`; review of PR 205, F5).
+# It is the words of the file map's own role, metric, basis and actual/plan names plus the common finance labels. A cell is a metric
+# label only when every one of its words is in the list: "Revenue" and "Gross margin %" are, "Revenue - Acme Retail" is not.
+_FINANCE_LABELS = """revenue revenues sales bookings booking arr mrr churn growth margin gross net cost costs opex ebitda cash customers
+customer users subscriptions subscription plan budget forecast actual actuals variance total subtotal new paying active recurring monthly
+quarterly annual yearly rate ratio average profit loss income expense expenses headcount payroll marketing support deferred balance
+closing opening ending retention nrr arpa acv tcv ltv cac ytd ltm""".split()
+
+
+def _vocabulary() -> frozenset:
+    from schemas.metrics import MAP_ACTUAL_PLAN, MAP_BASES, MAP_METRICS, MAP_ROLES
+    words = {w for name in (*MAP_ROLES, *MAP_METRICS, *MAP_BASES, *MAP_ACTUAL_PLAN) for w in name.lower().split("_")}
+    return frozenset(words | set(_FINANCE_LABELS))
+
+
+METRIC_VOCABULARY = _vocabulary()
+_WORDS = re.compile(r"[^\W\d_]+")
+
+
+def metric_label(text: str) -> bool:
+    """True when every word of the text is in the metric vocabulary (and it has a word): a label the masker leaves as it is."""
+    words = _WORDS.findall((text or "").lower())
+    return bool(words) and all(w in METRIC_VOCABULARY for w in words)
+
 # Bundled first names (English, German, French, Bulgarian in Latin and Cyrillic letters). Words that
 # are also everyday words in a deck ("May", "Will", "Mark", "Max", "Grace", "Hope") are left out.
 FIRST_NAMES = frozenset("""
@@ -607,25 +634,27 @@ def blank_customer_cells(cells: List[Dict], company_name: Optional[str]) -> Tupl
     return out, total
 
 
-def _company_headers(cells: List[Dict]) -> List[Dict]:
+def _company_headers(cells: List[Dict], amounts_to: Optional[Dict[int, int]] = None) -> List[Dict]:
+    """The cells that head a column of company names. `amounts_to` ({row: the last column holding an amount}, spreadsheets only): a cell
+    with an amount to its right on its row labels a row of figures ("Customers 10981 11003 ..."), it does not head a column of names."""
     return [c for c in cells if _COMPANY_HEADER.search(c["text"]) and not _PEOPLE_HEADER.search(c["text"])
-            and not _PSEUDONYM.search(c["text"])]
+            and not _PSEUDONYM.search(c["text"]) and not (amounts_to and amounts_to.get(c["row"], 0) > c["col"])]
 
 
 def _company_cell(cell: Dict, cells: List[Dict], headers: List[Dict], company_name: Optional[str]) -> bool:
     """True when the cell is text under a company-name header that no token covers yet (a cell holding a token is already masked).
     A cell with a digit in it is a label with a figure ("800 Paying Users"), not a name: it stays."""
     text = cell["text"]
-    return (bool(re.search(r"[^\W\d_]", text)) and not re.search(r"\d", text) and not is_figure(text) and not _is_amount_or_date(text) and not _PSEUDONYM.search(text)
+    return (bool(re.search(r"[^\W\d_]", text)) and not metric_label(text) and not re.search(r"\d", text) and not is_figure(text) and not _is_amount_or_date(text) and not _PSEUDONYM.search(text)
             and not _FIRST_NAME.search(text) and not any(p in text for p in PLACEHOLDERS) and not _protected(text, company_name)
             and cell not in headers and any(h["row"] < cell["row"] and _overlaps(h, cell) for h in headers))
 
 
-def new_company_names(cells: List[Dict], company_name: Optional[str]) -> List[str]:
+def new_company_names(cells: List[Dict], company_name: Optional[str], amounts_to: Optional[Dict[int, int]] = None) -> List[str]:
     """The company names a map does not hold yet: the text of every cell under a company-name header after the map's names are
     swapped (the caller runs pseudonymise_cells first), whitespace folded, in order and once each. The caller adds them to the
     audit's token map; the next masking turns them into their tokens."""
-    headers = _company_headers(cells)
+    headers = _company_headers(cells, amounts_to)
     names = (" ".join(c["text"].split()) for c in cells if headers and _company_cell(c, cells, headers, company_name))
     return list(dict.fromkeys(names))
 
@@ -640,7 +669,7 @@ def blank_people_columns(cells: List[Dict], company_name: Optional[str]) -> Tupl
     out, columns = [], set()
     for cell in cells:
         text = cell["text"]
-        if (headers and re.search(r"[^\W\d_]", text) and not is_figure(text) and not _is_amount_or_date(text)
+        if (headers and re.search(r"[^\W\d_]", text) and not is_figure(text) and not _is_amount_or_date(text) and not metric_label(text)
                 and not _PSEUDONYM.fullmatch(text.strip()) and text.strip() not in PLACEHOLDERS
                 and cell not in headers and any(h["row"] < cell["row"] and _overlaps(h, cell) for h in headers)):
             text = PERSON
@@ -676,7 +705,8 @@ def _redact(cells: List[Dict], company_name: Optional[str], rules, people: bool 
             text, n = _replace(text, _PHONE, PHONE, company_name)
             counts["phone"] += n
         if "person" in rules:
-            if people and _NAME_SHAPE.match(text) and _under_person_role(cell, cells) and not _protected(text, company_name):
+            if (people and _NAME_SHAPE.match(text) and not metric_label(text) and _under_person_role(cell, cells)
+                    and not _protected(text, company_name)):
                 text, n = PERSON, 1
             else:
                 text, n = _replace(text, _FIRST_NAME, PERSON, company_name)
@@ -1050,3 +1080,183 @@ def page_text_problem(text: str) -> Optional[str]:
     if any(not any(page_figure(c["text"], page) for c in cells) for page, cells in pages.items()):
         return "no_figure"
     return None
+
+
+# ---------------------------------------------------------------------------
+# The reading text (docs/design/read-check-review.md sections 3 and 8; CLAUDE.md rule 16 as amended for PR 2): every non-empty cell of
+# every recognised sheet of a spreadsheet, one `A1 ref: value` line per cell, after a `sheet n: name` line per sheet. No sampling and no
+# truncation. Masked by the same module as every other payload: personal data removed, columns headed owner, contact, manager, rep or
+# signatory masked whole, company and customer names (the target's too) replaced by per-audit tokens, a text cell under a company-name
+# header learned into the map. A figure (a number, a date, an amount) is a figure and is never rewritten. The lines are written and
+# checked here, so the gateway checks them with no link to the sheet reader.
+#     sheet 1: Monthly report
+#     A1: Revenue
+#     C1: 447223.43
+#     B3: Jan-24 (B3:D3)           a merged cell carries its span after its text, as a page cell does
+# ---------------------------------------------------------------------------
+READING_MAX_SHEETS = 12
+_READ_SHEET = re.compile(r"^sheet (?P<n>[1-9]\d*): (?P<name>.*)$")
+_READ_CELL = re.compile(r"^(?P<ref>[A-Z]{1,3}[1-9]\d*): (?P<text>.*?)(?: \((?P=ref):(?P<end>[A-Z]{1,3}[1-9]\d*)\))?$")
+_PLAIN_NUMBER = re.compile(r"^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$")
+_TRUE_FALSE = re.compile(r"^(?:TRUE|FALSE)$")
+
+
+def col_letters(col: int) -> str:
+    """1 -> "A", 27 -> "AA"."""
+    letters = ""
+    while col > 0:
+        col, rem = divmod(col - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def col_number(letters: str) -> int:
+    """"A" -> 1, "AA" -> 27."""
+    n = 0
+    for ch in letters:
+        n = n * 26 + ord(ch) - 64
+    return n
+
+
+def cell_ref(row: int, col: int) -> str:
+    return f"{col_letters(col)}{row}"
+
+
+def split_ref(ref: str) -> Optional[Tuple[int, int]]:
+    """(row, column) of "C5", or None."""
+    m = re.fullmatch(r"([A-Z]{1,3})([1-9]\d*)", ref or "")
+    return (int(m.group(2)), col_number(m.group(1))) if m else None
+
+
+def reading_figure(text: str) -> bool:
+    """True when a cell's text is a figure, a date or a flag: written as a number, an amount, a year or a date. It is never rewritten, and
+    never learned as a name. Decided from the text alone, so the sender and the gateway agree."""
+    text = (text or "").strip()
+    return bool(_PLAIN_NUMBER.match(text) or _TRUE_FALSE.match(text) or is_figure(text) or _is_amount_or_date(text))
+
+
+def reading_text(sheets: List[Dict]) -> str:
+    """The reading text of [{"name", "cells": [{"row", "col", "text"}]}]: sheet lines in order, each followed by the sheet's non-empty cells
+    in reading order."""
+    lines = []
+    for n, sheet in enumerate(sheets, 1):
+        lines.append(f"sheet {n}: {re.sub(chr(92) + 's+', ' ', str(sheet['name'])).strip()}")
+        for c in sorted(sheet["cells"], key=lambda c: (c["row"], c["col"])):
+            text = cell_text(c)
+            if text:
+                rows, cols = c.get("row_span", 1), c.get("col_span", 1)
+                span = f" ({cell_ref(c['row'], c['col'])}:{cell_ref(c['row'] + rows - 1, c['col'] + cols - 1)})" if rows > 1 or cols > 1 else ""
+                lines.append(f"{cell_ref(c['row'], c['col'])}: {text}{span}")
+    return "\n".join(lines)
+
+
+def parse_reading_text(text: str) -> Optional[List[Dict]]:
+    """[{"name", "cells": [{"row", "col", "text"}]}] of a reading text, or None when a line is of no kind above, the sheets are out of
+    order, a cell comes before the first sheet line or a cell comes twice."""
+    sheets: List[Dict] = []
+    seen: set = set()
+    for line in (text or "").split("\n"):
+        head, cell = _READ_SHEET.match(line), _READ_CELL.match(line)
+        if head:
+            if int(head.group("n")) != len(sheets) + 1:
+                return None
+            sheets.append({"name": head.group("name"), "cells": []})
+            seen = set()
+        elif cell and sheets:
+            row, col = split_ref(cell.group("ref"))
+            if (row, col) in seen:
+                return None
+            seen.add((row, col))
+            parsed = {"row": row, "col": col, "text": cell.group("text")}
+            if cell.group("end"):
+                end_row, end_col = split_ref(cell.group("end"))
+                if end_row < row or end_col < col:
+                    return None
+                if end_row > row:
+                    parsed["row_span"] = end_row - row + 1
+                if end_col > col:
+                    parsed["col_span"] = end_col - col + 1
+            sheets[-1]["cells"].append(parsed)
+        else:
+            return None
+    return sheets or None
+
+
+def reading_text_problem(text: str) -> Optional[str]:
+    """Why a reading text may not reach the model, or None: a line of no kind (not_cells), a sheet with no cell (no_cells), more than
+    READING_MAX_SHEETS sheets (too_many_sheets). Size is the gateway's token cap, not a row count: nothing is cut."""
+    sheets = parse_reading_text(text)
+    if sheets is None:
+        return "not_cells"
+    if len(sheets) > READING_MAX_SHEETS:
+        return "too_many_sheets"
+    if any(not s["cells"] for s in sheets):
+        return "no_cells"
+    return None
+
+
+def _amounts_to(cells: List[Dict]) -> Dict[int, int]:
+    """{row: the last column holding an amount} of a sheet: a number that is not a year or a date, as a row of figures has them."""
+    out: Dict[int, int] = {}
+    for c in cells:
+        t = c["text"].strip()
+        if reading_figure(t) and not _YEAR_OR_DATE.match(t) and not _PERIOD_FIGURE.match(t):
+            out[c["row"]] = max(out.get(c["row"], 0), c["col"])
+    return out
+
+
+def _text_cells(cells: List[Dict]) -> List[Dict]:
+    return [c for c in cells if not reading_figure(c["text"])]
+
+
+def reading_company_names(text: str, company_name: Optional[str], mapping: Dict[str, str]) -> List[str]:
+    """The company names a reading text holds under a company-name header that `mapping` does not hold yet (new_company_names, sheet by
+    sheet; a metric label is never one). The gateway adds them to the audit's map before it masks the text."""
+    names: List[str] = []
+    for sheet in parse_reading_text(text) or []:
+        swapped, _ = pseudonymise_cells(_text_cells(sheet["cells"]), mapping, company_name)
+        names += new_company_names(swapped, company_name, _amounts_to(sheet["cells"]))
+    return list(dict.fromkeys(names))
+
+
+def mask_text(text: str, company_name: Optional[str], mapping: Dict[str, str]) -> str:
+    """One string masked as a cell is: emails, phone numbers, IBANs and ID numbers removed, names in the map and the target's own name
+    replaced by their tokens. For a stored reading the model wrote (names restored) that is read again beside a sheet masked afresh."""
+    if reading_figure(text):
+        return text
+    out, _ = redact_structure([{"row": 1, "col": 1, "text": text}], company_name, mapping, people=False)
+    token = next((t for real, t in mapping.items() if company_name and norm(real) == norm(company_name)), None)
+    value = out[0]["text"]
+    return _replace_words(value, [(company_name.strip(), token)], None)[0] if token else value
+
+
+def mask_reading(text: str, company_name: Optional[str], mapping: Dict[str, str]) -> Tuple[str, Dict[str, int]]:
+    """(the reading text masked, the counts). Personal data removed, columns headed owner, contact, manager, rep or signatory masked whole
+    (spreadsheets only), company and customer names tokenised, the target's own name included (`mapping` holds it: the gateway adds it).
+    A figure is never rewritten. A text that is not a reading text comes back as it was, for the caller's own check to refuse. Running it
+    on its own output changes nothing."""
+    sheets = parse_reading_text(text)
+    if sheets is None:
+        return text, {}
+    token = next((t for real, t in mapping.items() if company_name and norm(real) == norm(company_name)), None)
+    counts: Dict[str, int] = {"lines": 0, "company": 0}
+    out = []
+    for sheet in sheets:
+        name_cell = [{"row": 1, "col": 1, "text": sheet["name"]}]
+        named, found = redact_structure(name_cell, company_name, mapping, people=False)
+        sheet_name = named[0]["text"]
+        cells = sheet["cells"]
+        masked, found_cells = redact_structure(_text_cells(cells), company_name, mapping, people=True)
+        for key, n in {**found_cells, "person": found_cells.get("person", 0) + found.get("person", 0)}.items():
+            counts[key] = counts.get(key, 0) + n
+        if token:
+            swapped = [_replace_words(c["text"], [(company_name.strip(), token)], None) for c in masked]
+            masked = [{**c, "text": new} for c, (new, _) in zip(masked, swapped)]
+            sheet_name = _replace_words(sheet_name, [(company_name.strip(), token)], None)[0]
+            counts["company"] += sum(n for _, n in swapped)
+        by_pos = {(c["row"], c["col"]): c for c in masked}
+        merged = [by_pos.get((c["row"], c["col"]), c) for c in cells]
+        counts["lines"] += len(merged)
+        out.append({"name": sheet_name, "cells": merged})
+    counts["company"] += counts.get("customer", 0)
+    return reading_text(out), counts

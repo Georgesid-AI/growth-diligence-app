@@ -2427,7 +2427,7 @@ def test_the_consistency_run_logs_one_not_read_line_per_structure_and_pass(caplo
         report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), adapter))
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
     assert (adapter.calls, len(lines), report["not_read"]) == (15, 15, 15), "5 structures, 3 passes, once each"
-    assert all(line.endswith("reason=provider_error status=400 type=invalid_request_error fields=- check=-") for line in lines)
+    assert all("reason=provider_error status=400 type=invalid_request_error fields=- check=-" in line for line in lines)
     assert report["cache_hit_rate_pct"] == {"pass_2": 0.0, "pass_3": 0.0}
 
 

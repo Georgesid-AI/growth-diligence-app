@@ -24,7 +24,8 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 14         # 14: P&L lines (docs/design/pnl-lines.md): the new server-only block `pnl_lines` (findings of the sum, recompute and sign checks, plan cells with implied against observed rate) and `yearly_basis.years.cac_payback_label` ("yearly, revenue-based"); S&M leaves out the sub-lines mapped to overhead (internal events); results stored under 13 read "Stale – re-run audit".
+CONTRACT_VERSION = 15         # 15: the file map (docs/design/read-check-review.md section 4, PR 2): `FileMap` joins this file as the one schema of a reading, for sheets and decks (a row may name its variance columns: actual | budget | variance per period), and the as-of month comes from the reader's checked evidence (the rules' boundary-cue path and last-unmarked-column fallback are gone); no engine block changes, and results stored under 14 read "Stale – re-run audit".
+                              # 14: P&L lines (docs/design/pnl-lines.md): the new server-only block `pnl_lines` (findings of the sum, recompute and sign checks, plan cells with implied against observed rate) and `yearly_basis.years.cac_payback_label` ("yearly, revenue-based"); S&M leaves out the sub-lines mapped to overhead (internal events); results stored under 13 read "Stale – re-run audit".
                               # 13: deck actuals (docs/design/deck-actuals.md, 2026-10-28): `yearly_basis.years[].revenue_cells` names the cells a deck figure is reconciled with; results stored under 12 read "Stale – re-run audit".
                               # 12: one as-of month (docs/specs/dates-and-periods.md section 2, 2026-10-28): the as-of month always counts as complete, `source_period.status` is always Complete and `complete_by` "as_of", the last month is no longer left out of NRR, gross churn and growth, and the fiscal year-end sets the months of a yearly column; results stored under 11 read "Stale – re-run audit".
                               # 11: the page reader's answer form (docs/design/page-image.md sections 4 and 5): claims carry label_text, segment, share_of and is_quote; label and
@@ -660,6 +661,138 @@ class PnlLines(Block):
 
 
 # ---------------------------------------------------------------------------
+# The file map (docs/design/read-check-review.md section 4): what the reader returns for a file, one schema for sheets and decks. A
+# sheet returns `sheets` (its layout, its rows, the last actual column with evidence) and `figures`; a deck returns `figures` only, the
+# per-row fields stay empty. Every item cites its cell or page; code opens every cited cell (app/checks.py) and decides nothing the cell
+# cannot show. Cells are written as a spreadsheet writes them ("C5", "C5:N5"); rows are sheet row numbers; columns are letters.
+# ---------------------------------------------------------------------------
+FILE_MAP_VERSION = 1
+MAP_ROLES = ("revenue", "bookings", "contract_value", "arr", "mrr", "churn_rate", "growth_rate", "margin_rate", "customers", "users",
+             "cost_of_revenue", "sales_marketing", "rnd", "ga", "opex", "ebitda", "cash", "headcount", "forecast", "variance", "other")
+# The fixed metric names the engine uses (blank for a row whose role is "other").
+MAP_METRICS = ("revenue", "arr", "mrr", "new_arr", "churned_mrr", "churn_rate", "growth_rate", "gross_margin", "cost_of_revenue",
+               "sm_expense", "rnd_expense", "ga_expense", "opex", "ebitda", "bookings", "acv", "tcv", "customers", "users",
+               "headcount", "cash_balance", "arpa", "subscriptions", "contracted_revenue")
+MAP_BASES = ("monthly", "quarterly", "yearly", "cumulative_to_date", "last_12_months", "rate")
+MAP_ACTUAL_PLAN = ("actual", "plan", "variance", "mixed")
+MAP_UNITS = ("money", "count", "rate")
+MAP_GRANULARITY = ("monthly", "quarterly", "yearly")
+# The kinds of evidence a reader gives for the last actual column (section 6). Code has a test for every kind but "layout".
+EVIDENCE_KINDS = ("row_ends", "equals_range", "label_contains", "repeated_values", "round_values", "range_empty", "layout")
+_CELL = r"[A-Z]{1,3}[1-9]\d{0,6}"
+CELL_PATTERN = rf"^{_CELL}$"
+RANGE_PATTERN = rf"^{_CELL}(:{_CELL})?$"
+COLUMN_PATTERN = r"^[A-Z]{1,3}$"
+PERIOD_PATTERN = r"^\d{4}(-(0[1-9]|1[0-2]|Q[1-4]))?$"
+MAP_TEXT_MAX = 300           # one line of the reader's words
+
+
+class MapBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class MapEvidence(MapBlock):
+    """One piece of evidence for the last actual column. The fields a kind uses are filled, the others null: row_ends (`row`, `column`: the
+    values of the row stop at the column), equals_range (`cells`, `other_cells`: two ranges of the same shape hold the same values),
+    label_contains (`cell`, `word`: the cell's text holds the word), repeated_values (`cells`: every value of the range is the same),
+    round_values (`cells`, `multiple`: every value is a multiple of it), range_empty (`cells`: every cell of the range is blank), layout (words only,
+    nothing to open)."""
+    kind: Literal[EVIDENCE_KINDS]
+    text: str = Field(max_length=MAP_TEXT_MAX)
+    row: Optional[int] = Field(default=None, ge=1)
+    column: Optional[str] = Field(default=None, pattern=COLUMN_PATTERN)
+    cell: Optional[str] = Field(default=None, pattern=CELL_PATTERN)
+    cells: Optional[str] = Field(default=None, pattern=RANGE_PATTERN)
+    other_cells: Optional[str] = Field(default=None, pattern=RANGE_PATTERN)
+    word: Optional[str] = Field(default=None, max_length=60)
+    multiple: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+
+
+class MapLastActual(MapBlock):
+    """The last actual column of a sheet, with the header cell it was read from and the evidence."""
+    column: str = Field(pattern=COLUMN_PATTERN)
+    period: str = Field(pattern=PERIOD_PATTERN)         # the period the header of that column names
+    evidence: List[MapEvidence]
+
+
+class MapVariance(MapBlock):
+    """A variance row's two inputs: the variance is actual minus plan, row by row."""
+    actual_row: int = Field(ge=1)
+    plan_row: int = Field(ge=1)
+
+
+class MapVarianceColumns(MapBlock):
+    """Actual, plan and variance side by side per period in the cells of one row (actual | budget | variance per month): the first period's
+    three columns and the step to the next period's. The variance of each period is actual minus plan."""
+    actual: str = Field(pattern=COLUMN_PATTERN)
+    plan: str = Field(pattern=COLUMN_PATTERN)
+    variance: str = Field(pattern=COLUMN_PATTERN)
+    step: int = Field(ge=1, le=26)
+
+
+class MapRow(MapBlock):
+    """What one row of a sheet is (a column where the periods run down the sheet: `by_column` true and `row` the column's number)."""
+    row: int = Field(ge=1)
+    label_cell: Optional[str] = Field(default=None, pattern=CELL_PATTERN)
+    role: Literal[MAP_ROLES]
+    metric: Optional[Literal[MAP_METRICS]] = None
+    basis: Optional[Literal[MAP_BASES]] = None
+    actual_plan: Optional[Literal[MAP_ACTUAL_PLAN]] = None
+    boundary_col: Optional[str] = Field(default=None, pattern=COLUMN_PATTERN)     # for "mixed": the last actual column of this row
+    segment: Optional[str] = Field(default=None, max_length=MAP_TEXT_MAX)         # a split's name; blank for a total
+    parent_row: Optional[int] = Field(default=None, ge=1)                         # the row this one sums into, when the parts sum to it
+    unit: Optional[Literal[MAP_UNITS]] = None
+    currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
+    cells: Optional[str] = Field(default=None, pattern=RANGE_PATTERN)             # the range the values occupy
+    variance_of: Optional[MapVariance] = None
+    variance_columns: Optional[MapVarianceColumns] = None
+    by_column: bool = False
+    evidence: str = Field(max_length=MAP_TEXT_MAX)
+
+
+class MapSheet(MapBlock):
+    sheet: str = Field(max_length=MAP_TEXT_MAX)
+    header_row: int = Field(ge=1)
+    label_col: str = Field(pattern=COLUMN_PATTERN)
+    first_period_col: str = Field(pattern=COLUMN_PATTERN)
+    last_period_col: str = Field(pattern=COLUMN_PATTERN)
+    granularity: Literal[MAP_GRANULARITY]
+    currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
+    currency_cell: Optional[str] = Field(default=None, pattern=CELL_PATTERN)      # the cell the currency was read from
+    last_actual: Optional[MapLastActual] = None
+    rows: List[MapRow]
+
+
+class MapSource(MapBlock):
+    """Where a figure was read: a sheet cell, or a deck page (with whether the page has a text layer)."""
+    sheet: Optional[str] = Field(default=None, max_length=MAP_TEXT_MAX)
+    cell: Optional[str] = Field(default=None, pattern=CELL_PATTERN)
+    page: Optional[int] = Field(default=None, ge=1)
+    text_layer: Optional[bool] = None
+
+
+class MapFigure(MapBlock):
+    metric: Optional[Literal[MAP_METRICS]] = None
+    value: Optional[float] = Field(default=None, allow_inf_nan=False)
+    unit: Optional[Literal[MAP_UNITS]] = None
+    currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
+    period: Optional[str] = Field(default=None, pattern=PERIOD_PATTERN)
+    basis: Optional[Literal[MAP_BASES]] = None
+    actual_plan: Optional[Literal[MAP_ACTUAL_PLAN]] = None
+    segment: Optional[str] = Field(default=None, max_length=MAP_TEXT_MAX)
+    source: Optional[MapSource] = None
+    evidence: str = Field(max_length=MAP_TEXT_MAX)
+
+
+class FileMap(MapBlock):
+    """The reader's map of one file. The same schema serves decks and sheets."""
+    map_version: Literal[1] = FILE_MAP_VERSION
+    kind: Literal["sheet", "deck"]
+    sheets: List[MapSheet] = Field(default_factory=list)
+    figures: List[MapFigure] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # What could not be computed
 # ---------------------------------------------------------------------------
 class MissingItem(Block):
@@ -702,7 +835,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[14]
+    contract_version: Literal[15]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]

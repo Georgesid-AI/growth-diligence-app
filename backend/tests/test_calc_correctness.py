@@ -21,7 +21,7 @@ import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 
 CFG = {"reporting_currency": "EUR", "target_arr": 5_000_000, "target_date": "2026-12-31", "fx": {"EUR": 1.0},
-       "billing_terms": {}, "default_l": 1, "as_of_month": None}
+       "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
 SOURCES = {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}}
 
 

@@ -359,18 +359,6 @@ class RecognitionNonRevenue(BaseModel):
     kind: Literal[NON_REVENUE_KINDS]
 
 
-CELL_ADDRESS = r"^(?:[A-Z]{1,3}[1-9][0-9]{0,5}|r[1-9][0-9]{0,5}c[1-9][0-9]{0,3}|r[1-9][0-9]{0,5})$"      # D3, r3c4 or, for a row label, r12
-
-
-class BoundaryCue(BaseModel):
-    """The cell the model decided the last actual column by: its address and its exact text (dates-and-periods.md section 2)."""
-
-    model_config = {"extra": "forbid"}
-
-    cell: str = Field(pattern=CELL_ADDRESS)
-    text: str = Field(min_length=1, max_length=200)
-
-
 class FileRecognitionReply(BaseModel):
     """What the model must return for a file (spec section 5.7): exactly these keys, no confidence, no free text."""
 
@@ -382,8 +370,6 @@ class FileRecognitionReply(BaseModel):
     revenue_row: Optional[RecognitionRow]
     currency: Optional[str] = Field(pattern=r"^[A-Z]{3}$")
     non_revenue_rows: List[RecognitionNonRevenue] = Field(max_length=RECOGNITION_MAX_ROWS)
-    last_actual_column: Optional[int] = Field(default=None, ge=1, le=16384)     # a suggestion: Python checks the cue before it is used
-    boundary_cue: Optional[BoundaryCue] = None
 
 
 # The sheet skeleton (chat-upload.md section 26): a P&L the rules cannot map, read as a statement. Its own schema and prompt, outside
@@ -559,12 +545,44 @@ def labelling_output_schema() -> dict:
     }
 
 
-def output_schema(structure_type: str) -> dict:
-    """The schema a call sends for its type: a column mapping and a file type keep their own, every deck type is labelled."""
+# The sheet reader (docs/design/read-check-review.md sections 3 and 4): one call per spreadsheet, the model returns the file map. The
+# provider's strict structured output refused the FileMap grammar ("The compiled grammar is too large"), so the file map is not a strict
+# output schema (George, 2026-10-30): the contract's FileMap goes to the model as text, a compact JSON-schema rendering inside the request,
+# with the ask for plain JSON, and FileMap validates the reply in code (gateway.parse_file_map_reply): one retry carrying the first
+# validation errors, then "not read". Generated from FileMap, so the two cannot drift.
+SHEET_READING = "sheet_reading"
+# The ask that goes with the schema in the user message, and the retry's ask (the first FILE_MAP_ERRORS_SENT validation errors go with it).
+FILE_MAP_ANSWER = ("Reply with one JSON object that matches the JSON schema under \"schema\". Plain JSON only: no prose before or after "
+                   "it and no code fences.")
+FILE_MAP_FIX = "The reply did not match the schema. Fix these and return the full object again, as plain JSON with no prose and no fences."
+FILE_MAP_ERRORS_SENT = 10
+
+
+def _compact(node: Any) -> Any:
+    """The schema without pydantic's `title` keys: the field names, types, enums, patterns, bounds and descriptions stay."""
+    if isinstance(node, dict):
+        return {k: _compact(v) for k, v in node.items() if k != "title"}
+    if isinstance(node, list):
+        return [_compact(n) for n in node]
+    return node
+
+
+def file_map_schema() -> dict:
+    """The JSON schema a sheet reading sends as text inside its request (under "schema"): the contract's FileMap (schemas/metrics.py),
+    compacted. It is never sent as `output_config.format.schema`."""
+    from schemas.metrics import FileMap
+    return _compact(FileMap.model_json_schema())
+
+
+def output_schema(structure_type: str) -> Optional[dict]:
+    """The strict output schema a call sends for its type, or None for a sheet reading: a column mapping and a file type keep their
+    own, every deck type is labelled."""
     if structure_type == FILE_TYPE:
         return file_type_output_schema()
     if structure_type == SHEET_STRUCTURE:
         return sheet_output_schema()
+    if structure_type == SHEET_READING:
+        return None                     # the file map goes as text in the request (file_map_schema), never as a strict output schema
     if structure_type == FILE_RECOGNITION:
         return file_recognition_output_schema()
     if structure_type == PAGE_CLAIMS:
@@ -587,11 +605,8 @@ def file_recognition_output_schema() -> dict:
             "non_revenue_rows": {"type": "array", "items": {
                 "type": "object", "properties": {"row": {"type": "integer"}, "kind": {"type": "string", "enum": list(NON_REVENUE_KINDS)}},
                 "required": ["row", "kind"], "additionalProperties": False}},
-            "last_actual_column": nullable({"type": "integer"}),
-            "boundary_cue": nullable({"type": "object", "properties": {"cell": {"type": "string"}, "text": {"type": "string"}},
-                                      "required": ["cell", "text"], "additionalProperties": False}),
         },
-        "required": ["type", "sheet", "file_type", "revenue_row", "currency", "non_revenue_rows", "last_actual_column", "boundary_cue"],
+        "required": ["type", "sheet", "file_type", "revenue_row", "currency", "non_revenue_rows"],
         "additionalProperties": False,
     }
 
@@ -830,6 +845,9 @@ class StructureRead(BaseModel):
     prompt_version: Optional[str] = None
     model: Optional[str] = None
     masked: Optional[dict] = None           # a page read: counts of what masking removed or tokenised in the text sent (numbers only)
+    file_map: Optional[dict] = None         # a sheet reading (the contract's FileMap) in masked space; the stored copy has the names restored
+    reading_key: Optional[str] = None       # ... and its identity: file hash + prompt version + model (app/readings.py)
+    payload: Optional[str] = Field(default=None, exclude=True)      # the masked cell text a sheet reading sent: in memory for the checks, never serialised
 
 
 class DeckUsage(BaseModel):

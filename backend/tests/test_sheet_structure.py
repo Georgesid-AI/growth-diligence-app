@@ -120,7 +120,7 @@ def test_a_yearly_pnl_by_product_reads_its_header_tags_sections_and_checks():
 
 def test_the_yearly_pnl_is_never_split_into_months_and_its_actual_years_are_the_yearly_input():
     m = stored_map(YEARLY)
-    fed = sh.feed(m, 12, 1000, {"file": YEARLY, "sheet": "CSV"})
+    fed = sh.feed(m, 12, 1000, {"file": YEARLY, "sheet": "CSV"}, "2023-12")     # no as-of month: no actual year (is_actual)
     assert fed["pnl"] is None, "no month column: nothing reaches the engine as a monthly P&L"
     years = {y["period"]: y["fields"] for y in fed["yearly"]["actual"]}
     assert list(years) == ["FY2021", "FY2022", "FY2023"], "only the actual-tagged year columns"
@@ -305,9 +305,9 @@ def test_a_monthly_statement_feeds_the_engine_with_sm_as_the_sum_of_the_sales_an
 # ---------------------------------------------------------------------------
 # 26.8: yearly-basis metrics (engine, Python only)
 # ---------------------------------------------------------------------------
-def _yearly_block(name=YEARLY, content=None, results=None, series=None):
+def _yearly_block(name=YEARLY, content=None, results=None, series=None, as_of="2023-12"):
     read = reading(name, content)
-    fed = sh.feed(sh.build(read), 12, cr.read_units(read["titles"])[0], {"file": name, "sheet": "CSV"})
+    fed = sh.feed(sh.build(read), 12, cr.read_units(read["titles"])[0], {"file": name, "sheet": "CSV"}, as_of)
     return ge.compute_yearly_basis(fed["yearly"], results or {}, series)
 
 
@@ -346,7 +346,7 @@ def test_a_reported_actual_year_is_compared_with_the_revenue_file_when_it_covers
     content = b"Line,2023A,2024A\nRevenue,120,130\n"
     months = [f"2024-{m:02d}" for m in range(1, 13)]
     series = {"data": [{"month": m, "total": 10.5} for m in months]}
-    (row,) = _yearly_block("r.csv", content, series=series)["reported_vs_file"]
+    (row,) = _yearly_block("r.csv", content, series=series, as_of="2024-12")["reported_vs_file"]
     assert (row["period"], row["reported"], row["revenue_file"], row["gap"]) == ("2024A", 130, 126, -4)
 
 
