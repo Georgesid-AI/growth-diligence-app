@@ -23,16 +23,16 @@ describe("source reference", () => {
 describe("claim value", () => {
   test("keeps the deck's decimals and shows unit or currency", () => {
     expect(claimValue({ value: 3600000, currency: "USD" })).toBe("3,600,000 USD");
-    expect(claimValue({ value: 13.72, unit: "%" })).toBe("13.72%");
+    expect(claimValue({ value: 13.72, unit: "%" })).toBe("14 %");
     expect(claimValue({ value: 4.9, unit: "x" })).toBe("4.9x");
     expect(claimValue({ value: 24, unit: "months" })).toBe("24 months");
     expect(claimValue({ value: 2.5 })).toBe("2.5");
     expect(claimValue({ value: null, target_date: "2021-Q3" })).toBe("—");
     expect(claimValue({ value: 12000000, value_high: 13000000, currency: "USD" })).toBe("12,000,000–13,000,000 USD");
-    expect(claimValue({ value: 5, value_high: 10, unit: "%" })).toBe("5–10%");
+    expect(claimValue({ value: 5, value_high: 10, unit: "%" })).toBe("5–10 %");
     // The counted noun is the unit: Buffer slide 5.
     expect(claimValue({ value: 800, unit: "paying users" })).toBe("800 paying users");
-    expect(claimValue({ value: 97, unit: "%" })).toBe("97%");
+    expect(claimValue({ value: 97, unit: "%" })).toBe("97 %");
     expect(claimValue({ value: 150000, currency: "USD" })).toBe("150,000 USD");
     expect(claimValue({ value: 1500000, unit: "updates" })).toBe("1,500,000 updates");
   });
@@ -411,7 +411,7 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
   test("a direction with no figure reads positive (no figure); a figure typed over it reads as a figure", () => {
     expect(directionText("negative")).toBe("negative (no figure)");
     expect(claimValue({ value: null, claim_direction: "positive" })).toBe("positive (no figure)");
-    expect(claimValue({ value: 3, unit: "%", claim_direction: null })).toBe("3%");
+    expect(claimValue({ value: 3, unit: "%", claim_direction: null })).toBe("3 %");
     expect(claimValue({ value: null })).toBe("—");
   });
 
@@ -428,7 +428,7 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
     expect(claimValue({ value: 150000, currency: "BRL", fx: { ...fx, rate: null } }))
       .toBe("150,000 BRL (BRL→EUR rate missing – enter it in FX settings at the top of the page)");
     expect(claimValue({ value: 150000, currency: "EUR", fx: null })).toBe("150,000 EUR");
-    expect(claimValue({ value: 15, unit: "%", currency: null, fx: null })).toBe("15%");
+    expect(claimValue({ value: 15, unit: "%", currency: null, fx: null })).toBe("15 %");
   });
 });
 

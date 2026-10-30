@@ -100,8 +100,9 @@ def _quantized(d: Decimal, places: Iterable[int]) -> Iterable[Tuple[int, Decimal
 
 # The places a figure is written with, by its kind (app/formatting.py): a percent is its fraction times 100, whole or to
 # two places (a gap of 69.61%); currency whole or to the cent; days rounded up; months to one or two places; ratios to two.
-_PLACES = {fmt.PCT: (0, 1, 2), fmt.CURRENCY: (0, 2), fmt.COUNT: (0,), fmt.COUNT_UP: (0,), fmt.DAYS: (0, 1), fmt.MONTHS: (1, 2),
-           fmt.RATIO: (2,), fmt.PLAIN: (0,)}
+# The display rule (formatting.display_number, section 11.5) writes a single-digit number to one place and any other whole.
+_PLACES = {fmt.PCT: (0, 1, 2), fmt.CURRENCY: (0, 1, 2), fmt.COUNT: (0, 1), fmt.COUNT_UP: (0,), fmt.DAYS: (0, 1), fmt.MONTHS: (0, 1, 2),
+           fmt.RATIO: (0, 1, 2), fmt.PLAIN: (0,)}
 
 
 def _keys(value, kind: Optional[str] = None, places: Iterable[int] = (0, 1, 2), percent: bool = False) -> Iterable[Tuple[int, Decimal]]:
@@ -367,7 +368,7 @@ def vas_cells(rows: List[dict], currency: Optional[str]) -> Dict[int, str]:
             text += f" ({r['vas_reason']})"
         if amount is not None and carrier.get(r["rank"], r["rank"]) != r["rank"]:
             text += f" (counted in #{carrier[r['rank']]})"
-        cells[r["rank"]] = text + (f" · shortfall {shortfall * 100:.1f}%" if shortfall is not None else "")
+        cells[r["rank"]] = text + (f" · shortfall {fmt.display_number(Decimal(str(shortfall * 100)))} %" if shortfall is not None else "")
     return cells
 
 

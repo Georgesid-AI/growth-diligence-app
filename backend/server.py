@@ -1651,6 +1651,15 @@ async def reading_register(audit_id: str):
     return sanitize(await register.build(db, audit_id))
 
 
+@api.get("/audits/{audit_id}/readings/{file_hash}/cell")
+async def reading_cell(audit_id: str, file_hash: str, sheet: str, cell: str):
+    """The cell a Source cites, with the cells around it, as the stored file holds them (the link of the register's Source column)."""
+    got = await register.cell_window(db, audit_id, file_hash, sheet, cell)
+    if got is None:
+        raise HTTPException(404, "Cell not found")
+    return sanitize(got)
+
+
 class CardDecision(BaseModel):
     model_config = {"extra": "forbid"}
     action: Literal["use_cell", "use_reader", "type_value"]

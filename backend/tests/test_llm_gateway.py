@@ -1601,7 +1601,7 @@ def test_partial_quarter_figures_are_withheld_from_the_model_payload():
     computed = _cac_computed()
     out = gateway.build_outbound(computed, {})
     q = out["metrics"]["cac_payback"]["quarters"]
-    assert q["2024-Q3"]["L1"]["months"] == "18.8 months", "complete quarters are sent as before"
+    assert q["2024-Q3"]["L1"]["months"] == "19 months", "complete quarters are sent as before"
     assert q["2025-Q1"]["L1"] == {
         "months": None, "reason": "partial quarter (2 of 3 months); not comparable"}
     assert "29" not in json.dumps(q["2025-Q1"]) and "20.0" not in json.dumps(q["2025-Q1"])
@@ -1703,7 +1703,7 @@ def _both_views_results():
     }
 
 
-def _generate_with(rows, results=None, headline="The simple view needs 1.28x the observed rate and the segment view 1.02x."):
+def _generate_with(rows, results=None, headline="The simple view needs 1.3x the observed rate and the segment view 1x."):
     narrative = {
         "headline": headline,
         "what_this_means": "Both are shown.", "table_rows": rows, "worth_flagging": [], "next_actions": [], "source_keys": [],
@@ -1718,8 +1718,8 @@ def _generate_with(rows, results=None, headline="The simple view needs 1.28x the
     return asyncio.run(run())
 
 
-SIMPLE_ROW = {"label": "Simple", "value": "1.28x", "source_key": "metrics.acv_path.required_vs_observed_12m"}
-SEGMENT_ROW = {"label": "Segment", "value": "1.02x", "source_key": "metrics.segment_paths.reconciliation.12.segment_ratio"}
+SIMPLE_ROW = {"label": "Simple", "value": "1.3x", "source_key": "metrics.acv_path.required_vs_observed_12m"}
+SEGMENT_ROW = {"label": "Segment", "value": "1x", "source_key": "metrics.segment_paths.reconciliation.12.segment_ratio"}
 
 
 def test_a_table_citing_both_views_is_accepted():
@@ -1740,14 +1740,14 @@ def test_the_views_guard_applies_only_when_the_views_have_been_reconciled():
     results = _both_views_results()
     results["segment_paths"]["reconciliation"]["12"] = {"window_months": 12, "available": False,
                                                           "reason": "some active customers have no segment"}
-    assert _generate_with([SIMPLE_ROW], results, headline="The simple view needs 1.28x the observed rate.").narrative_status == "ok"
+    assert _generate_with([SIMPLE_ROW], results, headline="The simple view needs 1.3x the observed rate.").narrative_status == "ok"
 
 
 def test_a_rejected_one_sided_narrative_is_logged_as_such_and_counted():
     async def run():
         db = make_db()
         db["audits"].docs[0]["results"].update(_both_views_results())
-        narrative = {"headline": "x 1.28x", "what_this_means": "", "table_rows": [SIMPLE_ROW],
+        narrative = {"headline": "x 1.3x", "what_this_means": "", "table_rows": [SIMPLE_ROW],
                      "worth_flagging": [], "next_actions": [], "source_keys": []}
         await gateway.generate_narrative(db, RUN_ID, "growth_engine",
                                          adapter=FakeAdapter(replies=[json.dumps(narrative)]), sleep=_noop_sleep)

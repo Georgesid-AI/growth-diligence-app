@@ -101,7 +101,7 @@ def test_a_rate_beyond_one_point_is_read_by_its_direction():
     assert state(win_rate(41, 39.0)) == ("Contradicted", None, "miss")
     assert state(win_rate(41, 42)) == ("Verified", None, "beat") and not cm.is_beat(win_rate(41, 42)), "within ±1 pp"
     assert state(win_rate(41, 10)) == (None, "ask", "miss"), "31 points under 41: beyond 10 points"
-    assert win_rate(41, 10)["definition_question"] == "Observed 10.0%, claimed 41.0%. Same metric and period?"
+    assert win_rate(41, 10)["definition_question"] == "Observed 10 %, claimed 41 %. Same metric and period?"
 
 
 def test_a_rate_asks_only_beyond_ten_points_not_beyond_half_of_the_claim():

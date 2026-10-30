@@ -16,6 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from . import deck_actuals, forecast_calc, payback_definition
+from . import formatting as fmt
 from .decks.claims import BASIS_CONFLICT, CASES as SCENARIO_CASES, review_flags
 
 # The register's fields, in the order of the spec's section 6 (and the CSV header of section 7).
@@ -348,12 +349,17 @@ _NUMBER_WORDS = "zero one two three four five six seven eight nine ten eleven tw
                 "seventeen eighteen nineteen twenty".split()
 
 
+def _shown(value: float) -> str:
+    """A number by the one display rule (app/formatting.display_number, read-check-review.md section 11.5)."""
+    return fmt.display_number(Decimal(str(value)))
+
+
 def _money(amount: float, currency: Optional[str], whole_millions: bool = False) -> str:
     symbol = _CURRENCY_SYMBOLS.get(currency or "", f"{currency} " if currency else "")
     amount = abs(amount)
     if whole_millions and amount >= 1_000_000:
-        return f"{symbol}{amount / 1_000_000:.1f}M"
-    return f"{symbol}{amount:,.0f}"
+        return f"{symbol}{_shown(amount / 1_000_000)}M"
+    return f"{symbol}{_shown(amount)}"
 
 
 def gloss(unit: str, kind: str, gap: float, currency: Optional[str], direction: Optional[str], by: Optional[str]) -> str:
@@ -367,14 +373,14 @@ def gloss(unit: str, kind: str, gap: float, currency: Optional[str], direction: 
     higher, lower = {"days": ("longer", "shorter"), "months": ("longer", "shorter"), "count": ("more", "fewer")}.get(
         unit, ("higher", "lower"))
     if unit in ("days", "months"):
-        amount = f"{size:.1f} {unit}"
+        amount = f"{_shown(size)} {unit}"
     elif unit == "%":
-        amount = f"{size:.1f} points"
+        amount = f"{_shown(size)} points"
     elif unit == "count":
-        n = f"{size:,.0f}"
+        n = _shown(size)
         amount = f"{n} customer{'' if n == '1' else 's'}"
     elif unit == "x":
-        amount = f"{size:.2f}x"
+        amount = f"{_shown(size)}x"
     else:
         amount = _money(size, currency, whole_millions=kind == "to go")
     text = f"{amount} {higher if above else lower}"
@@ -389,12 +395,12 @@ def _format(unit: str, value: float, currency: Optional[str]) -> str:
     if unit == "currency":
         return _money(value, currency)
     if unit == "%":
-        return f"{_one_place(value)}%"
+        return f"{_shown(value)} %"
     if unit in ("days", "months"):
-        return f"{_one_place(value)} {unit}"
+        return f"{_shown(value)} {unit}"
     if unit == "x":
-        return f"{value:.2f}x"
-    return f"{value:,.0f}"
+        return f"{_shown(value)}x"
+    return _shown(value)
 
 
 def _one_place(value: float) -> str:

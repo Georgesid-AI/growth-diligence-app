@@ -28,6 +28,7 @@ jest.mock("@/components/AuditSetup", () => ({ __esModule: true, ConsentBlock: ()
 jest.mock("@/components/DeckPanel", () => () => <div data-testid="deck-panel" />);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+window.history.pushState({}, "", "/?view=legacy");      // PR 3: the earlier screen, which this file tests, is behind ?view=legacy (lib/legacyView.js)
 const AUDIT = { id: "a1", company_name: "TestCo", reporting_currency: "EUR", target_arr: 1000000, as_of_month: null, structure_reading_consent: true };
 const VIEW = (dtype, over = {}) => ({
   status: "ok", dtype, file: `${dtype}.csv`, size_bytes: 10, ext: "csv", row_count: 3, months: null, pending: 0, missing_required: [], version: 1,

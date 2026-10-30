@@ -6,7 +6,7 @@
 import metricUnits from "./claim_metrics.json";
 import evidenceLabels from "./evidence_labels.json";
 import claimColumns from "./claim_columns.json";
-import { PLACEHOLDER, fmtCount, fmtCurrency } from "./format";
+import { PLACEHOLDER, displayNumber, fmtCount, fmtCurrency, fmtExact, fmtMonths, fmtPercentPoints } from "./format";
 import { NO_DATE, STALE_LABEL, rateMissingText, typeLabel } from "./deckClaims";
 import { dateRangeError, displayDate } from "./datePicker";
 
@@ -117,7 +117,7 @@ export const turnoverHeading = (view, multi) => (view.turnover_set_by === "analy
 
 /** "Implied take rate 10.0% (derived, not verified)": revenue ÷ volume, or null. */
 export const takeRateText = (row) => (row.implied_take_rate == null ? null
-  : `Implied take rate ${(row.implied_take_rate * 100).toFixed(2)}% (derived, not verified)`);
+  : `Implied take rate ${fmtPercentPoints(row.implied_take_rate * 100)} (derived, not verified)`);
 
 export const csvUrl = (apiBase, auditId) => `${apiBase}/audits/${auditId}/claims.csv`;
 export const registerRows = (data) => data?.register ?? [];
@@ -162,7 +162,7 @@ export function valueAtStakeText(row, ccy) {
   const base = row.value_at_stake_arr != null
     ? `${fmtCurrency(row.value_at_stake_arr, ccy)}${row.vas_reason ? ` (${row.vas_reason})` : ""}`   // "run-rate: Q3 2024 × 4"
     : row.vas_reason || "not yet computed";
-  return row.shortfall == null ? base : `${base} · shortfall ${(row.shortfall * 100).toFixed(1)}%`;
+  return row.shortfall == null ? base : `${base} · shortfall ${fmtPercentPoints(row.shortfall * 100)}`;
 }
 
 /** How a claim is called in a sentence (the backend's claim_name): its metric or type, the segment when not the whole company, the period. */
@@ -205,8 +205,7 @@ export function detailItems(row, rows, ccy, prefix = "register-") {
   ].map(([text, id]) => [text, `${prefix}${id}`]);
 }
 
-const multiple = (v) => (Math.round(Number(v) * 10 + 1e-9) / 10).toFixed(1);     // half up, absorbing binary noise: 2.25 -> "2.3"
-const trimmed = (v, dp) => String(Number(Number(v).toFixed(dp)));
+const multiple = (v) => displayNumber(v);            // the display rule: 2.25 -> "2.3", 12.4 -> "12"
 
 /** "positive (no figure)": a direction the deck states with no figure (docs/specs/claim-matching.md section 2). */
 export const directionText = (direction) => `${direction} (no figure)`;
@@ -224,7 +223,7 @@ export function conversionText(row, ccy) {
 export function rateHover(row, ccy) {
   if (row.claimed_converted == null || row.fx_rate == null || !row.currency) return null;
   const at = displayDate(row.fx_date);
-  return `Rate used: 1 ${row.currency} = ${trimmed(row.fx_rate, 6)} ${ccy}${at ? ` on ${at}` : ""}`;
+  return `Rate used: 1 ${row.currency} = ${fmtExact(row.fx_rate)} ${ccy}${at ? ` on ${at}` : ""}`;
 }
 
 /** "GBP→EUR": the pair a claim in another currency has no saved rate for; null when it has a rate or needs none. */
@@ -242,9 +241,9 @@ export function claimFigure(row, ccy) {
     return (hi == null ? fmtCurrency(lo, row.currency) : `${fmtCurrency(lo)}–${fmtCurrency(hi, row.currency)}`) + conversionText(row, ccy);
   }
   if (row.currency) return hi == null ? fmtCurrency(lo, row.currency) : `${fmtCurrency(lo)}–${fmtCurrency(hi, row.currency)}`;
-  if (row.unit === "%") return hi == null ? `${trimmed(lo, 4)}%` : `${trimmed(lo, 4)}–${trimmed(hi, 4)}%`;
+  if (row.unit === "%") return hi == null ? fmtPercentPoints(lo) : `${displayNumber(lo)}–${fmtPercentPoints(hi)}`;
   if (row.unit === "x") return hi == null ? `${multiple(lo)}x` : `${multiple(lo)}–${multiple(hi)}x`;       // a multiple: one decimal (George, 2026-10-24)
-  const num = (v) => (DURATIONS.includes(claimUnit(row)) ? trimmed(v, 4) : fmtCount(v));
+  const num = (v) => (DURATIONS.includes(claimUnit(row)) ? displayNumber(v) : fmtCount(v));
   return `${hi == null ? num(lo) : `${num(lo)}–${num(hi)}`}${row.unit ? ` ${row.unit}` : ""}`;
 }
 
@@ -264,9 +263,9 @@ export function claimCellText(row, ccy) {
 function inUnit(metric, value, ccy) {
   switch (METRIC_UNIT[metric]) {
     case "currency": return fmtCurrency(value, ccy);
-    case "%": return `${trimmed(value, 2)}%`;
-    case "days": return `${Number(value).toFixed(1)} days`;
-    case "months": return `${Number(value).toFixed(1)} months`;
+    case "%": return fmtPercentPoints(value);
+    case "days": return `${displayNumber(value)} days`;
+    case "months": return fmtMonths(value);
     default: return fmtCount(value);
   }
 }
@@ -282,8 +281,8 @@ export function gapText(row, ccy) {
   if (row.gap == null) return PLACEHOLDER;
   const size = Math.abs(row.gap);
   const unit = METRIC_UNIT[row.metric];
-  const native = unit === "%" ? `${size.toFixed(1)} pp` : inUnit(row.metric, size, ccy);
-  const share = row.gap_normalised == null ? "" : ` · ${(Math.abs(row.gap_normalised) * 100).toFixed(1)}%`;
+  const native = unit === "%" ? `${displayNumber(size)} pp` : inUnit(row.metric, size, ccy);
+  const share = row.gap_normalised == null ? "" : ` · ${fmtPercentPoints(Math.abs(row.gap_normalised) * 100)}`;
   const prefix = row.gap_kind === "beat" ? "beat " : row.gap_kind === "to go" ? "to go " : "";
   return `${prefix}${native}${share}`;
 }

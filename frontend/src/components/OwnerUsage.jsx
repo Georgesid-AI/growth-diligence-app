@@ -1,11 +1,12 @@
+import { fmtNumber, fmtUsd } from "@/lib/format";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 // The owner's Usage section (docs/specs/usage-and-allowance.md section 3): counts, tokens and USD per tester link label, this month
 // and all time, and each link's monthly AI allowance. No company, file or audit name: the server sends none.
-const usd = (n) => `USD ${Number(n).toFixed(2)}`;
-const num = (n) => Number(n).toLocaleString("en-US");
+const usd = (n) => fmtUsd(n);
+const num = (n) => fmtNumber(n);
 const HEAD = ["Files uploaded", "AI calls", "Tokens", "Cost"];
 const cells = (t) => [num(t.files), num(t.calls), num(t.tokens), usd(t.cost_usd)];
 

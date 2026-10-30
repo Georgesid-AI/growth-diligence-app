@@ -133,7 +133,7 @@ def test_cac_payback_is_tested_against_the_engines_months_for_the_quarter():
     results = with_cac(results_for(RUNS["A"]))
     miss = row("cac_payback", 12, "2023-Q3", unit="months", results=results)
     assert miss["metric"] == "CAC payback" and (miss["observed_value"], miss["observed_at"]) == (14.0, "2023-Q3")
-    assert (miss["evidence_label"], miss["gap_kind"], miss["gloss"]) == ("Contradicted", "miss", "2.0 months longer (miss)")
+    assert (miss["evidence_label"], miss["gap_kind"], miss["gloss"]) == ("Contradicted", "miss", "2 months longer (miss)")
     assert row("cac_payback", 14.5, "2023-Q3", unit="months", results=results)["evidence_label"] == "Verified"
     beat = row("cac_payback", 20, "2023-Q3", unit="months", results=results)
     assert (beat["evidence_label"], beat["gap_kind"]) == ("Verified", "beat") and beat["reason"].startswith(cm.BEAT_PREFIX)

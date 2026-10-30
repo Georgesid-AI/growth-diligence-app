@@ -157,6 +157,7 @@ async def build(db, audit_id: str) -> Dict:
         shown = _effective_lines(doc, effective)
         files.append({"kind": "sheet", "file": doc.get("file"), "file_hash": doc["file_hash"], "size": (datasets.get(doc["file_hash"]) or {}).get("size"),
                       "summary": {"period_columns": doc.get("period_columns"), "rows_mapped": doc.get("rows_mapped"), "last_actual": doc.get("month"),
+                                  "granularity": next((x.get("granularity") for x in effective.get("sheets") or []), None),
                                   "confirmed": counts.get("confirmed", 0), "rejected": counts.get("rejected", 0),
                                   "cannot_check": counts.get("cannot_check", 0), **privacy_counts(doc.get("masked"))},
                       "anchors": anchors(doc, effective, shown), "lines": shown, "overrides": len(overrides)})
@@ -257,3 +258,30 @@ async def change_boundary(db, audit_id: str, file_hash: str, sheet: str, column:
                                                    path=f"sheets.{si}.rows.{ri}.boundary_col", old=r["boundary_col"], new=column, who=who,
                                                    why="Change: actual / plan boundary"))
     return out
+
+
+# ---------------------------------------------------------------------------
+# The link of a Source (section 11.3): the cell, in its neighbourhood, as the file holds it
+# ---------------------------------------------------------------------------
+WINDOW_ROWS, WINDOW_COLS = 3, 4
+
+
+async def cell_window(db, audit_id: str, file_hash: str, sheet: str, cell: str) -> Optional[Dict]:
+    """The cited cell and the cells around it (three rows each way, four columns each way) from the stored sheets of the audit's file, for the
+    screen's "Click to see the cell". Names are the file's own: this goes to the analyst's browser only, as the dataset does. None when the file
+    or the cell is not there."""
+    from . import recognition as rec
+    from .structures import reading_input
+    pos = checks.parse_ref(cell)
+    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": file_hash}, {"_id": 0, "recognition_sheets": 1})
+    if not ds or not pos:
+        return None
+    found = next((s for s in rec.unpack_sheets(ds.get("recognition_sheets") or []) if s.sheet == sheet), None)
+    if found is None:
+        return None
+    grid = {(c["row"], c["col"]): c["text"] for c in reading_input.sheet_cells(found)}
+    rows = []
+    for r in range(max(1, pos[0] - WINDOW_ROWS), pos[0] + WINDOW_ROWS + 1):
+        rows.append({"row": r, "cells": [{"ref": checks.ref_of(r, c), "text": grid.get((r, c), ""), "cited": (r, c) == pos}
+                                         for c in range(max(1, pos[1] - WINDOW_COLS), pos[1] + WINDOW_COLS + 1)]})
+    return {"sheet": sheet, "cell": cell, "rows": rows}

@@ -218,3 +218,16 @@ def test_a_decision_the_card_does_not_offer_is_refused_even_when_a_cell_value_ex
     with pytest.raises(ValueError):
         asyncio.run(cards.decide(db, "a1", card["id"], cards.USE_CELL))
     assert asyncio.run(cards.decide(db, "a1", card["id"], cards.USE_READER))["decision"]["value"] == 1.0
+
+
+def test_the_link_of_a_source_opens_the_cell_with_the_cells_around_it(flow):
+    start(flow, map_with("bookings"))
+    file_hash = reading(flow)["files"][0]["file_hash"]
+    got = flow.get(f"/api/audits/{AUDIT}/readings/{file_hash}/cell", params={"sheet": SHEET, "cell": "G4"}).json()
+    assert got["cell"] == "G4"
+    cited = [c for r_ in got["rows"] for c in r_["cells"] if c["cited"]]
+    assert cited == [{"ref": "G4", "text": "10625", "cited": True}]
+    assert [r_["row"] for r_ in got["rows"]] == [1, 2, 3, 4, 5, 6, 7]
+    assert flow.get(f"/api/audits/{AUDIT}/readings/{file_hash}/cell", params={"sheet": "No such", "cell": "G4"}).status_code == 404
+    assert flow.get(f"/api/audits/{AUDIT}/readings/{'0' * 64}/cell", params={"sheet": SHEET, "cell": "G4"}).status_code == 404
+    assert reading(flow)["files"][0]["summary"]["granularity"] == "monthly"

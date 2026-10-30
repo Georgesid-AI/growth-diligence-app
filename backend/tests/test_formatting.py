@@ -54,11 +54,11 @@ def test_format_payload_leaves_no_raw_numbers():
     m = out["metrics"]
     assert out["target_arr"] == "5,000,000 EUR"
     assert m["arr"]["value"] == "3,129,104 EUR"
-    assert m["nrr"]["overall_pct"] == "106%" and m["nrr"]["n"] == "100"
+    assert m["nrr"]["overall_pct"] == "106 %" and m["nrr"]["n"] == "100"
     assert m["sales_cycle"]["median_days"] == "43 days" and m["sales_cycle"]["iqr"] == ["17 days", "59 days"]
     assert m["acv_path"]["total_customers_at_target"] == "129"
-    assert m["cac_payback"]["quarters"]["2026-Q1"]["L1"]["months"] == "12.2 months"
-    assert m["acv_path"]["required_vs_observed_12m"] == "1.28x"
+    assert m["cac_payback"]["quarters"]["2026-Q1"]["L1"]["months"] == "12 months"
+    assert m["acv_path"]["required_vs_observed_12m"] == "1.3x"
     assert m["acv_path"]["bands"][0]["range_label"] == "100–1,000 EUR"
     assert "value_label" not in m["acv_path"]["overall_band"]
     assert RAW["metrics"]["arr"]["value"] == 3129104.4  # input untouched
@@ -74,8 +74,8 @@ def test_numeric_guard_still_matches_formatted_strings():
     from app.llm.schemas import Narrative, TableRow
 
     out = f.format_payload(RAW)
-    n = Narrative(headline="ARR is 3,129,104 EUR", what_this_means="Needs 129 customers at 1.28x.",
-                  table_rows=[TableRow(label="NRR", value="106%", source_key="metrics.nrr.overall_pct")])
+    n = Narrative(headline="ARR is 3,129,104 EUR", what_this_means="Needs 129 customers at 1.3x.",
+                  table_rows=[TableRow(label="NRR", value="106 %", source_key="metrics.nrr.overall_pct")])
     assert gateway.numeric_guard(n, out).all == []
 
 
@@ -281,7 +281,7 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
         table_rows=[
             TableRow(label="metrics.acv_path.customers_needed", value="129",
                      source_key="metrics.acv_path.customers_needed"),
-            TableRow(label="NRR", value="106%", source_key="metrics.nrr.overall_pct"),
+            TableRow(label="NRR", value="106 %", source_key="metrics.nrr.overall_pct"),
         ],
     )
     resp = NarrativeResponse(run_id="r", step="growth_engine", narrative_status="ok", narrative=n)
@@ -423,13 +423,13 @@ def test_segment_path_figures_format_by_the_rules():
                                  "required_vs_observed_gross": 13.31, "required_blended_landed_acv": 515946.03,
                                  "by_segment": {"A": {"current_mix_pct": 0.293, "shift_pct_points": -0.124}}}},
     }}}, "EUR")["metrics"]["segment_paths"]
-    assert out["horizon_months"] == "34.0 months"
+    assert out["horizon_months"] == "34 months"
     assert out["gap_arr"] == "35,112,601 EUR"
     rs = out["reverse_solve"]["12"]
     assert rs["new_customers_by_target"] == "69"            # implied count rounds UP
     assert rs["required_new_per_year_at_current_mix"] == "320"   # required count rounds UP
-    assert rs["required_vs_observed_gross"] == "13.31x"
-    assert rs["by_segment"]["A"]["shift_pct_points"] == "-12%"
+    assert rs["required_vs_observed_gross"] == "13x"
+    assert rs["by_segment"]["A"]["shift_pct_points"] == "-12 %"
     assert out["landed"]["12"]["gross_new_per_year"] == "24"     # observed rate rounds normally
 
 
@@ -609,7 +609,7 @@ def test_reconciliation_and_window_fields_have_kinds_and_names():
         "factor_landed_acv": 1.25, "factor_gross_rate": 0.8, "segment_ratio": 1.024}}}},
         "gross_churn": {"trailing_window_months": 12}}, "EUR")
     rc = out["metrics"]["segment_paths"]["reconciliation"]["12"]
-    assert (rc["path_to_plan_ratio"], rc["factor_compounded_base"], rc["segment_ratio"]) == ("1.28x", "0.80x", "1.02x")
+    assert (rc["path_to_plan_ratio"], rc["factor_compounded_base"], rc["segment_ratio"]) == ("1.3x", "0.8x", "1x")
     assert out["gross_churn"]["trailing_window_months"] == "12"
     assert f.display_name("metrics.gross_churn.trailing_window_months") == "Measurement window (months)"
     assert f.display_name("metrics.segment_paths.reconciliation.12.factor_landed_acv") == (

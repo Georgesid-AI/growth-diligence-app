@@ -7,6 +7,8 @@ import DeckPanel from "@/components/DeckPanel";
 import { ConsentBlock, AssumptionsSetup, ParkedBlocks } from "@/components/AuditSetup";
 import UploadChat from "@/components/UploadChat";
 import RunAuditPanel from "@/components/RunAuditPanel";
+import ReadingScreen, { ReadingTop } from "@/components/ReadingScreen";
+import { legacyView } from "@/lib/legacyView";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -35,6 +37,14 @@ export default function MappingWizard() {
   useEffect(() => { load(); reportUsage(id, { screen: "mapping" }); }, [load, id]);
 
   // Map is on whenever a file is attached or loaded.
+  const [readKey, setReadKey] = useState(0);        // bumped when a read or a run ends: the reading screen loads again
+  useEffect(() => { if (!mapping && !running) setReadKey((k) => k + 1); }, [mapping, running, views.length]);
+  // The sheet reader runs after the upload's response (read-check-review.md section 3): follow the audit while it works.
+  useEffect(() => {
+    if (!audit || !(audit.sheet_reads_pending > 0)) return undefined;
+    const timer = setTimeout(() => { load(); setReadKey((k) => k + 1); }, 3000);
+    return () => clearTimeout(timer);
+  }, [audit]); // eslint-disable-line react-hooks/exhaustive-deps
   const busy = mapping || running;
   const map = mapState({ attached, loaded: views.length, busy });
 
@@ -42,6 +52,7 @@ export default function MappingWizard() {
     return <Layout audit={audit}><div className="flex justify-center py-32 text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div></Layout>;
   }
 
+  if (legacyView()) {
   return (
     <Layout audit={audit}>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
@@ -69,6 +80,32 @@ export default function MappingWizard() {
       <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={mapping} topHost={topHost} />
 
       <ParkedBlocks audit={audit} setAudit={setAudit} asOf={asOf} />
+    </Layout>
+  );
+  }
+
+  const revenueViews = views.filter((v) => v.dtype === "revenue" && !v.recognition_only);
+  return (
+    <Layout audit={audit}>
+      <ReadingTop audit={audit} setAudit={setAudit} host={<div ref={setTopHost} data-testid="run-audit-top-host" />} />
+      {missing && <p role="status" className="mb-4 text-sm text-amber-800" data-testid="run-missing-line">{missing}</p>}
+
+      <UploadChat audit={audit} onViews={setViews} onStaged={setAttached} onMapping={setMapping}
+        onFiles={attach} leftover={leftover} mapButton={map} compact />
+
+      <ReadingScreen audit={audit} setAudit={setAudit} reloadKey={readKey + fxVersion} />
+
+      <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={mapping} topHost={topHost} />
+
+      <details className="mt-5" data-testid="more-settings">
+        <summary className="cursor-pointer text-sm text-sky-700">More settings</summary>
+        <div className="mt-3">
+          {revenueViews.map((view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />)}
+          <div className="mt-5"><FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} /></div>
+          <AssumptionsSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
+          <ParkedBlocks audit={audit} setAudit={setAudit} asOf={asOf} />
+        </div>
+      </details>
     </Layout>
   );
 }

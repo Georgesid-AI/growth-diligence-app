@@ -22,6 +22,7 @@ jest.mock("@/components/Layout", () => ({ Layout: ({ audit, children }) => <div>
 jest.mock("@/components/DeckPanel", () => ({ reloadKey = 0 }) => <div data-testid="deck-panel" data-reload={reloadKey} />);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+window.history.pushState({}, "", "/?view=legacy");      // PR 3: the earlier screen, which this file tests, is behind ?view=legacy (lib/legacyView.js)
 
 const AUDIT = { id: "a1", company_name: "Target", reporting_currency: "EUR", fiscal_year_end: 12, structure_reading_consent: true, datasets: {} };
 const S2_EXPLAINER_CONSENT = s2Explainer(false);          // PROVIDER_ZDR is off unless an audit says otherwise
@@ -325,7 +326,7 @@ describe("a file", () => {
     expect(api.uploadChatFile).toHaveBeenCalledWith("a1", expect.any(File), {});
     const analyst = q("chat-analyst-bubble");
     expect(analyst.textContent).toContain("rev.csv");
-    expect(analyst.textContent).toContain("2.0 KB");
+    expect(analyst.textContent).toContain("2 KB");
     expect(q("bubble-head").textContent).toBe("Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024)");
     const table = q("mapping-table-revenue");
     expect([...table.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["In your file", "Means", "Confidence", "Mapped by", ""]);
@@ -580,7 +581,7 @@ describe("a forecast table read as claims (chat-upload.md section 20)", () => {
     expect([5, 8, 16].map((r) => q(`forecast-tick-${r}`).checked)).toEqual([true, true, true]);
     expect(q("forecast-label-5").textContent).toBe("Revenue");
     expect(q("forecast-values-5").textContent).toBe("2025F 1,980,000 EUR · 2026F 3,100,000 EUR · 2027F 4,650,000 EUR");
-    expect(q("forecast-values-8").textContent).toBe("2025F 65.2% · 2026F 66.1% · 2027F 67.1%");
+    expect(q("forecast-values-8").textContent).toBe("2025F 65 % · 2026F 66 % · 2027F 67 %");
     expect(q("forecast-values-16").textContent).toBe("2025F 26 people · 2026F 34 people · 2027F 43 people");
     expect(q("forecast-cells-5").textContent).toBe("E5:G5");
     expect(q("forecast-confirm-pnl").textContent).toBe("Save claims");

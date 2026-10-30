@@ -697,7 +697,7 @@ def test_the_boundaries_are_the_dashboards_own_and_the_rating_carries_the_benchm
     assert _rate(_growth(nrr=1.0, churn=0.08, months=12.0))["rating"] == "Strong", "NRR 100%, churn 8% and 12 months are green"
     assert _rate(_growth(churn=0.15))["rating"] == "Adequate" and _rate(_growth(months=18.0))["rating"] == "Adequate", "red is above 15% and 18"
     r = _rate(_growth())
-    assert r["benchmark"] is True and r["line"].startswith("Strong (NRR 104%, gross churn 5%, CAC payback 10")
+    assert r["benchmark"] is True and r["line"].startswith("Strong (NRR 104 %, gross churn 5 %, CAC payback 10")
     assert vd.BENCHMARK == "benchmark, not company data"
 
 

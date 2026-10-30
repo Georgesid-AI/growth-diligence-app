@@ -8,6 +8,7 @@
 import { displayDate } from "./datePicker";
 import evidenceLabels from "./evidence_labels.json";
 import informationalFlags from "./informational_flags.json";
+import { fmtExact, fmtNumber } from "./format";
 import listTexts from "./claims_list_texts.json";
 
 export const PLACEHOLDER = "—";
@@ -134,9 +135,9 @@ export function sourceRef(ref) {
   return parts.join(" · ");
 }
 
-const figure = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const figure = (v) => fmtNumber(v);
 // A converted figure is in whole units of the reporting currency: the rate and the date it applies at are on hover.
-const whole = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
+const whole = (v) => fmtNumber(v);
 const present = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
 
 function amount(c, value, high, rate) {
@@ -144,7 +145,7 @@ function amount(c, value, high, rate) {
   const scale = rate ? Number(rate) : 1;
   const fmt = rate ? whole : figure;
   const n = present(high) ? `${fmt(value * scale)}–${fmt(high * scale)}` : fmt(value * scale);
-  if (c.unit === "%") return `${n}%`;
+  if (c.unit === "%") return `${n} %`;
   if (c.unit === "x") return `${n}x`;
   if (c.unit) return `${n} ${c.unit}`;
   return c.currency ? `${n} ${rate ? c.fx.currency : c.currency}` : n;
@@ -170,7 +171,7 @@ export const STALE_LABEL = "Stale – re-run audit";
 export function conversionHover(c) {
   if (!c?.fx || !c.currency || c.unit || c.fx.rate == null) return null;
   const on = c.fx.date_stale ? STALE_LABEL : displayDate(c.fx.date);
-  return `Rate used: 1 ${c.currency} = ${figure(c.fx.rate)} ${c.fx.currency}${on ? ` on ${on}` : ""}`;
+  return `Rate used: 1 ${c.currency} = ${fmtExact(c.fx.rate)} ${c.fx.currency}${on ? ` on ${on}` : ""}`;
 }
 
 /** The claim's figure in the audit's currency, when it is stated in another one: "150,000 GBP (171,000 EUR)", whole units. The
@@ -244,7 +245,7 @@ export const MIXED_SLIDE_LABEL = "mixed slide – check";
 // The word the deck uses for the figure ("Turnover", "Revenue"), shown before it so two figures are never mistaken for one metric.
 const figureText = (f) => {
   const n = present(f.value_high) ? `${figure(f.value)}–${figure(f.value_high)}` : figure(f.value);
-  if (f.unit === "%") return `${f.label ? `${f.label} ` : ""}${n}%`;
+  if (f.unit === "%") return `${f.label ? `${f.label} ` : ""}${n} %`;
   if (f.unit === "x") return `${f.label ? `${f.label} ` : ""}${n}x`;
   return [f.label, n, f.currency || f.unit].filter(Boolean).join(" ");
 };

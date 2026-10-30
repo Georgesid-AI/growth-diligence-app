@@ -22,6 +22,7 @@ import { Conclusion, VerdictDetail, ReportDownload } from "@/components/Verdict"
 import AssumptionsStrip from "@/components/AssumptionsStrip";
 import FiveClaims from "@/components/FiveClaims";
 import NeedsAttention from "@/components/NeedsAttention";
+import { legacyView } from "@/lib/legacyView";
 import IntegrityCoverage from "@/components/IntegrityCoverage";
 import YearlyBasis from "@/components/YearlyBasis";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
@@ -140,7 +141,7 @@ export default function Dashboard() {
   if (error === "not_computed") {
     return (
       <Layout audit={audit}>
-        <NeedsAttention auditId={id} computed={false} onChanged={answered} />
+        {legacyView() && <NeedsAttention auditId={id} computed={false} onChanged={answered} />}
         <div className="border border-dashed border-[#E5E7EB] rounded-xl py-24 text-center">
           <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-4" />
           <p className="text-slate-700 mb-4">This audit hasn't been computed yet.</p>
@@ -269,9 +270,10 @@ export default function Dashboard() {
       <AssumptionsStrip audit={por} results={r} onChange={() => nav(`/audit/${id}/mapping`)} />
 
       {/* The conclusion with its contradiction lines, the five selected claims, the questions, the report (docs/design/simplified-flow.md) */}
-      <Conclusion auditId={id} verdict={verdict} onChanged={refreshVerdict} />
-      <FiveClaims auditId={id} verdict={verdict} ccy={ccy} tick={verdictTick + registerKey} />
-      <NeedsAttention auditId={id} onChanged={answered} />
+      {/* PR 3: the five-claims conclusion, the questions and the claims list stay in the code and leave the default screen (?view=legacy). */}
+      {legacyView() && <Conclusion auditId={id} verdict={verdict} onChanged={refreshVerdict} />}
+      {legacyView() && <FiveClaims auditId={id} verdict={verdict} ccy={ccy} tick={verdictTick + registerKey} />}
+      {legacyView() && <NeedsAttention auditId={id} onChanged={answered} />}
       <ReportDownload auditId={id} note={verdict?.ic_inputs?.note} />
 
       {/* Everything else, collapsed. A native details element keeps its content in the page, so nothing below is unmounted. */}
@@ -344,7 +346,7 @@ export default function Dashboard() {
       </div>
 
       {/* Claim register: the deck claims in the register, tested against the computed metrics (docs/specs/claim-matching.md section 8) */}
-      <ClaimRegister key={registerKey} auditId={id} results={r} onChanged={refreshVerdict} />
+      {legacyView() && <ClaimRegister key={registerKey} auditId={id} results={r} onChanged={refreshVerdict} />}
 
       {/* Data gaps and the verdict (docs/specs/verdict-and-memo.md sections 4 and 6.4) */}
       <DataGaps auditId={id} verdict={verdict} onChanged={refreshVerdict} />

@@ -1,0 +1,189 @@
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import ReadingResults, { SourceLink } from "@/components/ReadingResults";
+import { changeReading, downloadReading, getAudit, getReading, updateAudit } from "@/lib/api";
+import { SETUP_LABELS, MONTHS, DEFAULT_FISCAL_YEAR_END, asOfEvidenceLine, parseMonthYear } from "@/lib/auditForm";
+import { fmtBytes } from "@/lib/format";
+import { monthName, periodText } from "@/lib/periods";
+import { describeRequestError } from "@/lib/requestError";
+import { EXPLAINER, HOVERS, WIDTHS, deckFiguresText, deckSummary, lastActualText, sheetSummary, splitEvidence } from "@/lib/readingView";
+
+/**
+ * The audit page's reading screen (docs/design/read-check-review.md section 11; docs/design/audit-page-mockup.html; PR 3 step d): the one-sentence
+ * explainer with the AI-reading tick, the assumptions strip with the as-of evidence, one block per file, and the three result tables with the
+ * cards. The Run audit button is drawn at the right of the top row by RunAuditPanel (the page's `topHost`).
+ */
+const EMPTY = { files: [], tables: { confirmed: [], rejected: [], cannot_check: [] }, counts: { confirmed: 0, rejected: 0, cannot_check: 0 }, cards: [], review: {} };
+
+export function ReadingTop({ audit, setAudit, host }) {
+  const consent = audit.structure_reading_consent === true;
+  const save = async (value) => {
+    try {
+      await updateAudit(audit.id, { structure_reading_consent: value });
+      setAudit(await getAudit(audit.id));
+    } catch (e) {
+      toast.error(`${SETUP_LABELS.structure_reading_consent} could not be saved: ${describeRequestError(e).message}`);
+    }
+  };
+  return (
+    <section className="reading-top" data-testid="reading-top">
+      <div>
+        <p data-testid="reading-explainer">{EXPLAINER}</p>
+        <label>
+          <input type="checkbox" data-testid="setup-consent-checkbox" checked={consent} onChange={(e) => save(e.target.checked)} />
+          <span data-testid="setup-consent-tick-label">{SETUP_LABELS.structure_reading_consent}</span>
+        </label>
+      </div>
+      {host}
+    </section>
+  );
+}
+
+function InlineChange({ label, placeholder, onSave, testid, type = "text" }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  if (!open) return <a href="#change" data-testid={testid} onClick={(e) => { e.preventDefault(); setOpen(true); }}>Change</a>;
+  return (
+    <span>
+      <input aria-label={label} type={type} placeholder={placeholder} value={value} onChange={(e) => setValue(e.target.value)} data-testid={`${testid}-input`} />
+      <button type="button" className="btn quiet" data-testid={`${testid}-save`} disabled={!value.trim()}
+        onClick={async () => { if (await onSave(value.trim())) { setOpen(false); setValue(""); } }}>Save</button>
+    </span>
+  );
+}
+
+export function ReadingStrip({ audit, onAsOf }) {
+  const asOf = audit.as_of_month;
+  const items = [
+    ["currency", "Currency", audit.reporting_currency || "—"],
+    ["period", "Reporting period", periodText(audit.datasets?.revenue?.months) || "—"],
+    ["fy-end", "FY end", MONTHS[(Number(audit.fiscal_year_end) || DEFAULT_FISCAL_YEAR_END) - 1]],
+  ];
+  const evidence = splitEvidence(asOfEvidenceLine(audit));
+  return (
+    <>
+      <section className="strip" data-testid="assumptions-strip">
+        {items.slice(0, 2).map(([key, name, value]) => <div key={key} data-testid={`assumption-${key}`}><span>{name}</span>{value}</div>)}
+        <div data-testid="assumption-as-of">
+          <span>As-of month</span>
+          {asOf ? `${monthName(asOf)}${audit.as_of_by === "analyst" ? " (set by analyst)" : ""}` : "not determined"}{" "}
+          <InlineChange label="As-of month" placeholder="Jun 2021" testid="assumptions-change" onSave={onAsOf} />
+        </div>
+        {items.slice(2).map(([key, name, value]) => <div key={key} data-testid={`assumption-${key}`}><span>{name}</span>{value}</div>)}
+      </section>
+      {(evidence.text || evidence.confirmed) && (
+        <p className="evidence" data-testid="assumption-as-of-evidence">
+          {evidence.text}{evidence.confirmed && <> <b>{evidence.confirmed}</b></>}
+        </p>
+      )}
+    </>
+  );
+}
+
+const Summary = ({ parts }) => (
+  <p className="summary" data-testid="file-summary">
+    {parts.map((p, i) => (
+      <span key={i}>{i ? " · " : ""}{p.bold && p.text.startsWith(" ") ? <>{p.bold}{p.text}</> : p.bold ? <>{p.text}<b>{p.bold}</b></> : p.text}</span>
+    ))}
+  </p>
+);
+
+function LinesTable({ lines, file, auditId, sheet }) {
+  const heads = Object.keys(HOVERS.lines);
+  return (
+    <table className="rows" data-testid="lines-table">
+      <colgroup>{WIDTHS.lines.map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+      <thead><tr>{heads.map((h) => <th key={h} title={HOVERS.lines[h]}>{h}</th>)}</tr></thead>
+      <tbody>
+        {lines.map((ln) => (
+          <tr key={ln.row} className={[ln.indent ? "sub" : "", ln.moved ? "moved" : ""].join(" ").trim()} data-testid={`line-${ln.row}`}>
+            <td data-h="Line">{ln.label}{ln.moved && <span className="note" data-testid="moved-note"> · shown under its line</span>}</td>
+            <td data-h="Read as">{ln.read_as}</td>
+            <td data-h="Basis">{ln.basis}</td>
+            <td data-h="Actual / plan">{ln.actual_plan}</td>
+            <td data-h="Cells" className="src">
+              {ln.cells ? <SourceLink auditId={auditId} source={{ file: file.file, file_hash: file.file_hash, sheet, cell: ln.cells }} label={<b>{ln.cells}</b>} /> : PLACEHOLDER_DASH}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+const PLACEHOLDER_DASH = "—";
+
+function SheetBlock({ file, auditId, onChanged, onAsOf }) {
+  const [open, setOpen] = useState(false);
+  const a = file.anchors;
+  const change = async (body) => {
+    try { await changeReading(auditId, file.file_hash, body); onChanged(); return true; }
+    catch (e) { toast.error(e.response?.data?.detail || "The change could not be saved."); return false; }
+  };
+  const sheet = a.revenue_row?.sheet || a.actual_plan?.sheet || file.lines[0]?.sheet;
+  return (
+    <section className="file" data-testid="file-block">
+      <h2>{file.file} {file.size != null && <small>{fmtBytes(file.size)}</small>}</h2>
+      <Summary parts={sheetSummary(file.summary)} />
+      <div className="anchors">
+        <span className="k">As-of month</span>
+        <span data-testid="anchor-as-of">{a.as_of ? `${lastActualText(a.as_of.month, file.summary.granularity)} — ${splitEvidence(a.as_of.evidence).text}` : "not determined"}</span>
+        <InlineChange label="As-of month" placeholder="Jun 2021" testid="anchor-as-of-change" onSave={onAsOf} />
+        <span className="k">Revenue row</span>
+        <span data-testid="anchor-revenue">{a.revenue_row ? `Row ${a.revenue_row.row}, ${a.revenue_row.label}, ${a.revenue_row.basis}` : "not found"}</span>
+        <InlineChange label="Revenue row" placeholder="Row number" type="number" testid="anchor-revenue-change"
+          onSave={(v) => change({ what: "revenue_row", sheet, row: Number(v) })} />
+        <span className="k">Actual / plan</span>
+        <span data-testid="anchor-boundary">{a.actual_plan ? `Actual to column ${a.actual_plan.last_actual}, plan from ${a.actual_plan.plan_from}` : "not determined"}</span>
+        <InlineChange label="Last actual column" placeholder="AP" testid="anchor-boundary-change"
+          onSave={(v) => change({ what: "boundary", sheet: a.actual_plan?.sheet || sheet, column: v })} />
+      </div>
+      <p className="exports">
+        <a href="#json" data-testid="export-json" onClick={(e) => { e.preventDefault(); downloadReading(auditId, file.file_hash, "json"); }}>Export map (JSON)</a>
+        {" · "}
+        <a href="#csv" data-testid="export-csv" onClick={(e) => { e.preventDefault(); downloadReading(auditId, file.file_hash, "csv"); }}>Export series (CSV)</a>
+      </p>
+      <details open={open} data-testid="lines-details">
+        <summary onClick={(e) => { e.preventDefault(); setOpen((v) => !v); }}>{open ? "Hide all lines" : "Show all lines"}</summary>
+        {file.lines.map((entry) => <LinesTable key={entry.sheet} lines={entry.lines} file={file} auditId={auditId} sheet={entry.sheet} />)}
+      </details>
+    </section>
+  );
+}
+
+function DeckBlock({ file, onShowAll }) {
+  return (
+    <section className="file" data-testid="file-block">
+      <h2>{file.file} <small>{file.pages != null ? `${file.pages} pages` : ""}</small></h2>
+      <Summary parts={deckSummary(file.summary)} />
+      <div className="anchors">
+        <span className="k">Figures</span><span data-testid="anchor-figures">{deckFiguresText(file.anchors.figures)}</span>
+        <a href="#all" data-testid="deck-show-all" onClick={(e) => { e.preventDefault(); onShowAll(); }}>Show all</a>
+      </div>
+    </section>
+  );
+}
+
+export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
+  const [data, setData] = useState(null);
+  const [confirmedOpen, setConfirmedOpen] = useState(false);
+  const auditId = audit.id;
+  const load = useCallback(() => getReading(auditId).then(setData).catch(() => setData(EMPTY)), [auditId]);
+  useEffect(() => { load(); }, [load, reloadKey]);
+  const reloadAudit = async () => { try { setAudit(await getAudit(auditId)); } catch (e) { /* the page keeps what it has */ } };
+  const onAsOf = async (text) => {
+    const next = parseMonthYear(text);
+    if (!next) { toast.error("As-of month must be a month and year, e.g. Jun 2021"); return false; }
+    try { await updateAudit(auditId, { as_of_month: next }); await reloadAudit(); load(); return true; }
+    catch (e) { toast.error(`As-of month could not be saved: ${describeRequestError(e).message}`); return false; }
+  };
+  const view = data || EMPTY;
+  return (
+    <div className="reading" data-testid="reading-screen">
+      <ReadingStrip audit={audit} onAsOf={onAsOf} />
+      {view.files.map((f) => (f.kind === "sheet"
+        ? <SheetBlock key={f.file_hash} file={f} auditId={auditId} onChanged={() => { load(); reloadAudit(); }} onAsOf={onAsOf} />
+        : <DeckBlock key={f.deck_id} file={f} onShowAll={() => setConfirmedOpen(true)} />))}
+      <ReadingResults data={view} auditId={auditId} confirmedOpen={confirmedOpen} setConfirmedOpen={setConfirmedOpen} onChanged={() => { load(); reloadAudit(); }} />
+    </div>
+  );
+}

@@ -272,7 +272,7 @@ def test_the_two_assessed_rows_carry_the_computed_rating_its_rule_line_and_the_w
     assert "0 anomaly flags" in reliability and "9 of 33 claims Verified" in reliability
     growth = next(line for line in text.split("\n") if line.startswith("| Growth engine |"))
     assert growth.split("|")[2].strip() == "Adequate"
-    assert "Adequate: NRR 113%, gross churn 0%, CAC payback not computed (benchmark, not company data)." in growth
+    assert "Adequate: NRR 113 %, gross churn 0 %, CAC payback not computed (benchmark, not company data)." in growth
 
 
 def test_a_rating_with_a_missing_input_reads_not_rated_and_names_it():
@@ -308,7 +308,7 @@ def test_without_a_narrative_the_memo_carries_every_figure_with_its_footnote_and
     text = memo(narratives=narratives)
     head = head_of(text)
     growth = next(line for line in head.split("\n") if line.startswith("| Growth engine |"))
-    assert re.search(r"ARR 202,125 EUR \(2024-02\)\[\^\d+\], NRR 113% \(2024-02\)\[\^\d+\], gross revenue churn 0% \(2024-02\)\[\^\d+\]", growth)
+    assert re.search(r"ARR 202,125 EUR \(2024-02\)\[\^\d+\], NRR 113 % \(2024-02\)\[\^\d+\], gross revenue churn 0 % \(2024-02\)\[\^\d+\]", growth)
     assert im.S17 in growth and im.S17 in head.split("## Worth flagging")[1]
     assert "The growth engine is steady." not in text
 

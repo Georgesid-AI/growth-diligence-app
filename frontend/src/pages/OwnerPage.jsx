@@ -1,3 +1,4 @@
+import { fmtNumber } from "@/lib/format";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,7 @@ export const NO_PROMPT_NOTICE = "No prompt loaded for";
 // docs/specs/prompt-store.md section 1: the same limit as prompt_store.MAX_TEXT_CHARS; counted on text with \n line ends, as stored.
 export const PROMPT_LIMIT = 10000;
 export const promptLength = (text) => text.replace(/\r\n/g, "\n").length;
-export const overLimitMessage = (n) => `Prompt is ${n} characters; the limit is ${PROMPT_LIMIT.toLocaleString("en-US")}.`;
+export const overLimitMessage = (n) => `Prompt is ${n} characters; the limit is ${fmtNumber(PROMPT_LIMIT)}.`;
 export const LINK_ONCE = "Shown once. Copy it now; it cannot be shown again, only replaced by Re-issue.";
 
 const when = (iso) => (iso ? String(iso).slice(0, 16).replace("T", " ") + " UTC" : "—");
@@ -190,7 +191,7 @@ export default function OwnerPage() {
           <Textarea rows={8} value={text} onChange={(e) => { setText(e.target.value); setFileName(null); }} placeholder="Or paste the prompt text"
             data-testid="owner-prompt-text" className="font-mono text-xs" />
           <p className={`text-xs ${promptLength(text) > PROMPT_LIMIT ? "text-rose-700" : "text-slate-500"}`} data-testid="owner-prompt-count">
-            {promptLength(text)} / {PROMPT_LIMIT.toLocaleString("en-US")}
+            {promptLength(text)} / {fmtNumber(PROMPT_LIMIT)}
           </p>
           <p className="text-xs text-slate-500">Each page read sends this prompt; longer prompts cost more per audit.</p>
           <p className="text-xs text-slate-500">Every upload creates a new version. Nothing is deleted, and the text is not shown again.</p>

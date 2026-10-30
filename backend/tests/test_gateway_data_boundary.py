@@ -2448,7 +2448,7 @@ def test_the_integrity_payload_holds_the_window_figures_as_display_strings_and_n
     for m in results["revenue_reconciliation"]["by_month"]:
         m["revenue_file"], m["pnl"], m["gap"] = 123456.0, 111111.0, 12345.0      # figures only the monthly block holds
     blob = json.dumps(steps.payload_of("data_integrity", results), ensure_ascii=False)
-    assert "1,100,000 EUR" in blob and "10%" in blob, "the stored window total and gap, as display strings"
+    assert "1,100,000 EUR" in blob and "10 %" in blob, "the stored window total and gap, as display strings"
     for needle in ("revenue_reconciliation", "by_month", "123456", "123,456", "111,111", "12,345", "0.1"):
         assert needle not in blob, f"{needle!r} (a month of the monthly block) reached the integrity payload"
     inventory = json.dumps(steps.payload_of("data_inventory", results), ensure_ascii=False)

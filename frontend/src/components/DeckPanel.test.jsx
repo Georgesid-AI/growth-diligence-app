@@ -263,7 +263,7 @@ test("a use-of-funds text figure and its chart figure show text and chart with t
     inconsistencies: [{ this: share("text", 40), other: share("chart", 42), note: "chart excludes Operational Expenses & Talent Acquisition, rescaled" }] })]);
   await open(8);                                   // Use of funds starts collapsed (George, 2026-10-23)
   expect(q("candidate-inconsistency").getAttribute("title")).toBe(
-    "The deck gives different figures for this metric: text 40% at d.pdf · page 22 and chart 42% at d.pdf · page 22; chart excludes Operational Expenses & Talent Acquisition, rescaled.");
+    "The deck gives different figures for this metric: text 40 % at d.pdf · page 22 and chart 42 % at d.pdf · page 22; chart excludes Operational Expenses & Talent Acquisition, rescaled.");
   expect(document.body.textContent).not.toMatch(/Contradicted/);
 });
 
