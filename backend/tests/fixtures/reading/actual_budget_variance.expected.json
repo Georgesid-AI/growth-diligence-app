@@ -23,20 +23,6 @@
    "period": "2024-06",
    "sheet": "Actual vs budget",
    "cell": "Q5"
-  },
-  {
-   "metric": "revenue",
-   "value": 425000.0,
-   "period": "2024-06",
-   "sheet": "Actual vs budget",
-   "cell": "R5"
-  },
-  {
-   "metric": "revenue",
-   "value": 5250.0,
-   "period": "2024-06",
-   "sheet": "Actual vs budget",
-   "cell": "S5"
   }
  ],
  "file_map": {

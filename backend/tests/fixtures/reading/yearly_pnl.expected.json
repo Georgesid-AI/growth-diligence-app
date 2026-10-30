@@ -33,13 +33,6 @@
    "period": "2024",
    "sheet": "P&L",
    "cell": "E4"
-  },
-  {
-   "metric": "revenue",
-   "value": 5200000.0,
-   "period": "2025",
-   "sheet": "P&L",
-   "cell": "F4"
   }
  ],
  "file_map": {

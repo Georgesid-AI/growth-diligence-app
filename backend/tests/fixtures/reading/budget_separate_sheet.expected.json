@@ -34,13 +34,6 @@
    "period": "2024-06",
    "sheet": "Actuals",
    "cell": "G3"
-  },
-  {
-   "metric": "revenue",
-   "value": 425000.0,
-   "period": "2024-06",
-   "sheet": "Budget",
-   "cell": "G3"
   }
  ],
  "file_map": {

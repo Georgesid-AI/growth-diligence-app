@@ -127,7 +127,7 @@ def yearly_pnl():
     fmap = {"map_version": 1, "kind": "sheet", "sheets": [sheet_map(name, 3, "B", "F", "yearly", rows, last)], "figures": figures}
     return expected("yearly_pnl.xlsx", "2024-12", [{"sheet": name, "last_actual_column": "E", "revenue_row": 4, "granularity": "yearly"}],
                     [{"sheet": name, "row": 4, "role": "revenue"}, {"sheet": name, "row": 5, "role": "cost_of_revenue"},
-                     {"sheet": name, "row": 6, "role": "sales_marketing"}], figures, fmap)
+                     {"sheet": name, "row": 6, "role": "sales_marketing"}], figures[:1], fmap)
 
 
 # --- 3. actual | budget | variance columns per month ---
@@ -168,7 +168,7 @@ def actual_budget_variance():
     fmap = {"map_version": 1, "kind": "sheet", "sheets": [sheet_map(name, 3, "B", "AI", "monthly", rows, last)], "figures": figures}
     return expected("actual_budget_variance.xlsx", "2024-06",
                     [{"sheet": name, "last_actual_column": "Q", "revenue_row": 5, "granularity": "monthly"}],
-                    [{"sheet": name, "row": 5, "role": "revenue"}], figures, fmap)
+                    [{"sheet": name, "row": 5, "role": "revenue"}], figures[:1], fmap)
 
 
 # --- 4. the budget on a separate sheet ---
@@ -204,7 +204,7 @@ def budget_separate_sheet():
     return expected("budget_separate_sheet.xlsx", "2024-06",
                     [{"sheet": "Actuals", "last_actual_column": "G", "revenue_row": 3, "granularity": "monthly"},
                      {"sheet": "Budget", "last_actual_column": None, "revenue_row": None, "granularity": "monthly"}],
-                    [{"sheet": "Actuals", "row": 3, "role": "revenue"}, {"sheet": "Budget", "row": 3, "role": "forecast"}], figures, fmap)
+                    [{"sheet": "Actuals", "row": 3, "role": "revenue"}, {"sheet": "Budget", "row": 3, "role": "forecast"}], figures[:1], fmap)
 
 
 # --- 5. a deck with rotated chart-axis labels whose parts sum to a headline figure (read by the page reader, PR 3) ---

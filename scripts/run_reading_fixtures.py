@@ -12,7 +12,7 @@ notice, exit 0, when any is absent:
 
 The cap is one provider call per fixture per run: each file is read once, with no re-read, and the first reading is what is compared. The
 reading goes through the same gateway as the product (masking, token cap, allow-listed model, prompt from a store), with an in-memory store holding
-the prompt. A difference, a refusal or a failed read exits 1. Cost: a few cents per run. Prints a table; no cell text is printed.
+the prompt. A difference, a refusal or a failed read exits 1. Cost: a few cents per run. Prints a table and the reason text of every cannot-check item (fixtures are synthetic).
 """
 import asyncio
 import hashlib
@@ -78,6 +78,9 @@ async def read_all() -> int:
         counts = result["counts"]
         print(f"{name:26} {'read':10} {month or '-':8} {read.input_tokens}/{read.output_tokens:<8} "
               f"{'; '.join(diffs) if diffs else 'none'}  [confirmed {counts['confirmed']}, rejected {counts['rejected']}, cannot check {counts['cannot_check']}]")
+        for item in result["items"]:
+            if item["outcome"] == checks.CANNOT:
+                print(f"    cannot check {item['key']}: {item['reason']}")
     print(f"{failed} fixture(s) differ from their expected map" if failed else "every fixture agrees with its expected map")
     return 1 if failed else 0
 

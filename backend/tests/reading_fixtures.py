@@ -74,7 +74,7 @@ def compare(exp: Dict, month, file_map: Dict) -> List[str]:
         role = next((r.get("role") for r in (got or {}).get("rows") or [] if r["row"] == want_role["row"]), None)
         if role != want_role["role"]:
             out.append(f"{want_role['sheet']} row {want_role['row']}: role {role}, expected {want_role['role']}")
-    for want_fig in exp.get("figures") or []:
+    for want_fig in exp.get("figures") or []:        # a required subset: figures returned beyond these are no difference
         found = [f for f in file_map.get("figures") or []
                  if (f.get("source") or {}).get("cell") == want_fig["cell"] and (f.get("source") or {}).get("sheet") == want_fig["sheet"]
                  and f.get("metric") == want_fig["metric"]]

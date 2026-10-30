@@ -174,6 +174,15 @@ def test_the_comparison_names_a_wrong_boundary_column_even_when_the_month_agrees
     assert rf.compare(exp, "2024-06", moved) == ["Actual vs budget: last actual column R, expected Q"]
 
 
+def test_expected_figures_are_a_required_subset_and_extra_returned_figures_are_no_difference():
+    exp = next(f for f in SHEETS if f["name"] == "actual_budget_variance")["expected_map"]
+    assert len(exp["figures"]) == 1, "the plan and variance cells are covered by the row entries, not by figures"
+    full = copy.deepcopy(exp["file_map"])
+    assert len(full["figures"]) == 3 and rf.compare(exp, "2024-06", full) == []
+    full["figures"] = full["figures"][1:]
+    assert rf.compare(exp, "2024-06", full) == ["figure revenue at Actual vs budget!Q5 missing"]
+
+
 def test_the_comparison_names_a_wrong_revenue_row_a_wrong_role_and_a_wrong_figure():
     fixture = next(f for f in SHEETS if f["name"] == "monthly_report")
     exp = fixture["expected_map"]
