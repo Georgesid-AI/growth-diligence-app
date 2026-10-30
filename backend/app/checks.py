@@ -83,6 +83,14 @@ class SheetCells:
     def get(self, row: int, col: int) -> Optional[str]:
         return self.cells.get((row, col))
 
+    def span_end(self, row: int, col: int) -> int:
+        """The last column of the merged cell that covers (row, col), or the column itself: a month header over its actual, budget and
+        variance columns ends at the variance column."""
+        for r1, c1, r2, c2 in self.spans:
+            if r1 <= row <= r2 and c1 <= col <= c2:
+                return c2
+        return col
+
     def header(self, row: int, col: int) -> Optional[str]:
         """The text a header cell shows: its own, or that of the merged cell that covers it (a month over its three columns, a quarter over
         its three months)."""
@@ -394,6 +402,7 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
     kind = piece["kind"]
     base = {"key": key, "kind": "evidence", "evidence_kind": kind, "sheet": smap["sheet"], "cell": None, "text": piece.get("text"), "supports": False}
     last_col = redact.col_number(smap["last_period_col"])
+    next_col = sheet.span_end(smap["header_row"], boundary_col) + 1      # the column right after the boundary period's header
 
     def rejected(reason, cell=None):
         return {**base, "outcome": REJECTED, "reason": reason, "cell": cell}
@@ -431,7 +440,7 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
         if " ".join(piece["word"].lower().split()) not in " ".join((text or "").lower().split()):
             return rejected(R_CONTAINS.format(ref=piece["cell"], word=piece["word"], cell=cell_shown(text)), piece["cell"])
         row, col = pos
-        # A title points at one column, the one right after the boundary (a merged title holds its text in its first column). A row label points at none.
+        # A title points at one column, the one right after the boundary period (a merged title holds its text in its first column). A row label points at none.
         above = row <= smap["header_row"] and col == boundary_col + 1
         return confirmed(bool(PLAN_WORD.search(piece["word"])) and above, piece["cell"])
     rng = parse_range(piece.get("cells"))
@@ -441,7 +450,7 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
         past = _outside(sheet, *pos)
         if past:
             return rejected(past)
-    after = rng[1] == boundary_col + 1                                 # the range starts in the column right after the boundary
+    after = rng[1] == next_col                                         # the range starts in the column right after the boundary period
     if kind == "equals_range":
         other = parse_range(piece.get("other_cells"))
         if other is None:

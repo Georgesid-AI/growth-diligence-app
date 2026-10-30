@@ -476,3 +476,19 @@ def test_a_title_over_a_merged_span_counts_from_the_start_of_the_span():
     cells = checks.Cells(redact.reading_text([{"name": "Report", "cells": sheet_cells}]))
     inside = checks.check_map(cells, fmap(sheet_map(evidence=[piece("label_contains", cell="H2", word="Forecast")])), 12)
     assert months(inside) == [("2024-06", "G")]
+
+
+def test_a_month_header_over_three_columns_ends_at_its_last_column():
+    """Layout 3: Jun-24 is merged over Q:S; the evidence starts at T. A boundary at the May group (N:P) or the Jun group is tested the same way."""
+    grid = {(3, 14): "May-24", (3, 17): "Jun-24", (3, 20): "Jul-24", (5, 17): "430", (7, 17): "70"}
+    cells = [{"row": r, "col": c, "text": t} for (r, c), t in grid.items() if t is not None]
+    cells += [{"row": 3, "col": 14, "text": "May-24", "col_span": 3}, {"row": 3, "col": 17, "text": "Jun-24", "col_span": 3}]
+    cells = [c for c in cells if not (c["row"] == 3 and c["col"] in (14, 17) and "col_span" not in c)]
+    book = checks.Cells(redact.reading_text([{"name": "Report", "cells": cells}]))
+
+    def run(letter, period):
+        sm = sheet_map(evidence=[piece("range_empty", cells="T5:T7")], first_period_col="N", last_period_col="V", rows=[])
+        sm["last_actual"].update(column=letter, period=period)
+        return checks.check_map(book, fmap(sm), 12)
+    assert months(run("Q", "2024-06")) == [("2024-06", "Q")]
+    assert months(run("N", "2024-05")) == [], "T is three columns after the May group's last column"
