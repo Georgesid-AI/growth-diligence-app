@@ -22,19 +22,19 @@ def run(coro):
 
 def test_a_reading_is_written_once_and_a_second_write_returns_the_first_unchanged():
     db = t.FakeDB()
-    first = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=READING, input_tokens=10, output_tokens=5))
+    first = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, prompt_hash=PROMPT, model=MODEL, reading=READING, input_tokens=10, output_tokens=5))
     other = copy.deepcopy(READING)
     other["sheets"][0]["rows"][0]["role"] = "revenue"
-    second = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=other))
+    second = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, prompt_hash=PROMPT, model=MODEL, reading=other))
     assert len(db[readings.READINGS].docs) == 1
     assert second["file_map"]["sheets"][0]["rows"][0]["role"] == "bookings" == first["file_map"]["sheets"][0]["rows"][0]["role"]
 
 
 def test_a_new_prompt_or_model_version_is_stored_beside_the_old_reading_and_the_old_one_stays():
     db = t.FakeDB()
-    run(readings.put(db, account="t1", file_hash=HASH, prompt_version="store:v1", model=MODEL, reading=READING))
-    run(readings.put(db, account="t1", file_hash=HASH, prompt_version="store:v2", model=MODEL, reading=READING))
-    run(readings.put(db, account="t1", file_hash=HASH, prompt_version="store:v1", model="claude-opus-5-5", reading=READING))
+    run(readings.put(db, account="t1", file_hash=HASH, prompt_version="store:v1", prompt_hash="store:v1", model=MODEL, reading=READING))
+    run(readings.put(db, account="t1", file_hash=HASH, prompt_version="store:v2", prompt_hash="store:v2", model=MODEL, reading=READING))
+    run(readings.put(db, account="t1", file_hash=HASH, prompt_version="store:v1", prompt_hash="store:v1", model="claude-opus-5-5", reading=READING))
     assert len({d["key"] for d in db[readings.READINGS].docs}) == 3
     assert run(readings.get(db, "t1", HASH, "store:v1", MODEL)) is not None
     assert run(readings.get(db, "t1", "0" * 64, "store:v1", MODEL)) is None
@@ -42,7 +42,7 @@ def test_a_new_prompt_or_model_version_is_stored_beside_the_old_reading_and_the_
 
 def test_an_override_is_a_dated_record_of_its_own_and_the_stored_reading_is_not_touched():
     db = t.FakeDB()
-    stored = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=READING))
+    stored = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, prompt_hash=PROMPT, model=MODEL, reading=READING))
     before = copy.deepcopy(db[readings.READINGS].docs[0])
     o = run(readings.add_override(db, reading=stored["key"], audit_id="a1", item="sheets.0.rows.0", path="sheets.0.rows.0.role",
                                   old="bookings", new="revenue", who="analyst", why="bookings row is recognised revenue"))
@@ -80,7 +80,7 @@ def test_a_second_reading_is_keyed_on_the_reading_and_its_item_keys_never_twice_
 
 def test_delete_audit_removes_a_reading_when_no_audit_uses_it_and_keeps_it_while_another_does():
     db = t.FakeDB()
-    stored = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=READING))
+    stored = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, prompt_hash=PROMPT, model=MODEL, reading=READING))
     run(readings.put_reread(db, reading=stored["key"], items=["i"], reason="r", prompt_version=PROMPT, model=MODEL, output={}))
     for audit in ("a1", "a2"):
         run(readings.use(db, audit, stored["key"]))
@@ -98,9 +98,9 @@ def test_delete_audit_removes_a_reading_when_no_audit_uses_it_and_keeps_it_while
 
 def test_a_reading_is_keyed_on_the_account_and_one_account_never_gets_anothers():
     db = t.FakeDB()
-    run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=READING))
-    run(readings.put(db, account="t2", file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=READING))
-    run(readings.put(db, account=None, file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=READING))
+    run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, prompt_hash=PROMPT, model=MODEL, reading=READING))
+    run(readings.put(db, account="t2", file_hash=HASH, prompt_version=PROMPT, prompt_hash=PROMPT, model=MODEL, reading=READING))
+    run(readings.put(db, account=None, file_hash=HASH, prompt_version=PROMPT, prompt_hash=PROMPT, model=MODEL, reading=READING))
     assert len({d["key"] for d in db[readings.READINGS].docs}) == 3
     assert run(readings.get(db, "t1", HASH, PROMPT, MODEL))["account"] == "t1" and run(readings.get(db, "t3", HASH, PROMPT, MODEL)) is None
     assert run(readings.get(db, None, HASH, PROMPT, MODEL))["account"] == ""

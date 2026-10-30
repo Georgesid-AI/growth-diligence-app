@@ -233,13 +233,13 @@ stays behind the PROVIDER_ZDR flag.
 
 ## 9. Readings are immutable
 
-A reading is written once, keyed on account + file hash + reading prompt version
-+ model version, and never edited. The account is the tester who owns the audit.
+A reading is written once, keyed on account + file hash + a short hash of the reading prompt text as sent
++ model version, and never edited (the prompt version label is a display field only). The account is the tester who owns the audit.
 
 - A reviewer correction or an analyst Change is a separate dated override
   record: reading, item, old value, new value, who, when, why. The register is
   the reading plus its overrides.
-- A new prompt or model version produces a new reading stored beside the old
+- Any change to the prompt text, or a new model version, produces a new reading stored beside the old
   one. Re-reading is an explicit action, never automatic.
 - The same file uploaded again, in any audit of the same account, gets the
   stored reading. No second call. The same file in another account is read

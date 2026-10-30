@@ -1,10 +1,9 @@
 """Stored readings (docs/design/read-check-review.md section 9): written once, never edited.
 
-A reading is the reader's file map (schemas/metrics.FileMap) for one file, keyed on the account, the file's hash, the reading prompt's
-version and the model's version. The account is the tester who owns the audit (none when access control is off). The same file uploaded
+A reading is the reader's file map (schemas/metrics.FileMap) for one file, keyed on the account, the file's hash, a short hash of the reading prompt's
+text as sent and the model's version. The prompt's version label is a display field only. The account is the tester who owns the audit (none when access control is off). The same file uploaded
 again in any audit of the same account gets the stored reading and makes no model call; in another account it is read again, so one account
-can never tell that another uploaded the same bytes, and a reading holding one account's restored names is never served to another. A new
-prompt or model version is a new key, stored beside the old reading; re-reading is an explicit action, never automatic.
+can never tell that another uploaded the same bytes, and a reading holding one account's restored names is never served to another. Any change to the prompt text, or a new model version, is a new key, stored beside the old reading; re-reading is an explicit action, never automatic.
 
 Nothing here updates a stored document. What changes later is written as a record of its own:
 
@@ -42,29 +41,34 @@ def _digest(*parts: str) -> str:
     return h.hexdigest()
 
 
-def reading_key(account: Optional[str], file_hash: str, prompt_version: str, model: str) -> str:
-    """The identity of a reading: the account, the file's bytes, the prompt version, the model version."""
-    return _digest("reading", account or "", file_hash, prompt_version, model)
+def prompt_hash(text: str) -> str:
+    """A short hash of the prompt text actually sent: any edit to the text is a new reading, whatever the version label says."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def reading_key(account: Optional[str], file_hash: str, prompt_hash: str, model: str) -> str:
+    """The identity of a reading: the account, the file's bytes, the hash of the prompt text, the model version."""
+    return _digest("reading", account or "", file_hash, prompt_hash, model)
 
 
 NOT_READ = "not_read"       # the status of a failed record (put_failed): kept for diagnosis, never served, replaced by the next reading
 
 
-async def get(db, account: Optional[str], file_hash: str, prompt_version: str, model: str) -> Optional[dict]:
-    """The stored reading of this account for this file, prompt version and model, or None. A hit makes no provider call. A failed
+async def get(db, account: Optional[str], file_hash: str, prompt_hash: str, model: str) -> Optional[dict]:
+    """The stored reading of this account for this file, prompt text hash and model, or None. A hit makes no provider call. A failed
     record under the key is not a reading and is not returned."""
-    return await db[READINGS].find_one({"key": reading_key(account, file_hash, prompt_version, model), "status": {"$ne": NOT_READ}}, {"_id": 0})
+    return await db[READINGS].find_one({"key": reading_key(account, file_hash, prompt_hash, model), "status": {"$ne": NOT_READ}}, {"_id": 0})
 
 
-async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, model: str, reading: dict, input_tokens: int = 0,
+async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, prompt_hash: str, model: str, reading: dict, input_tokens: int = 0,
               output_tokens: int = 0, cost: float = 0.0) -> dict:
     """Store a reading once. A reading already stored under the key is returned as it stands and nothing is written."""
-    key = reading_key(account, file_hash, prompt_version, model)
+    key = reading_key(account, file_hash, prompt_hash, model)
     kept = await db[READINGS].find_one({"key": key}, {"_id": 0})
     if kept and kept.get("status") != NOT_READ:
         return kept
-    doc = {"key": key, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version, "model": model,
-           "file_map": copy.deepcopy(reading),
+    doc = {"key": key, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version, "prompt_hash": prompt_hash,
+           "model": model, "file_map": copy.deepcopy(reading),
            "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6),
            "created_at": _now()}
     if kept:

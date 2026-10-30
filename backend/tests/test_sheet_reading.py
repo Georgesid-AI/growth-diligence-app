@@ -127,6 +127,20 @@ def test_the_sheet_reading_and_its_retry_go_out_with_temperature_zero():
     assert [r["temperature"] for r in adapter.requests] == [0, 0]
 
 
+def test_changed_prompt_text_is_a_new_reading_even_under_the_same_version_label():
+    """The stored-reading key holds a hash of the prompt text sent, not its version label; the label stays on the record for display."""
+    db = audit_db()
+    first, adapter = read(db)
+    stub = next(d for d in db["prompts"].docs if d["name"] == "sheet_reading")
+    stub["text"] += " (edited)"                                 # same version label, different text
+    second, adapter = read(db, adapter=adapter)
+    assert first.status == second.status == "read" and adapter.calls == 2, "the edited prompt is read again"
+    assert first.reading_key != second.reading_key and not second.cache_hit
+    assert len(db[readings.READINGS].docs) == 2 and {d["prompt_version"] for d in db[readings.READINGS].docs} == {stub["version"]}
+    third, adapter = read(db, adapter=adapter)
+    assert third.cache_hit and adapter.calls == 2, "the same text is still served from storage"
+
+
 def test_the_same_file_in_another_audit_of_the_same_account_gets_the_stored_reading_with_no_second_call():
     db = audit_db()
     db["audits"].docs[0]["owner"] = "tester-1"

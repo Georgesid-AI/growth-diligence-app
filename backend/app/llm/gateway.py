@@ -2220,14 +2220,15 @@ async def read_structure(
     base = {"key": key, "prompt_version": prompt.version, "model": model}
     system = prompt.text
     account = await allowance.tester_of(db, audit_id) if structure_type == SHEET_READING else None
-    reading_key = readings.reading_key(account, file_hash, prompt.version, model) if structure_type == SHEET_READING else None
+    prompt_hash = readings.prompt_hash(system)
+    reading_key = readings.reading_key(account, file_hash, prompt_hash, model) if structure_type == SHEET_READING else None
     recheck_id = content_hash(cache.canonical_json(recheck)) if recheck else None
     recheck_items = [r["item"] for r in recheck or []]
 
     if structure_type == SHEET_READING:
         # Stored once, keyed on the file and the versions (section 9): the reading of this file is looked up before anything is counted
         # or sent. A hit makes no provider call, whichever audit of the account asked first; another account reads the file again. A second reading of rejected items is stored beside it.
-        kept = await readings.get_reread(db, reading_key, recheck_items) if recheck else await readings.get(db, account, file_hash, prompt.version, model)
+        kept = await readings.get_reread(db, reading_key, recheck_items) if recheck else await readings.get(db, account, file_hash, prompt_hash, model)
         if kept:
             await readings.use(db, audit_id, reading_key)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
@@ -2390,7 +2391,7 @@ async def read_structure(
                 await readings.put_reread(db, reading=reading_key, items=recheck_items, reason=recheck_id, prompt_version=prompt.version, model=model,
                                           output=restored, input_tokens=in_tok, output_tokens=out_tok, cost=cost)
             else:
-                await readings.put(db, account=account, file_hash=file_hash, prompt_version=prompt.version, model=model, reading=restored,
+                await readings.put(db, account=account, file_hash=file_hash, prompt_version=prompt.version, prompt_hash=prompt_hash, model=model, reading=restored,
                                    input_tokens=in_tok, output_tokens=out_tok, cost=cost)
                 await readings.use(db, audit_id, reading_key)
         else:
