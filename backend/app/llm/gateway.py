@@ -2121,6 +2121,7 @@ async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
+    fiscal_year_end: int = 12,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2386,6 +2387,9 @@ async def read_structure(
             stored = {**output, "revenue_row": {"row": output["revenue_row"]["row"]}}        # the label echo is never kept (5.5)
         if structure_type == SHEET_READING:
             # Written once beside the file's hash (section 9), names restored: the token map goes with the audit, a reading may outlive it.
+            if not recheck:
+                from .. import series as series_mod        # series imports the checks, which import this module's package
+                output = series_mod.attach(output, text, fiscal_year_end)       # the row series, written once with the reading (step a of PR 3)
             restored = redaction.restore_deep(output, mapping)
             if recheck:
                 await readings.put_reread(db, reading=reading_key, items=recheck_items, reason=recheck_id, prompt_version=prompt.version, model=model,

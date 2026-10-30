@@ -50,8 +50,8 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     if text is None:
         return {"status": "none", "reason": "No sheet with period columns to read."}
     try:
-        first = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter),
-                                       READ_SECONDS)
+        first = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter,
+                                                           fiscal_year_end=fiscal_year_end), READ_SECONDS)
     except asyncio.TimeoutError:
         return {"status": "not_read", "reason": gateway.NOT_READ}
     if first.status != "read" or not first.file_map:

@@ -28,6 +28,7 @@ from schemas import metrics as contract
 from app import as_of as as_of_mod
 from app import readings as readings_mod
 from app import sheet_reader
+from app import reading_export
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
@@ -1614,6 +1615,27 @@ async def upload_dataset(audit_id: str, dtype: str, background: BackgroundTasks,
     """The typed upload, for the demo seed and the tests: the same path, a loaded file of the type is replaced."""
     view = await _ingest(audit_id, file, dtype, True, background)
     return view
+
+
+async def _stored_reading(audit_id: str, file_hash: str) -> tuple:
+    """(the audit's stored check outcome of the file, the reading it names): 404 when the audit has read no such file."""
+    check = next((c for c in await readings_mod.checks_for(db, audit_id) if c.get("file_hash") == file_hash and c.get("status") == "read"), None)
+    doc = await db[readings_mod.READINGS].find_one({"key": check.get("reading_key")}, {"_id": 0}) if check else None
+    if not doc:
+        raise HTTPException(404, "No reading of this file in this audit")
+    return check, doc
+
+
+@api.get("/audits/{audit_id}/readings/{file_hash}/export")
+async def export_reading(audit_id: str, file_hash: str, format: Literal["json", "csv"] = "json"):
+    """The full file map of one file's reading with its series (docs/design/read-check-review.md section 9, PR 3 step a): JSON, or CSV with one
+    line per row-period. Stored values at full precision; the overrides made on the reading go with the JSON as records of their own."""
+    check, doc = await _stored_reading(audit_id, file_hash)
+    overrides = await readings_mod.overrides_for(db, audit_id, doc["key"])
+    if format == "csv":
+        return Response(reading_export.as_csv(doc, overrides, check.get("file") or ""), media_type="text/csv",
+                        headers={"Content-Disposition": 'attachment; filename="reading.csv"'})
+    return reading_export.as_json({**doc, "file": check.get("file") or doc.get("file")}, overrides)
 
 
 @api.get("/audits/{audit_id}/datasets")

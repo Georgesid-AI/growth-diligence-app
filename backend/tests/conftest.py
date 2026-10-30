@@ -114,8 +114,8 @@ async def _prepared(db, audit_id, deck_id, fmt, pages):
 @pytest.fixture(autouse=True)
 def sheet_reader_off_unless_tested(request, monkeypatch):
     """The sheet reader now has a default model, so an upload would queue a reading and spend a scripted reply meant for another call. Only
-    the tests of the reader itself (test_sheet_reader_flow.py) let the upload queue it."""
-    if request.module.__name__ == "test_sheet_reader_flow":
+    the tests of the reader itself (test_sheet_reader_flow.py, and any module that sets QUEUES_SHEET_READER) let the upload queue it."""
+    if request.module.__name__ == "test_sheet_reader_flow" or getattr(request.module, "QUEUES_SHEET_READER", False):
         return
     import server
 

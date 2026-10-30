@@ -4313,7 +4313,12 @@ def test_sheet_reading_keeps_no_text_in_a_log_a_call_record_or_beside_the_struct
     for secret in ("Zenith", "Pat Sample", sr.EMAIL, "447223", "451000"):
         assert secret not in logged and secret not in stored["llm_calls"]
     holders = {n for n, blob in stored.items() if "447223" in blob or "451000" in blob}
-    assert holders == set(), "model output carries cell references, never the cell values it was sent: " + str(holders)
+    # PR 3 step a (Architecture change, for George's approval): the stored series of a row hold the cell values CODE read, period by period
+    # with their cell references, on the reading record and nowhere else. The model's own output still carries references only.
+    assert holders == {"readings"}, "cell values sit in the stored series of the reading only: " + str(holders)
+    from app import series as series_mod
+    bare = [series_mod.strip(d["file_map"]) for d in db["readings"].docs]
+    assert "447223" not in json.dumps(bare) and "451000" not in json.dumps(bare), "outside its series a reading holds no cell value"
     assert set(stored["llm_calls"] and json.loads(stored["llm_calls"])[0]) >= {"content_hash", "structure_type", "prompt_version", "model"}
 
 
