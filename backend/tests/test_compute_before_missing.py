@@ -15,7 +15,7 @@ from app.llm import gateway  # noqa: E402
 
 REV_MAPPING = {"customer_id": "Customer", "invoice_date": "Invoice date", "amount": "Amount", "currency": "Currency"}
 CFG = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0},
-       "billing_terms": {}, "default_l": 1, "as_of_month": None}
+       "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
 
 # Two won deals (30 and 61 days) and one lost deal, carried on the first invoice of each customer.
 DEALS = {"C1": ("2024-01-02", "2024-02-01", "Won"), "C2": ("2024-01-01", "2024-03-02", "Won"),

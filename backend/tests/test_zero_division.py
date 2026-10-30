@@ -95,7 +95,7 @@ def _segment_a(final_amount):
     rev["_row"] = range(2, len(rev) + 2)
     # the as-of month is complete by construction (docs/specs/dates-and-periods.md section 2: else NRR stops a month early)
     cfg = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2025-06-30", "fx": {"EUR": 1.0},
-           "billing_terms": {}, "default_l": 1, "as_of_month": None}
+           "billing_terms": {}, "default_l": 1, "as_of_month": "2024-12-31"}
     return ge.compute_all(rev, None, None, cfg, {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}})
 
 
@@ -159,7 +159,7 @@ def test_one_failing_metric_is_missing_and_the_others_compute(monkeypatch):
     norm = {d: server.normalize(server.df_to_records(df), d, m) for d, (df, m) in datasets.items()}
     config = {"reporting_currency": "EUR", "target_arr": SPEC["target_arr"], "target_date": SPEC["target_date"],
               "fx": {**{k.upper(): v for k, v in meta["fx"].items()}, "EUR": 1.0}, "billing_terms": {},
-              "default_l": 1, "as_of_month": None}
+              "default_l": 1, "as_of_month": "2026-06-30"}
     results = ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], config,
                              {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}}, on_error=errors.append)
     assert [type(e).__name__ for e in errors] == ["KeyError"]
@@ -224,7 +224,7 @@ def test_failing_anomaly_flags_are_missing_and_never_zero(monkeypatch):
     errors = []
     results = ge.compute_all(_rev_two_customers(), None, None,
                              {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0},
-                              "billing_terms": {}, "default_l": 1, "as_of_month": None},
+                              "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"},
                              {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}}, on_error=errors.append)
     assert [type(e).__name__ for e in errors] == ["AttributeError"]
     assert results["anomalies"] is None, "no zero counts after a failure"

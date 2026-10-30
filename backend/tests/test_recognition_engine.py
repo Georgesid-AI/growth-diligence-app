@@ -20,7 +20,7 @@ from schemas import metrics  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CONFIG = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2027-12-31", "fx": {"EUR": 1.0}, "billing_terms": {},
-          "default_l": 1, "as_of_month": None}
+          "default_l": 1, "as_of_month": "2026-06-30"}
 
 
 def recognised(name, folder="recognition", as_of="2025-12-31"):

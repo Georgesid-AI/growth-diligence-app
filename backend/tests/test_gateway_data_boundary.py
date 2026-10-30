@@ -236,7 +236,7 @@ def test_demo_upload_leaks_no_file_sheet_header_or_cell_value():
     fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
     fx[spec["reporting_currency"].upper()] = 1.0
     cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
-           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
     results = server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, sources,
                                              files=server.candidate_views(uploads)))
@@ -323,7 +323,7 @@ def _engine_results(spec, inject: bool) -> dict:
     fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
     fx[spec["reporting_currency"].upper()] = 1.0
     cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
-           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
     return server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, sources,
                                           files=server.candidate_views(uploads)))
@@ -4031,7 +4031,7 @@ def _results_with_a_failed_statement(monkeypatch):
     rev = pd.DataFrame([("C1", "2024-01-01", 1000, "EUR")], columns=["customer_id", "invoice_date", "amount", "currency"])
     rev["_row"] = [2]
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2026-12-31", "fx": {"EUR": 1.0}, "billing_terms": {},
-              "default_l": 1, "as_of_month": None}
+              "default_l": 1, "as_of_month": "2026-06-30"}
     errors = []
     results = ge.compute_all_raw(rev, empty, empty, config, {"pnl": {"file": "heron.csv", "sheet": "Heron"}}, on_error=errors.append,
                                  statement={"lines": [{"label": PNL_ERROR_SENTINEL}]})

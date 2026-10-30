@@ -1785,7 +1785,7 @@ def test_every_field_the_prompt_names_exists_in_a_real_payload():
     fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
     fx[spec["reporting_currency"].upper()] = 1.0
     cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
-           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
     src = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
     res = server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, src))
     out = gateway.build_outbound({"reporting_currency": "EUR", "metrics": gateway._slice_for_step(res, "growth_engine")}, {})

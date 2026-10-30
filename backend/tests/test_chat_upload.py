@@ -648,7 +648,7 @@ def _frames(file_months, pnl_months, extra_pnl_rows=()):
 def _reconcile(file_months, pnl_months):
     rev, pnl = _frames(file_months, pnl_months)
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0}, "billing_terms": {},
-              "default_l": 1, "as_of_month": None}
+              "default_l": 1, "as_of_month": "2026-06-30"}
     sources = {"revenue": {"file": "rev.csv", "sheet": "CSV"}, "pnl": {"file": "pnl.csv", "sheet": "CSV"}}
     return ge.compute_all(rev, pd.DataFrame(), pnl, config, sources)["revenue_reconciliation"]
 
@@ -692,7 +692,7 @@ def test_the_window_is_the_months_both_files_cover_and_at_most_the_last_12():
 def test_without_a_pnl_there_is_no_check_no_section_and_no_blocker():
     rev, _ = _frames([(m, 1000.0) for m in MONTHS], [])
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0}, "billing_terms": {},
-              "default_l": 1}
+              "default_l": 1, "as_of_month": "2026-06-30"}
     results = ge.compute_all(rev, pd.DataFrame(), pd.DataFrame(), config, {"revenue": {"file": "r.csv", "sheet": "CSV"}})
     assert results["revenue_reconciliation"] is None
 

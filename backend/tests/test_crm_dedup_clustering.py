@@ -24,7 +24,7 @@ from claim_matching_support import engine_results  # noqa: E402
 from test_claim_register_api import AUDIT  # noqa: E402
 
 CFG = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2026-12-31", "fx": {"EUR": 1.0},
-       "billing_terms": {}, "default_l": 1, "as_of_month": None}
+       "billing_terms": {}, "default_l": 1, "as_of_month": "2026-06-30"}
 SOURCES = {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}, "crm": {"file": "crm.csv", "sheet": "Deals"}}
 HEADERS = ("Deal ID", "Created", "Close Date", "Stage", "Amount")
 CRM_MAP = {"deal_id": "Deal ID", "created_date": "Created", "close_date": "Close Date", "stage": "Stage", "amount": "Amount"}
