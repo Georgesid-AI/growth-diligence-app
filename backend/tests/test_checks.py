@@ -353,8 +353,8 @@ def test_the_outcomes_are_three_and_no_check_changes_a_citation():
     assert not {n for n in public if n.startswith(("fix", "correct", "repair", "autocorrect", "adjust", "guess", "infer"))}
 
 
-def test_every_cannot_check_reason_is_one_of_the_five_and_every_other_failure_is_a_rejection():
-    five = {checks.C_LAYOUT, checks.C_NO_REF, checks.C_MASKED, checks.C_NO_TEXT.format(n=7)}
+def test_every_cannot_check_reason_is_one_of_the_five_or_the_two_missing_inputs_and_every_other_failure_is_a_rejection():
+    five = {checks.C_LAYOUT, checks.C_NO_REF, checks.C_MASKED, checks.C_NO_TEXT.format(n=7), checks.C_VARIANCE_ROWS, checks.C_SEGMENT_TOTAL}
     grid = build({(2, 8): "[email]"})
     m = fmap(sheet_map(evidence=[piece("layout"), piece("label_contains", cell="H2", word="x"), piece("equals_range", cells="H4:M4")],
                        rows=[row(), row(row=5, label_cell=None, cells=None)]),
@@ -492,3 +492,103 @@ def test_a_month_header_over_three_columns_ends_at_its_last_column():
         return checks.check_map(book, fmap(sm), 12)
     assert months(run("Q", "2024-06")) == [("2024-06", "Q")]
     assert months(run("N", "2024-05")) == [], "T is three columns after the May group's last column"
+
+
+# ---------------------------------------------------------------------------
+# F2 and F3: the arithmetic the reading must be able to show
+# ---------------------------------------------------------------------------
+def _variance_rows(**over):
+    var = row(row=7, label_cell="A7", role="variance", actual_plan="variance", cells="B7:M7", variance_of={"actual_row": 4, "plan_row": 5}, **over)
+    return [row(), row(row=5, label_cell="A5", role="forecast", cells="B5:M5"), var]
+
+
+def test_a_variance_row_is_confirmed_only_when_actual_minus_plan_holds_cell_by_cell():
+    ok = check(fmap(sheet_map(rows=_variance_rows())))
+    assert item(ok, "variance:Report:7")["outcome"] == checks.CONFIRMED
+    assert not [i for i in ok["items"] if i["key"] == "row:Report:7"], "the variance row is one item: its cells and its arithmetic"
+    wrong = check(fmap(sheet_map(rows=_variance_rows())), build({(7, 9): "5"}))
+    assert (item(wrong, "variance:Report:7")["outcome"], item(wrong, "variance:Report:7")["reason"]) == (
+        checks.REJECTED, "Variance row A7 does not equal actual minus budget in 1 of 12 periods.")
+
+
+def test_a_variance_row_without_its_two_source_rows_cannot_be_checked_and_is_never_confirmed():
+    for marked in ("variance", "mixed"):
+        rows = [row(), row(row=7, label_cell="A7", role="variance", actual_plan=marked, cells="B7:M7", variance_of=None)]
+        got = item(check(fmap(sheet_map(rows=rows))), "row:Report:7")
+        assert (got["outcome"], got["reason"]) == (checks.CANNOT, "variance row without its two source rows")
+
+
+def test_a_variance_row_whose_cells_are_text_is_still_rejected_before_its_arithmetic():
+    got = item(check(fmap(sheet_map(rows=_variance_rows())), build({(7, 5): "tbc"})), "row:Report:7")
+    assert got["outcome"] == checks.REJECTED and got["reason"] == "Reading says a number; cell E7 holds tbc."
+
+
+def test_a_segment_row_with_no_total_cannot_be_checked_and_parts_that_do_not_sum_are_rejected():
+    lone = [row(row=9, label_cell="A9", segment="Product A", cells="B9:M9")]
+    got = item(check(fmap(sheet_map(rows=lone))), "row:Report:9")
+    assert (got["outcome"], got["reason"]) == (checks.CANNOT, "segment row without its total row")
+    rows = [row(row=8, label_cell="A8", cells="B8:M8"), row(row=9, label_cell="A9", segment="Product A", parent_row=8, cells="B9:M9"),
+            row(row=10, label_cell="A10", segment="Product B", parent_row=8, cells="B10:M10")]
+    bad = item(check(fmap(sheet_map(rows=rows)), build({(9, 6): "130"})), "parts:Report:8")
+    assert (bad["outcome"], bad["reason"]) == (checks.REJECTED, "Parts F9, F10 sum to 210; the reading names F8 as their total, which holds 200.")
+
+
+# Layout 3: actual | budget | variance per month, in the cells of one row.
+def _triples(changes=None):
+    """A5 Revenue; Jan to Mar over B..J: actual 100 + k, budget 100, variance k."""
+    cells = {(1, 1): "Actual against budget, EUR", (5, 1): "Revenue"}
+    for k, month in enumerate(["Jan-24", "Feb-24", "Mar-24"]):
+        a = 2 + 3 * k
+        cells[(3, a)] = month
+        cells[(4, a)], cells[(4, a + 1)], cells[(4, a + 2)] = "Actual", "Budget", "Variance"
+        cells[(5, a)], cells[(5, a + 1)], cells[(5, a + 2)] = str(100 + k), "100", str(k)
+    cells.update(changes or {})
+    return cells
+
+
+def _triple_map(**over):
+    r = row(row=5, label_cell="A5", cells="B5:J5", variance_columns={"actual": "B", "plan": "C", "variance": "D", "step": 3}, **over)
+    return fmap(sheet_map(rows=[r], header_row=3, first_period_col="B", last_period_col="J", last_actual=False))
+
+
+def test_the_variance_columns_of_actual_budget_variance_triples_are_tested_the_same_way():
+    ok = check(_triple_map(), _triples())
+    got = item(ok, "variance:Report:5")
+    assert got["outcome"] == checks.CONFIRMED
+    bad = item(check(_triple_map(), _triples({(5, 7): "9"})), "variance:Report:5")
+    assert (bad["outcome"], bad["reason"]) == (checks.REJECTED, "Variance row D5 does not equal actual minus budget in 1 of 3 periods.")
+
+
+# (d) a figure's actual/plan against its row's boundary
+def test_a_figure_marked_actual_after_its_rows_boundary_or_plan_before_it_is_rejected():
+    after = item(check(fmap(figures=[figure(PLAN[7], cell="I4", period="2024-08", actual_plan="actual")]),
+                       build()), "figure:Report:I4:revenue")
+    assert (after["outcome"], after["reason"]) == (checks.REJECTED, "figure marked actual; column I is plan for this row")
+    before = item(check(fmap(figures=[figure(ACTUAL[2], cell="D4", period="2024-03", actual_plan="plan")])), FIG)
+    assert (before["outcome"], before["reason"]) == (checks.REJECTED, "figure marked plan; column D is actual for this row")
+    ok = check(fmap(figures=[figure(ACTUAL[2], cell="D4", period="2024-03", actual_plan="actual"),
+                             figure(PLAN[7], cell="I4", period="2024-08", actual_plan="plan"),
+                             figure(ACTUAL[5], cell="G4", period="2024-06", actual_plan="actual")]))
+    assert [i["outcome"] for i in ok["items"] if i["kind"] == "figure"] == [checks.CONFIRMED] * 3
+
+
+def test_a_figure_marked_variance_or_mixed_or_nothing_is_not_compared_and_a_row_with_no_boundary_has_nothing_to_compare():
+    for marked in ("variance", "mixed", None):
+        got = item(check(fmap(figures=[figure(ACTUAL[2], cell="D4", actual_plan=marked)])), FIG)
+        assert got["outcome"] == checks.CONFIRMED, marked
+    no_boundary = fmap(sheet_map(rows=[row(boundary_col=None)], last_actual=False), [figure(PLAN[7], cell="I4", period="2024-08", actual_plan="actual")])
+    assert item(check(no_boundary), "figure:Report:I4:revenue")["outcome"] == checks.CONFIRMED
+
+
+def test_the_boundary_of_the_sheet_is_used_when_the_row_has_none_and_only_when_the_month_stands():
+    m = fmap(sheet_map(rows=[row(boundary_col=None)]), [figure(PLAN[7], cell="I4", period="2024-08", actual_plan="actual")])
+    assert item(check(m), "figure:Report:I4:revenue")["outcome"] == checks.REJECTED
+    unconfirmed = fmap(sheet_map(rows=[row(boundary_col=None)], evidence=[piece("layout")]), [figure(PLAN[7], cell="I4", period="2024-08", actual_plan="actual")])
+    assert item(check(unconfirmed), "figure:Report:I4:revenue")["outcome"] == checks.CONFIRMED, "a boundary no evidence confirmed rejects nothing"
+
+
+def test_a_row_of_actual_budget_variance_triples_has_no_single_boundary_to_compare_with():
+    r = row(row=5, label_cell="A5", cells="B5:J5", boundary_col="D", variance_columns={"actual": "B", "plan": "C", "variance": "D", "step": 3})
+    m = fmap(sheet_map(rows=[r], header_row=3, first_period_col="B", last_period_col="J", last_actual=False),
+             [figure(100, cell="C5", period="2024-01", actual_plan="plan")])
+    assert item(check(m, _triples({(3, 3): "Jan-24"})), "figure:Report:C5:revenue")["outcome"] == checks.CONFIRMED

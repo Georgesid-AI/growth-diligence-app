@@ -112,6 +112,14 @@ def test_the_ideal_reading_of_each_workbook_is_confirmed_cell_by_cell_and_gives_
     assert rf.compare(fixture["expected_map"], doc["month"], stored) == []
 
 
+def test_the_variance_columns_of_actual_budget_variance_are_tested_in_every_row_that_names_them():
+    """F2 of the review of PR 205: layout 3's defining feature, the variance column of each month, is inside the comparison."""
+    fixture = next(f for f in SHEETS if f["name"] == "actual_budget_variance")
+    doc, _, _ = run(fixture)
+    tested = {i["row"]: i["outcome"] for i in doc["items"] if i["kind"] == "variance"}
+    assert tested == {5: checks.CONFIRMED, 6: checks.CONFIRMED, 7: checks.CONFIRMED}, "S5 = Q5 - R5, and the same for the other rows"
+
+
 @pytest.mark.parametrize("fixture", [f for f in SHEETS if f["name"] != "testco_pnl"], ids=[n for n in IDS if n != "testco_pnl"])
 def test_every_non_empty_cell_of_every_sheet_is_sent_none_sampled_none_cut(fixture):
     _, adapter, _ = run(fixture)

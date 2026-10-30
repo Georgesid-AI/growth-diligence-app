@@ -95,6 +95,12 @@
       "currency": "EUR",
       "cells": "B5:AK5",
       "variance_of": null,
+      "variance_columns": {
+        "actual": "B",
+        "plan": "C",
+        "variance": "D",
+        "step": 3
+      },
       "by_column": false,
       "evidence": "Actual, Budget and Variance per month"
      },
@@ -112,6 +118,12 @@
       "currency": "EUR",
       "cells": "B6:AK6",
       "variance_of": null,
+      "variance_columns": {
+        "actual": "B",
+        "plan": "C",
+        "variance": "D",
+        "step": 3
+      },
       "by_column": false,
       "evidence": "cost_of_revenue label and numbers across the period columns"
      },
@@ -129,6 +141,12 @@
       "currency": "EUR",
       "cells": "B7:AK7",
       "variance_of": null,
+      "variance_columns": {
+        "actual": "B",
+        "plan": "C",
+        "variance": "D",
+        "step": 3
+      },
       "by_column": false,
       "evidence": "sales_marketing label and numbers across the period columns"
      }

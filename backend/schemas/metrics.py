@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 15         # 15: the file map (docs/design/read-check-review.md section 4, PR 2): `FileMap` joins this file as the one schema of a reading, for sheets and decks, and the as-of month comes from the reader's checked evidence (the rules' boundary-cue path and last-unmarked-column fallback are gone); no engine block changes, and results stored under 14 read "Stale – re-run audit".
+CONTRACT_VERSION = 15         # 15: the file map (docs/design/read-check-review.md section 4, PR 2): `FileMap` joins this file as the one schema of a reading, for sheets and decks (a row may name its variance columns: actual | budget | variance per period), and the as-of month comes from the reader's checked evidence (the rules' boundary-cue path and last-unmarked-column fallback are gone); no engine block changes, and results stored under 14 read "Stale – re-run audit".
                               # 14: P&L lines (docs/design/pnl-lines.md): the new server-only block `pnl_lines` (findings of the sum, recompute and sign checks, plan cells with implied against observed rate) and `yearly_basis.years.cac_payback_label` ("yearly, revenue-based"); S&M leaves out the sub-lines mapped to overhead (internal events); results stored under 13 read "Stale – re-run audit".
                               # 13: deck actuals (docs/design/deck-actuals.md, 2026-10-28): `yearly_basis.years[].revenue_cells` names the cells a deck figure is reconciled with; results stored under 12 read "Stale – re-run audit".
                               # 12: one as-of month (docs/specs/dates-and-periods.md section 2, 2026-10-28): the as-of month always counts as complete, `source_period.status` is always Complete and `complete_by` "as_of", the last month is no longer left out of NRR, gross churn and growth, and the fiscal year-end sets the months of a yearly column; results stored under 11 read "Stale – re-run audit".
@@ -721,6 +721,15 @@ class MapVariance(MapBlock):
     plan_row: int = Field(ge=1)
 
 
+class MapVarianceColumns(MapBlock):
+    """Actual, plan and variance side by side per period in the cells of one row (actual | budget | variance per month): the first period's
+    three columns and the step to the next period's. The variance of each period is actual minus plan."""
+    actual: str = Field(pattern=COLUMN_PATTERN)
+    plan: str = Field(pattern=COLUMN_PATTERN)
+    variance: str = Field(pattern=COLUMN_PATTERN)
+    step: int = Field(ge=1, le=26)
+
+
 class MapRow(MapBlock):
     """What one row of a sheet is (a column where the periods run down the sheet: `by_column` true and `row` the column's number)."""
     row: int = Field(ge=1)
@@ -736,6 +745,7 @@ class MapRow(MapBlock):
     currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
     cells: Optional[str] = Field(default=None, pattern=RANGE_PATTERN)             # the range the values occupy
     variance_of: Optional[MapVariance] = None
+    variance_columns: Optional[MapVarianceColumns] = None
     by_column: bool = False
     evidence: str = Field(max_length=MAP_TEXT_MAX)
 

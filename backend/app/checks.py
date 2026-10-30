@@ -44,6 +44,9 @@ C_NO_TEXT = "Page {n} has no text layer; figure read from the image."
 C_SCALE = "Cell {ref} holds {cell}; reading says {value}. Unit or scale differs; not compared."
 C_NO_REF = "No cell reference given."
 C_MASKED = "Depends on a name that was masked before reading."
+# --- Two more "nothing to compare against" cases (review of PR 205, F2): the arithmetic input the reading did not give. ---
+C_VARIANCE_ROWS = "variance row without its two source rows"
+C_SEGMENT_TOTAL = "segment row without its total row"
 # --- Wording for rejections the note does not list (for the owner's approval; same discipline: a template, formatted from code). ---
 R_ROW = "Reading cites {ref}; the sheet ends at row {last}."
 R_NO_SHEET = "Reading cites sheet {name}; the file has no such sheet."
@@ -55,6 +58,7 @@ R_REPEATS = "Reading says {cells} repeats one value; cell {ref} holds {cell} aga
 R_ROUND = "Reading says {cells} are multiples of {multiple}; cell {ref} holds {cell}."
 R_EMPTY = "Reading says {cells} is empty; cell {ref} holds {cell}."
 R_NUMBER = "Reading says a number; cell {ref} holds {cell}."
+R_ACTUAL_PLAN = "figure marked {marked}; column {column} is {found} for this row"
 NOTHING = "nothing"
 
 # The plan words of a boundary (budget, plan, forecast, FC, estimate, projection and their plain forms).
@@ -252,7 +256,26 @@ def compare(unit: str, reading: float, cell: float) -> bool:
     return abs(reading - cell) <= MONEY_TOLERANCE * abs(cell) + EXACT
 
 
-def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, Dict], fye: int) -> Dict:
+def _clash(figure: Dict, pos: Tuple[int, int], smap: Dict, boundaries: Dict[str, int]) -> Optional[str]:
+    """The rejection reason when a figure's actual/plan disagrees with the boundary of its row (a column after the boundary marked actual,
+    a column up to it marked plan), else None. The boundary is the row's own, else the sheet's last actual column when its month stands.
+    Only "actual" and "plan" are compared. A row that holds actual, budget and variance side by side per period has no one boundary."""
+    marked = figure.get("actual_plan")
+    if marked not in ("actual", "plan"):
+        return None
+    row = next((r for r in smap.get("rows") or [] if r["row"] == pos[0] and not r.get("by_column")), None)
+    if row is None or row.get("variance_columns"):
+        return None
+    boundary = redact.col_number(row["boundary_col"]) if row.get("boundary_col") else boundaries.get(smap["sheet"])
+    if boundary is None:
+        return None
+    found = "actual" if pos[1] <= boundary else "plan"
+    if found == marked:
+        return None
+    return R_ACTUAL_PLAN.format(marked=marked, column=redact.col_letters(pos[1]), found=found)
+
+
+def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, Dict], fye: int, boundaries: Optional[Dict[str, int]] = None) -> Dict:
     source = figure.get("source") or {}
     sheet_name, cell_ref = source.get("sheet"), source.get("cell")
     key = f"figure:{sheet_name}:{cell_ref}:{figure.get('metric')}" if cell_ref else f"figure:#{index}"
@@ -292,6 +315,9 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
         found = period_in_form(header_period(head_text, fye), period)
         if found != period:
             return {**base, "outcome": REJECTED, "reason": R_PERIOD.format(period=period, ref=head_ref, header=describe_header(head_text, period, fye))}
+    clash = _clash(figure, pos, smap, boundaries or {}) if smap else None
+    if clash:
+        return {**base, "outcome": REJECTED, "reason": clash}
     return {**base, "outcome": CONFIRMED, "reason": None}
 
 
@@ -336,6 +362,10 @@ def check_row(smap: Dict, row: Dict, sheet: SheetCells) -> Dict:
         seen += 1
     if numeric and seen == 0:
         return {**base, "outcome": REJECTED, "reason": R_NUMBER.format(ref=ref_of(rng[0], rng[1]), cell=NOTHING)}
+    if row.get("role") == "variance" and not row.get("variance_of") and not row.get("variance_columns"):
+        return {**base, "outcome": CANNOT, "reason": C_VARIANCE_ROWS}
+    if row.get("segment") and not row.get("parent_row"):
+        return {**base, "outcome": CANNOT, "reason": C_SEGMENT_TOTAL}
     return {**base, "outcome": CONFIRMED, "reason": None}
 
 
@@ -349,20 +379,34 @@ def _values_in_column(sheet: SheetCells, rows: List[int], col: int) -> Optional[
     return out
 
 
+def _variance_tolerated(variance: float, actual: float, plan: float) -> bool:
+    return abs(variance - (actual - plan)) <= MONEY_TOLERANCE * max(abs(actual), abs(plan)) + EXACT
+
+
 def check_variance(smap: Dict, row: Dict, sheet: SheetCells) -> Dict:
-    """A variance row equals actual minus plan, column by column over the periods where all three hold a number."""
+    """A variance equals actual minus plan, period by period, over the periods where all three hold a number: a variance row against its
+    two source rows (`variance_of`), or the variance columns of a row against its actual and plan columns (`variance_columns`: actual |
+    budget | variance per period)."""
     key = f"variance:{smap['sheet']}:{row['row']}"
     ref = row.get("label_cell") or row["row"]
-    v = row["variance_of"]
     compared = wrong = 0
-    for col in _period_cols(smap):
-        vals = _values_in_column(sheet, [row["row"], v["actual_row"], v["plan_row"]], col)
-        if vals is None:
-            continue
-        compared += 1
-        variance, actual, plan = vals
-        if abs(variance - (actual - plan)) > MONEY_TOLERANCE * max(abs(actual), abs(plan)) + EXACT:
-            wrong += 1
+    v, vc = row.get("variance_of"), row.get("variance_columns")
+    if v:
+        for col in _period_cols(smap):
+            vals = _values_in_column(sheet, [row["row"], v["actual_row"], v["plan_row"]], col)
+            if vals is None:
+                continue
+            compared += 1
+            wrong += not _variance_tolerated(*vals)
+    if vc:
+        first = [redact.col_number(vc[k]) for k in ("variance", "actual", "plan")]
+        ref = ref_of(row["row"], first[0])
+        for col in range(first[0], max(sheet.max_col, redact.col_number(smap["last_period_col"])) + 1, vc["step"]):
+            vals = [to_number(sheet.get(row["row"], col + c - first[0])) for c in first]
+            if None in vals:
+                continue
+            compared += 1
+            wrong += not _variance_tolerated(*vals)
     base = {"key": key, "kind": "variance", "sheet": smap["sheet"], "cell": row.get("cells"), "row": row["row"]}
     if compared == 0:
         return {**base, "outcome": CANNOT, "reason": C_LAYOUT}
@@ -590,6 +634,7 @@ def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
     """Every item of the map checked against the cells: {"items": [...], "counts": {...}, "months": [per-sheet confirmed months]}."""
     items: List[Dict] = []
     months: List[Dict] = []
+    boundaries: Dict[str, int] = {}                       # the last actual column of each sheet whose month stands
     smaps = {s["sheet"]: s for s in fmap.get("sheets") or []}
     for smap in smaps.values():
         sheet = cells.sheet(smap["sheet"])
@@ -602,8 +647,13 @@ def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
         items.append(check_periods(smap, sheet, fye))
         rows = smap.get("rows") or []
         for row in rows:
-            items.append(check_row(smap, row, sheet))
-            if row.get("variance_of"):
+            got = check_row(smap, row, sheet)
+            has_arithmetic = bool(row.get("variance_of") or row.get("variance_columns"))
+            if row.get("role") == "variance" and has_arithmetic and got["outcome"] == CONFIRMED:
+                items.append(check_variance(smap, row, sheet))        # a variance row is confirmed by its arithmetic, as one item
+                continue
+            items.append(got)
+            if has_arithmetic and row.get("role") != "variance":
                 items.append(check_variance(smap, row, sheet))
         by_parent: Dict[int, List[Dict]] = {}
         for row in rows:
@@ -615,8 +665,9 @@ def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
         items += extra
         if month:
             months.append(month)
+            boundaries[smap["sheet"]] = redact.col_number(month["column"])
     for i, figure in enumerate(fmap.get("figures") or []):
-        items.append(check_figure(i, figure, cells, smaps, fye))
+        items.append(check_figure(i, figure, cells, smaps, fye, boundaries))
     counts = {o: sum(1 for i in items if i["outcome"] == o) for o in OUTCOMES}
     return {"items": items, "counts": counts, "months": months}
 
