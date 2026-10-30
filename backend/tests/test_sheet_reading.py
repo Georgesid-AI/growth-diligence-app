@@ -115,9 +115,10 @@ def redaction_map(db):
     return asyncio.run(redaction.get_map(db, "a1"))
 
 
-def test_the_same_file_in_any_audit_gets_the_stored_reading_with_no_second_call():
+def test_the_same_file_in_another_audit_of_the_same_account_gets_the_stored_reading_with_no_second_call():
     db = audit_db()
-    db["audits"].docs.append({"id": "a2", "company_name": COMPANY, "structure_reading_consent": True})
+    db["audits"].docs[0]["owner"] = "tester-1"
+    db["audits"].docs.append({"id": "a2", "company_name": COMPANY, "structure_reading_consent": True, "owner": "tester-1"})
     first, adapter = read(db, "a1")
     again, second = read(db, "a2", adapter=adapter)
     assert adapter.calls == 1, "the second upload made no provider call"
@@ -126,6 +127,37 @@ def test_the_same_file_in_any_audit_gets_the_stored_reading_with_no_second_call(
     assert len(db[readings.READINGS].docs) == 1 and len(db[readings.USES].docs) == 2
     assert [c["cache_hit"] for c in db["llm_calls"].docs] == [False, True]
     assert db["llm_calls"].docs[1]["input_tokens"] == 0
+
+
+def test_two_accounts_uploading_the_same_file_make_two_model_calls_and_never_see_each_others_reading():
+    """F6 of the review of PR 205: a stored reading belongs to one account. The second account's upload is read again, its llm_calls row
+    is no cache hit, and the first account's restored names never reach it."""
+    db = audit_db()
+    db["audits"].docs[0]["owner"] = "tester-1"
+    db["audits"].docs.append({"id": "a2", "company_name": COMPANY, "structure_reading_consent": True, "owner": "tester-2"})
+    _, adapter = read(db, "a1")
+    other, adapter = read(db, "a2", adapter=adapter)
+    assert adapter.calls == 2 and other.cache_hit is False
+    assert [c["cache_hit"] for c in db["llm_calls"].docs] == [False, False]
+    docs = db[readings.READINGS].docs
+    assert len(docs) == 2 and {d["account"] for d in docs} == {"tester-1", "tester-2"} and len({d["key"] for d in docs}) == 2
+    again, adapter = read(db, "a2", adapter=adapter)
+    assert adapter.calls == 2 and again.cache_hit is True, "the same account twice: one call"
+
+
+def test_a_reading_goes_with_the_last_audit_of_its_account_and_stays_for_the_other_account():
+    db = audit_db()
+    db["audits"].docs[0]["owner"] = "tester-1"
+    db["audits"].docs.append({"id": "a2", "company_name": COMPANY, "structure_reading_consent": True, "owner": "tester-1"})
+    db["audits"].docs.append({"id": "a3", "company_name": COMPANY, "structure_reading_consent": True, "owner": "tester-2"})
+    _, adapter = read(db, "a1")
+    for audit in ("a2", "a3"):
+        _, adapter = read(db, audit, adapter=adapter)
+    assert len(db[readings.READINGS].docs) == 2 and len(db[readings.USES].docs) == 3
+    asyncio.run(gateway.purge_run(db, "a1"))
+    assert {d["account"] for d in db[readings.READINGS].docs} == {"tester-1", "tester-2"}, "a2 still uses the first account's reading"
+    asyncio.run(gateway.purge_run(db, "a2"))
+    assert {d["account"] for d in db[readings.READINGS].docs} == {"tester-2"}, "the last audit of the account took its reading with it"
 
 
 def test_a_new_prompt_version_or_model_is_a_new_reading_beside_the_old_one(monkeypatch):

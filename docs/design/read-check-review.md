@@ -233,16 +233,17 @@ stays behind the PROVIDER_ZDR flag.
 
 ## 9. Readings are immutable
 
-A reading is written once, keyed on file hash + reading prompt version + model
-version, and never edited.
+A reading is written once, keyed on account + file hash + reading prompt version
++ model version, and never edited. The account is the tester who owns the audit.
 
 - A reviewer correction or an analyst Change is a separate dated override
   record: reading, item, old value, new value, who, when, why. The register is
   the reading plus its overrides.
 - A new prompt or model version produces a new reading stored beside the old
   one. Re-reading is an explicit action, never automatic.
-- The same file uploaded again, in any audit, gets the stored reading. No
-  second call.
+- The same file uploaded again, in any audit of the same account, gets the
+  stored reading. No second call. The same file in another account is read
+  again, and a reading goes with the last audit of its account that uses it.
 - The model string in the gateway is a dated version, never "latest".
 
 ## 10. Fixture set

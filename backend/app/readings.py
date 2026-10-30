@@ -1,8 +1,10 @@
 """Stored readings (docs/design/read-check-review.md section 9): written once, never edited.
 
-A reading is the reader's file map (schemas/metrics.FileMap) for one file, keyed on the file's hash, the reading prompt's version and the
-model's version. The same file uploaded again, in any audit, gets the stored reading and makes no model call. A new prompt or model
-version is a new key, stored beside the old reading; re-reading is an explicit action, never automatic.
+A reading is the reader's file map (schemas/metrics.FileMap) for one file, keyed on the account, the file's hash, the reading prompt's
+version and the model's version. The account is the tester who owns the audit (none when access control is off). The same file uploaded
+again in any audit of the same account gets the stored reading and makes no model call; in another account it is read again, so one account
+can never tell that another uploaded the same bytes, and a reading holding one account's restored names is never served to another. A new
+prompt or model version is a new key, stored beside the old reading; re-reading is an explicit action, never automatic.
 
 Nothing here updates a stored document. What changes later is written as a record of its own:
 
@@ -40,24 +42,25 @@ def _digest(*parts: str) -> str:
     return h.hexdigest()
 
 
-def reading_key(file_hash: str, prompt_version: str, model: str) -> str:
-    """The identity of a reading: the file's bytes, the prompt version, the model version."""
-    return _digest("reading", file_hash, prompt_version, model)
+def reading_key(account: Optional[str], file_hash: str, prompt_version: str, model: str) -> str:
+    """The identity of a reading: the account, the file's bytes, the prompt version, the model version."""
+    return _digest("reading", account or "", file_hash, prompt_version, model)
 
 
-async def get(db, file_hash: str, prompt_version: str, model: str) -> Optional[dict]:
-    """The stored reading for this file, prompt version and model, or None. A hit makes no provider call."""
-    return await db[READINGS].find_one({"key": reading_key(file_hash, prompt_version, model)}, {"_id": 0})
+async def get(db, account: Optional[str], file_hash: str, prompt_version: str, model: str) -> Optional[dict]:
+    """The stored reading of this account for this file, prompt version and model, or None. A hit makes no provider call."""
+    return await db[READINGS].find_one({"key": reading_key(account, file_hash, prompt_version, model)}, {"_id": 0})
 
 
-async def put(db, *, file_hash: str, prompt_version: str, model: str, reading: dict, input_tokens: int = 0, output_tokens: int = 0,
-              cost: float = 0.0) -> dict:
+async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, model: str, reading: dict, input_tokens: int = 0,
+              output_tokens: int = 0, cost: float = 0.0) -> dict:
     """Store a reading once. A reading already stored under the key is returned as it stands and nothing is written."""
-    key = reading_key(file_hash, prompt_version, model)
+    key = reading_key(account, file_hash, prompt_version, model)
     kept = await db[READINGS].find_one({"key": key}, {"_id": 0})
     if kept:
         return kept
-    doc = {"key": key, "file_hash": file_hash, "prompt_version": prompt_version, "model": model, "file_map": copy.deepcopy(reading),
+    doc = {"key": key, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version, "model": model,
+           "file_map": copy.deepcopy(reading),
            "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6),
            "created_at": _now()}
     try:

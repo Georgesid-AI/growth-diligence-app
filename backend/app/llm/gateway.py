@@ -2030,7 +2030,7 @@ async def read_structure(
 
     A sheet reading (SHEET_READING, read-check-review.md sections 3, 4 and 9) sends every non-empty cell of every recognised sheet,
     masked here (name learning included), with the prompt `sheet_reading` and the dated model SHEET_READER_MODEL. The reading is stored
-    once under the file's hash (`file_hash`), the prompt version and the model, never edited; the same file read again, in any audit,
+    once under the account, the file's hash (`file_hash`), the prompt version and the model, never edited; the same file read again, in any audit of the account,
     gets the stored reading and makes no provider call. `recheck` ([{"item", "reason"}]) asks for a second reading of the items a check
     rejected, with the reasons attached; it is stored beside the first reading, once per item and reason. The result carries the
     reading in masked space (`file_map`) and the masked text (`payload`, in memory only) for the checks. A file over SHEET_READING_INPUT_CAP
@@ -2098,13 +2098,14 @@ async def read_structure(
     digest = content_hash(text)
     base = {"key": key, "prompt_version": prompt.version, "model": model}
     system = prompt.text
-    reading_key = readings.reading_key(file_hash, prompt.version, model) if structure_type == SHEET_READING else None
+    account = await allowance.tester_of(db, audit_id) if structure_type == SHEET_READING else None
+    reading_key = readings.reading_key(account, file_hash, prompt.version, model) if structure_type == SHEET_READING else None
     recheck_id = content_hash(cache.canonical_json(recheck)) if recheck else None
 
     if structure_type == SHEET_READING:
         # Stored once, keyed on the file and the versions (section 9): the reading of this file is looked up before anything is counted
-        # or sent. A hit makes no provider call, whichever audit asked first. A second reading of rejected items is stored beside it.
-        kept = await readings.get_reread(db, reading_key, "batch", recheck_id) if recheck else await readings.get(db, file_hash, prompt.version, model)
+        # or sent. A hit makes no provider call, whichever audit of the account asked first; another account reads the file again. A second reading of rejected items is stored beside it.
+        kept = await readings.get_reread(db, reading_key, "batch", recheck_id) if recheck else await readings.get(db, account, file_hash, prompt.version, model)
         if kept:
             await readings.use(db, audit_id, reading_key)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
@@ -2253,7 +2254,7 @@ async def read_structure(
                 await readings.put_reread(db, reading=reading_key, item="batch", reason=recheck_id, prompt_version=prompt.version, model=model,
                                           output=restored, input_tokens=in_tok, output_tokens=out_tok, cost=cost)
             else:
-                await readings.put(db, file_hash=file_hash, prompt_version=prompt.version, model=model, reading=restored,
+                await readings.put(db, account=account, file_hash=file_hash, prompt_version=prompt.version, model=model, reading=restored,
                                    input_tokens=in_tok, output_tokens=out_tok, cost=cost)
                 await readings.use(db, audit_id, reading_key)
         else:
