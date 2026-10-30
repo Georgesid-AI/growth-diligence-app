@@ -75,11 +75,15 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
                 if new is None:
                     new = {"outcome": checks.REJECTED, "reason": old["reason"]}
                 result = checks.classify_reread(old, new)
-                rereads.append({"item": key, "first_reason": old["reason"], "reread": result, "outcome": new["outcome"],
-                                "reason": new.get("reason"), "action": "corrected automatically" if new["outcome"] == checks.CONFIRMED else "card"})
+                entry = {"item": key, "first_reason": old["reason"], "reread": result, "outcome": new["outcome"],
+                         "reason": new.get("reason"), "action": "corrected automatically" if new["outcome"] == checks.CONFIRMED else "card"}
+                if new["outcome"] == checks.REJECTED:
+                    # Both readings go with the card: the first as the reader gave it, the second beside it.
+                    entry["first"], entry["second"] = checks.reading_of(first.file_map, key), checks.reading_of(second.file_map, key)
+                rereads.append(entry)
         else:
             rereads = [{"item": e["item"], "first_reason": e["reason"], "reread": None, "outcome": checks.REJECTED, "reason": e["reason"],
-                        "action": "card"} for e in ask]
+                        "action": "card", "first": checks.reading_of(first.file_map, e["item"]), "second": None} for e in ask]
     months = final["months"]
     best = max(months, key=lambda m: m["month"], default=None)
     doc = {"status": "read", "file": file, "file_hash": file_hash, "reading_key": first.reading_key, "prompt_version": first.prompt_version,

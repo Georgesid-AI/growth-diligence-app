@@ -139,6 +139,23 @@ def test_a_second_reading_that_repeats_the_first_stays_rejected_and_waits_for_a_
     assert audit_of(flow)["as_of_month"] == "2025-06-30", "a rejected figure does not take the confirmed boundary away"
 
 
+def test_a_re_read_that_is_also_rejected_keeps_the_first_reading_beside_the_second_for_the_card(flow):
+    flow.state["adapter"] = Router(good_map(revenue=11000), good_map(revenue=12000))
+    upload(flow, MONTHLY, monthly())
+    entry = flow.db[readings.CHECKS].docs[0]["rereads"][0]
+    assert entry["reread"] == "gives a third value" and entry["action"] == "card"
+    assert entry["first"]["value"] == 11000.0 and entry["second"]["value"] == 12000.0
+    assert entry["first"]["source"]["cell"] == entry["second"]["source"]["cell"] == "G4"
+    assert flow.db[readings.READINGS].docs[0]["file_map"]["figures"][0]["value"] == 11000.0, "the stored first reading is not edited"
+    assert flow.db[readings.REREADS].docs[0]["output"]["figures"][0]["value"] == 12000.0
+
+
+def test_a_re_read_that_is_confirmed_carries_no_pair(flow):
+    flow.state["adapter"] = Router(good_map(revenue=11000), good_map(revenue=10625))
+    upload(flow, MONTHLY, monthly())
+    assert "first" not in flow.db[readings.CHECKS].docs[0]["rereads"][0]
+
+
 def test_the_same_file_in_another_audit_gets_the_stored_reading_and_makes_no_call(flow):
     upload(flow, MONTHLY, monthly())
     flow.db["audits"].docs.append({**AUDIT_DOC, "id": "audit-two", "company_name": COMPANY, "usage": usage_mod.empty()})

@@ -739,6 +739,33 @@ def merge_reread(first: Dict, second: Dict, keys: List[str]) -> Dict:
     return out
 
 
+def reading_of(file_map: Optional[Dict], key: str) -> Optional[Dict]:
+    """The part of a reading an item key names, as the reader gave it: a figure, a row (a variance row, a parent with its parts) or a sheet's
+    currency, period columns or last actual column. None when the reading holds nothing for the key."""
+    if not file_map:
+        return None
+    if key.startswith("figure:"):
+        return next((f for i, f in enumerate(file_map.get("figures") or []) if _figure_key(i, f) == key), None)
+    kind, _, rest = key.partition(":")
+    for smap in file_map.get("sheets") or []:
+        name = smap["sheet"]
+        if not rest.startswith(f"{name}"):
+            continue
+        tail = rest[len(name):]
+        if kind in ("row", "variance") and re.fullmatch(r":\d+", tail):
+            return next((r for r in smap.get("rows") or [] if r["row"] == int(tail[1:])), None)
+        if kind == "parts" and re.fullmatch(r":\d+", tail):
+            parent = int(tail[1:])
+            return {"rows": [r for r in smap.get("rows") or [] if r["row"] == parent or r.get("parent_row") == parent]}
+        if kind == "last_actual" and not tail:
+            return smap.get("last_actual")
+        if kind == "currency" and not tail:
+            return {"currency": smap.get("currency"), "currency_cell": smap.get("currency_cell")}
+        if kind == "periods" and not tail:
+            return {f: smap.get(f) for f in ("header_row", "label_col", "first_period_col", "last_period_col", "granularity")}
+    return None
+
+
 REREAD_AGREES, REREAD_SAME, REREAD_THIRD = "agrees with the cell", "repeats the first reading", "gives a third value"
 
 
