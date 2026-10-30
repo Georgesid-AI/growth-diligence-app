@@ -322,11 +322,15 @@ def test_a_label_word_counts_after_whitespace_and_case():
     assert got["outcome"] == checks.CONFIRMED
 
 
-def test_a_plan_word_title_over_a_later_column_or_a_row_label_supports_the_boundary():
+def test_a_plan_word_title_over_the_column_after_the_boundary_supports_it():
     title = check(fmap(sheet_map(evidence=[piece("label_contains", cell="H2", word="Forecast")])))
     assert months(title) == [("2024-06", "G")]
+    merged = check(fmap(sheet_map(evidence=[piece("label_contains", cell="K2", word="Forecast")])),
+                   build())                                                  # K2 is empty: the word is not there
+    assert months(merged) == []
     row_label = check(fmap(sheet_map(evidence=[piece("label_contains", cell="A5", word="Plan")])))
-    assert months(row_label) == [("2024-06", "G")]
+    assert item(row_label, "evidence:Report:0")["outcome"] == checks.CONFIRMED and months(row_label) == [], \
+        "a row label points at no column, so it cannot support one"
     early = check(fmap(sheet_map(evidence=[piece("label_contains", cell="D2", word="Forecast")])), build({(2, 4): "Forecast"}))
     assert months(early) == [], "a plan title over a column before the boundary does not point at it"
     not_plan = check(fmap(sheet_map(evidence=[piece("label_contains", cell="H2", word="Notes")])), build({(2, 8): "Notes"}))
@@ -431,3 +435,44 @@ def test_without_a_span_a_blank_header_cell_is_blank_and_never_borrows_a_neighbo
     grid = build({(HEADER, 4): None})
     got = item(check(fmap(figures=[figure(ACTUAL[2], period="2024-03")]), grid), FIG)
     assert (got["outcome"], got["reason"]) == (checks.REJECTED, "Reading says 2024-03; cell D3 is the header for nothing.")
+
+
+# ---------------------------------------------------------------------------
+# F1: a piece of evidence points at one column, the one right after the claimed boundary
+# ---------------------------------------------------------------------------
+def _boundary_at(letter, period, evidence):
+    m = fmap(sheet_map(evidence=[evidence]))
+    m["sheets"][0]["last_actual"].update(column=letter, period=period)
+    return check(m)
+
+
+@pytest.mark.parametrize("letter, period", [("G", "2024-06"), ("F", "2024-05"), ("D", "2024-03")])
+@pytest.mark.parametrize("evidence", [
+    piece("equals_range", cells="H4:M4", other_cells="H5:M5"),
+    piece("range_empty", cells="H6:M6"),
+    piece("repeated_values", cells="H9:M9"),
+    piece("round_values", cells="H4:M4", multiple=10),
+    piece("label_contains", cell="H2", word="Forecast"),
+], ids=lambda e: e["kind"])
+def test_evidence_starting_at_column_h_supports_a_boundary_at_g_only(letter, period, evidence):
+    got = _boundary_at(letter, period, evidence)
+    confirmed_here = item(got, "evidence:Report:0")
+    assert confirmed_here["outcome"] == checks.CONFIRMED, "the fact is true wherever the boundary is claimed"
+    if letter == "G":
+        assert confirmed_here["supports"] is True and months(got) == [("2024-06", "G")]
+    else:
+        assert confirmed_here["supports"] is False and months(got) == [], "one or three columns early: the month is not confirmed on it"
+
+
+def test_evidence_starting_one_column_late_confirms_nothing():
+    late = _boundary_at("G", "2024-06", piece("range_empty", cells="I6:M6"))
+    assert item(late, "evidence:Report:0")["supports"] is False and months(late) == []
+
+
+def test_a_title_over_a_merged_span_counts_from_the_start_of_the_span():
+    grid = build({(2, 9): None})
+    sheet_cells = [{"row": r, "col": c, "text": t} for (r, c), t in grid.items() if (r, c) != (2, 8)] + \
+                  [{"row": 2, "col": 8, "text": "Forecast", "col_span": 6}]
+    cells = checks.Cells(redact.reading_text([{"name": "Report", "cells": sheet_cells}]))
+    inside = checks.check_map(cells, fmap(sheet_map(evidence=[piece("label_contains", cell="H2", word="Forecast")])), 12)
+    assert months(inside) == [("2024-06", "G")]

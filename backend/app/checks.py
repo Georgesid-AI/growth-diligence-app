@@ -431,9 +431,9 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
         if " ".join(piece["word"].lower().split()) not in " ".join((text or "").lower().split()):
             return rejected(R_CONTAINS.format(ref=piece["cell"], word=piece["word"], cell=cell_shown(text)), piece["cell"])
         row, col = pos
-        row_label = col == redact.col_number(smap["label_col"]) and row > smap["header_row"]
-        above = row <= smap["header_row"] and col > boundary_col
-        return confirmed(bool(PLAN_WORD.search(piece["word"])) and (row_label or above), piece["cell"])
+        # A title points at one column, the one right after the boundary (a merged title holds its text in its first column). A row label points at none.
+        above = row <= smap["header_row"] and col == boundary_col + 1
+        return confirmed(bool(PLAN_WORD.search(piece["word"])) and above, piece["cell"])
     rng = parse_range(piece.get("cells"))
     if rng is None:
         return {**base, "outcome": CANNOT, "reason": C_NO_REF}
@@ -441,7 +441,7 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
         past = _outside(sheet, *pos)
         if past:
             return rejected(past)
-    after = rng[1] > boundary_col                                      # the range starts after the boundary column
+    after = rng[1] == boundary_col + 1                                 # the range starts in the column right after the boundary
     if kind == "equals_range":
         other = parse_range(piece.get("other_cells"))
         if other is None:
