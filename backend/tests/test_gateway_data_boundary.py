@@ -4286,9 +4286,10 @@ def test_sheet_reading_sends_only_masked_cells_and_the_provider_adapter_refuses_
     db = sr.audit_db()
     result, adapter = sr.read(db)
     sent = json.loads(adapter.payloads[0])
-    assert set(sent) == {"type", "text"}, "the text of the cells and its type word: no file name, no hash, no audit, no company"
+    assert set(sent) == {"type", "text", "answer", "schema"}, "the cells, the type word, the ask and the map's schema: no file name, no hash, no audit, no company"
+    assert sent["schema"] == gateway.schemas.file_map_schema() and adapter.requests[0]["json_schema"] is None, "the schema is text in the request, no strict output schema"
     assert result.status == "read"
-    blob = "\n".join(str(p) for p in adapter.payloads) + json.dumps(adapter.requests[0]["json_schema"])
+    blob = "\n".join(str(p) for p in adapter.payloads)
     for secret in (sr.COMPANY, sr.EMAIL, "Pat Sample", "Zenith", sr.HASH, "a1"):
         assert secret not in blob
     for leaky in (f"sheet 1: S\nA1: {sr.EMAIL}", "sheet 1: S\nA1: GB82 WEST 1234 5698 7654 32", "sheet 1: S\nA1: +44 20 7946 0958"):
@@ -4314,6 +4315,44 @@ def test_sheet_reading_keeps_no_text_in_a_log_a_call_record_or_beside_the_struct
     holders = {n for n, blob in stored.items() if "447223" in blob or "451000" in blob}
     assert holders == set(), "model output carries cell references, never the cell values it was sent: " + str(holders)
     assert set(stored["llm_calls"] and json.loads(stored["llm_calls"])[0]) >= {"content_hash", "structure_type", "prompt_version", "model"}
+
+
+def test_a_failed_sheet_reading_keeps_the_raw_replies_as_sent_and_nothing_of_them_in_a_log_line(caplog):
+    """George, 2026-10-30: a reply FileMap does not validate, after the one retry, is "reading did not match the map schema"; the two raw
+    replies are stored on the reading record for diagnosis, as received (masked space: Client-NN, never the names), never restored and
+    never served as a reading; the retry sends the failed reply back to the model as its own turn, in masked space too. The log lines name
+    the reason, the count of replies, the check and the schema fields: never a reply, a value or a name."""
+    import logging
+
+    import test_sheet_reading as sr
+    bad = sr.file_map()
+    bad["sheets"][0]["header_row"] = "two"
+    bad["sheets"][0]["rows"][0]["evidence"] = "Revenue row of Client-01, see A1"
+    os.environ["SHEET_READER_MODEL"] = sr.MODEL
+    try:
+        db = sr.audit_db()
+        caplog.set_level(logging.DEBUG)
+        result, adapter = sr.read(db, adapter=t.FakeAdapter(replies=[json.dumps(bad)]))
+    finally:
+        del os.environ["SHEET_READER_MODEL"]
+    assert result.status == "not_read" and result.reason == "reading did not match the map schema" and adapter.calls == 2
+    record = db["readings"].docs[0]
+    assert record["status"] == "not_read" and record["raw_responses"] == [json.dumps(bad)] * 2, "as received, not restored"
+    stored = json.dumps(db["readings"].docs, default=str)
+    for secret in (sr.COMPANY, "Orchid", sr.EMAIL, "Pat Sample", "Zenith", "447223", "451000"):
+        assert secret not in stored, f"{secret!r} on the reading record"
+    retry = adapter.requests[1]["prior"]
+    assert [m["role"] for m in retry] == ["user", "assistant"] and retry[1]["content"] == json.dumps(bad)
+    for secret in (sr.COMPANY, "Orchid", sr.EMAIL, "Pat Sample", "Zenith"):
+        assert secret not in json.dumps(retry) + adapter.payloads[1], f"{secret!r} in the retry"
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "sheet reading not read: run_id=a1 hash=" in logged and "reason=reading did not match the map schema replies=2" in logged
+    for leak in ("two", "Revenue row", "Client-01", "A1", sr.COMPANY, "Zenith", "447223"):
+        assert leak not in logged, f"{leak!r} in a log line"
+    assert "check=schema" in logged and "fields=header_row" in logged
+    with pytest.raises(gateway.GatewayError):
+        gateway.AnthropicAdapter(api_key="k").complete(model=sr.MODEL, system="s", user_payload="{}", max_tokens=5, temperature=None, json_schema=None,
+                                                       prior=[{"role": "assistant", "content": f"see {sr.EMAIL}"}])
 
 
 def test_the_4xx_provider_message_on_a_structure_line_holds_no_cell_token_or_prompt(caplog):

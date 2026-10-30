@@ -19,7 +19,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 import test_llm_gateway as t  # noqa: E402
 from app import readings  # noqa: E402
-from app.llm import gateway, redaction  # noqa: E402
+from app.llm import gateway, redaction, schemas  # noqa: E402
 from app.structures import redact  # noqa: E402
 
 MODEL = "claude-sonnet-5-5"
@@ -75,7 +75,9 @@ def test_one_call_per_spreadsheet_with_the_store_prompt_and_the_allow_listed_mod
     request = adapter.requests[0]
     assert request["model"] == MODEL
     assert request["system"] == next(d["text"] for d in db["prompts"].docs if d["name"] == "sheet_reading"), "the prompt comes from the store"
-    assert request["json_schema"]["required"] == ["map_version", "kind", "sheets", "figures"]
+    assert request["json_schema"] is None, "no strict output schema: the provider refused the file map's grammar (George, 2026-10-30)"
+    sent = json.loads(adapter.payloads[0])
+    assert set(sent["schema"]["properties"]) == {"map_version", "kind", "sheets", "figures"} and sent["answer"] == schemas.FILE_MAP_ANSWER
     assert result.file_map["sheets"][0]["rows"][0]["role"] == "revenue" and result.model == MODEL and result.prompt_version == "v1"
 
 
@@ -90,7 +92,8 @@ def test_the_payload_is_every_cell_masked_and_nothing_else():
     db = audit_db()
     result, adapter = read(db)
     sent = json.loads(adapter.payloads[0])
-    assert sent["type"] == "sheet_reading" and set(sent) == {"type", "text"}
+    assert sent["type"] == "sheet_reading" and set(sent) == {"type", "text", "answer", "schema"}
+    assert sent["schema"] == schemas.file_map_schema(), "the file map's schema as text, the same for every file"
     lines = sent["text"].split("\n")
     assert lines[0] == "sheet 1: Client-01 report"
     assert len(lines) == 1 + len(CELLS), "every non-empty cell, none sampled, none cut"
@@ -250,7 +253,10 @@ def test_a_reply_naming_a_sheet_that_was_not_sent_is_a_parse_failure_and_the_cel
     bad = file_map()
     bad["sheets"][0]["sheet"] = "Another sheet"
     result, adapter = read(audit_db(), adapter=t.FakeAdapter(replies=[json.dumps(bad)]))
-    assert result.status == "not_read" and adapter.calls == 2, "one reask, then not read"
+    assert result.status == "not_read" and adapter.calls == 2, "one retry, then not read"
+    assert result.reason == gateway.SHEET_READING_NOT_MATCHED
+    assert json.loads(adapter.payloads[1])["errors"] == [{"loc": "sheets", "type": "unknown_sheet",
+                                                          "msg": "a sheet named in the reply was not in the request, or kind is not sheet"}]
     far = file_map()
     far["sheets"][0]["rows"][0]["cells"] = "B3:ZZ99"
     assert read(audit_db(), adapter=t.FakeAdapter(replies=[json.dumps(far)]))[0].status == "read", "a citation outside the sheet is a check's rejection"
@@ -364,51 +370,77 @@ def test_startup_check_stays_up_when_the_store_cannot_be_read(monkeypatch, caplo
     assert [r.getMessage() for r in caplog.records] == ["sheet reader check failed at startup: error=RuntimeError"]
 
 
-def test_the_sheet_reading_schema_holds_none_of_the_constructs_the_provider_refuses():
-    """platform.claude.com/docs/en/build-with-claude/structured-outputs: no recursion, external $ref, string, number or array constraints
-    (minItems above 1), pattern or format, every object closed with all its properties required or optional by name, at most 16 union
-    parameters and 24 optional parameters in all."""
+def test_the_schema_goes_as_compact_text_in_the_request_and_no_strict_output_schema_is_sent():
+    """George, 2026-10-30: the provider refused the file map as a strict output schema ("The compiled grammar is too large"), so the schema
+    is text inside the request and the code validates. What still applies of the former construct test: the text is FileMap's own schema
+    with every field, its closed words and cell patterns (the model is told them), compact (no pydantic titles), the same on every call."""
     from app.llm import schemas
-    schema = schemas.file_map_output_schema()
-    banned = {"$ref", "$defs", "definitions", "allOf", "pattern", "format", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum",
-              "exclusiveMaximum", "multipleOf", "maxItems", "uniqueItems", "minProperties", "maxProperties", "patternProperties",
-              "default", "const"}
-    unions, optional = [0], [0]
-
-    def walk(node, path="$"):
-        if isinstance(node, list):
-            for i, n in enumerate(node):
-                walk(n, f"{path}[{i}]")
-            return
-        if not isinstance(node, dict):
-            return
-        assert not banned & set(node), (path, banned & set(node))
-        if "minItems" in node:
-            assert node["minItems"] in (0, 1), path
-        if "enum" in node:
-            assert all(isinstance(v, (str, int, float, bool, type(None))) for v in node["enum"]), path
-        if "anyOf" in node:
-            unions[0] += 1
-        if node.get("type") == "object":
-            assert node["additionalProperties"] is False, path
-            assert set(node["required"]) <= set(node["properties"]), path
-            optional[0] += len(set(node["properties"]) - set(node["required"]))
-        for key, value in node.items():
-            walk(value, f"{path}.{key}")
-
-    walk(schema)
-    assert unions[0] <= schemas.PROVIDER_UNION_LIMIT, unions
-    assert optional[0] <= schemas.PROVIDER_OPTIONAL_LIMIT, optional
-    assert unions[0] > 0 and optional[0] > 0, "FileMap's nullable fields are split between unions and optional ones"
     from schemas.metrics import FileMap
-    fields = {f for model in (FileMap,) for f in model.model_fields}
-    assert set(schema["properties"]) == fields, "FileMap's fields are unchanged"
+    schema = schemas.file_map_schema()
+    assert schemas.output_schema("sheet_reading") is None
+    assert set(schema["properties"]) == set(FileMap.model_fields) and set(schema["$defs"]) == {
+        "MapEvidence", "MapFigure", "MapLastActual", "MapRow", "MapSheet", "MapSource", "MapVariance", "MapVarianceColumns"}
+    assert "title" not in json.dumps(schema) and "pattern" in json.dumps(schema["$defs"]["MapRow"]["properties"]["cells"])
+    assert len(json.dumps(schema, separators=(",", ":"))) < 12_000, "compact: a few thousand tokens beside the cells"
+    db = audit_db()
+    result, adapter = read(db)
+    request, sent = adapter.requests[0], json.loads(adapter.payloads[0])
+    assert request["json_schema"] is None and request["prior"] is None and sent["schema"] == schema
+    assert adapter.count_requests[-1]["json_schema"] is None and json.loads(adapter.count_requests[-1]["user_payload"])["schema"] == schema, \
+        "the token count is of the request as sent, schema text included"
+    assert result.status == "read"
+
+
+def test_a_reply_with_a_wrong_field_type_gets_one_retry_carrying_the_errors_then_not_read():
+    """The retry is one conversation: the request, the reply that failed and a fix request with the first ten validation errors (location,
+    type, message; never the reply's values). A second failure is "not read" with the strip's reason, and both raw replies are kept on the
+    reading record, as received, for diagnosis; the record is never served as a reading."""
+    bad = file_map()
+    bad["sheets"][0]["header_row"] = "two"                       # an int field as a word
+    bad["sheets"][0]["rows"][0]["row"] = "three"
+    for i in range(12):
+        bad["figures"].append({"metric": "revenue", "value": "n/a", "evidence": f"f{i}"})        # 12 more: the errors are capped at ten
+    adapter = t.FakeAdapter(replies=[json.dumps(bad), "Sorry, here it is:\n" + json.dumps(bad)])
+    db = audit_db()
+    result, adapter = read(db, adapter=adapter)
+    assert adapter.calls == 2, "exactly one retry"
+    assert result.status == "not_read" and result.reason == gateway.SHEET_READING_NOT_MATCHED == "reading did not match the map schema"
+    assert result.rejected.startswith("schema: ") and "header_row" in result.rejected and "value" in result.rejected
+    first, retry = adapter.requests
+    assert first["prior"] is None and retry["prior"] == [{"role": "user", "content": adapter.payloads[0]},
+                                                           {"role": "assistant", "content": json.dumps(bad)}]
+    fix = json.loads(adapter.payloads[1])
+    assert set(fix) == {"type", "fix", "errors"} and fix["type"] == "sheet_reading" and fix["fix"] == schemas.FILE_MAP_FIX
+    assert len(fix["errors"]) == 10 == schemas.FILE_MAP_ERRORS_SENT and all(set(e) == {"loc", "type", "msg"} for e in fix["errors"])
+    assert fix["errors"][0] == {"loc": "sheets.0.header_row", "type": "int_parsing",
+                                "msg": "Input should be a valid integer, unable to parse string as an integer"}
+    assert "two" not in json.dumps(fix["errors"]) and "n/a" not in json.dumps(fix["errors"]), "the input is never echoed"
+    assert retry["system"] == first["system"] and retry["json_schema"] is None
+    record = db[readings.READINGS].docs
+    assert len(record) == 1 and record[0]["status"] == "not_read" and record[0]["reason"] == gateway.SHEET_READING_NOT_MATCHED
+    assert record[0]["raw_responses"] == [json.dumps(bad), "Sorry, here it is:\n" + json.dumps(bad)], "both replies, as received"
+    assert "file_map" not in record[0] and record[0]["file_hash"] == HASH and record[0]["model"] == MODEL
+    assert db[readings.USES].docs and db[readings.USES].docs[0]["key"] == record[0]["key"], "goes with the audit (purge)"
+    # Not a reading: the file is read again, and the reading then replaces the record.
+    again, adapter2 = read(db)
+    assert again.status == "read" and adapter2.calls == 1 and not again.cache_hit
+    assert [d.get("status") for d in db[readings.READINGS].docs] == [None] and db[readings.READINGS].docs[0]["file_map"]["kind"] == "sheet"
+    # The retry that succeeds is a reading.
+    fixed = t.FakeAdapter(replies=[json.dumps(bad), json.dumps(file_map())])
+    ok, fixed = read(audit_db(), file_hash="b" * 64, adapter=fixed)
+    assert ok.status == "read" and fixed.calls == 2 and ok.file_map["sheets"][0]["header_row"] == 2
+
+
+def test_fences_and_prose_around_the_json_are_stripped_before_parsing():
+    wrapped = "Here is the file map:\n```json\n" + json.dumps(file_map(), indent=1) + "\n```\nLet me know if you need more."
+    result, adapter = read(audit_db(), adapter=t.FakeAdapter(replies=[wrapped]))
+    assert result.status == "read" and adapter.calls == 1 and result.file_map["sheets"][0]["header_row"] == 2
+    assert gateway._json_object("no object here") == "no object here" and gateway._json_object("") == ""
+    result, adapter = read(audit_db(), file_hash="c" * 64, adapter=t.FakeAdapter(replies=["I cannot read this sheet."]))
+    assert result.status == "not_read" and adapter.calls == 2 and result.reason == gateway.SHEET_READING_NOT_MATCHED
+    assert json.loads(adapter.payloads[1])["errors"][0]["type"] == "json_invalid"
 
 
 def test_a_reading_that_leaves_out_the_optional_fields_still_validates():
-    from app.llm import schemas
     from schemas.metrics import FileMap
     assert FileMap.model_validate({"map_version": 1, "kind": "deck", "sheets": [], "figures": [{"evidence": "p1"}]}).figures[0].value is None
-    schema = schemas.file_map_output_schema()
-    figure = schema["properties"]["figures"]["items"]
-    assert set(figure["properties"]) - set(figure["required"]), "the figure's late nullable fields are optional"

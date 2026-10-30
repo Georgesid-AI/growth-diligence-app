@@ -47,9 +47,13 @@ def reading_key(account: Optional[str], file_hash: str, prompt_version: str, mod
     return _digest("reading", account or "", file_hash, prompt_version, model)
 
 
+NOT_READ = "not_read"       # the status of a failed record (put_failed): kept for diagnosis, never served, replaced by the next reading
+
+
 async def get(db, account: Optional[str], file_hash: str, prompt_version: str, model: str) -> Optional[dict]:
-    """The stored reading of this account for this file, prompt version and model, or None. A hit makes no provider call."""
-    return await db[READINGS].find_one({"key": reading_key(account, file_hash, prompt_version, model)}, {"_id": 0})
+    """The stored reading of this account for this file, prompt version and model, or None. A hit makes no provider call. A failed
+    record under the key is not a reading and is not returned."""
+    return await db[READINGS].find_one({"key": reading_key(account, file_hash, prompt_version, model), "status": {"$ne": NOT_READ}}, {"_id": 0})
 
 
 async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, model: str, reading: dict, input_tokens: int = 0,
@@ -57,12 +61,15 @@ async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str
     """Store a reading once. A reading already stored under the key is returned as it stands and nothing is written."""
     key = reading_key(account, file_hash, prompt_version, model)
     kept = await db[READINGS].find_one({"key": key}, {"_id": 0})
-    if kept:
+    if kept and kept.get("status") != NOT_READ:
         return kept
     doc = {"key": key, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version, "model": model,
            "file_map": copy.deepcopy(reading),
            "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6),
            "created_at": _now()}
+    if kept:
+        await db[READINGS].replace_one({"key": key}, dict(doc))        # the failed record of an earlier read gives way to the reading
+        return doc
     try:
         await db[READINGS].insert_one(dict(doc))
     except Exception as exc:        # a second writer won the unique index: its reading stands
@@ -84,7 +91,7 @@ def reread_key(reading: str, items: List[str]) -> str:
 
 
 async def get_reread(db, reading: str, items: List[str]) -> Optional[dict]:
-    return await db[REREADS].find_one({"key": reread_key(reading, items)}, {"_id": 0})
+    return await db[REREADS].find_one({"key": reread_key(reading, items), "status": {"$ne": NOT_READ}}, {"_id": 0})
 
 
 async def put_reread(db, *, reading: str, items: List[str], reason: str, prompt_version: str, model: str, output: dict, input_tokens: int = 0,
@@ -92,12 +99,34 @@ async def put_reread(db, *, reading: str, items: List[str], reason: str, prompt_
     """Store the second reading of rejected items beside the first, once. The same items of the same reading are never read again."""
     key = reread_key(reading, items)
     kept = await db[REREADS].find_one({"key": key}, {"_id": 0})
-    if kept:
+    if kept and kept.get("status") != NOT_READ:
         return kept
     doc = {"key": key, "reading": reading, "items": sorted(set(items)), "reason": reason, "prompt_version": prompt_version, "model": model,
            "output": copy.deepcopy(output), "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
            "estimated_cost_usd": round(float(cost), 6), "created_at": _now()}
+    if kept:
+        await db[REREADS].replace_one({"key": key}, dict(doc))
+        return doc
     await db[REREADS].insert_one(dict(doc))
+    return doc
+
+
+async def put_failed(db, *, key: str, reread: bool, items: List[str], account: Optional[str], file_hash: str, prompt_version: str, model: str,
+                     reason: str, replies: List[str]) -> dict:
+    """The record of a reading the model's replies did not give (gateway: "reading did not match the map schema"), for diagnosis: the raw
+    replies as received, in masked space, never restored, under the reading's key (or the re-read's) with status NOT_READ. It is not a
+    reading: get and get_reread never return it, and the next reading of the file replaces it. A record already there is rewritten."""
+    reading = key
+    collection, key = (REREADS, reread_key(reading, items)) if reread else (READINGS, reading)
+    doc = {"key": key, "status": NOT_READ, "reason": reason, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version,
+           "model": model, "raw_responses": [str(r) for r in replies], "created_at": _now()}
+    if reread:
+        doc.update(reading=reading, items=sorted(set(items)))       # purged with the reading it belongs to (purge_audit)
+    kept = await db[collection].find_one({"key": key}, {"_id": 0, "key": 1})
+    if kept:
+        await db[collection].replace_one({"key": key}, dict(doc))
+    else:
+        await db[collection].insert_one(dict(doc))
     return doc
 
 

@@ -546,67 +546,43 @@ def labelling_output_schema() -> dict:
 
 
 # The sheet reader (docs/design/read-check-review.md sections 3 and 4): one call per spreadsheet, the model returns the file map. The
-# provider schema is generated from the contract's FileMap, so the two cannot drift. Structured outputs take no string, number or array
-# constraints, no pattern and need every object closed (additionalProperties false), so those are dropped here and checked by FileMap
-# after the reply arrives. They also cap a request at 16 parameters with a union type (anyOf, type arrays) and 24 optional parameters
-# (platform.claude.com/docs/en/build-with-claude/structured-outputs): FileMap has more nullable fields than 16, so the first 16 in schema
-# order stay `anyOf [T, null]` and required, and the others become optional with the null dropped (the model leaves them out; FileMap
-# reads an absent field as None).
+# provider's strict structured output refused the FileMap grammar ("The compiled grammar is too large"), so the file map is not a strict
+# output schema (George, 2026-10-30): the contract's FileMap goes to the model as text, a compact JSON-schema rendering inside the request,
+# with the ask for plain JSON, and FileMap validates the reply in code (gateway.parse_file_map_reply): one retry carrying the first
+# validation errors, then "not read". Generated from FileMap, so the two cannot drift.
 SHEET_READING = "sheet_reading"
-PROVIDER_UNION_LIMIT = 16
-PROVIDER_OPTIONAL_LIMIT = 24
+# The ask that goes with the schema in the user message, and the retry's ask (the first FILE_MAP_ERRORS_SENT validation errors go with it).
+FILE_MAP_ANSWER = ("Reply with one JSON object that matches the JSON schema under \"schema\". Plain JSON only: no prose before or after "
+                   "it and no code fences.")
+FILE_MAP_FIX = "The reply did not match the schema. Fix these and return the full object again, as plain JSON with no prose and no fences."
+FILE_MAP_ERRORS_SENT = 10
 
 
-def _provider_schema(node: Any, defs: dict, budget: dict) -> Any:
-    if "$ref" in node:
-        return _provider_schema(defs[node["$ref"].rsplit("/", 1)[-1]], defs, budget)
-    if "anyOf" in node:
-        return {"anyOf": [_provider_schema(n, defs, budget) for n in node["anyOf"]]}
-    if "const" in node:
-        return {"type": node["type"], "enum": [node["const"]]}
-    kind = node.get("type")
-    if kind == "object":
-        props, required = {}, []
-        for name, value in node["properties"].items():
-            out = _provider_schema(value, defs, budget)
-            nullable = "anyOf" in out and any(m == {"type": "null"} for m in out["anyOf"])
-            if nullable and budget["unions"] <= 0:
-                kept = [m for m in out["anyOf"] if m != {"type": "null"}]
-                out = kept[0] if len(kept) == 1 else {"anyOf": kept}
-                budget["optional"] += 1
-            else:
-                required.append(name)
-                if "anyOf" in out:
-                    budget["unions"] -= 1
-            props[name] = out
-        return {"type": "object", "properties": props, "required": required, "additionalProperties": False}
-    if kind == "array":
-        return {"type": "array", "items": _provider_schema(node["items"], defs, budget)}
-    out = {"type": kind}
-    if "enum" in node:
-        out["enum"] = list(node["enum"])
-    return out
+def _compact(node: Any) -> Any:
+    """The schema without pydantic's `title` keys: the field names, types, enums, patterns, bounds and descriptions stay."""
+    if isinstance(node, dict):
+        return {k: _compact(v) for k, v in node.items() if k != "title"}
+    if isinstance(node, list):
+        return [_compact(n) for n in node]
+    return node
 
 
-def file_map_output_schema() -> dict:
-    """The JSON schema a sheet reading sends as `output_config.format.schema`: the contract's FileMap (schemas/metrics.py)."""
+def file_map_schema() -> dict:
+    """The JSON schema a sheet reading sends as text inside its request (under "schema"): the contract's FileMap (schemas/metrics.py),
+    compacted. It is never sent as `output_config.format.schema`."""
     from schemas.metrics import FileMap
-    raw = FileMap.model_json_schema()
-    budget = {"unions": PROVIDER_UNION_LIMIT, "optional": 0}
-    schema = _provider_schema(raw, raw.get("$defs", {}), budget)
-    if budget["optional"] > PROVIDER_OPTIONAL_LIMIT:
-        raise ValueError(f"FileMap has {budget['optional']} fields over the union limit; the provider takes {PROVIDER_OPTIONAL_LIMIT} optional")
-    return schema
+    return _compact(FileMap.model_json_schema())
 
 
-def output_schema(structure_type: str) -> dict:
-    """The schema a call sends for its type: a column mapping and a file type keep their own, every deck type is labelled."""
+def output_schema(structure_type: str) -> Optional[dict]:
+    """The strict output schema a call sends for its type, or None for a sheet reading: a column mapping and a file type keep their
+    own, every deck type is labelled."""
     if structure_type == FILE_TYPE:
         return file_type_output_schema()
     if structure_type == SHEET_STRUCTURE:
         return sheet_output_schema()
     if structure_type == SHEET_READING:
-        return file_map_output_schema()
+        return None                     # the file map goes as text in the request (file_map_schema), never as a strict output schema
     if structure_type == FILE_RECOGNITION:
         return file_recognition_output_schema()
     if structure_type == PAGE_CLAIMS:

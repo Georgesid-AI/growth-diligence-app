@@ -989,14 +989,15 @@ def test_the_file_map_roles_are_the_ones_the_design_note_lists():
                          "variance", "other")
 
 
-def test_the_provider_schema_is_the_file_map_and_nothing_else():
-    """The JSON schema sent to the provider is generated from FileMap, so the two cannot drift: every closed word of one is the other's."""
+def test_the_schema_text_sent_for_a_sheet_reading_is_the_file_map_and_nothing_else():
+    """The JSON schema a sheet reading carries as text in its request is generated from FileMap, so the two cannot drift: every closed word
+    of one is the other's. No strict output schema is sent for the step (George, 2026-10-30: the provider refused the grammar)."""
     from app.llm import schemas as llm_schemas
     from schemas.metrics import MAP_ROLES, FileMap
-    sent = llm_schemas.file_map_output_schema()
-    assert sent["additionalProperties"] is False and set(sent["required"]) == set(FileMap.model_fields)
-    row = sent["properties"]["sheets"]["items"]["properties"]["rows"]["items"]
+    sent = llm_schemas.file_map_schema()
+    assert llm_schemas.output_schema(llm_schemas.SHEET_READING) is None
+    assert sent["additionalProperties"] is False and set(sent["properties"]) == set(FileMap.model_fields), "FileMap's fields are all sent"
+    row = sent["$defs"]["MapRow"]
     assert row["properties"]["role"]["enum"] == list(MAP_ROLES)
-    assert set(row["required"]) <= set(row["properties"])           # structured output: required, nullable where optional, or optional past the union limit
-    assert set(sent["properties"]) == set(FileMap.model_fields), "FileMap's fields are all sent"
-    assert "$ref" not in str(sent) and "$defs" not in str(sent)
+    assert set(row["required"]) <= set(row["properties"]) and row["additionalProperties"] is False
+    assert "title" not in str(sent), "compact: pydantic's titles are dropped, the names, types, enums, patterns and descriptions stay"

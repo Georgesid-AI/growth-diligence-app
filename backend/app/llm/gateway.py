@@ -575,11 +575,17 @@ class AnthropicAdapter:
         user_payload: str,
         max_tokens: int,
         temperature: Optional[float],
-        json_schema: dict,
+        json_schema: Optional[dict],
         cache_system: bool = False,
         images: Optional[List[bytes]] = None,
+        prior: Optional[List[dict]] = None,
     ) -> Tuple[str, int, int]:
         """One provider call. Returns (text, input_tokens, output_tokens).
+
+        `json_schema` is the strict output schema (`output_config.format`); None sends none, and the caller validates the text
+        (the sheet reading: the schema goes as text in its request). `prior` is the turns before the user message, in order
+        ([{"role": "user"|"assistant", "content": text}]): the sheet reading's retry sends its request, the reply that failed and
+        the fix request as one conversation. Every text of a prior turn passes the masking check too.
 
         With `cache_system` the system prompt is marked for the provider's prompt cache (the page_claims step: the same
         prompt for every batch of an audit). The input tokens returned then count the cache writes and reads with the
@@ -590,16 +596,20 @@ class AnthropicAdapter:
         off, and `GatewayError` for anything a retry would not fix.
         """
         _assert_masked(user_payload)
+        for turn in prior or []:
+            _assert_masked(turn["content"])
         client = self._ensure_client()
         kwargs = {
             "model": model,
             "max_tokens": max_tokens,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if cache_system else system,
-            "messages": [{"role": "user", "content": _user_content(user_payload, images)}],
+            "messages": [*({"role": t["role"], "content": t["content"]} for t in prior or []),
+                         {"role": "user", "content": _user_content(user_payload, images)}],
+        }
+        if json_schema is not None:
             # Structured output is what makes strict parsing viable: the first
             # content block is guaranteed to be schema-valid JSON.
-            "output_config": {"format": {"type": "json_schema", "schema": json_schema}},
-        }
+            kwargs["output_config"] = {"format": {"type": "json_schema", "schema": json_schema}}
         # Current Opus/Sonnet models reject sampling params with a 400.
         if temperature is not None and model in MODELS_ACCEPTING_TEMPERATURE:
             kwargs["temperature"] = temperature
@@ -1531,6 +1541,9 @@ SHEET_READING_TOO_LARGE = ("This file is too large to read in full (the limit is
 SHEET_READING_CUT = ("The reading of this file was cut off because the file has too many rows to map in one read. "
                      "Remove the sheets that are not needed or split the file, then upload it again.")
 SHEET_READING_LOCK_ROUNDS = 5
+# A reply that FileMap does not validate, after the one retry (George, 2026-10-30: no strict output schema for the file map; the schema goes
+# as text and the code validates). The strip's and the log's reason; the two raw replies are kept on the reading record (readings.put_failed).
+SHEET_READING_NOT_MATCHED = "reading did not match the map schema"
 # The spreadsheet mapping path of PR 1 and before (file_type, file_recognition, sheet_structure and the column mapping) stays behind a flag
 # for PR 2 only (read-check-review.md section 13): READER_V1=off turns its model calls off, anything else leaves them on. Its three calls
 # are unchanged and still do not learn names.
@@ -1669,7 +1682,8 @@ def structure_key(text: str, structure_type: str, prompt_tag: str, model: str, i
 def schema_hash(structure_type: str) -> str:
     """sha256 of the output schema a structure of this type is sent: the labelling schema for a deck structure,
     its own for a column mapping."""
-    return content_hash(cache.canonical_json(schemas.output_schema(structure_type)))
+    schema = schemas.file_map_schema() if structure_type == SHEET_READING else schemas.output_schema(structure_type)
+    return content_hash(cache.canonical_json(schema))
 
 
 def content_hash(text: str) -> str:
@@ -1782,14 +1796,36 @@ def parse_file_map_reply(reply: str, text: str):
     one failure."""
     from schemas.metrics import FileMap
     try:
-        parsed = FileMap.model_validate(json.loads((reply or "").strip()))
+        parsed = FileMap.model_validate(json.loads(_json_object(reply)))
     except Exception as exc:
-        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc),
-                           fields=_schema_fields(exc))
+        failed = GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc),
+                              fields=_schema_fields(exc))
+        failed.errors = _validation_errors(exc)
+        raise failed
     sent = {s["name"] for s in (structure_redact.parse_reading_text(text) or [])}
     if parsed.kind != "sheet" or any(s.sheet not in sent for s in parsed.sheets):
-        raise GatewayError("parse_failed", "reply names a sheet that was not sent", check="other")
+        failed = GatewayError("parse_failed", "reply names a sheet that was not sent", check="other")
+        failed.errors = [{"loc": "sheets", "type": "unknown_sheet", "msg": "a sheet named in the reply was not in the request, or kind is not sheet"}]
+        raise failed
     return parsed
+
+
+def _json_object(reply: str) -> str:
+    """The JSON object in a reply: from its first "{" to its last "}", so a code fence or a line of prose before or after it is dropped.
+    A reply with no object is returned stripped, for json.loads to refuse."""
+    reply = reply or ""
+    start, end = reply.find("{"), reply.rfind("}")
+    return reply[start:end + 1] if 0 <= start < end else reply.strip()
+
+
+def _validation_errors(exc: Exception) -> List[dict]:
+    """The first FILE_MAP_ERRORS_SENT errors of a failed reply, for the retry's fix request: location, type and message, never the input.
+    A reply that is not JSON gives one error with the decoder's position."""
+    if hasattr(exc, "errors"):
+        errors = exc.errors(include_url=False, include_context=False, include_input=False)
+        return [{"loc": ".".join(str(part) for part in e.get("loc", ())), "type": e.get("type", ""), "msg": e.get("msg", "")}
+                for e in errors[:schemas.FILE_MAP_ERRORS_SENT]]
+    return [{"loc": "", "type": "json_invalid", "msg": f"the reply is not one JSON object: {type(exc).__name__} {exc}"[:200]}]
 
 
 def _cited_cells(text: str, structure_type: str) -> set:
@@ -1808,8 +1844,18 @@ def _cited_cells(text: str, structure_type: str) -> set:
 # The check a structure reply failed, named last on its "structure not read" line (llm-structure-reading.md section 9,
 # issue #64): a closed word, never the reply, the check's message or cell text.
 PARSE_CHECKS = ("schema", "metric_list", "item_count", "other")
-# The field names a "structure not read" line may name after fields= (a page reply's schema): closed words, never a value.
+# The field names a "structure not read" line may name after fields= (a page reply's schema, the file map's): closed words, never a value.
 PAGE_FIELDS = frozenset(schemas.PageClaim.model_fields) | {"type", "claims"}
+
+
+def _map_fields() -> frozenset:
+    from schemas import metrics
+    models = (metrics.FileMap, metrics.MapSheet, metrics.MapRow, metrics.MapFigure, metrics.MapSource, metrics.MapLastActual,
+              metrics.MapEvidence, metrics.MapVariance, metrics.MapVarianceColumns)
+    return frozenset(f for m in models for f in m.model_fields)
+
+
+MAP_FIELDS = _map_fields()
 
 
 def _schema_check(exc: Exception) -> str:
@@ -2003,11 +2049,13 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
     if images:
         cached["images"] = images
     billed_calls = 0
+    replies: List[str] = []
+    payload = user_payload
     while True:
         try:
             try:
                 reply, in_tok, out_tok = await _to_thread(
-                    adapter.complete, model=model, system=system if system is not None else prompt.text, user_payload=user_payload,
+                    adapter.complete, model=model, system=system if system is not None else prompt.text, user_payload=payload,
                     max_tokens=max_tokens, temperature=None, json_schema=schema, **cached)
             except (RetryableProviderError, GatewayError):
                 raise
@@ -2030,6 +2078,7 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
             exc.billed_calls = billed_calls + (1 if any(cut) else 0)
             raise
         billed_in, billed_out, billed_calls = billed_in + in_tok, billed_out + out_tok, billed_calls + 1
+        replies.append(reply)
         try:
             return parse_structure_reply(reply, structure_type, text), billed_in, billed_out, billed_calls
         except GatewayError as exc:
@@ -2037,7 +2086,14 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
             if parse_attempts > MAX_PARSE_RETRIES:
                 exc.billed = (billed_in, billed_out)
                 exc.billed_calls = billed_calls
+                exc.replies = replies                # the raw replies, as received (masked space), for the reading record
                 raise
+            if structure_type == SHEET_READING:
+                # The one retry is a fix request (George, 2026-10-30): the request, the reply that failed and the first validation errors
+                # go as one conversation, and the model returns the full object again. Other steps resend the same request.
+                cached["prior"] = [{"role": "user", "content": user_payload}, {"role": "assistant", "content": reply}]
+                payload = cache.canonical_json({"type": structure_type, "fix": schemas.FILE_MAP_FIX,
+                                                "errors": getattr(exc, "errors", None) or [{"loc": "", "type": exc.check or "other", "msg": ""}]})
 
 
 def _structure_result(status, structure_type, reason=None, **fields) -> StructureRead:
@@ -2191,7 +2247,9 @@ async def read_structure(
             return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
                                      masked=masked_counts, **_reading(hit["output"]), **base)
 
-    user_payload = cache.canonical_json({"type": structure_type, "text": text, **({"recheck": recheck} if recheck else {})})
+    # A sheet reading carries the file map's schema as text, with the ask for plain JSON (schemas.file_map_schema; no strict output schema).
+    ask = {"answer": schemas.FILE_MAP_ANSWER, "schema": schemas.file_map_schema()} if structure_type == SHEET_READING else {}
+    user_payload = cache.canonical_json({"type": structure_type, "text": text, **({"recheck": recheck} if recheck else {}), **ask})
     image_tokens = 0
     adapter = adapter or (AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS) if structure_type == SHEET_READING else AnthropicAdapter())
     sheet = structure_type == SHEET_STRUCTURE
@@ -2280,7 +2338,8 @@ async def read_structure(
             # #64); on a 4xx the provider's message too, capped (_logged_provider_message); never the exception's own text.
             billed, code, status, kind = getattr(exc, "billed", (0, 0)), exc.reason, exc.status, exc.error_type
             check = exc.check if exc.check in PARSE_CHECKS else "-"
-            fields = ",".join(f for f in exc.fields if f in PAGE_FIELDS) or "-"       # schema field names only, never a value
+            named = PAGE_FIELDS | MAP_FIELDS if structure_type == SHEET_READING else PAGE_FIELDS
+            fields = ",".join(f for f in exc.fields if f in named) or "-"       # schema field names only, never a value
             cost = estimate_cost_usd(model, *billed)
             shown = _message_field(exc, text, system, user_payload, prompt.text)
             image_billed = min(billed[0], image_tokens * getattr(exc, "billed_calls", 0))
@@ -2299,9 +2358,17 @@ async def read_structure(
             rejected = None
             if code == "parse_failed" and structure_type == PAGE_CLAIMS:
                 rejected = check if fields == "-" else f"{check}: {fields}"
+            reason = SHEET_READING_CUT if structure_type == SHEET_READING and code == "truncated" else NOT_READ
             if code == "parse_failed" and structure_type == SHEET_READING:
                 rejected = check if fields == "-" else f"{check}: {fields}"
-            reason = SHEET_READING_CUT if structure_type == SHEET_READING and code == "truncated" else NOT_READ
+                reason = SHEET_READING_NOT_MATCHED
+                # The strip's reason in the log too, and the raw replies (masked space, as received, never restored) on the reading
+                # record for diagnosis; the record is not a reading: it is never served and the next read of the file replaces it.
+                replies = list(getattr(exc, "replies", None) or [])
+                logger.warning("sheet reading not read: run_id=%s hash=%s reason=%s replies=%d", audit_id, digest, reason, len(replies))
+                await readings.put_failed(db, key=reading_key, reread=bool(recheck), items=recheck_items, account=account, file_hash=file_hash,
+                                          prompt_version=prompt.version, model=model, reason=reason, replies=replies)
+                await readings.use(db, audit_id, reading_key)
             return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, reason,
                                      input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, rejected=rejected,
                                      image_tokens=image_billed, image_cost_usd=image_cost, **base)
