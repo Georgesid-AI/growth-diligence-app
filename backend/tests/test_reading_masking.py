@@ -18,6 +18,10 @@ def text_of(*cells, name="Report"):
     return redact.reading_text([{"name": name, "cells": [{"row": r, "col": c, "text": t} for r, c, t in cells]}])
 
 
+def page_of(*lines):
+    return redact.page_text([(3, [{"row": i, "col": 1, "text": t} for i, t in enumerate(lines, 1)])])
+
+
 def mask(text, mapping=None, company=COMPANY):
     mapping = dict(mapping or {})
     for name in redact.reading_company_names(text, company, mapping):          # name learning, as the gateway does it
@@ -56,6 +60,27 @@ def test_a_label_with_a_word_outside_the_vocabulary_is_not_a_metric_label():
     text = text_of((1, 1, "Customers"), (2, 1, "Revenue - Zenith Retail"))
     (masked, _), mapping = mask(text)
     assert "Zenith" not in masked and mapping, "a name with a metric word beside it is still a name"
+
+
+def test_a_name_the_map_already_holds_is_tokenised_whatever_word_it_is_on_a_sheet_and_on_a_page():
+    """F5 of the review of PR 205: the vocabulary applies only when a name is learned. A customer called "Balance" or "Closing" that the
+    audit already tokenised goes out as its token in every payload."""
+    mapping = {"Balance": "Client-04", "Closing": "Client-05", "Support": "Client-06"}
+    sheet = text_of((1, 1, "Customer"), (2, 1, "Balance"), (2, 2, "100"), (3, 1, "Closing Ltd"), (4, 1, "Support"))
+    masked, counts = redact.mask_reading(sheet, COMPANY, mapping)
+    assert "A2: Client-04" in masked and "A3: Client-05 Ltd" in masked and "A4: Client-06" in masked and counts["company"] >= 3
+    page, _ = redact.mask_pages(page_of("Balance renewed", "Closing signed for 120", "Support tier"), COMPANY, mapping)
+    assert [line.split(": ", 1)[1] for line in page.splitlines()] == ["Client-04 renewed", "Client-05 signed for 120", "Client-06 tier"]
+    row, _ = redact.mask_reading(text_of((1, 1, "Metric"), (2, 1, "Balance"), (2, 2, "100")), COMPANY, mapping)
+    assert "A2: Client-04" in row, "once mapped, the word is a name in every file of the audit"
+
+
+def test_a_metric_label_on_a_sheet_with_no_such_customer_is_unchanged_and_is_not_learned():
+    text = text_of((1, 1, "Customers"), (2, 1, "Balance"), (2, 2, "100"), (3, 1, "Closing"), (4, 1, "Support"), (5, 1, "Total"))
+    (masked, _), mapping = mask(text)
+    assert masked == text and mapping == {}, "the vocabulary decides what is learned"
+    text = page_of("Closing balance 120")
+    assert redact.mask_pages(text, COMPANY, {})[0] == text
 
 
 def test_a_metric_label_under_a_people_header_is_not_a_person_and_a_name_is():

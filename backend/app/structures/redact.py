@@ -495,8 +495,10 @@ _PSEUDONYM = re.compile(re.escape(TOKEN_PREFIX) + r"\d+|Segment [A-Z]+")
 CUSTOMER_PREFIX = TOKEN_PREFIX
 MIN_NAME_LENGTH = 4
 
-# The metric vocabulary (George, 2026-10-29, read-check-review.md section 8, PR 2): words the masker never tokenises. A row label
-# such as "Revenue" under a "Customers" title is a metric, not a company; tokenised, the reader could not tell what the row measures.
+# The metric vocabulary (George, 2026-10-29, read-check-review.md section 8, PR 2): words the masker never LEARNS as a company name. A
+# row label such as "Revenue" under a "Customers" title is a metric, not a company; learned, the reader could not tell what the row
+# measures. It applies to learning (`_company_cell`) and to the people rules (a metric label is no person); never to a name the audit's
+# map already holds, which is swapped in every payload whatever word it is (`customer_names`; review of PR 205, F5).
 # It is the words of the file map's own role, metric, basis and actual/plan names plus the common finance labels. A cell is a metric
 # label only when every one of its words is in the list: "Revenue" and "Gross margin %" are, "Revenue - Acme Retail" is not.
 _FINANCE_LABELS = """revenue revenues sales bookings booking arr mrr churn growth margin gross net cost costs opex ebitda cash customers
@@ -741,8 +743,7 @@ def customer_names(mapping: Dict[str, str], company_name: Optional[str]) -> List
     and existing pseudonyms are never among them."""
     company = (company_name or "").strip().lower()
     return [(real.strip(), pseudo) for real, pseudo in mapping.items() if pseudo.startswith(CUSTOMER_PREFIX)
-            and _usable_name(real) and real.strip().lower() != company and not _PSEUDONYM.fullmatch(real.strip())
-            and not metric_label(real)]
+            and _usable_name(real) and real.strip().lower() != company and not _PSEUDONYM.fullmatch(real.strip())]
 
 
 def pseudonymise_cells(cells: List[Dict], mapping: Dict[str, str], company_name: Optional[str]
