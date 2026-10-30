@@ -91,9 +91,11 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
            "items": final["items"], "rereads": rereads, "months": months,
            "month": best["month"] if best else None,
            "evidence": (f"{best['evidence']} (confirmed on sheet {best['sheet']}, column {best['column']})" if best else None),
+           "dims": {name: [sheet.max_row, sheet.max_col] for name, sheet in cells.sheets.items()},
            "rows_mapped": sum(len(s.get("rows") or []) for s in merged.get("sheets") or []),
            "period_columns": max((redactless_cols(s) for s in merged.get("sheets") or []), default=0)}
     mapping = await redaction.get_map(db, audit_id)
+    doc["dims"] = {redaction.restore(name, mapping): dims for name, dims in doc["dims"].items()}      # keyed by the sheet's own name, as the map is
     doc = redaction.restore_deep(doc, mapping)                   # display un-masks on the server; the reasons held masked cell texts
     await readings.save_checks(db, audit_id, file_hash, doc)
     return doc

@@ -29,6 +29,8 @@ from app import as_of as as_of_mod
 from app import readings as readings_mod
 from app import sheet_reader
 from app import reading_export
+from app import reviewer
+from app import deck_figures
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
@@ -1638,6 +1640,32 @@ async def export_reading(audit_id: str, file_hash: str, format: Literal["json", 
     return reading_export.as_json({**doc, "file": check.get("file") or doc.get("file")}, overrides)
 
 
+async def _review_safely(audit_id: str, force: bool = False) -> None:
+    """The reviewer for one audit (read-check-review.md section 7; app/reviewer.py), after the audit's files are read and its calculations ran. A
+    failure of any kind leaves the register as it is (rule 20) and is logged by its type only."""
+    try:
+        a = await db.audits.find_one({"id": audit_id})
+        if not a or a.get("structure_reading_consent") is not True:
+            return
+        doc = await reviewer.review_audit(db, a, force=force)
+        await _usage_update(audit_id, lambda u: u["steps"].setdefault("reviewer", {}).__setitem__(
+            doc["status"], u["steps"]["reviewer"].get(doc["status"], 0) + 1))
+        await _refresh_as_of(audit_id)
+        logger.info("review: run_id=%s status=%s findings=%d dropped=%d", audit_id, doc["status"], len(doc.get("findings") or []), doc.get("dropped", 0))
+    except Exception as exc:
+        logger.error("review failed: run_id=%s error=%s", audit_id, type(exc).__name__)
+
+
+@api.post("/audits/{audit_id}/review-readings")
+async def review_readings(audit_id: str, background: BackgroundTasks, force: bool = False):
+    """Ask for the review of the audit's readings now (the reviewer also runs after the calculations of Run audit). One call per audit and input;
+    `force` reviews again an input already reviewed."""
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+    background.add_task(_review_safely, audit_id, force)
+    return {"status": "queued"}
+
+
 @api.get("/audits/{audit_id}/datasets")
 async def list_datasets(audit_id: str):
     """One view per stored file, for rebuilding the chat on reload."""
@@ -2277,16 +2305,9 @@ SNIPPET_MAX = 300           # the longest passage Add from deck takes (claim-typ
 
 
 def _page_lines(deck: dict, page: int) -> List[dict]:
-    """A stored page as the analyst sees it under View page: its text, notes and table lines ("b{n}", the block's index in the
-    stored deck) and its chart labels ("c{structure}:{cell}"), in the stored order. Nothing is read again from the file."""
-    key = "slide" if deck.get("page_unit") == "slide" else "page"
-    lines = [{"ref": f"b{n}", "kind": b.get("kind"), "text": b.get("text") or ""}
-             for n, b in enumerate(deck.get("blocks") or []) if b.get(key) == page and (b.get("text") or "").strip()]
-    for s, structure in enumerate(deck.get("structures") or []):
-        if structure.get("type") == "chart" and structure.get(key) == page:
-            lines += [{"ref": f"c{s}:{n}", "kind": "chart", "text": cell.get("text") or ""}
-                      for n, cell in enumerate(structure.get("cells") or []) if (cell.get("text") or "").strip()]
-    return lines
+    """A stored page as the analyst sees it under View page: its text, notes and table lines and its chart labels, in the stored order.
+    Nothing is read again from the file."""
+    return deck_figures.page_lines(deck, page)
 
 
 async def _stored_deck(audit_id: str, deck_id: str) -> dict:
@@ -2656,6 +2677,7 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
             else:
                 # No month confirmed and none typed: the audit runs everything that does not depend on it (read-check-review.md section 6).
                 await _run_compute(audit_id)
+                background.add_task(_review_safely, audit_id)        # one review per audit and input; a review already made is kept
                 result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF)
         else:
             if not audit.get("results"):

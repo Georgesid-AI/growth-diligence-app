@@ -4393,3 +4393,51 @@ def test_the_4xx_provider_message_on_a_structure_line_holds_no_cell_token_or_pro
             assert prompt_text[:20] not in tail and GOOD_ITEMS[:20] not in tail, line
     assert all("message=" not in line for line in lines(error(echoes[1]), GOOD_ITEMS)), "a message holding a token is left out"
     assert all("sk-ant" not in line for line in lines(error(echoes[3]), GOOD_ITEMS)), "a key is never logged"
+
+
+def test_the_reviewer_payload_is_masked_at_the_gateway_and_no_log_or_call_record_holds_its_text(caplog):
+    """PR 3 (read-check-review.md section 7; rule 16 as amended): the review input goes out masked like every payload (the target's name, a
+    customer in the map, an email, a first-name personal name); figures are not rewritten; the log lines and the call record hold a hash,
+    counts and closed words, never a finding, a name or a value."""
+    import logging
+
+    import test_sheet_reading as sr
+    caplog.set_level(logging.DEBUG)
+    os.environ["SHEET_READER_MODEL"] = sr.MODEL
+    try:
+        db = sr.audit_db()
+        asyncio.run(redaction.add_customers(db, "a1", ["Zenith Retail Ltd"]))
+        review_input = {"files": [{"file": 1, "kind": "sheet", "map": {"sheets": [{"sheet": f"{sr.COMPANY} report", "rows": [{"row": 3, "series": {
+            "periods": ["2024-01"], "values": [447223.43], "refs": ["B3"]}}]}]}}], "cannot_check": [
+                {"file": 1, "segment": "Jane Doe", "reason": f"Cell holds {sr.EMAIL}, for Zenith Retail Ltd"}], "computed": None}
+        reply = json.dumps({"findings": [{"what": "Zenith Retail Ltd row 3 reads as bookings", "reading": "bookings", "confidence": "low",
+                                          "refs": [{"file": 1, "sheet": f"{sr.COMPANY} report", "cell": "B3", "page": None}]}]})
+        adapter = t.FakeAdapter(replies=[reply])
+        got = asyncio.run(gateway.run_reviewer(db, "a1", review_input, adapter=adapter, sleep=t._noop_sleep))
+    finally:
+        del os.environ["SHEET_READER_MODEL"]
+    assert got.status == "read" and adapter.calls == 1
+    sent = adapter.payloads[0]
+    for secret in (sr.COMPANY, "Zenith", "Jane Doe", sr.EMAIL):
+        assert secret not in sent, f"{secret!r} left the server in the review payload"
+    assert "447223.43" in sent and "Client-" in sent, "figures stay as they are and names become tokens"
+    assert got.findings[0]["what"].startswith("Zenith Retail Ltd"), "display un-masks on the server"
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    calls = json.dumps(db["llm_calls"].docs, default=str)
+    for leak in ("Zenith", "Jane Doe", sr.EMAIL, "447223", "reads as bookings", sr.COMPANY):
+        assert leak not in logged and leak not in calls, f"{leak!r} in a log line or a call record"
+    assert json.loads(calls)[-1]["structure_type"] == "reviewer" and "review read: run_id=a1" in logged
+
+
+def test_the_reviewer_refuses_a_payload_that_still_holds_personal_data_and_a_model_off_the_list():
+    import test_sheet_reading as sr
+    os.environ["SHEET_READER_MODEL"] = "latest"
+    try:
+        db = sr.audit_db()
+        adapter = t.FakeAdapter(replies=["{}"])
+        blocked = asyncio.run(gateway.run_reviewer(db, "a1", {"files": []}, adapter=adapter, sleep=t._noop_sleep))
+    finally:
+        del os.environ["SHEET_READER_MODEL"]
+    assert blocked.status == "blocked" and adapter.calls == 0
+    from app.structures import redact as masker
+    assert masker.personal_items("call +44 20 7946 0958 or b@c.test") == ["email", "phone"], "the last line before the provider names kinds"

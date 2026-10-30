@@ -122,3 +122,4 @@ def sheet_reader_off_unless_tested(request, monkeypatch):
     async def not_queued(*args, **kwargs):
         return None
     monkeypatch.setattr(server, "_queue_workbook_read", not_queued)
+    monkeypatch.setattr(server, "_review_safely", not_queued)          # the reviewer runs after the calculations; only its own tests let it

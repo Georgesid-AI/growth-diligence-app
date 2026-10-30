@@ -1530,6 +1530,7 @@ PAGE_READER_BLOCKED = "AI read: blocked – model not permitted"
 # model is one exact id on an allow-list (SHEET_READER_MODELS; George, 2026-10-30), never a moving alias, so a stored reading names the model that made it
 # (section 9). Only the Sonnet and Opus families may read a file in full (rule 31's allow-list, for the same zero-data-retention reason).
 SHEET_READING_PROMPT = "sheet_reading"
+REVIEWER_PROMPT = "reviewer"          # PR 3: the reviewer call (run_reviewer), the prompt of the store; the repository holds a test stub only
 SHEET_READER_ENV = "SHEET_READER_MODEL"
 SHEET_READER_MODELS = frozenset({"claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5", "claude-opus-5"})
 SHEET_READER_BLOCKED = "AI read: blocked – the sheet reader model is not on the allow-list (SHEET_READER_MODEL)"
@@ -2229,7 +2230,7 @@ async def read_structure(
     if structure_type == SHEET_READING:
         # Stored once, keyed on the file and the versions (section 9): the reading of this file is looked up before anything is counted
         # or sent. A hit makes no provider call, whichever audit of the account asked first; another account reads the file again. A second reading of rejected items is stored beside it.
-        kept = await readings.get_reread(db, reading_key, recheck_items) if recheck else await readings.get(db, account, file_hash, prompt_hash, model)
+        kept = await readings.get_reread(db, reading_key, recheck_items, recheck_id) if recheck else await readings.get(db, account, file_hash, prompt_hash, model)
         if kept:
             await readings.use(db, audit_id, reading_key)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
@@ -2369,7 +2370,7 @@ async def read_structure(
                 replies = list(getattr(exc, "replies", None) or [])
                 logger.warning("sheet reading not read: run_id=%s hash=%s reason=%s replies=%d", audit_id, digest, reason, len(replies))
                 await readings.put_failed(db, key=reading_key, reread=bool(recheck), items=recheck_items, account=account, file_hash=file_hash,
-                                          prompt_version=prompt.version, model=model, reason=reason, replies=replies)
+                                          prompt_version=prompt.version, model=model, reason=reason, replies=replies, recheck_id=recheck_id or "")
                 await readings.use(db, audit_id, reading_key)
             return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, reason,
                                      input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, rejected=rejected,
@@ -2422,6 +2423,163 @@ async def read_structure(
             _inflight_tokens[audit_id] = max(0, _inflight_tokens.get(audit_id, 0) - reserved)
         if token is not None:
             await guards.release(db, audit_id, STRUCTURE_STEP, token)
+
+
+REVIEWER_INPUT_CAP = 60_000      # tokens of the masked review input, by the provider's token counter: above it the review is refused, nothing is cut
+REVIEWER_MAX_TOKENS = 4_000      # the findings' reply
+REVIEWER_TIMEOUT_SECONDS = 180.0
+REVIEWER_TOO_LARGE = "The files are too large to review in one call (the limit is {limit:,} tokens). Nothing was reviewed."
+REVIEW_STRUCTURE_TYPE = "reviewer"
+
+
+class ReviewRead(NamedTuple):
+    """The result of the reviewer call: status ("read", or why not), the findings as the model wrote them (restored names), the reason."""
+    status: str
+    findings: List[dict] = []
+    reason: Optional[str] = None
+    prompt_version: Optional[str] = None
+    prompt_hash: Optional[str] = None
+    model: Optional[str] = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+def parse_review_reply(reply: str) -> "schemas.ReviewReply":
+    """The reviewer's reply as the contract: plain JSON, validated in code. A failure is a GatewayError("parse_failed") carrying the first
+    validation errors, which the one retry sends back."""
+    try:
+        return schemas.ReviewReply.model_validate(json.loads(_json_object(reply)))
+    except Exception as exc:
+        failed = GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc),
+                              fields=_schema_fields(exc))
+        failed.errors = _validation_errors(exc)
+        raise failed
+
+
+def _walk_strings(node: Any, fn):
+    if isinstance(node, dict):
+        return {k: _walk_strings(v, fn) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_walk_strings(v, fn) for v in node]
+    return fn(node) if isinstance(node, str) else node
+
+
+async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, sleep=None) -> ReviewRead:
+    """One reviewer call for the audit (read-check-review.md section 7; CLAUDE.md rule 16 as amended for PR 3): the stored file maps and figures
+    (the readers' evidence lines already left out by the caller), the computed results and the cannot-check list, masked here like every
+    payload (every string as a stored reading is; figures are never rewritten), then sent with the prompt `reviewer` of the store on the
+    reader's model (the same allow-list, SHEET_READER_MODELS). The reply is plain JSON validated in code, one retry carrying the errors.
+    Names come back restored. Never raises for a model-side problem: the status says why nothing was reviewed (rule 20)."""
+    import asyncio
+    sleep = sleep or asyncio.sleep
+    context = await load_structure_context(db, audit_id)
+    if context.get("structure_reading_consent") is not True:
+        return ReviewRead("no_consent", reason="AI-assisted reading is off for this audit")
+    blocked = sheet_reader_problem()
+    if blocked:
+        return ReviewRead("blocked", reason=blocked)
+    model = sheet_reader_model()
+    try:
+        prompt = await prompt_store.load(db, REVIEWER_PROMPT)
+    except prompt_store.PromptMissing:
+        return ReviewRead("not_read", reason=NOT_READ)
+    if price_model(model) not in MODEL_PRICING_USD:
+        return ReviewRead("not_read", reason=NOT_READ)
+    mapping = await redaction.get_map(db, audit_id)
+    company = context.get("company_name")
+    if company and not any(structure_redact.norm(real) == structure_redact.norm(company) for real in mapping):
+        mapping = await redaction.add_customers(db, audit_id, [company])
+    def mask(text: str) -> str:
+        # The names of the map and the target's own become their tokens first, then the personal rules run on what is left (emails, phone
+        # numbers, IBANs, ID numbers, first-name personal names): a company with a first name in it is Client-NN, never "[person] Group".
+        tokenised = structure_redact.mask_text(text, company, mapping)
+        return structure_redact.redact_cells([{"row": 1, "col": 1, "text": tokenised}], company)[0][0]["text"]
+    masked = _walk_strings(review_input, mask)
+    text = cache.canonical_json(masked)
+    try:
+        _assert_masked(text)
+    except GatewayError as exc:
+        kinds = exc.reason
+        logger.warning("review refused: run_id=%s reason=%s", audit_id, kinds)
+        return ReviewRead("refused", reason=f"refused: {kinds}")
+    user_payload = cache.canonical_json({"type": REVIEW_STRUCTURE_TYPE, "input": masked, "answer": schemas.REVIEW_ASK})
+    system = prompt.text
+    digest = content_hash(text)
+    prompt_hash = readings.prompt_hash(system)
+    base = dict(prompt_version=prompt.version, prompt_hash=prompt_hash, model=model)
+    adapter = adapter or AnthropicAdapter(timeout=REVIEWER_TIMEOUT_SECONDS)
+    try:
+        counted = await _count_tokens(adapter, sleep, None, model=model, system=system, user_payload=user_payload, json_schema=None)
+    except GatewayError as exc:
+        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
+                       estimated_cost_usd=0.0, cache_hit=False, status=exc.reason, content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE)
+        return ReviewRead("not_read", reason=NOT_READ, **base)
+    if counted > REVIEWER_INPUT_CAP:
+        return ReviewRead("too_large", reason=REVIEWER_TOO_LARGE.format(limit=REVIEWER_INPUT_CAP), **base)
+    token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
+    rounds = 0
+    while token is None and rounds < SHEET_READING_LOCK_ROUNDS:
+        rounds += 1
+        await guards.wait_for_inflight(db, audit_id, STRUCTURE_STEP)
+        token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
+    if token is None:
+        return ReviewRead("not_read", reason=NOT_READ, **base)
+    try:
+        try:
+            await guards.check_allowance(db, audit_id)
+            await guards.check_spend_cap(db)
+            await guards.check_structure_token_cap(db, audit_id, counted, REVIEWER_MAX_TOKENS)
+        except guards.GuardRefusal as refusal:
+            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
+                           estimated_cost_usd=0.0, cache_hit=False, status=refusal.reason, content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE)
+            return ReviewRead("not_read", reason=NOT_READ, **base)
+        billed_in = billed_out = attempts = 0
+        prior, payload = None, user_payload
+        while True:
+            try:
+                reply, in_tok, out_tok = await _to_thread(adapter.complete, model=model, system=system, user_payload=payload,
+                                                          max_tokens=REVIEWER_MAX_TOKENS, temperature=0, json_schema=None,
+                                                          **({"prior": prior} if prior else {}))
+            except Exception as raw:
+                err = raw if isinstance(raw, GatewayError) else _classify_provider_error(raw)
+                code = getattr(err, "reason", None) or "provider_error"
+                cost = estimate_cost_usd(model, billed_in, billed_out)
+                await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=billed_in,
+                               output_tokens=billed_out, estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
+                               structure_type=REVIEW_STRUCTURE_TYPE)
+                logger.warning("review not read: run_id=%s hash=%s reason=%s", audit_id, digest, code)
+                return ReviewRead("not_read", reason=NOT_READ, input_tokens=billed_in, output_tokens=billed_out, estimated_cost_usd=cost, **base)
+            billed_in, billed_out = billed_in + in_tok, billed_out + out_tok
+            try:
+                parsed = parse_review_reply(reply)
+                break
+            except GatewayError as exc:
+                attempts += 1
+                if attempts > MAX_PARSE_RETRIES:
+                    cost = estimate_cost_usd(model, billed_in, billed_out)
+                    check = exc.check if exc.check in PARSE_CHECKS else "-"
+                    await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=billed_in,
+                                   output_tokens=billed_out, estimated_cost_usd=cost, cache_hit=False, status="parse_failed",
+                                   content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE)
+                    logger.warning("review not read: run_id=%s hash=%s reason=parse_failed check=%s", audit_id, digest, check)
+                    return ReviewRead("not_read", reason="the review did not match the findings format", input_tokens=billed_in,
+                                      output_tokens=billed_out, estimated_cost_usd=cost, **base)
+                prior = [{"role": "user", "content": user_payload}, {"role": "assistant", "content": reply}]
+                payload = cache.canonical_json({"type": REVIEW_STRUCTURE_TYPE, "fix": schemas.REVIEW_FIX,
+                                                "errors": getattr(exc, "errors", None) or [{"loc": "", "type": exc.check or "other", "msg": ""}]})
+        cost = estimate_cost_usd(model, billed_in, billed_out)
+        findings = redaction.restore_deep(parsed.model_dump(), mapping)["findings"]         # display un-masks on the server
+        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=billed_in,
+                       output_tokens=billed_out, estimated_cost_usd=cost, cache_hit=False, status="ok", content_hash=digest,
+                       structure_type=REVIEW_STRUCTURE_TYPE)
+        logger.info("review read: run_id=%s hash=%s tokens=%d/%d cost=%.6f findings=%d", audit_id, digest, billed_in, billed_out, cost, len(findings))
+        return ReviewRead("read", findings, None, input_tokens=billed_in, output_tokens=billed_out, estimated_cost_usd=cost, **base)
+    except Exception as exc:  # never let a review block the audit
+        logger.error("unexpected review failure: run_id=%s error=%s", audit_id, type(exc).__name__)
+        return ReviewRead("not_read", reason=NOT_READ, **base)
+    finally:
+        await guards.release(db, audit_id, STRUCTURE_STEP, token)
 
 
 def _mask_map(stored: dict, company_name: Optional[str], mapping: Dict[str, str]) -> dict:

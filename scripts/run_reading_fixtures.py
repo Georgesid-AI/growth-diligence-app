@@ -9,6 +9,8 @@ notice, exit 0, when any is absent:
     ANTHROPIC_API_KEY     the provider key (a GitHub Actions secret)
     SHEET_READING_PROMPT  the text of the `sheet_reading` prompt (a GitHub Actions secret: the prompt is never in the repository)
     SHEET_READER_MODEL    optional: an allow-listed model id (a repository variable); the structure model when unset
+    DECK_READING_PROMPT   the text of the `deck_reading` prompt (a secret) for the deck fixture; without it the deck fixture alone is skipped with a
+                          notice (PR 3: the deck joins the job, the page reader's figures are checked against the stored page text)
 
 The cap is one provider call per fixture per run: each file is read once, with no re-read, and the first reading is what is compared. The
 reading goes through the same gateway as the product (masking, token cap, allow-listed model, prompt from a store), with an in-memory store holding
@@ -47,13 +49,16 @@ class OneCall:
         return self.adapter.count_tokens(**kw)
 
 
-def empty_store(prompt_text: str):
+def empty_store(prompt_text: str, deck_prompt: str = ""):
     """A fresh in-memory store holding the `sheet_reading` prompt and no stored reading, so each run reads every fixture with the model."""
     import test_llm_gateway as t
     from app import readings
     db = t.FakeDB()
     db["prompts"].docs[:] = [{"name": "sheet_reading", "version": "v1", "text": prompt_text, "uploaded_at": "2026-01-01T00:00:00+00:00",
                               "sha256": hashlib.sha256(prompt_text.encode()).hexdigest()}]
+    if deck_prompt.strip():
+        db["prompts"].docs.append({"name": "deck_reading", "version": "v1", "text": deck_prompt, "uploaded_at": "2026-01-01T00:00:00+00:00",
+                                   "sha256": hashlib.sha256(deck_prompt.encode()).hexdigest()})
     for collection in readings.COLLECTIONS:
         assert not db[collection].docs, f"the job's store must start without {collection}"
     return db
@@ -65,7 +70,7 @@ async def read_all() -> int:
     from app.llm import gateway
     from app.llm.schemas import SHEET_READING
     from app.structures import reading_input
-    db = empty_store(os.environ["SHEET_READING_PROMPT"])
+    db = empty_store(os.environ["SHEET_READING_PROMPT"], os.environ.get("DECK_READING_PROMPT", ""))
     failed = 0
     print(f"{'fixture':26} {'status':10} {'month':8} {'tokens in/out':14} differences")
     for fixture in rf.sheet_fixtures():
@@ -94,8 +99,67 @@ async def read_all() -> int:
         for item in result["items"]:
             if item["outcome"] == checks.CANNOT:
                 print(f"    cannot check {item['key']}: {item['reason']}")
+    failed += await read_decks(db)
     print(f"{failed} fixture(s) differ from their expected map" if failed else "every fixture agrees with its expected map")
     return 1 if failed else 0
+
+
+async def read_decks(db, adapter=None) -> int:
+    """The deck fixtures, read once through the page reader and checked against the stored page text (app/deck_figures.py): every expected
+    figure must be read and confirmed, and the parts must add up to the headline. Skipped with a notice when the `deck_reading` prompt is not
+    set. The cap is one provider call per page with a figure. Returns the number of fixtures that differ."""
+    import reading_fixtures as rf
+    from app import deck_figures, structures
+    from app.decks import TEXT_COLLECTION, pages as grids_mod, parser
+    failed = 0
+    for fixture in rf.deck_fixtures():
+        name, path = fixture["name"], fixture["path"]
+        if not any(p["name"] == "deck_reading" for p in db["prompts"].docs):
+            print(f"::notice title=Deck fixture skipped::DECK_READING_PROMPT is not set, so {name} was not read.")
+            continue
+        audit = f"fx-{name}"
+        db["audits"].docs.append({"id": audit, "company_name": rf.COMPANY, "structure_reading_consent": True, "fiscal_year_end": 12})
+        db["datasets"].docs.append({"audit_id": audit, "dtype": "revenue", "recognition_only": True, "mapped_at": "2026-01-01T00:00:00+00:00"})
+        deck = parser.parse_deck(path.read_bytes(), path.name)
+        deck_id = f"deck-{name}"
+        sendable = len(grids_mod.sendable(grids_mod.page_grids(deck["blocks"])))
+        await db[TEXT_COLLECTION].insert_one({"audit_id": audit, "deck_id": deck_id, "file": deck["file"], "format": deck["format"],
+                                              "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"],
+                                              "layout": deck.get("layout") or [], "structures": deck["structures"], "ai_status": "reading"})
+        adapter_in = adapter or CallCap(gateway_adapter(), sendable)
+        status = await structures.process_deck(db, audit, deck_id, adapter=adapter_in)
+        checked = [d for d in await deck_figures.checked(db, audit) if d["deck_id"] == deck_id]
+        figures = checked[0]["figures"] if checked else []
+        diffs = rf.compare_deck(fixture["expected_map"], figures)
+        failed += bool(diffs)
+        counts = {o: sum(1 for f in figures if f["outcome"] == o) for o in ("confirmed", "rejected", "cannot_check")}
+        print(f"{name:26} {status[:10]:10} {'-':8} {'-':14} {'; '.join(diffs) if diffs else 'none'}  [confirmed {counts['confirmed']}, "
+              f"rejected {counts['rejected']}, cannot check {counts['cannot_check']}]")
+        for f in figures:
+            if f["outcome"] != "confirmed":
+                print(f"    {f['outcome']} page {f['source']['page']}: {f['reason']}")
+    return failed
+
+
+def gateway_adapter():
+    from app.llm import gateway
+    return gateway.AnthropicAdapter()
+
+
+class CallCap:
+    """The page reader's adapter, counting: one call per page with a figure is the cap."""
+
+    def __init__(self, adapter, limit: int):
+        self.adapter, self.limit, self.calls = adapter, limit, 0
+
+    def complete(self, **kw):
+        self.calls += 1
+        if self.calls > self.limit:
+            raise RuntimeError("the cap is one provider call per page with a figure")
+        return self.adapter.complete(**kw)
+
+    def count_tokens(self, **kw):
+        return self.adapter.count_tokens(**kw)
 
 
 def main() -> int:

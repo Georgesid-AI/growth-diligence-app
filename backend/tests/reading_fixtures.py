@@ -40,6 +40,34 @@ def sheet_fixtures() -> List[Dict]:
     return out
 
 
+def deck_fixtures() -> List[Dict]:
+    """The fixtures the page reader reads: the decks of the manifest, each with its expected figures (PR 3, item 4 of the build plan)."""
+    return [{**entry, "expected_map": expected(entry["name"]), "path": path_of(entry)} for entry in manifest()
+            if expected(entry["name"]).get("kind") == "deck"]
+
+
+def compare_deck(exp: Dict, figures: List[Dict]) -> List[str]:
+    """The differences between the figures the page reader read and checked (deck_figures.checked) and the expected deck; [] when they agree.
+    Each expected figure (metric, value, page) must be among them, within the money tolerance and confirmed by the page text; the parts of
+    the expected sum must add up to the headline in what was read. Figures read beyond the expected ones are no difference."""
+    out: List[str] = []
+    for want in exp.get("figures") or []:
+        found = [f for f in figures if f.get("source", {}).get("page") == want["page"] and f.get("value") is not None
+                 and _close(float(f["value"]), want["value"])]
+        if not found:
+            out.append(f"page {want['page']}: no figure {want['value']:g} read")
+        elif not any(f.get("outcome") == "confirmed" for f in found):
+            out.append(f"page {want['page']}: figure {want['value']:g} not confirmed by the page text ({found[0].get('outcome')})")
+    sums = exp.get("parts_sum")
+    if sums:
+        parts = [want for want in sums["parts"]]
+        read = sorted(float(f["value"]) for f in figures if f.get("source", {}).get("page") == sums["page"] and f.get("value") is not None
+                      and any(_close(float(f["value"]), p) for p in parts))
+        if not _close(sum(read), sums["headline"]):
+            out.append(f"page {sums['page']}: the parts read add up to {sum(read):g}, not {sums['headline']:g}")
+    return out
+
+
 def _close(a: float, b: float) -> bool:
     return abs(a - b) <= MONEY_TOLERANCE * abs(b) + 1e-9
 

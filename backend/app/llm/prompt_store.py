@@ -26,7 +26,7 @@ NO_PROMPT = "No prompt loaded — upload prompts on the owner page"
 # The prompt names the gateway reads: the enabled narrative steps and the structure path. tests/test_llm_gateway.py
 # fails if this list and the gateway's STEP_CONFIG drift apart.
 NAMES = ("growth_engine", "data_inventory", "data_integrity", "structure_reading", "file_type", "sheet_structure", "deck_reading",
-         "sheet_reading")
+         "sheet_reading", "reviewer")
 
 MAX_TEXT_CHARS = 10_000          # every page read sends the prompt: a longer one costs more per audit (spec section 1)
 _VERSION_PREFIX = "v"

@@ -5,6 +5,7 @@ backend/app/llm/**
 backend/app/sheet_reader.py
 backend/app/readings.py
 backend/app/series.py
+backend/app/deck_figures.py
 backend/app/checks.py
 backend/app/recognition.py
 backend/app/column_rules.py

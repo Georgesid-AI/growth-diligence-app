@@ -68,13 +68,14 @@ def test_a_second_reading_is_keyed_on_the_reading_and_its_item_keys_never_twice_
     run(readings.put_reread(db, reading="k", items=["figure:S:C5:revenue"], reason=reason, prompt_version=PROMPT, model=MODEL,
                             output={"figures": [{"changed": True}]}))
     assert len(db[readings.REREADS].docs) == 1 and db[readings.REREADS].docs[0]["output"] == {"figures": []}
-    assert run(readings.get_reread(db, "k", ["figure:S:C5:revenue"]))["output"] == {"figures": []}
-    assert run(readings.get_reread(db, "k", ["figure:S:C6:revenue"])) is None, "another item of the same reading is its own re-read"
-    assert run(readings.get_reread(db, "other", ["figure:S:C5:revenue"])) is None, "another reading too"
+    assert run(readings.get_reread(db, "k", ["figure:S:C5:revenue"], reason))["output"] == {"figures": []}
+    assert run(readings.get_reread(db, "k", ["figure:S:C5:revenue"], "a finding of the reviewer")) is None, "another question is another re-read"
+    assert run(readings.get_reread(db, "k", ["figure:S:C6:revenue"], reason)) is None, "another item of the same reading is its own re-read"
+    assert run(readings.get_reread(db, "other", ["figure:S:C5:revenue"], reason)) is None, "another reading too"
     run(readings.put_reread(db, reading="k", items=["figure:S:C6:revenue"], reason="Reading says 7; cell C6 holds 8.", prompt_version=PROMPT,
                             model=MODEL, output={"figures": [{"other": True}]}))
     assert len(db[readings.REREADS].docs) == 2
-    assert run(readings.get_reread(db, "k", ["figure:S:C6:revenue"]))["output"] == {"figures": [{"other": True}]}
+    assert run(readings.get_reread(db, "k", ["figure:S:C6:revenue"], "Reading says 7; cell C6 holds 8."))["output"] == {"figures": [{"other": True}]}
     assert readings.reread_key("k", ["b", "a"]) == readings.reread_key("k", ["a", "b"]), "the order of the items is no part of the key"
 
 
