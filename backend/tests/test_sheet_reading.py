@@ -302,6 +302,23 @@ def test_a_second_reading_of_rejected_items_is_stored_beside_the_first_and_made_
     assert db[readings.READINGS].docs[0]["file_map"] == copy.deepcopy(db[readings.READINGS].docs[0]["file_map"])
 
 
+def test_two_audits_re_reading_different_items_of_one_reading_do_not_share_a_second_reading():
+    db = audit_db()
+    db["audits"].docs.append({"id": "a2", "company_name": COMPANY, "structure_reading_consent": True, "fiscal_year_end": 12})
+    read(db)
+    read(db, audit="a2")
+    one = [{"item": "figure:Client-01 report:B3:revenue", "reason": "Reading says 5; cell B3 holds 447223.43."}]
+    two = [{"item": "figure:Client-01 report:C3:revenue", "reason": "Reading says 6; cell C3 holds 451000."}]
+    again = {"map_version": 1, "kind": "sheet", "sheets": [], "figures": []}
+    adapter = t.FakeAdapter(replies=[json.dumps(again), json.dumps({**again, "map_version": 1, "figures": []})])
+    a, adapter = read(db, audit="a1", adapter=adapter, recheck=one)
+    b, adapter = read(db, audit="a2", adapter=adapter, recheck=two)
+    assert adapter.calls == 2 and a.cache_hit is False and b.cache_hit is False, "different items are different second readings"
+    c, adapter = read(db, audit="a2", adapter=adapter, recheck=one)
+    assert adapter.calls == 2 and c.cache_hit is True, "the same item, asked by another audit, is served"
+    assert len(db[readings.REREADS].docs) == 2
+
+
 def test_no_rule_decides_that_a_sheet_is_a_ledger_and_every_sheet_with_cells_is_sent():
     """Item 7 of the review of PR 205: the rules' record-layout test is gone; a long invoice list is sent whole like any sheet (the token
     cap refuses a file that is too large, with its message)."""

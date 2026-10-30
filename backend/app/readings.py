@@ -78,22 +78,23 @@ async def use(db, audit_id: str, key: str) -> None:
         await db[USES].insert_one({"audit_id": audit_id, "key": key, "at": _now()})
 
 
-def reread_key(reading: str, item: str, reason: str) -> str:
-    return _digest("reread", reading, item, reason)
+def reread_key(reading: str, items: List[str]) -> str:
+    """A second reading is keyed on the reading and the item keys it was asked about, in any order. The reason is stored, not keyed."""
+    return _digest("reread", reading, *sorted(set(items)))
 
 
-async def get_reread(db, reading: str, item: str, reason: str) -> Optional[dict]:
-    return await db[REREADS].find_one({"key": reread_key(reading, item, reason)}, {"_id": 0})
+async def get_reread(db, reading: str, items: List[str]) -> Optional[dict]:
+    return await db[REREADS].find_one({"key": reread_key(reading, items)}, {"_id": 0})
 
 
-async def put_reread(db, *, reading: str, item: str, reason: str, prompt_version: str, model: str, output: dict, input_tokens: int = 0,
+async def put_reread(db, *, reading: str, items: List[str], reason: str, prompt_version: str, model: str, output: dict, input_tokens: int = 0,
                      output_tokens: int = 0, cost: float = 0.0) -> dict:
-    """Store the second reading of a rejected item beside the first, once. The same item with the same reason is never read again."""
-    key = reread_key(reading, item, reason)
+    """Store the second reading of rejected items beside the first, once. The same items of the same reading are never read again."""
+    key = reread_key(reading, items)
     kept = await db[REREADS].find_one({"key": key}, {"_id": 0})
     if kept:
         return kept
-    doc = {"key": key, "reading": reading, "item": item, "reason": reason, "prompt_version": prompt_version, "model": model,
+    doc = {"key": key, "reading": reading, "items": sorted(set(items)), "reason": reason, "prompt_version": prompt_version, "model": model,
            "output": copy.deepcopy(output), "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
            "estimated_cost_usd": round(float(cost), 6), "created_at": _now()}
     await db[REREADS].insert_one(dict(doc))

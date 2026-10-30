@@ -60,20 +60,28 @@ def test_overrides_apply_in_the_order_they_were_made_and_a_dead_path_is_skipped(
     assert readings.effective(reading, rows)["sheets"][0]["rows"][0]["role"] == "second"
 
 
-def test_the_same_item_with_the_same_reason_is_read_again_never_twice():
+def test_a_second_reading_is_keyed_on_the_reading_and_its_item_keys_never_twice_and_never_across_items():
     db = t.FakeDB()
-    run(readings.put_reread(db, reading="k", item="figures.0", reason="Reading says 5; cell C5 holds 6.", prompt_version=PROMPT, model=MODEL,
+    reason = "Reading says 5; cell C5 holds 6."
+    run(readings.put_reread(db, reading="k", items=["figure:S:C5:revenue"], reason=reason, prompt_version=PROMPT, model=MODEL,
                             output={"figures": []}))
-    run(readings.put_reread(db, reading="k", item="figures.0", reason="Reading says 5; cell C5 holds 6.", prompt_version=PROMPT, model=MODEL,
+    run(readings.put_reread(db, reading="k", items=["figure:S:C5:revenue"], reason=reason, prompt_version=PROMPT, model=MODEL,
                             output={"figures": [{"changed": True}]}))
     assert len(db[readings.REREADS].docs) == 1 and db[readings.REREADS].docs[0]["output"] == {"figures": []}
-    assert run(readings.get_reread(db, "k", "figures.0", "another reason")) is None
+    assert run(readings.get_reread(db, "k", ["figure:S:C5:revenue"]))["output"] == {"figures": []}
+    assert run(readings.get_reread(db, "k", ["figure:S:C6:revenue"])) is None, "another item of the same reading is its own re-read"
+    assert run(readings.get_reread(db, "other", ["figure:S:C5:revenue"])) is None, "another reading too"
+    run(readings.put_reread(db, reading="k", items=["figure:S:C6:revenue"], reason="Reading says 7; cell C6 holds 8.", prompt_version=PROMPT,
+                            model=MODEL, output={"figures": [{"other": True}]}))
+    assert len(db[readings.REREADS].docs) == 2
+    assert run(readings.get_reread(db, "k", ["figure:S:C6:revenue"]))["output"] == {"figures": [{"other": True}]}
+    assert readings.reread_key("k", ["b", "a"]) == readings.reread_key("k", ["a", "b"]), "the order of the items is no part of the key"
 
 
 def test_delete_audit_removes_a_reading_when_no_audit_uses_it_and_keeps_it_while_another_does():
     db = t.FakeDB()
     stored = run(readings.put(db, account="t1", file_hash=HASH, prompt_version=PROMPT, model=MODEL, reading=READING))
-    run(readings.put_reread(db, reading=stored["key"], item="i", reason="r", prompt_version=PROMPT, model=MODEL, output={}))
+    run(readings.put_reread(db, reading=stored["key"], items=["i"], reason="r", prompt_version=PROMPT, model=MODEL, output={}))
     for audit in ("a1", "a2"):
         run(readings.use(db, audit, stored["key"]))
         run(readings.use(db, audit, stored["key"]))                                   # once per audit
