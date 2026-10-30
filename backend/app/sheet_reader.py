@@ -16,7 +16,7 @@ prompt, a missing consent or a file over the limit gives a status and a message,
 import asyncio
 from typing import Dict, List
 
-from . import checks, readings
+from . import cards, checks, lines as lines_mod, readings
 from .llm import gateway, redaction
 from .llm.schemas import SHEET_READING
 from .structures import reading_input
@@ -91,6 +91,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
            "items": final["items"], "rereads": rereads, "months": months,
            "month": best["month"] if best else None,
            "evidence": (f"{best['evidence']} (confirmed on sheet {best['sheet']}, column {best['column']})" if best else None),
+           "lines": sheet_lines(merged, cells, final["items"]),
            "dims": {name: [sheet.max_row, sheet.max_col] for name, sheet in cells.sheets.items()},
            "rows_mapped": sum(len(s.get("rows") or []) for s in merged.get("sheets") or []),
            "period_columns": max((redactless_cols(s) for s in merged.get("sheets") or []), default=0)}
@@ -98,7 +99,26 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     doc["dims"] = {redaction.restore(name, mapping): dims for name, dims in doc["dims"].items()}      # keyed by the sheet's own name, as the map is
     doc = redaction.restore_deep(doc, mapping)                   # display un-masks on the server; the reasons held masked cell texts
     await readings.save_checks(db, audit_id, file_hash, doc)
+    await cards.open_for_checks(db, audit_id, doc)
     return doc
+
+
+def sheet_lines(file_map: Dict, cells: "checks.Cells", items: List[Dict]) -> List[Dict]:
+    """[{"sheet", "lines"}] of a map: the lines of each sheet in file order (app/lines.py), their labels read from the cells the reader was sent."""
+    out = []
+    for smap in file_map.get("sheets") or []:
+        sheet = cells.sheet(smap["sheet"])
+        labels = {}
+        for row in smap.get("rows") or []:
+            pos = checks.parse_ref(row.get("label_cell"))
+            if sheet is not None and pos:
+                labels[row["row"]] = (sheet.get(*pos) or "").strip()
+        built = lines_mod.build(smap, labels)
+        for line in built:
+            found = next((i for i in items if i["key"] == f"row:{smap['sheet']}:{line['row']}"), None)
+            line["outcome"] = found["outcome"] if found else None
+        out.append({"sheet": smap["sheet"], "lines": built})
+    return out
 
 
 def redactless_cols(sheet: Dict) -> int:

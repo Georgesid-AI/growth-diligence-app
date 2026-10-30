@@ -283,7 +283,9 @@ async def reread_file(db, audit: Dict, f: Dict, asks: List[Dict], adapter, compa
                                                         old=old_entry.get(field), new=new_entry.get(field), who=WHO,
                                                         why=f"{CORRECTED}: {why[k]}"))["id"])
         result[k]["overrides"] = ids
-    doc = redaction.restore_deep({"items": final["items"], "counts": final["counts"], "months": final["months"]}, mapping)
+    from .sheet_reader import sheet_lines
+    doc = redaction.restore_deep({"items": final["items"], "counts": final["counts"], "months": final["months"],
+                                  "lines": sheet_lines(merged, cells, final["items"])}, mapping)
     best = max(final["months"], key=lambda m: m["month"], default=None)
     stored = dict(f["check"])
     stored.update(doc, month=best["month"] if best else None,
@@ -371,14 +373,14 @@ def _title(finding: Dict) -> str:
 async def _card_for(db, audit_id: str, finding: Dict, f: Dict, key: str, res: Dict) -> None:
     """The reader–reviewer disagreement that survived the re-read: both readings, the cell or page."""
     path = _paths(f["reading"], key) if f["kind"] == "sheet" else None
-    entry = (path or (None, None))[1]
+    entry = (path or (None, None))[1]            # a decision on this card keeps the reader's reading or not: it overrides no number
     ref = finding["refs"][0]
     source = {"file": f["file"], "file_hash": f.get("file_hash"), "sheet": ref.get("sheet"), "cell": ref.get("cell")}
     reader = _reader_side(entry, res.get("second"))
     reader["label"] = "Reader, twice" if res["result"] in (REPEATS, THIRD) else "Reader"
     other = {"label": "Reviewer", "evidence": finding["reading"], "confidence": finding["confidence"], "what": finding["what"]}
     await cards.open_card(db, audit_id, kind=cards.DISAGREEMENT, item=f"{finding['id']}:{key}", title=_title(finding), source=source, reader=reader,
-                          other=other, reading=f["reading"]["key"] if path else None, path=path[0] if path else None)
+                          other=other, actions=[cards.USE_READER])
 
 
 async def _card_without_item(db, audit_id: str, finding: Dict, files: Files) -> None:
@@ -392,4 +394,4 @@ async def _card_without_item(db, audit_id: str, finding: Dict, files: Files) -> 
               "period": (figure or {}).get("period"), "evidence": None}
     other = {"label": "Reviewer", "evidence": finding["reading"], "confidence": finding["confidence"], "what": finding["what"]}
     await cards.open_card(db, audit_id, kind=cards.DISAGREEMENT, item=f"{finding['id']}:{ref.get('cell') or 'p' + str(ref.get('page'))}",
-                          title=_title(finding), source=source, reader=reader, other=other)
+                          title=_title(finding), source=source, reader=reader, other=other, actions=[cards.USE_READER])

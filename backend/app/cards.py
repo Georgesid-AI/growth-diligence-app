@@ -32,10 +32,12 @@ def _now() -> str:
 
 
 async def open_card(db, audit_id: str, *, kind: str, item: str, title: str, source: Dict, reader: Optional[Dict], other: Optional[Dict],
-                    cell_value: Optional[float] = None, reading: Optional[str] = None, path: Optional[str] = None) -> Dict:
+                    cell_value: Optional[float] = None, reading: Optional[str] = None, path: Optional[str] = None,
+                    subject: Optional[Dict] = None, actions: Optional[List[str]] = None) -> Dict:
     """Open the card of (audit, kind, item) unless it exists. `source` is {file, sheet, cell | page, file_hash | deck_id}; `reader` and `other` are
     the two readings to show, each {label, value, unit, currency, period, evidence}. `cell_value` is what the cell holds (for "use the cell"),
-    `reading` the key of the stored reading and `path` the place in it a decision overrides."""
+    `reading` the key of the stored reading and `path` the place in it a decision overrides, `subject` {metric, period} for the heading and
+    `actions` the buttons offered: all three for a value with a cell to use, "use the reader" alone where nothing else can be used."""
     if kind not in KINDS:
         raise ValueError(f"unknown card kind {kind!r}")
     cid = card_id(audit_id, kind, item)
@@ -43,7 +45,8 @@ async def open_card(db, audit_id: str, *, kind: str, item: str, title: str, sour
     if kept:
         return kept
     doc = {"id": cid, "audit_id": audit_id, "kind": kind, "item": item, "title": title, "source": source, "reader": reader, "other": other,
-           "cell_value": cell_value, "reading": reading, "path": path, "status": OPEN, "decision": None, "created_at": _now()}
+           "cell_value": cell_value, "reading": reading, "path": path, "subject": subject or {},
+           "actions": actions or ([USE_CELL, USE_READER, TYPED] if cell_value is not None else [USE_READER, TYPED]), "status": OPEN, "decision": None, "created_at": _now()}
     await db[readings.CARDS].insert_one(dict(doc))
     return doc
 
@@ -70,14 +73,65 @@ async def decide(db, audit_id: str, cid: str, action: str, typed: Optional[float
     card = await db[readings.CARDS].find_one({"id": cid, "audit_id": audit_id, "status": OPEN}, {"_id": 0})
     if not card:
         return None
+    if action not in card.get("actions", ACTIONS):
+        raise ValueError("this card does not offer that action")
     value = chosen_value(card, action, typed)
-    if value is None:
+    if value is None and action != USE_READER:
         raise ValueError("no value to use")
     decision = {"action": action, "value": value, "who": who, "at": _now()}
-    if card.get("reading") and card.get("path"):
+    if value is not None and card.get("reading") and card.get("path"):
         old = (card.get("reader") or {}).get("value")
         override = await readings.add_override(db, reading=card["reading"], audit_id=audit_id, item=card["item"], path=card["path"], old=old, new=value,
                                                who=who, why=f"card decided: {action}")
         decision["override"] = override["id"]
     await db[readings.CARDS].update_one({"id": cid}, {"$set": {"status": DECIDED, "decision": decision}})
     return {**card, "status": DECIDED, "decision": decision}
+
+
+async def open_for_checks(db, audit_id: str, doc: Dict) -> List[Dict]:
+    """The cards the checks of one file call for (section 7.4): a citation that failed twice (the item is still rejected after its one automatic
+    re-read) and a masked value the reading needs (a figure whose cell holds a name masked before reading). `doc` is the stored outcome
+    (sheet_reader.read_file). Nothing else opens a card."""
+    out: List[Dict] = []
+    reading = await db[readings.READINGS].find_one({"key": doc.get("reading_key")}, {"_id": 0, "file_map": 1}) or {}
+    figures = (reading.get("file_map") or {}).get("figures") or []
+    by_key = {i["key"]: i for i in doc.get("items") or [] if i["kind"] != "evidence"}
+
+    def figure_path(key: str) -> Optional[str]:
+        from . import checks
+        return next((f"figures.{n}.value" for n, f in enumerate(figures) if checks._figure_key(n, f) == key), None)
+
+    def entry(key: str) -> Optional[Dict]:
+        from . import checks
+        return next((f for n, f in enumerate(figures) if checks._figure_key(n, f) == key), None)
+
+    for again in doc.get("rereads") or []:
+        if again.get("action") != "card":
+            continue
+        item = by_key.get(again["item"]) or {}
+        first = again.get("first") or {}
+        is_figure = again["item"].startswith("figure:")
+        reader = {"label": "Reader, twice" if again.get("second") else "Reader", "value": first.get("value") if is_figure else None,
+                  "unit": first.get("unit"), "currency": first.get("currency"), "period": first.get("period"),
+                  "evidence": first.get("evidence") if isinstance(first.get("evidence"), str) else None}
+        other = {"label": f"Cell {item.get('cell')}" if item.get("cell") else "The file", "value": item.get("found_value"),
+                 "period": item.get("found_period"), "evidence": again.get("reason")}
+        out.append(await open_card(
+            db, audit_id, kind=CITATION, item=again["item"], title="The reader and the file disagree",
+            source={"file": doc.get("file"), "file_hash": doc.get("file_hash"), "sheet": item.get("sheet"), "cell": item.get("cell")},
+            reader=reader, other=other, cell_value=item.get("found_value") if is_figure else None, reading=doc.get("reading_key"),
+            path=figure_path(again["item"]) if is_figure else None, subject={"metric": item.get("metric"), "period": first.get("period")},
+            actions=None if is_figure else [USE_READER]))
+    for item in doc.get("items") or []:
+        if item["kind"] != "figure" or item["outcome"] != "cannot_check" or "masked before reading" not in (item.get("reason") or ""):
+            continue
+        first = entry(item["key"]) or {}
+        out.append(await open_card(
+            db, audit_id, kind=MASKED, item=item["key"], title="The reading needs a value that was masked",
+            source={"file": doc.get("file"), "file_hash": doc.get("file_hash"), "sheet": item.get("sheet"), "cell": item.get("cell")},
+            reader={"label": "Reader", "value": first.get("value"), "unit": first.get("unit"), "currency": first.get("currency"),
+                    "period": first.get("period"), "evidence": first.get("evidence") if isinstance(first.get("evidence"), str) else None},
+            other={"label": f"Cell {item.get('cell')}", "value": None, "period": None, "evidence": item.get("reason")},
+            reading=doc.get("reading_key"), path=figure_path(item["key"]), subject={"metric": item.get("metric"), "period": first.get("period")},
+            actions=[USE_READER, TYPED]))
+    return out

@@ -30,6 +30,8 @@ from app import readings as readings_mod
 from app import sheet_reader
 from app import reading_export
 from app import reviewer
+from app import register
+from app import cards as cards_mod
 from app import deck_figures
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
@@ -1638,6 +1640,54 @@ async def export_reading(audit_id: str, file_hash: str, format: Literal["json", 
         return Response(reading_export.as_csv(doc, overrides, check.get("file") or ""), media_type="text/csv",
                         headers={"Content-Disposition": 'attachment; filename="reading.csv"'})
     return reading_export.as_json({**doc, "file": check.get("file") or doc.get("file")}, overrides)
+
+
+@api.get("/audits/{audit_id}/reading")
+async def reading_register(audit_id: str):
+    """What the audit page shows (docs/design/read-check-review.md section 11): one block per file, the three result tables across all files
+    (Confirmed, Rejected, Cannot check), the open cards and the review's summary. Numbers are raw; the screen formats them."""
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+    return sanitize(await register.build(db, audit_id))
+
+
+class CardDecision(BaseModel):
+    model_config = {"extra": "forbid"}
+    action: Literal["use_cell", "use_reader", "type_value"]
+    value: Optional[float] = Field(default=None, allow_inf_nan=False)
+
+
+@api.post("/audits/{audit_id}/cards/{card_id}")
+async def decide_card(audit_id: str, card_id: str, body: CardDecision):
+    """The analyst's decision on an open card: use the cell, use the reader, or type a value. A dated override record; the reading is not edited."""
+    try:
+        card = await cards_mod.decide(db, audit_id, card_id, body.action, body.value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if card is None:
+        raise HTTPException(404, "No open card")
+    return sanitize(card)
+
+
+class ReadingChange(BaseModel):
+    model_config = {"extra": "forbid"}
+    what: Literal["revenue_row", "boundary"]
+    sheet: str = Field(max_length=200)
+    row: Optional[int] = Field(default=None, ge=1)
+    column: Optional[str] = Field(default=None, max_length=3)
+
+
+@api.post("/audits/{audit_id}/readings/{file_hash}/change")
+async def change_reading(audit_id: str, file_hash: str, body: ReadingChange):
+    """The analyst's Change on a spreadsheet's anchors: the revenue row or the actual / plan boundary. Override records; the reading stays."""
+    try:
+        if body.what == "revenue_row":
+            made = await register.change_revenue_row(db, audit_id, file_hash, body.sheet, body.row or 0)
+        else:
+            made = await register.change_boundary(db, audit_id, file_hash, body.sheet, body.column or "")
+    except register.ChangeRefused as exc:
+        raise HTTPException(400, str(exc))
+    return {"overrides": len(made)}
 
 
 async def _review_safely(audit_id: str, force: bool = False) -> None:

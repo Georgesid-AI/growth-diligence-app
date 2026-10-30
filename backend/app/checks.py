@@ -291,6 +291,7 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
     if _masked(text):
         return {**base, "outcome": CANNOT, "reason": C_MASKED}
     number = to_number(text)
+    base["found_value"] = number            # what the code found when it opened the cell (the register's "Cell holds")
     unit = figure.get("unit")
     if number is None:
         return {**base, "outcome": REJECTED, "reason": R_VALUE.format(value=shown(reading), ref=cell_ref, cell=cell_shown(text))}
@@ -307,6 +308,7 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
         head_ref = ref_of(head_row, head_col)
         head_text = sheet.header(head_row, head_col)
         found = period_in_form(header_period(head_text, fye), period)
+        base["found_period"] = found
         if found != period:
             return {**base, "outcome": REJECTED, "reason": R_PERIOD.format(period=period, ref=head_ref, header=describe_header(head_text, period, fye))}
     clash = _clash(figure, pos, smap, boundaries or {}) if smap else None
