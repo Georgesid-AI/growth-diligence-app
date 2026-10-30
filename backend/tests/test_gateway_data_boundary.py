@@ -1246,8 +1246,11 @@ def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_c
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Jane Doe", "£1,200,000", "cannot read cell"):
         assert needle not in json.dumps(records, ensure_ascii=False), f"{needle!r} was stored"
+    for needle in ("Jane Doe", "£1,200,000"):
         assert needle not in logs, f"{needle!r} was logged"
     assert "reason=provider_unreachable status=529 type=overloaded_error" in logs
+    assert "message=cannot read cell … in r2c2: #" in logs, "a 4xx provider message is logged, quoted spans and figures blanked, capped"
+    assert "status=529 type=overloaded_error message=" not in logs, "a 5xx message is not logged"
 
 
 # The reason a cap refusal's "structure not read" line gives: a closed word per guard, never the guard's message.
@@ -4311,3 +4314,38 @@ def test_sheet_reading_keeps_no_text_in_a_log_a_call_record_or_beside_the_struct
     holders = {n for n, blob in stored.items() if "447223" in blob or "451000" in blob}
     assert holders == set(), "model output carries cell references, never the cell values it was sent: " + str(holders)
     assert set(stored["llm_calls"] and json.loads(stored["llm_calls"])[0]) >= {"content_hash", "structure_type", "prompt_version", "model"}
+
+
+def test_the_4xx_provider_message_on_a_structure_line_holds_no_cell_token_or_prompt(caplog):
+    import logging
+    anthropic = pytest.importorskip("anthropic")
+    httpx2 = pytest.importorskip("httpx2")
+    prompt_text = max((d["text"] for d in _structure_db()["prompts"].docs), key=len)         # the stub the gateway sends as the prompt
+    schema_fault = "output_config.format.schema: too many parameters with union types (18, limit 16)"
+
+    def error(message, status=400):
+        response = httpx2.Response(status, request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
+        body = {"type": "error", "error": {"type": "invalid_request_error", "message": message}}
+        return anthropic.Anthropic(api_key="test")._make_status_error(message, body=body, response=response)
+
+    def lines(raised, text):
+        db = _structure_db()
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], text, "table", adapter=t.FakeAdapter(raise_with=raised),
+                                               sleep=t._noop_sleep))
+        return [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+
+    assert lines(error(schema_fault), GOOD_ITEMS)[0].endswith(f"message={schema_fault}"), "the schema fault is what the line is for"
+    long = lines(error("x" * 1000), GOOD_ITEMS)[0]
+    assert len(long.split("message=")[1]) == gateway.PROVIDER_MESSAGE_CAP, "capped at 300 characters"
+    assert "message=" not in lines(error("overloaded", 529), GOOD_ITEMS)[0], "4xx only"
+    echoes = (f"bad value 'Jane Doe (CEO)' and £1,200,000 in {GOOD_ITEMS[:40]}", "cell Client-01 is not allowed",
+              f"system: {prompt_text[:200]}", "Bearer sk-ant-api03-secret: invalid x-api-key")
+    for message in echoes[:3]:
+        for line in lines(error(message), GOOD_ITEMS):
+            tail = line.split("message=")[1] if "message=" in line else ""
+            assert "Jane Doe" not in tail and "1,200,000" not in tail and "Client-01" not in tail, line
+            assert prompt_text[:20] not in tail and GOOD_ITEMS[:20] not in tail, line
+    assert all("message=" not in line for line in lines(error(echoes[1]), GOOD_ITEMS)), "a message holding a token is left out"
+    assert all("sk-ant" not in line for line in lines(error(echoes[3]), GOOD_ITEMS)), "a key is never logged"

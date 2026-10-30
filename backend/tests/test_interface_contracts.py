@@ -997,5 +997,6 @@ def test_the_provider_schema_is_the_file_map_and_nothing_else():
     assert sent["additionalProperties"] is False and set(sent["required"]) == set(FileMap.model_fields)
     row = sent["properties"]["sheets"]["items"]["properties"]["rows"]["items"]
     assert row["properties"]["role"]["enum"] == list(MAP_ROLES)
-    assert set(row["required"]) == set(row["properties"])           # structured output: every property required, nullable where optional
+    assert set(row["required"]) <= set(row["properties"])           # structured output: required, nullable where optional, or optional past the union limit
+    assert set(sent["properties"]) == set(FileMap.model_fields), "FileMap's fields are all sent"
     assert "$ref" not in str(sent) and "$defs" not in str(sent)

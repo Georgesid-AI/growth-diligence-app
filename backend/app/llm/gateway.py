@@ -189,11 +189,13 @@ class GatewayError(Exception):
     HTTP status and error type (codes only, see _provider_error_type)."""
 
     def __init__(self, reason: str, detail: str = "", status: Optional[int] = None,
-                 error_type: Optional[str] = None, check: Optional[str] = None, fields: Optional[List[str]] = None):
+                 error_type: Optional[str] = None, check: Optional[str] = None, fields: Optional[List[str]] = None,
+                 provider_message: Optional[str] = None):
         self.reason = reason
         self.detail = detail
         self.status = status
         self.error_type = error_type
+        self.provider_message = provider_message    # a 4xx provider's own message, raw; logged only through _logged_provider_message
         self.check = check              # parse_failed on a structure reply: one of PARSE_CHECKS
         self.fields = fields or []      # ... and the schema fields that failed (closed names from the schema, never values)
         super().__init__(f"{reason}: {detail}" if detail else reason)
@@ -654,6 +656,7 @@ class RetryableProviderError(Exception):
         self.status = status
         self.error_type = error_type
         self.retry_after = retry_after
+        self.provider_message = None
 
 
 _ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,59}")
@@ -668,6 +671,47 @@ def _provider_error_type(exc: Exception) -> str:
         error = body.get("error") if isinstance(body, dict) else None
         code = error.get("type") if isinstance(error, dict) else None
     return code if isinstance(code, str) and _ERROR_CODE.fullmatch(code) else type(exc).__name__
+
+
+def _provider_message(exc: Exception, status: Optional[int]) -> Optional[str]:
+    """The provider's own error message (body error.message, else the exception's text) on a 4xx; None otherwise."""
+    if status is None or not 400 <= status < 500:
+        return None
+    body = getattr(exc, "body", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    return message if isinstance(message, str) and message else str(exc)
+
+
+PROVIDER_MESSAGE_CAP = 300
+_QUOTED = re.compile(r"""'[^']*'|"[^"]*"|`[^`]*`""")
+_FIGURE = re.compile(r"[£$€]?\d[\d,.]{3,}")
+_TOKEN = re.compile(r"Client-\d+|sk-[\w-]{8,}|Bearer\s+\S+")
+_OVERLAP = 20
+
+
+def _logged_provider_message(exc: Exception, *sent: Optional[str]) -> str:
+    """The 4xx provider message for the "structure not read" line, or "-". 4xx messages name schema and request faults and carry no
+    file content, so they are logged, capped at PROVIDER_MESSAGE_CAP; as a belt for a message that quotes the request anyway, quoted spans
+    and figures are blanked, a message holding a token is left out, and so is one sharing a run of 20 characters with anything sent
+    (the cells, the prompt). Request bodies, keys and the prompt are never logged."""
+    message = getattr(exc, "provider_message", None)
+    if not message:
+        return "-"
+    message = " ".join(_FIGURE.sub("#", _QUOTED.sub("…", message)).split())
+    if _TOKEN.search(message):
+        return "-"
+    for text in sent:
+        flat = " ".join((text or "").split())
+        if any(message[i:i + _OVERLAP] in flat for i in range(max(0, len(message) - _OVERLAP + 1))):
+            return "-"
+    return message[:PROVIDER_MESSAGE_CAP] or "-"
+
+
+def _message_field(exc: Exception, *sent) -> str:
+    """` message=...` for a log line when the provider's 4xx message is loggable, else nothing."""
+    message = _logged_provider_message(exc, *[x if isinstance(x, str) else json.dumps(x, default=str) for x in sent])
+    return "" if message == "-" else f" message={message}"
 
 
 def _retry_after_seconds(exc: Exception) -> Optional[float]:
@@ -697,19 +741,22 @@ def _classify_provider_error(exc: Exception) -> Exception:
     name = type(exc).__name__
     error_type = _provider_error_type(exc)
     if status is not None and (status >= 500 or status in (408, 409, 429)):
-        return RetryableProviderError(f"{name} {status}: {exc}", status, error_type, _retry_after_seconds(exc))
+        retry = RetryableProviderError(f"{name} {status}: {exc}", status, error_type, _retry_after_seconds(exc))
+        retry.provider_message = _provider_message(exc, status)
+        return retry
     if status is None and name in {
         "APIConnectionError", "APITimeoutError", "APIConnectionTimeoutError",
     }:
         return RetryableProviderError(f"{name}: {exc}", None, error_type)
     if status is not None:
-        return GatewayError("provider_error", f"{name} {status}: {exc}", status, error_type)
+        return GatewayError("provider_error", f"{name} {status}: {exc}", status, error_type,
+                            provider_message=_provider_message(exc, status))
     return RetryableProviderError(f"{name}: {exc}", None, error_type)
 
 
 def _unreachable(exc: RetryableProviderError) -> GatewayError:
     """The GatewayError for a retryable error that outlasted MAX_PROVIDER_RETRIES, with its status and type."""
-    return GatewayError("provider_unreachable", str(exc), exc.status, exc.error_type)
+    return GatewayError("provider_unreachable", str(exc), exc.status, exc.error_type, provider_message=exc.provider_message)
 
 
 # ---------------------------------------------------------------------------
@@ -2171,13 +2218,15 @@ async def read_structure(
                                               json_schema=schemas.output_schema(structure_type), images=images)
             image_tokens, counted = max(0, with_images - counted), with_images
     except GatewayError as exc:
-        # Codes only: the reason, the HTTP status and the provider's error type; never the exception's message.
+        # Codes, and on a 4xx the provider's message, capped: it names schema and request faults and carries no file content
+        # (_logged_provider_message). Never the exception's own text, a request body, a key or the prompt.
         code, status, kind = exc.reason, exc.status, exc.error_type
         await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
                        input_tokens=0, output_tokens=0, estimated_cost_usd=0.0, cache_hit=False, status=code,
                        content_hash=digest, deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
-        logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=%s type=%s", audit_id,
-                       STRUCTURE_STEP, digest, code, status or "-", kind or "-")
+        shown = _message_field(exc, text, system, user_payload, prompt.text)
+        logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=%s type=%s%s", audit_id,
+                       STRUCTURE_STEP, digest, code, status or "-", kind or "-", shown)
         return _structure_result("not_read", structure_type, NOT_READ, **base)
 
     parallel = structure_type == PAGE_CLAIMS
@@ -2228,11 +2277,12 @@ async def read_structure(
                                                                         max_tokens, on_rate_limit, model=model, system=system, images=images)
         except GatewayError as exc:
             # Codes only: the reason, the HTTP status, the provider's error type and the check a reply failed (issue
-            # #64); never the message.
+            # #64); on a 4xx the provider's message too, capped (_logged_provider_message); never the exception's own text.
             billed, code, status, kind = getattr(exc, "billed", (0, 0)), exc.reason, exc.status, exc.error_type
             check = exc.check if exc.check in PARSE_CHECKS else "-"
             fields = ",".join(f for f in exc.fields if f in PAGE_FIELDS) or "-"       # schema field names only, never a value
             cost = estimate_cost_usd(model, *billed)
+            shown = _message_field(exc, text, system, user_payload, prompt.text)
             image_billed = min(billed[0], image_tokens * getattr(exc, "billed_calls", 0))
             image_cost = estimate_cost_usd(model, image_billed, 0)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
@@ -2241,8 +2291,8 @@ async def read_structure(
                            deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type,
                            image_tokens=image_billed, image_cost_usd=image_cost)
             logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s "
-                           "status=%s type=%s fields=%s check=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
-                           code, status or "-", kind or "-", fields, check)
+                           "status=%s type=%s fields=%s check=%s%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
+                           code, status or "-", kind or "-", fields, check, shown)
             # "truncated" (the reply cut at max_tokens) is kept apart, so the page step can split the batch and read it again.
             # A page reply that failed validation says so, with the check and the schema fields (closed words), so the deck
             # panel and the run log tell it from an outage.

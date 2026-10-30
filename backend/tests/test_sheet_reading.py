@@ -362,3 +362,53 @@ def test_startup_check_stays_up_when_the_store_cannot_be_read(monkeypatch, caplo
     with caplog.at_level(logging.ERROR):
         asyncio.run(server.check_sheet_reader())               # does not raise
     assert [r.getMessage() for r in caplog.records] == ["sheet reader check failed at startup: error=RuntimeError"]
+
+
+def test_the_sheet_reading_schema_holds_none_of_the_constructs_the_provider_refuses():
+    """platform.claude.com/docs/en/build-with-claude/structured-outputs: no recursion, external $ref, string, number or array constraints
+    (minItems above 1), pattern or format, every object closed with all its properties required or optional by name, at most 16 union
+    parameters and 24 optional parameters in all."""
+    from app.llm import schemas
+    schema = schemas.file_map_output_schema()
+    banned = {"$ref", "$defs", "definitions", "allOf", "pattern", "format", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum",
+              "exclusiveMaximum", "multipleOf", "maxItems", "uniqueItems", "minProperties", "maxProperties", "patternProperties",
+              "default", "const"}
+    unions, optional = [0], [0]
+
+    def walk(node, path="$"):
+        if isinstance(node, list):
+            for i, n in enumerate(node):
+                walk(n, f"{path}[{i}]")
+            return
+        if not isinstance(node, dict):
+            return
+        assert not banned & set(node), (path, banned & set(node))
+        if "minItems" in node:
+            assert node["minItems"] in (0, 1), path
+        if "enum" in node:
+            assert all(isinstance(v, (str, int, float, bool, type(None))) for v in node["enum"]), path
+        if "anyOf" in node:
+            unions[0] += 1
+        if node.get("type") == "object":
+            assert node["additionalProperties"] is False, path
+            assert set(node["required"]) <= set(node["properties"]), path
+            optional[0] += len(set(node["properties"]) - set(node["required"]))
+        for key, value in node.items():
+            walk(value, f"{path}.{key}")
+
+    walk(schema)
+    assert unions[0] <= schemas.PROVIDER_UNION_LIMIT, unions
+    assert optional[0] <= schemas.PROVIDER_OPTIONAL_LIMIT, optional
+    assert unions[0] > 0 and optional[0] > 0, "FileMap's nullable fields are split between unions and optional ones"
+    from schemas.metrics import FileMap
+    fields = {f for model in (FileMap,) for f in model.model_fields}
+    assert set(schema["properties"]) == fields, "FileMap's fields are unchanged"
+
+
+def test_a_reading_that_leaves_out_the_optional_fields_still_validates():
+    from app.llm import schemas
+    from schemas.metrics import FileMap
+    assert FileMap.model_validate({"map_version": 1, "kind": "deck", "sheets": [], "figures": [{"evidence": "p1"}]}).figures[0].value is None
+    schema = schemas.file_map_output_schema()
+    figure = schema["properties"]["figures"]["items"]
+    assert set(figure["properties"]) - set(figure["required"]), "the figure's late nullable fields are optional"

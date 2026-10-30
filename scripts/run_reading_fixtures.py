@@ -83,6 +83,9 @@ async def read_all() -> int:
 
 
 def main() -> int:
+    if "SHEET_READING_PROMPT" in os.environ and not os.environ["SHEET_READING_PROMPT"].strip():
+        print("::error title=Reading fixtures::SHEET_READING_PROMPT is set but empty: add the prompt text to the repository secret.")
+        return 1
     missing = [n for n in NEEDED if not os.environ.get(n, "").strip()]
     if missing:
         notice("not set: " + ", ".join(missing) + ". The job needs the key and the prompt as secrets and the model as a variable.")

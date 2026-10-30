@@ -546,24 +546,42 @@ def labelling_output_schema() -> dict:
 
 
 # The sheet reader (docs/design/read-check-review.md sections 3 and 4): one call per spreadsheet, the model returns the file map. The
-# provider schema is generated from the contract's FileMap, so the two cannot drift; structured outputs take no string or number
-# constraints and need every property listed as required, so those are dropped here and checked by FileMap after the reply arrives.
+# provider schema is generated from the contract's FileMap, so the two cannot drift. Structured outputs take no string, number or array
+# constraints, no pattern and need every object closed (additionalProperties false), so those are dropped here and checked by FileMap
+# after the reply arrives. They also cap a request at 16 parameters with a union type (anyOf, type arrays) and 24 optional parameters
+# (platform.claude.com/docs/en/build-with-claude/structured-outputs): FileMap has more nullable fields than 16, so the first 16 in schema
+# order stay `anyOf [T, null]` and required, and the others become optional with the null dropped (the model leaves them out; FileMap
+# reads an absent field as None).
 SHEET_READING = "sheet_reading"
+PROVIDER_UNION_LIMIT = 16
+PROVIDER_OPTIONAL_LIMIT = 24
 
 
-def _provider_schema(node: Any, defs: dict) -> Any:
+def _provider_schema(node: Any, defs: dict, budget: dict) -> Any:
     if "$ref" in node:
-        return _provider_schema(defs[node["$ref"].rsplit("/", 1)[-1]], defs)
+        return _provider_schema(defs[node["$ref"].rsplit("/", 1)[-1]], defs, budget)
     if "anyOf" in node:
-        return {"anyOf": [_provider_schema(n, defs) for n in node["anyOf"]]}
+        return {"anyOf": [_provider_schema(n, defs, budget) for n in node["anyOf"]]}
     if "const" in node:
         return {"type": node["type"], "enum": [node["const"]]}
     kind = node.get("type")
     if kind == "object":
-        props = {k: _provider_schema(v, defs) for k, v in node["properties"].items()}
-        return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+        props, required = {}, []
+        for name, value in node["properties"].items():
+            out = _provider_schema(value, defs, budget)
+            nullable = "anyOf" in out and any(m == {"type": "null"} for m in out["anyOf"])
+            if nullable and budget["unions"] <= 0:
+                kept = [m for m in out["anyOf"] if m != {"type": "null"}]
+                out = kept[0] if len(kept) == 1 else {"anyOf": kept}
+                budget["optional"] += 1
+            else:
+                required.append(name)
+                if "anyOf" in out:
+                    budget["unions"] -= 1
+            props[name] = out
+        return {"type": "object", "properties": props, "required": required, "additionalProperties": False}
     if kind == "array":
-        return {"type": "array", "items": _provider_schema(node["items"], defs)}
+        return {"type": "array", "items": _provider_schema(node["items"], defs, budget)}
     out = {"type": kind}
     if "enum" in node:
         out["enum"] = list(node["enum"])
@@ -574,7 +592,11 @@ def file_map_output_schema() -> dict:
     """The JSON schema a sheet reading sends as `output_config.format.schema`: the contract's FileMap (schemas/metrics.py)."""
     from schemas.metrics import FileMap
     raw = FileMap.model_json_schema()
-    return _provider_schema(raw, raw.get("$defs", {}))
+    budget = {"unions": PROVIDER_UNION_LIMIT, "optional": 0}
+    schema = _provider_schema(raw, raw.get("$defs", {}), budget)
+    if budget["optional"] > PROVIDER_OPTIONAL_LIMIT:
+        raise ValueError(f"FileMap has {budget['optional']} fields over the union limit; the provider takes {PROVIDER_OPTIONAL_LIMIT} optional")
+    return schema
 
 
 def output_schema(structure_type: str) -> dict:
