@@ -63,6 +63,8 @@ def reader_env(monkeypatch):
 
 def read(db, audit="a1", adapter=None, text=TEXT, file_hash=HASH, **kwargs):
     adapter = adapter or t.FakeAdapter(replies=[json.dumps(file_map())])
+    if kwargs.get("recheck") and "reread_of" not in kwargs:
+        kwargs["reread_of"] = next((d["key"] for d in db[readings.READINGS].docs), None)
     result = asyncio.run(gateway.read_structure(db, audit, text, "sheet_reading", adapter=adapter, sleep=t._noop_sleep, file_hash=file_hash,
                                                 **kwargs))
     return result, adapter
@@ -381,6 +383,18 @@ def test_startup_logs_one_line_naming_what_is_missing_and_the_app_still_starts(m
     assert not caplog.records
 
 
+def test_startup_logs_one_line_when_the_reviewer_prompt_is_missing(monkeypatch, caplog):
+    import server
+    db = t.FakeDB()
+    db["prompts"].docs[:] = [d for d in db["prompts"].docs if d["name"] != "reviewer"]
+    monkeypatch.setattr(server, "db", db)
+    monkeypatch.setenv("SHEET_READER_MODEL", MODEL)
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(server.check_sheet_reader())
+    lines = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert lines == ["reviewer will not run: prompt reviewer is not in the store"]
+
+
 def test_startup_check_stays_up_when_the_store_cannot_be_read(monkeypatch, caplog):
     import server
 
@@ -467,3 +481,26 @@ def test_fences_and_prose_around_the_json_are_stripped_before_parsing():
 def test_a_reading_that_leaves_out_the_optional_fields_still_validates():
     from schemas.metrics import FileMap
     assert FileMap.model_validate({"map_version": 1, "kind": "deck", "sheets": [], "figures": [{"evidence": "p1"}]}).figures[0].value is None
+
+
+def test_a_re_read_takes_the_prompt_text_stored_on_its_reading_and_needs_no_prompt_store():
+    db = audit_db()
+    first, _ = read(db)
+    stored = db[readings.READINGS].docs[0]
+    sent = next(d["text"] for d in db["prompts"].docs if d["name"] == "sheet_reading")
+    assert stored["prompt_text"] == sent and readings.prompt_hash(stored["prompt_text"]) == stored["prompt_hash"]
+    db["prompts"].docs[:] = []                      # no prompt store: a lookup would find nothing
+    items = [{"item": "figure:Client-01 report:B3:revenue", "reason": "Reading says 5; cell B3 holds 447223.43."}]
+    adapter = t.FakeAdapter(replies=[json.dumps({"map_version": 1, "kind": "sheet", "sheets": [], "figures": []})])
+    again, adapter = read(db, adapter=adapter, recheck=items, reread_of=first.reading_key)
+    assert again.status == "read" and adapter.calls == 1
+    assert adapter.requests[0]["system"] == sent
+
+
+def test_a_re_read_of_a_record_with_no_prompt_text_makes_no_call():
+    db = audit_db()
+    first, _ = read(db)
+    del db[readings.READINGS].docs[0]["prompt_text"]
+    adapter = t.FakeAdapter(replies=[json.dumps(file_map())])
+    again, adapter = read(db, adapter=adapter, recheck=[{"item": "x", "reason": "y"}], reread_of=first.reading_key)
+    assert again.status == "not_read" and adapter.calls == 0

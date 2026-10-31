@@ -45,9 +45,9 @@ def test_an_annual_forecast_is_set_against_the_latest_complete_actual_fiscal_yea
     assert found["historical"] == {"kind": "annual", "value": pytest.approx(0.2), "windows": ["FY2023", "FY2024"]}
     assert found["difference"] == {"low": pytest.approx(0.0), "high": None}
     text = lines_of(found)
-    assert "Required growth: 20.0% a year" in text and "FY2024" in text and "24 months" in text
-    assert "Historical growth: 20.0% (FY2023 → FY2024)" in text
-    assert "Difference: +0.0 percentage points (required less historical)" in text
+    assert "Required growth: 20% a year" in text and "FY2024" in text and "24 months" in text
+    assert "Historical growth: 20% (FY2023 → FY2024)" in text
+    assert "Difference: 0 percentage points (required less historical)" in text
 
 
 def test_the_required_growth_is_the_compound_annual_rate_over_the_elapsed_months():
@@ -61,7 +61,7 @@ def test_the_gap_to_the_historical_growth_is_in_percentage_points_and_carries_no
     found = run(series=TWO_YEARS, last="2024-12", start="2025-01", end="2025-12", low=1_440_000 * 1.5)
     assert found["difference"]["low"] == pytest.approx(30.0), "required 50% less historical 20%"
     text = lines_of(found)
-    assert "Difference: +30.0 percentage points (required less historical)" in text
+    assert "Difference: +30 percentage points (required less historical)" in text
     for word in ("beat", "pass", "fail", "ahead", "behind", "achievable", "on track", "verified"):
         assert not re.search(rf"(?i)\b{word}\b", text), f"a calculation is a number, not a verdict: {word!r}"
 
@@ -69,7 +69,7 @@ def test_the_gap_to_the_historical_growth_is_in_percentage_points_and_carries_no
 def test_a_forecast_below_the_historical_growth_shows_a_negative_difference():
     found = run(series=TWO_YEARS, last="2024-12", start="2025-01", end="2025-12", low=1_440_000 * 1.1)
     assert found["difference"]["low"] == pytest.approx(-10.0)
-    assert "Difference: -10.0 percentage points" in lines_of(found)
+    assert "Difference: -10 percentage points" in lines_of(found)
 
 
 def test_with_no_complete_fiscal_year_the_complete_trailing_12_months_are_the_base_and_the_window_is_named():
@@ -273,8 +273,8 @@ def test_a_range_is_shown_as_a_range_with_both_ends_calculated():
     assert found["required"] == {"low": pytest.approx(0.2), "high": pytest.approx(0.5)}
     assert found["difference"] == {"low": pytest.approx(0.0), "high": pytest.approx(30.0)}
     text = lines_of(found)
-    assert "Required growth: 20.0% to 50.0% a year" in text and "€1,728,000–€2,160,000" in text
-    assert "Difference: +0.0 to +30.0 percentage points (required less historical)" in text
+    assert "Required growth: 20% to 50% a year" in text and "€1,728,000–€2,160,000" in text
+    assert "Difference: 0 to +30 percentage points (required less historical)" in text
 
 
 def test_a_range_is_never_reduced_to_the_end_that_compares_best():

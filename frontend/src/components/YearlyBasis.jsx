@@ -1,5 +1,5 @@
 import { Provenance } from "@/components/Provenance";
-import { fmtCurrency, fmtMonths, fmtPct, PLACEHOLDER } from "@/lib/format";
+import { fmtCurrency, fmtMonths, fmtPct, fmtPoints, PLACEHOLDER } from "@/lib/format";
 
 /**
  * Yearly-basis metrics (docs/specs/chat-upload.md section 26.8, S30g): from the actual-tagged year columns of a P&L read as a
@@ -15,7 +15,7 @@ export const TRACK_HEADERS = ["Year", "Line", "Forecast", "Actual", "Gap", "Gap 
 export const REPORTED_HEADERS = ["Period", "Reported", "Revenue file", "Gap %", "Basis"];
 
 /** A margin's change from the year before, in points: 0.013 is "+1.3 pts". */
-export const fmtPoints = (v) => (v == null ? PLACEHOLDER : `${v > 0 ? "+" : ""}${(Math.round(v * 1000) / 10).toFixed(1)} pts`);
+export { fmtPoints };
 
 export default function YearlyBasis({ block, ccy }) {
   if (!block) return null;

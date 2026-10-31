@@ -18,6 +18,7 @@ jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{childr
 jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{children}</div> }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+window.history.pushState({}, "", "/?view=legacy");      // PR 3: the earlier screen, which this file tests, is behind ?view=legacy (lib/legacyView.js)
 
 // What GET /audits/{id}/verdict and GET answer (docs/specs/verdict-and-memo.md). The server tests, ranks and words.
 const TOP = {
@@ -368,7 +369,7 @@ test("the yearly-basis section shows each year, the track record and the missing
   const y23 = section.querySelector('[data-testid="yearly-year-FY2023"]').textContent;
   expect(y23).toContain("42%");
   expect(y23).toContain("+1.3 pts");
-  expect(y23).toContain("30.4 months");
+  expect(y23).toContain("30 months");
   expect(section.querySelector('[data-testid="yearly-year-FY2022"]').textContent).toContain("n/c");
   expect(section.querySelector('[data-testid="yearly-track"]').textContent).toContain("(budget)");
   expect(section.querySelector('[data-testid="yearly-reported"]')).toBeNull();

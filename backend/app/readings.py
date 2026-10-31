@@ -12,6 +12,8 @@ Nothing here updates a stored document. What changes later is written as a recor
     reading_rereads   the automatic second reading of a rejected item, with the reason attached. Insert-only, beside the first reading.
     reading_overrides a reviewer correction or an analyst Change: reading, item, old value, new value, who, when, why. Insert-only.
     reading_checks    the outcome of the checks for one audit and file. Derived (app/checks.py), rewritten for the audit at each upload.
+    reading_reviews   the reviewer's findings for one audit and what followed each (app/reviewer.py). Derived, rewritten by a new review.
+    reading_cards     the cards of one audit and the analyst's decision on each (app/cards.py).
 
 The register is the reading plus its overrides (`effective`). Rule 17: the stored reading is the model's JSON output with names restored
 (display un-masks on the server); never the text that was sent.
@@ -26,7 +28,9 @@ USES = "reading_uses"
 REREADS = "reading_rereads"
 OVERRIDES = "reading_overrides"
 CHECKS = "reading_checks"
-COLLECTIONS = (READINGS, USES, REREADS, OVERRIDES, CHECKS)
+REVIEWS = "reading_reviews"        # the reviewer's findings for one audit and what followed each (PR 3), derived and rewritten on a new review
+CARDS = "reading_cards"            # the cards of an audit: the three cases of section 7.4 and the analyst's decision on each (PR 3)
+COLLECTIONS = (READINGS, USES, REREADS, OVERRIDES, CHECKS, REVIEWS, CARDS)
 
 
 def _now() -> str:
@@ -60,15 +64,15 @@ async def get(db, account: Optional[str], file_hash: str, prompt_hash: str, mode
     return await db[READINGS].find_one({"key": reading_key(account, file_hash, prompt_hash, model), "status": {"$ne": NOT_READ}}, {"_id": 0})
 
 
-async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, prompt_hash: str, model: str, reading: dict, input_tokens: int = 0,
-              output_tokens: int = 0, cost: float = 0.0) -> dict:
+async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, prompt_hash: str, model: str, reading: dict, prompt_text: str = "",
+              input_tokens: int = 0, output_tokens: int = 0, cost: float = 0.0) -> dict:
     """Store a reading once. A reading already stored under the key is returned as it stands and nothing is written."""
     key = reading_key(account, file_hash, prompt_hash, model)
     kept = await db[READINGS].find_one({"key": key}, {"_id": 0})
     if kept and kept.get("status") != NOT_READ:
         return kept
     doc = {"key": key, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version, "prompt_hash": prompt_hash,
-           "model": model, "file_map": copy.deepcopy(reading),
+           "model": model, "file_map": copy.deepcopy(reading), "prompt_text": prompt_text,
            "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6),
            "created_at": _now()}
     if kept:
@@ -89,19 +93,21 @@ async def use(db, audit_id: str, key: str) -> None:
         await db[USES].insert_one({"audit_id": audit_id, "key": key, "at": _now()})
 
 
-def reread_key(reading: str, items: List[str]) -> str:
-    """A second reading is keyed on the reading and the item keys it was asked about, in any order. The reason is stored, not keyed."""
-    return _digest("reread", reading, *sorted(set(items)))
+def reread_key(reading: str, items: List[str], reason: str = "") -> str:
+    """A second reading is keyed on the reading and the item keys it was asked about, in any order, and on a hash of the reasons attached
+    (the reviewer's finding asks about an item a check may have asked about before; a different reason is a different question). The reasons
+    of a check are written by code and the same every time, so an automatic re-read keeps one key."""
+    return _digest("reread", reading, *sorted(set(items)), reason)
 
 
-async def get_reread(db, reading: str, items: List[str]) -> Optional[dict]:
-    return await db[REREADS].find_one({"key": reread_key(reading, items), "status": {"$ne": NOT_READ}}, {"_id": 0})
+async def get_reread(db, reading: str, items: List[str], reason: str = "") -> Optional[dict]:
+    return await db[REREADS].find_one({"key": reread_key(reading, items, reason), "status": {"$ne": NOT_READ}}, {"_id": 0})
 
 
 async def put_reread(db, *, reading: str, items: List[str], reason: str, prompt_version: str, model: str, output: dict, input_tokens: int = 0,
                      output_tokens: int = 0, cost: float = 0.0) -> dict:
     """Store the second reading of rejected items beside the first, once. The same items of the same reading are never read again."""
-    key = reread_key(reading, items)
+    key = reread_key(reading, items, reason)
     kept = await db[REREADS].find_one({"key": key}, {"_id": 0})
     if kept and kept.get("status") != NOT_READ:
         return kept
@@ -116,12 +122,12 @@ async def put_reread(db, *, reading: str, items: List[str], reason: str, prompt_
 
 
 async def put_failed(db, *, key: str, reread: bool, items: List[str], account: Optional[str], file_hash: str, prompt_version: str, model: str,
-                     reason: str, replies: List[str]) -> dict:
+                     reason: str, replies: List[str], recheck_id: str = "") -> dict:
     """The record of a reading the model's replies did not give (gateway: "reading did not match the map schema"), for diagnosis: the raw
     replies as received, in masked space, never restored, under the reading's key (or the re-read's) with status NOT_READ. It is not a
     reading: get and get_reread never return it, and the next reading of the file replaces it. A record already there is rewritten."""
     reading = key
-    collection, key = (REREADS, reread_key(reading, items)) if reread else (READINGS, reading)
+    collection, key = (REREADS, reread_key(reading, items, recheck_id)) if reread else (READINGS, reading)
     doc = {"key": key, "status": NOT_READ, "reason": reason, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version,
            "model": model, "raw_responses": [str(r) for r in replies], "created_at": _now()}
     if reread:
@@ -183,6 +189,8 @@ async def purge_audit(db, audit_id: str) -> Dict[str, int]:
     A reading another audit still uses stays for it."""
     used = [u["key"] for u in await db[USES].find({"audit_id": audit_id}, {"_id": 0, "key": 1}).to_list(100000)]
     uses = await db[USES].delete_many({"audit_id": audit_id})
+    reviews = await db[REVIEWS].delete_many({"audit_id": audit_id})
+    cards = await db[CARDS].delete_many({"audit_id": audit_id})
     checks = await db[CHECKS].delete_many({"audit_id": audit_id})
     overrides = await db[OVERRIDES].delete_many({"audit_id": audit_id})
     readings = rereads = 0
@@ -191,4 +199,5 @@ async def purge_audit(db, audit_id: str) -> Dict[str, int]:
             readings += getattr(await db[READINGS].delete_many({"key": key}), "deleted_count", 0)
             rereads += getattr(await db[REREADS].delete_many({"reading": key}), "deleted_count", 0)
     return {"reading_uses": getattr(uses, "deleted_count", 0), "reading_checks": getattr(checks, "deleted_count", 0),
-            "reading_overrides": getattr(overrides, "deleted_count", 0), "readings": readings, "reading_rereads": rereads}
+            "reading_overrides": getattr(overrides, "deleted_count", 0), "reading_reviews": getattr(reviews, "deleted_count", 0),
+            "reading_cards": getattr(cards, "deleted_count", 0), "readings": readings, "reading_rereads": rereads}

@@ -14,9 +14,9 @@ Nothing here corrects a citation: a re-read is the model's, and its answer is ch
 prompt, a missing consent or a file over the limit gives a status and a message, never an exception: the upload goes on (rule 20).
 """
 import asyncio
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from . import checks, readings
+from . import cards, checks, lines as lines_mod, readings
 from .llm import gateway, redaction
 from .llm.schemas import SHEET_READING
 from .structures import reading_input
@@ -37,7 +37,7 @@ def _worst(items: List[Dict]) -> Dict:
     return next((i for i in items if i["outcome"] == checks.REJECTED), items[0])
 
 
-async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fiscal_year_end: int = 12, adapter=None) -> Dict:
+async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fiscal_year_end: int = 12, adapter=None, capture: Optional[Dict] = None) -> Dict:
     """Read, check and re-read one workbook for one audit. Returns the stored outcome:
 
         {"status": "read", "file", "file_hash", "reading_key", "prompt_version", "model", "cache_hit", "masked": {...}, "counts": {...},
@@ -50,8 +50,8 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     if text is None:
         return {"status": "none", "reason": "No sheet with period columns to read."}
     try:
-        first = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter),
-                                       READ_SECONDS)
+        first = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter,
+                                                           fiscal_year_end=fiscal_year_end), READ_SECONDS)
     except asyncio.TimeoutError:
         return {"status": "not_read", "reason": gateway.NOT_READ}
     if first.status != "read" or not first.file_map:
@@ -63,9 +63,19 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     if keys:
         groups = _group(before["items"])
         ask = [{"item": k, "reason": _worst(groups[k])["reason"]} for k in keys]
-        second = await asyncio.wait_for(
-            gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask), READ_SECONDS)
-        if second.status == "read" and second.file_map is not None:
+        failure = None
+        second = None
+        try:
+            second = await asyncio.wait_for(
+                gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask,
+                                       reread_of=first.reading_key), READ_SECONDS)
+            if second.status != "read" or second.file_map is None:
+                failure = second.reason or second.status
+        except asyncio.TimeoutError:
+            failure = "timed out"
+        except Exception as exc:           # an error, a cap, a missing prompt: whatever the re-read met, the first reading stands
+            failure = type(exc).__name__ if not str(exc) else str(exc)
+        if failure is None:
             merged = checks.merge_reread(first.file_map, second.file_map, keys)
             final = checks.check_map(cells, merged, fiscal_year_end)
             after = _group(final["items"])
@@ -82,8 +92,15 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
                     entry["first"], entry["second"] = checks.reading_of(first.file_map, key), checks.reading_of(second.file_map, key)
                 rereads.append(entry)
         else:
-            rereads = [{"item": e["item"], "first_reason": e["reason"], "reread": None, "outcome": checks.REJECTED, "reason": e["reason"],
+            # The first reading stands, checked as it was; its rejected items say the re-read was not completed. Never not_read.
+            note = f"re-read not completed: {failure}"
+            rereads = [{"item": e["item"], "first_reason": e["reason"], "reread": None, "outcome": checks.REJECTED, "reason": note,
                         "action": "card", "first": checks.reading_of(first.file_map, e["item"]), "second": None} for e in ask]
+            for item in final["items"]:
+                if item["outcome"] == checks.REJECTED:
+                    item["reread_note"] = note
+    if capture is not None:
+        capture["file_map"] = merged          # for the fixture job's comparison; never stored
     months = final["months"]
     best = max(months, key=lambda m: m["month"], default=None)
     doc = {"status": "read", "file": file, "file_hash": file_hash, "reading_key": first.reading_key, "prompt_version": first.prompt_version,
@@ -91,12 +108,34 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
            "items": final["items"], "rereads": rereads, "months": months,
            "month": best["month"] if best else None,
            "evidence": (f"{best['evidence']} (confirmed on sheet {best['sheet']}, column {best['column']})" if best else None),
+           "lines": sheet_lines(merged, cells, final["items"]),
+           "dims": {name: [sheet.max_row, sheet.max_col] for name, sheet in cells.sheets.items()},
            "rows_mapped": sum(len(s.get("rows") or []) for s in merged.get("sheets") or []),
            "period_columns": max((redactless_cols(s) for s in merged.get("sheets") or []), default=0)}
     mapping = await redaction.get_map(db, audit_id)
+    doc["dims"] = {redaction.restore(name, mapping): dims for name, dims in doc["dims"].items()}      # keyed by the sheet's own name, as the map is
     doc = redaction.restore_deep(doc, mapping)                   # display un-masks on the server; the reasons held masked cell texts
     await readings.save_checks(db, audit_id, file_hash, doc)
+    await cards.open_for_checks(db, audit_id, doc)
     return doc
+
+
+def sheet_lines(file_map: Dict, cells: "checks.Cells", items: List[Dict]) -> List[Dict]:
+    """[{"sheet", "lines"}] of a map: the lines of each sheet in file order (app/lines.py), their labels read from the cells the reader was sent."""
+    out = []
+    for smap in file_map.get("sheets") or []:
+        sheet = cells.sheet(smap["sheet"])
+        labels = {}
+        for row in smap.get("rows") or []:
+            pos = checks.parse_ref(row.get("label_cell"))
+            if sheet is not None and pos:
+                labels[row["row"]] = (sheet.get(*pos) or "").strip()
+        built = lines_mod.build(smap, labels)
+        for line in built:
+            found = next((i for i in items if i["key"] == f"row:{smap['sheet']}:{line['row']}"), None)
+            line["outcome"] = found["outcome"] if found else None
+        out.append({"sheet": smap["sheet"], "lines": built})
+    return out
 
 
 def redactless_cols(sheet: Dict) -> int:

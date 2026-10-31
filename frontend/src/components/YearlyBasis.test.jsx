@@ -31,8 +31,8 @@ test("both proxies are columns named by their denominators, beside the scope of 
     expect(YEARS_HEADERS).toEqual(expect.arrayContaining(["CAC payback (revenue growth)", "CAC payback (net new ARR)", "S&M line"]));
     expect([...host.querySelectorAll('[data-testid="yearly-years"] thead th')].map((th) => th.textContent)).toEqual(YEARS_HEADERS);
     const row = q(host, "yearly-year-FY2024");
-    expect(row.querySelector('[data-testid="yearly-payback-revenue"]').textContent).toContain("24.0");
-    expect(row.querySelector('[data-testid="yearly-payback-arr"]').textContent).toContain("16.0");
+    expect(row.querySelector('[data-testid="yearly-payback-revenue"]').textContent).toContain("24 months");
+    expect(row.querySelector('[data-testid="yearly-payback-arr"]').textContent).toContain("16 months");
     expect(row.querySelector('[data-testid="yearly-sm-scope"]').textContent).toBe("sales and marketing");
   } finally { await done(); }
 });

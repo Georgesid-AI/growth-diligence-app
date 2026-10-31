@@ -268,7 +268,7 @@ def test_the_two_assessed_rows_carry_the_computed_rating_its_rule_line_and_the_w
     reliability = next(line for line in text.split("\n") if line.startswith("| Data reliability |"))
     assert reliability.split("|")[2].strip() == "Weak", "Material concerns is Weak"
     assert "Weak: at least one check Red, 5 of 5 completed." in reliability
-    assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in reliability
+    assert "Revenue file and P&L differ by 70% over 2023-03–2024-02" in reliability
     assert "0 anomaly flags" in reliability and "9 of 33 claims Verified" in reliability
     growth = next(line for line in text.split("\n") if line.startswith("| Growth engine |"))
     assert growth.split("|")[2].strip() == "Adequate"
@@ -551,7 +551,7 @@ def test_value_at_stake_reads_vas_and_each_abbreviation_points_to_the_glossary_o
 
 # --- the data inventory (A1) and data integrity (A2) narratives ---------------------------------------------------------------
 
-def data_step(step, headline="Material concerns: the revenue file and the P&L differ by 69.61%.", verdict="Material concerns",
+def data_step(step, headline="Material concerns: the revenue file and the P&L differ by 70%.", verdict="Material concerns",
               actions=(), status="ok"):
     n = narrative(headline=headline, status=status)
     n["step"] = step
@@ -574,9 +574,9 @@ def test_the_data_reliability_row_reads_the_integrity_conclusion_never_the_a2_ve
     assert row[2].strip() == "Weak", "computed from the integrity conclusion: Material concerns is Weak"
     assert row[3].strip().startswith("Material concerns. Completed 5 of 5 applicable checks.")
     assert "not a finding about the company" not in row[3], "the sentence belongs to Insufficient assessment coverage only"
-    assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in row[3], "the computed line follows"
+    assert "Revenue file and P&L differ by 70% over 2023-03–2024-02" in row[3], "the computed line follows"
     assert row[4].strip() == "Data integrity conclusion: Material concerns; revenue_reconciliation, anomalies, claim register"
-    assert "Material concerns: the revenue file and the P&L differ by 69.61%." not in text and "Data integrity verdict" not in text
+    assert "Material concerns: the revenue file and the P&L differ by 70%." not in text and "Data integrity verdict" not in text
 
 
 @pytest.mark.parametrize("narratives", [[], [data_step("data_integrity", status="flagged")], [data_step("data_integrity", status="unavailable")],
@@ -584,7 +584,7 @@ def test_the_data_reliability_row_reads_the_integrity_conclusion_never_the_a2_ve
                          ids=["none", "flagged", "unavailable", "no verdict", "other step"])
 def test_whatever_the_a2_narrative_the_row_keeps_the_computed_line(narratives):
     row = reliability_row(memo(narratives=narratives))
-    assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in row and "Data integrity verdict" not in row
+    assert "Revenue file and P&L differ by 70% over 2023-03–2024-02" in row and "Data integrity verdict" not in row
 
 
 def test_appendix_b_takes_the_a1_data_request_list_in_its_order_and_the_other_appendices_do_not():

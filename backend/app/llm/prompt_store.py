@@ -18,6 +18,8 @@ import hashlib
 from datetime import datetime, timezone
 from typing import List, NamedTuple, Optional
 
+from .. import formatting as fmt
+
 COLLECTION = "prompts"
 
 # What the narrative endpoint answers when a prompt the step needs is not in the store. No model call is made.
@@ -26,7 +28,7 @@ NO_PROMPT = "No prompt loaded — upload prompts on the owner page"
 # The prompt names the gateway reads: the enabled narrative steps and the structure path. tests/test_llm_gateway.py
 # fails if this list and the gateway's STEP_CONFIG drift apart.
 NAMES = ("growth_engine", "data_inventory", "data_integrity", "structure_reading", "file_type", "sheet_structure", "deck_reading",
-         "sheet_reading")
+         "sheet_reading", "reviewer")
 
 MAX_TEXT_CHARS = 10_000          # every page read sends the prompt: a longer one costs more per audit (spec section 1)
 _VERSION_PREFIX = "v"
@@ -63,9 +65,13 @@ async def _latest_doc(db, name: str) -> Optional[dict]:
     return max(docs, key=lambda d: _number(d.get("version"))) if docs else None
 
 
-async def load(db, name: str) -> Prompt:
-    """The latest version of a named prompt. Raises PromptMissing when the store holds none."""
-    doc = await _latest_doc(db, name) if name in NAMES else None
+async def load(db, name: str, version: Optional[str] = None) -> Prompt:
+    """The latest version of a named prompt, or the named `version` (a stored version names one text for good: a re-read of a stored reading
+    uses the text that reading was made with). Raises PromptMissing when the store holds none."""
+    if version is not None:
+        doc = await db[COLLECTION].find_one({"name": name, "version": version}, {"_id": 0}) if name in NAMES else None
+    else:
+        doc = await _latest_doc(db, name) if name in NAMES else None
     if not doc or not str(doc.get("text") or "").strip():
         raise PromptMissing(name)
     return Prompt(name=name, version=doc["version"], text=doc["text"], sha256=doc.get("sha256") or _digest(doc["text"]))
@@ -103,7 +109,7 @@ async def upload(db, name: str, text: str) -> dict:
     if not text.strip():
         raise PromptRefused("the prompt text is empty")
     if len(text) > MAX_TEXT_CHARS:
-        raise PromptRefused(f"Prompt is {len(text)} characters; the limit is {MAX_TEXT_CHARS:,}.")
+        raise PromptRefused(f"Prompt is {len(text)} characters; the limit is {fmt.fmt_count(MAX_TEXT_CHARS)}.")
     from pymongo.errors import DuplicateKeyError
     await db[COLLECTION].create_index([("name", 1), ("version", 1)], unique=True)
     for _ in range(5):                      # a second upload at the same moment takes the number: try the next one

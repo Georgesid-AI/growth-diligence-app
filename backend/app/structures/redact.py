@@ -641,13 +641,22 @@ def _company_headers(cells: List[Dict], amounts_to: Optional[Dict[int, int]] = N
             and not _PSEUDONYM.search(c["text"]) and not (amounts_to and amounts_to.get(c["row"], 0) > c["col"])]
 
 
+# A text shaped like a company: it ends in or holds a legal form or a business word. A first name inside it does not make it a person.
+_COMPANY_FORM = re.compile(r"(?i)(?<![^\W\d_])(?:group|holdings?|ltd|limited|llc|llp|inc|incorporated|corp|corporation|gmbh|ag|sa|sas|sarl|bv|nv|plc|"
+                           r"co|company|partners|capital|ventures|labs|studios?|solutions|systems|technologies|trading|consulting|services|"
+                           r"industries|logistics|enterprises|associates|brothers|bros)(?![^\W\d_])\.?")
+
+
 def _company_cell(cell: Dict, cells: List[Dict], headers: List[Dict], company_name: Optional[str]) -> bool:
     """True when the cell is text under a company-name header that no token covers yet (a cell holding a token is already masked).
-    A cell with a digit in it is a label with a figure ("800 Paying Users"), not a name: it stays."""
+    A cell with a digit in it is a label with a figure ("800 Paying Users"), not a name: it stays. A first name inside the text keeps it
+    out unless the text is shaped like a company (_COMPANY_FORM: Group, Ltd, GmbH ...): the company is tokenised before the personal-name
+    rule runs (read-check-review.md section 8, PR 3), so "Anna Group" is Client-NN and comes back on display, never "[person] Group";
+    "Jane Doe" under the same header stays a person."""
     text = cell["text"]
     return (bool(re.search(r"[^\W\d_]", text)) and not metric_label(text) and not re.search(r"\d", text) and not is_figure(text) and not _is_amount_or_date(text) and not _PSEUDONYM.search(text)
-            and not _FIRST_NAME.search(text) and not any(p in text for p in PLACEHOLDERS) and not _protected(text, company_name)
-            and cell not in headers and any(h["row"] < cell["row"] and _overlaps(h, cell) for h in headers))
+            and (not _FIRST_NAME.search(text) or _COMPANY_FORM.search(text)) and not any(p in text for p in PLACEHOLDERS)
+            and not _protected(text, company_name) and cell not in headers and any(h["row"] < cell["row"] and _overlaps(h, cell) for h in headers))
 
 
 def new_company_names(cells: List[Dict], company_name: Optional[str], amounts_to: Optional[Dict[int, int]] = None) -> List[str]:

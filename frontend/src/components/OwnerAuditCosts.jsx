@@ -1,10 +1,11 @@
 import { formatCreated } from "@/lib/auditForm";
+import { fmtNumber, fmtUsd } from "@/lib/format";
 
 // The owner's "Cost per audit" list (docs/specs/usage-and-allowance.md section 9): the tester link label, when the audit was created
 // (the viewer's local time), billed AI calls, then text tokens and cost, and image tokens and cost apart (docs/design/page-image.md section 6).
 // No audit, company or file name: the server sends none.
-const num = (n) => Number(n).toLocaleString("en-US");
-const usd = (n) => `USD ${Number(n).toFixed(2)}`;
+const num = (n) => fmtNumber(n);
+const usd = (n) => fmtUsd(n);
 
 export default function OwnerAuditCosts({ costs }) {
   if (!costs) return null;

@@ -20,6 +20,7 @@ jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavig
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
 jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{children}</div> }));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+window.history.pushState({}, "", "/?view=legacy");      // PR 3: the earlier screen, which this file tests, is behind ?view=legacy (lib/legacyView.js)
 
 const LINE = "Top-5 claim contradicted: revenue 200,000 EUR vs 150,000 EUR observed (board.pptx, slide 4).";
 const ROW = (n, label, extra = {}) => ({

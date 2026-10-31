@@ -116,8 +116,9 @@ def test_a_figure_with_no_unit_is_not_given_one_from_its_metric_name():
     ("count", 101, "100", checks.REJECTED),                    # counts are exact
     ("rate", 0.05, "0.045", checks.CONFIRMED),                 # within one point
     ("rate", 0.06, "0.045", checks.REJECTED),
-    ("rate", 4.0, "4.9", checks.CONFIRMED),                    # a rate written as a percent is compared in points
-    ("rate", 6.5, "4.9", checks.REJECTED),
+    ("rate", 4.0, "4.9", checks.REJECTED),                     # a rate is a fraction: 4.0 is no "4 points", the unit decides, no scale is guessed
+    ("rate", 1.2, "1.2", checks.CONFIRMED),                    # no 1.5 threshold: 1.2 is 120 %, the cell holds 1.2
+    ("rate", 1.2, "0.012", checks.CANNOT),                     # 1.2 % against 120 %: the scale differs, not compared
     ("money", 1200, "1,200", checks.CONFIRMED),                # a thousands comma is not a different number
     ("money", 1200, "(1,200)", checks.REJECTED),               # a bracket is a minus
     ("money", 1200, "n/a", checks.REJECTED),

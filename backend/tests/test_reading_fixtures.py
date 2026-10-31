@@ -237,6 +237,7 @@ def load_runner():
     spec = importlib.util.spec_from_file_location("run_reading_fixtures", ROOT / "scripts" / "run_reading_fixtures.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    module.deck_images_problem = lambda: ""          # the job's own preflight is tested below; the CI checks carry no LibreOffice
     return module
 
 
@@ -255,7 +256,8 @@ def test_the_job_skips_with_a_notice_and_exit_0_when_the_key_the_prompt_or_the_m
 class FixtureRouter:
     """Stands for the provider: answers a reading with the ideal map of the fixture whose sheets it was sent."""
 
-    def __init__(self, differ=None):
+    def __init__(self, differ=None, boundary=None):
+        self.boundary = boundary
         self.maps = {tuple(sorted(s["sheet"] for s in f["expected_map"]["file_map"]["sheets"])): f for f in SHEETS}
         self.differ, self.requests = differ, []
 
@@ -273,6 +275,10 @@ class FixtureRouter:
         file_map = copy.deepcopy(fixture["expected_map"]["file_map"])
         if self.differ and fixture["name"] == self.differ:
             file_map["sheets"][0]["rows"][0]["role"] = "bookings"
+        if self.boundary and fixture["name"] == self.boundary:
+            la = next(sh for sh in file_map["sheets"] if sh.get("last_actual"))["last_actual"]
+            from app.structures.redact import col_letters, col_number
+            la["column"] = col_letters(col_number(la["column"]) + 1)          # rejected by the checks, so a re-read is asked for
         return json.dumps(file_map), 3000, 400
 
 
@@ -287,6 +293,8 @@ def test_the_job_reads_every_fixture_once_and_exits_0_when_every_reading_agrees(
     assert len(router.requests) == len(SHEETS), "one provider call per fixture, no re-read"
     assert "every fixture agrees with its expected map" in out and all(f["name"] in out for f in SHEETS)
     assert "recheck" not in json.dumps(router.requests)
+    assert out.count("3000/400") == len(SHEETS), "the tokens in/out column shows the call's tokens"
+    assert "skipped: deck path unchanged" in out and "differ from" not in out
     assert "Client-01" not in out and "447223" not in out, "no cell text in the job's output"
 
 
@@ -322,7 +330,7 @@ def test_the_workflow_runs_only_on_the_reading_path_and_skips_without_the_key():
     assert job["env"]["ANTHROPIC_API_KEY"] == "${{ secrets.ANTHROPIC_API_KEY }}"
     skip = job["steps"][0]
     assert skip["if"] == "env.ANTHROPIC_API_KEY == ''" and "::notice" in skip["run"]
-    assert all(step.get("if") == "env.ANTHROPIC_API_KEY != ''" for step in job["steps"][1:]), "nothing else runs without the key"
+    assert all(step.get("if", "").startswith("env.ANTHROPIC_API_KEY != ''") for step in job["steps"][1:]), "nothing else runs without the key"
     assert any("scripts/run_reading_fixtures.py" in step.get("run", "") for step in job["steps"])
     tests_flow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY" not in tests_flow, "the general checks stay free of secrets"
@@ -335,7 +343,8 @@ def test_the_job_starts_from_an_empty_store_and_fails_with_a_clear_line_when_a_f
     assert all(not db[c].docs for c in readings.COLLECTIONS), "no stored reading at the start of a run"
     # a store that already holds a reading is never what the job reads from: the job builds its own, so a cache hit can only be a bug
     monkeypatch.setattr(gateway, "AnthropicAdapter", FixtureRouter())
-    served = gateway.StructureRead(status="read", type="sheet_reading", cache_hit=True)
+    fx = SHEETS[0]
+    served = gateway.StructureRead(status="read", type="sheet_reading", cache_hit=True, file_map=fx["expected_map"]["file_map"], payload="x", reading_key="k")
 
     async def stored(*a, **k):
         return served
@@ -345,3 +354,188 @@ def test_the_job_starts_from_an_empty_store_and_fails_with_a_clear_line_when_a_f
     assert runner.main() == 1
     out = capsys.readouterr().out
     assert out.count("served from storage, not read by the model") == len(SHEETS) and "fixture(s) differ" in out
+
+
+# ---------------------------------------------------------------------------
+# PR 3, item 4: the deck fixture joins the job. The page reader's figures are checked against the stored page text.
+# ---------------------------------------------------------------------------
+class DeckModel(t.FakeAdapter):
+    """Answers a page read with one claim for the figure written as digits in the page text (the headline), as an ideal reader would."""
+
+    def __init__(self, extra=()):
+        super().__init__()
+        self.extra = list(extra)
+
+    def complete(self, **kw):
+        self.calls += 1
+        sent = json.loads(kw["user_payload"])
+        claims = []
+        for line in sent["text"].split("\n"):
+            m = re.match(r"^(p\d+r\d+c\d+): .*?([\d,]+)$", line)
+            if m and "revenue" in line.lower():
+                claims.append({"metric": "revenue", "value": float(m.group(2).replace(",", "")), "value_high": None, "unit": "EUR", "unit_other": None,
+                               "period": "2024", "basis": "actual", "scenario": "none", "value_cell": m.group(1), "label_cell": None,
+                               "period_cell": None})
+        return json.dumps({"type": "page_claims", "claims": claims + self.extra}), 1000, 100
+
+
+def deck_job(adapter):
+    runner = load_runner()
+    db = runner.empty_store("TEST ONLY sheet prompt", "TEST ONLY deck prompt")
+    return runner, db, asyncio.run(runner.read_decks(db, adapter=adapter))
+
+
+def test_the_deck_fixture_runs_in_the_job_and_its_figures_are_checked_against_the_page_text(monkeypatch, capsys):
+    monkeypatch.setenv("PAGE_READER_MODEL", MODEL)
+    runner, db, failed = deck_job(DeckModel())
+    out = capsys.readouterr().out
+    assert "deck_rotated_axis" in out
+    # The headline is read and confirmed by the page text; the four quarters need the image (the offline model does not read it), so the
+    # job reports them as a difference: the comparison names what the reading lacks.
+    assert failed == 1 and "no figure 300 read" in out and "confirmed 1" in out
+
+
+def test_the_deck_comparison_passes_when_every_expected_figure_is_read_and_confirmed_and_the_parts_sum_to_the_headline():
+    exp = rf.expected("deck_rotated_axis")
+    figs = [{"value": f["value"], "outcome": "confirmed", "source": {"page": f["page"]}} for f in exp["figures"]]
+    assert rf.compare_deck(exp, figs) == []
+    assert any("not confirmed" in d for d in rf.compare_deck(exp, [{**figs[0], "outcome": "rejected"}, *figs[1:]]))
+    assert any("add up" in d for d in rf.compare_deck(exp, [figs[0], *[{**f, "value": f["value"] + 50} for f in figs[1:]]]))
+
+
+def test_the_job_skips_the_deck_alone_with_a_notice_without_the_deck_prompt(capsys):
+    runner = load_runner()
+    db = runner.empty_store("TEST ONLY sheet prompt")
+    assert asyncio.run(runner.read_decks(db, adapter=DeckModel())) == 0
+    assert "::notice title=Deck fixture skipped::DECK_READING_PROMPT is not set" in capsys.readouterr().out
+
+
+def test_the_job_reads_the_deck_fixture_only_when_the_deck_path_changed(monkeypatch, capsys):
+    runner = load_runner()
+    router = FixtureRouter()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    called = []
+
+    async def fake_decks(db, adapter=None):
+        called.append(1)
+        return 0
+    monkeypatch.setattr(runner, "read_decks", fake_decks)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("DECK_READING_PROMPT", "TEST ONLY deck"),
+                        ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("DECK_FIXTURE", raising=False)
+    assert runner.main() == 0 and not called
+    assert "skipped: deck path unchanged" in capsys.readouterr().out
+    monkeypatch.setenv("DECK_FIXTURE", "1")
+    monkeypatch.delenv("DECK_READING_PROMPT")
+    assert runner.main() == 0 and not called
+    assert "skipped: deck path unchanged" in capsys.readouterr().out
+    monkeypatch.setenv("DECK_READING_PROMPT", "TEST ONLY deck")
+    assert runner.main() == 0 and called == [1]
+
+
+def test_deck_differences_are_printed_but_never_fail_the_job_while_a_sheet_difference_does(monkeypatch, capsys):
+    runner = load_runner()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", FixtureRouter())
+
+    async def deck_differs(db, adapter=None):
+        print("deck_rotated_axis  read  differs")
+        return 1
+    monkeypatch.setattr(runner, "read_decks", deck_differs)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("DECK_READING_PROMPT", "TEST ONLY deck"),
+                        ("DECK_FIXTURE", "1"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    assert runner.main() == 0
+    out = capsys.readouterr().out
+    assert "deck_rotated_axis  read  differs" in out and "deck fixture: report-only until the converter works in CI (issue #207)" in out
+    monkeypatch.setattr(gateway, "AnthropicAdapter", FixtureRouter(differ=SHEETS[0]["name"]))
+    assert runner.main() == 1, "a sheet fixture still fails the job"
+
+
+def test_a_failing_re_read_leaves_the_file_read_with_its_rejected_items_noted_and_the_job_reports_the_count(monkeypatch, capsys):
+    runner = load_runner()
+    router = FixtureRouter(boundary="monthly_report")
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    runner.main()                                  # the cap refuses the second call: the re-read fails
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if ln.startswith("monthly_report"))
+    assert " read " in line and "not_read" not in line and re.search(r"rejected [1-9]", line), line
+    assert len(router.requests) == len(SHEETS), "the failed re-read made no provider call beyond the cap"
+
+
+def test_a_re_read_that_fails_never_marks_the_reading_not_read_and_notes_each_rejected_item():
+    fixture = next(f for f in SHEETS if f["name"] == "monthly_report")
+    bad = copy.deepcopy(fixture["expected_map"]["file_map"])
+    la = next(s for s in bad["sheets"] if s.get("last_actual"))["last_actual"]
+    from app.structures.redact import col_letters, col_number
+    la["column"] = col_letters(col_number(la["column"]) + 1)
+    for failure in (RuntimeError("cap"), gateway.GatewayError("model_refused", "no")):
+        class Failing(Ideal):
+            def complete(self, **kw):
+                if "recheck" in json.loads(kw["user_payload"]):
+                    raise failure
+                return super().complete(**kw)
+        db = t.FakeDB()
+        db["audits"].docs.append({"id": "fx", "company_name": rf.COMPANY, "structure_reading_consent": True})
+        doc = asyncio.run(sheet_reader.read_file(db, {"id": "fx"}, workbook(fixture), "f" * 64, fixture["path"].name, 12, adapter=Failing(bad)))
+        assert doc["status"] == "read" and doc["counts"]["rejected"] >= 1
+        assert doc["rereads"] and all(r["reason"].startswith("re-read not completed: ") for r in doc["rereads"])
+        assert all(i["reread_note"].startswith("re-read not completed: ") for i in doc["items"] if i["outcome"] == "rejected")
+
+
+def test_the_converter_presence_check_names_what_is_missing(monkeypatch):
+    from app.decks import render
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    assert render.converter_problem("pptx") == "no converter: soffice/libreoffice not found on the path"
+    assert render.converter_problem("docx") is not None
+    assert render.converter_problem("pdf") is None, "a PDF needs no converter"
+    monkeypatch.setattr(render.shutil, "which", lambda name: "/usr/bin/soffice" if name == "soffice" else None)
+    assert render.converter_problem("pptx") is None
+
+
+def test_the_deck_fixture_is_not_read_and_is_report_only_when_its_page_images_cannot_be_made(monkeypatch, capsys):
+    import importlib.util
+    from app.decks import render
+    spec = importlib.util.spec_from_file_location("run_reading_fixtures_real", ROOT / "scripts" / "run_reading_fixtures.py")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)                 # the real preflight
+    router = FixtureRouter()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("DECK_READING_PROMPT", "TEST ONLY deck"),
+                        ("DECK_FIXTURE", "1"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    runner.read_decks = lambda *a, **k: (_ for _ in ()).throw(AssertionError("the deck must not be read as text alone"))
+    code = runner.main()
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == ("page images unavailable: no converter: soffice/libreoffice not found on the path "
+                                   "[binary not found (soffice, libreoffice)]")
+    assert "deck fixture: report-only until the converter works in CI (issue #207)" in out
+    assert not any("deck_rotated_axis" in r for r in map(str, router.requests)), "no text-only read of the deck"
+    assert code == 0 or "differ from their expected map" in out, "only a sheet difference may fail the job"
+
+
+def test_the_preflight_line_carries_the_converters_exit_code_and_first_stderr_line(monkeypatch):
+    import importlib.util
+    import subprocess
+    from app.decks import render
+    spec = importlib.util.spec_from_file_location("run_reading_fixtures_real2", ROOT / "scripts" / "run_reading_fixtures.py")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    monkeypatch.setattr(render.shutil, "which", lambda name: "/usr/bin/soffice" if name == "soffice" else None)
+    monkeypatch.setattr(runner.subprocess if hasattr(runner, "subprocess") else subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 81, "", "Error: source file could not be loaded\nsecond line"))
+    problem = runner.converter_detail("pptx")
+    assert "exit code 81" in problem and "stderr: Error: source file could not be loaded" in problem and "second line" not in problem
+    assert "/usr/bin/soffice" in problem
+
+
+def test_the_workflow_installs_the_converter_the_deck_fixture_needs():
+    import yaml
+    flow = yaml.safe_load((ROOT / ".github" / "workflows" / "reading-fixtures.yml").read_text(encoding="utf-8"))
+    steps = flow["jobs"]["reading"]["steps"]
+    install = next(i for i, st in enumerate(steps) if "libreoffice" in st.get("run", ""))
+    run = next(i for i, st in enumerate(steps) if "scripts/run_reading_fixtures.py" in st.get("run", ""))
+    assert install < run and steps[install].get("if") == "env.ANTHROPIC_API_KEY != '' && env.DECK_FIXTURE == '1'"

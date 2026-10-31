@@ -861,3 +861,43 @@ class DeckUsage(BaseModel):
 
 
 UsageResponse.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# The reviewer's reply (read-check-review.md section 7; PR 3): plain JSON, validated in code, one retry. No rewritten numbers.
+# ---------------------------------------------------------------------------
+REVIEW_ASK = ("Reply with one JSON object {\"findings\": [...]}, possibly empty. Each finding: \"what\" (what is wrong), \"refs\" (the references: "
+              "{\"file\": the file number, \"sheet\": the sheet name or null, \"cell\": a cell or range such as \"AP11\" or \"B4:AW4\" or null, "
+              "\"page\": a deck page or null}), \"reading\" (how you read it) and \"confidence\" (\"high\" or \"low\"). Plain JSON only: no prose "
+              "before or after, no fences, no rewritten numbers.")
+REVIEW_FIX = "The reply did not match the format. Fix these and return the full object again, as plain JSON with no prose and no fences."
+REVIEW_TEXT_MAX = 500
+
+
+class ReviewRef(BaseModel):
+    model_config = {"extra": "forbid"}
+    file: int = Field(ge=1)
+    sheet: Optional[str] = Field(default=None, max_length=REVIEW_TEXT_MAX)
+    cell: Optional[str] = Field(default=None, pattern=r"^[A-Z]{1,3}[1-9]\d*(?::[A-Z]{1,3}[1-9]\d*)?$")
+    page: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _one_place(self):
+        if (self.cell is None) == (self.page is None):
+            raise ValueError("a reference is a cell or a page, not both and not neither")
+        if self.cell is not None and not self.sheet:
+            raise ValueError("a cell reference names its sheet")
+        return self
+
+
+class ReviewFinding(BaseModel):
+    model_config = {"extra": "forbid"}
+    what: str = Field(min_length=1, max_length=REVIEW_TEXT_MAX)
+    refs: List[ReviewRef] = Field(min_length=1, max_length=20)
+    reading: str = Field(min_length=1, max_length=REVIEW_TEXT_MAX)
+    confidence: Literal["high", "low"]
+
+
+class ReviewReply(BaseModel):
+    model_config = {"extra": "forbid"}
+    findings: List[ReviewFinding] = Field(default_factory=list, max_length=50)

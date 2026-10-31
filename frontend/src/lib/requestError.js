@@ -6,6 +6,7 @@
  * reads, shows or logs it, and every string that is shown is scrubbed for anything shaped like
  * a credential first, so a key cannot reach the page or the console even if a server echoes one.
  */
+import { fmtCount } from "./format";
 const SECRET_PATTERNS = [
   /sk-ant-[A-Za-z0-9_-]{6,}/g,
   /\bsk-[A-Za-z0-9_-]{16,}/g,
@@ -59,7 +60,7 @@ export function describeRequestError(err, { timeoutMs } = {}) {
     return { kind: "http", status: res.status, message: text ? `${head} — ${text}` : head };
   }
   if (err?.code === "ECONNABORTED" || err?.code === "ETIMEDOUT") {
-    const seconds = timeoutMs ? ` after ${Math.round(timeoutMs / 1000)} seconds` : "";
+    const seconds = timeoutMs ? ` after ${fmtCount(Math.round(timeoutMs / 1000))} seconds` : "";
     return {
       kind: "timeout", status: null,
       message: `No response from the server${seconds}. It may still be working; check again shortly.`,

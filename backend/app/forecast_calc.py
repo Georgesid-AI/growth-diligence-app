@@ -7,6 +7,8 @@ says verified, contradicted, beat, pass or fail.
 """
 from typing import Callable, Dict, List, Optional, Tuple
 
+from . import formatting as fmt
+
 FLOWS = ("Revenue",)                                    # summed over a period; the others are balances read at a month
 BALANCES = ("ARR", "MRR", "Customer count")
 FORMULA = "required annual growth = (forecast ÷ base) ^ (12 ÷ elapsed months) − 1"
@@ -59,11 +61,11 @@ def _period_name(flow: bool, start: int, end: int, fye: int) -> str:
 
 
 def _pct(fraction: float) -> str:
-    return f"{round(fraction * 100, 1) + 0.0:.1f}%"
+    return fmt.fmt_pct(fraction)
 
 
 def _points(value: float) -> str:
-    return f"{round(value, 1) + 0.0:+.1f}"
+    return fmt.fmt_signed(value)
 
 
 def _complete(series: Dict[int, float], start: int, end: int, last: Optional[int]) -> bool:
@@ -153,7 +155,7 @@ def _base(series, flow, start, end, last, fye) -> Tuple[Optional[dict], Optional
 
 
 def diagnose(*, metric: str, series: Dict[int, float], last: Optional[int], start: int, end: int, low: float, high: Optional[float] = None,
-             fye: int = 12, money: Callable[[float], str] = lambda v: f"{v:,.0f}") -> dict:
+             fye: int = 12, money: Callable[[float], str] = lambda v: fmt.fmt_number(v)) -> dict:
     """The forecast diagnostics of one claim.
 
     `series` is {month index: value} of the months the data can be read at (complete, in the data), `last` the last month a figure can be

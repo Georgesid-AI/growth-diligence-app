@@ -60,6 +60,18 @@ async def remove(db, audit_id: str, deck_ids: Optional[List[str]] = None) -> Non
     await db[COLLECTION].delete_many(where)
 
 
+def converter_problem(fmt: str) -> Optional[str]:
+    """None when a deck of this format can be turned into page images here, else one closed line saying what is missing (no file name, no text).
+    A PDF needs no converter; a .pptx or .docx needs LibreOffice (soffice or libreoffice on the path), and every format needs PDFium."""
+    if fmt != "pdf" and not (shutil.which("soffice") or shutil.which("libreoffice")):
+        return "no converter: soffice/libreoffice not found on the path"
+    try:
+        import pypdfium2  # noqa: F401
+    except ImportError:
+        return "no renderer: pypdfium2 is not installed"
+    return None
+
+
 def to_pdf(content: bytes, fmt: str) -> bytes:
     """The deck as PDF bytes: a PDF as it is, a .pptx or .docx through LibreOffice. PageImageError when it cannot be converted."""
     if fmt == "pdf":
