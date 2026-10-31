@@ -13,12 +13,14 @@ notice, exit 0, when any is absent:
     DECK_READING_PROMPT   the text of the `deck_reading` prompt (a secret). The deck fixture is read only when both are set, the workflow's own
                           condition for installing the converter; otherwise it is listed as "skipped: deck path unchanged" and is no difference
 
-The cap is one provider call per fixture per run: each file is read once, with no re-read, and the first reading is what is compared. The
+The cap is one provider call per fixture per run, plus the one retry the gateway makes when the first reply fails the file map's schema:
+each file is read once, with no item re-read, and the first reading that validates is what is compared. The
 reading goes through the same gateway as the product (masking, token cap, allow-listed model, prompt from a store), with an in-memory store holding
 the prompt and nothing else: every run starts from an empty store, and a fixture served from storage instead of the model fails the job. A difference, a refusal or a failed read exits 1. Cost: a few cents per run. Prints a table and the reason text of every cannot-check item (fixtures are synthetic).
 """
 import asyncio
 import hashlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -35,17 +37,28 @@ def notice(text: str) -> None:
 
 
 class OneCall:
-    """The provider adapter, counting: one call per fixture is the cap, and a second one is an error."""
+    """The provider adapter, counting. The cap per fixture is the first reading plus the one schema-validation retry (a fix request
+    carrying the errors, which the gateway sends when the first reply fails the file map's schema). Nothing else is allowed: an item re-read
+    (recheck), a second retry or any third call is refused with an error."""
 
     def __init__(self, adapter):
-        self.adapter, self.calls, self.tokens_in, self.tokens_out = adapter, 0, 0, 0
+        self.adapter, self.calls, self.retries, self.tokens_in, self.tokens_out = adapter, 0, 0, 0, 0
+
+    @staticmethod
+    def is_fix(kw) -> bool:
+        try:
+            return "fix" in json.loads(kw["user_payload"])
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def complete(self, **kw):
+        fix = self.is_fix(kw)
+        if self.calls == 0 and fix or self.calls > 0 and not (fix and self.retries == 0):
+            raise RuntimeError("the cap is one reading and one schema-validation retry per fixture per run")
         self.calls += 1
-        if self.calls > 1:
-            raise RuntimeError("the cap is one provider call per fixture per run")
+        self.retries += fix
         reply = self.adapter.complete(**kw)
-        self.tokens_in, self.tokens_out = reply[1], reply[2]
+        self.tokens_in, self.tokens_out = self.tokens_in + reply[1], self.tokens_out + reply[2]
         return reply
 
     def count_tokens(self, **kw):
@@ -148,7 +161,7 @@ async def read_all(deck_drawable: bool = True) -> int:
             failed += 1
             print(f"{name:26} {'stored':10} {'-':8} {'-':14} served from storage, not read by the model: a stored reading must never be reused here")
             continue
-        # The job's cap is one call per fixture, so a re-read of rejected items is refused by the cap and fails; the first reading stands
+        # The job's cap allows no item re-read, so a re-read of rejected items is refused by the cap and fails; the first reading stands
         # and the file is reported as read, with the rejected count (a failed re-read never makes a file not read).
         month = doc["month"]
         diffs = rf.compare(fixture["expected_map"], month, got["file_map"])
