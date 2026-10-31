@@ -57,7 +57,7 @@ def test_a_fake_pages_run_reads_each_deck_in_every_pass_and_agrees(script, tmp_p
         assert len(deck["passes"]) == 3 and deck["complete"] and deck["agreement_pct"] == 100.0
         assert all(p["read"] == p["batches"] > 0 and p["claims"] > 0 and p["matched"] > 0 for p in deck["passes"])
         assert all(p["batches"] == -(-deck["sent"] // 5) for p in deck["passes"]), "5 pages per call"
-    assert report["totals"]["calls"] == report["totals"]["batches"] == 12
+    assert report["totals"]["calls"] == report["totals"]["batches"] == 15
     out = capsys.readouterr().out
     assert "Report:" in out and "Pages run:" in out and "[2/2] 05-zero2hero.pdf pass 3/3" in out
     temp = tmp_path / "temp"

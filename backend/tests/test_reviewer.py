@@ -301,10 +301,12 @@ def test_a_count_on_a_page_is_compared_exactly_money_within_half_a_percent_and_o
     page = [{"page": 2, "text": "Customers 1,004 at year end", "kind": "text"}]
     assert check_deck(page, candidate(1000, unit="count", currency=None))["outcome"] == "rejected", "1,000 customers are not confirmed by 1,004"
     assert check_deck(page, candidate(1004, unit="count", currency=None))["outcome"] == "confirmed"
-    assert check_deck(page, candidate(1004, unit=None, currency=None))["outcome"] == "cannot_check", "no unit given: the page does not choose one"
+    assert check_deck(page, candidate(1004, unit=None, currency=None))["outcome"] == "confirmed", "no unit given: compared exactly against the page text"
+    assert check_deck(page, candidate(1000, unit=None, currency=None))["outcome"] == "rejected", "exact, not within a tolerance"
     assert check_deck([{"page": 2, "text": "ARR EUR 1,004", "kind": "text"}], candidate(1000))["outcome"] == "confirmed", "money: within 0.5 %"
     other = check_deck(page, candidate(1004, unit="other", currency=None))
-    assert other["outcome"] == "cannot_check" and other["reason"] == checks.C_NO_UNIT
+    assert other["outcome"] == "confirmed" and other["reason"] is None, '"other" is no unit either: exact'
+    assert checks.C_NO_UNIT not in {check_deck(page, candidate(v, unit=None, currency=None))["reason"] for v in (1004, 7)}, "never a cannot-check reason for a page"
 
 
 def test_the_page_does_not_choose_the_scale_a_reading_of_2_5_is_not_confirmed_by_2_5m():
@@ -341,8 +343,10 @@ def test_deck_figures_reach_the_reviewer_and_a_finding_on_a_page_is_a_card(flow)
         {"what": "The page figure is a plan value read as actual.", "refs": [{"file": 2, "sheet": None, "cell": None, "page": 2}],
          "reading": "plan", "confidence": "low"}]})
     flow.db[TEXT_COLLECTION].docs.append({**deck([{"page": 2, "text": "ARR 447,223", "kind": "text"}]), "audit_id": audit_of(flow)["id"]})
-    flow.db[CANDIDATES_COLLECTION].docs.append({**candidate(447223), "audit_id": audit_of(flow)["id"]})
+    flow.db[CANDIDATES_COLLECTION].docs.append({**candidate(447223, label_from="Closing ARR Printed Label"), "audit_id": audit_of(flow)["id"]})
     done = review(flow)
+    assert "Closing ARR Printed Label" not in json.dumps(router.review_payloads[0]) and "label" not in router.review_payloads[0]["input"]["files"][1]["figures"][0], \
+        "the printed label of a figure is shown to the analyst and never sent to the reviewer (rule 14)"
     deck_file = router.review_payloads[0]["input"]["files"][1]
     assert deck_file["kind"] == "deck" and deck_file["figures"][0]["value"] == 447223 and deck_file["figures"][0]["page"] == 2
     assert "ARR 447,223" not in json.dumps(router.review_payloads[0]), "no page text goes to the reviewer"
@@ -397,3 +401,41 @@ def test_run_audit_goes_on_without_the_reviewer_stage_when_the_reviewer_prompt_i
     assert done.json()["status"] != "failed"
     assert router.review_calls == (1 if with_prompt else 0), "the review stage runs only with its prompt; the audit goes on either way"
     assert bool(flow.db[readings.REVIEWS].docs) == with_prompt, "no reviewer stage, so no review record and no 'review not completed' line"
+
+
+@pytest.mark.parametrize("printed, reading, unit", [
+    ("ARR $22.9B at year end", 22_900_000_000, None), ("ARR $22.9 Bn at year end", 22_900_000_000, None),
+    ("Bookings 12MM in the year", 12_000_000, None), ("Bookings 3.5Mn in the year", 3_500_000, None),
+    ("Pipeline EUR 450K open", 450_000, None), ("Pipeline EUR 2.5M open", 2_500_000, None),
+    ("Net loss -1.2m for the year", -1_200_000, None), ("Net loss -1.2m for the year", 1_200_000, None),
+    ("Cost of sales (3,400) in the year", -3400, None), ("Cost of sales (3,400) in the year", 3400, None),
+    ("Cost of sales $(1.2)M in the year", -1_200_000, None),
+    ("Churn 4.5% a month", 4.5, "%"), ("Margin (8%) this year", -8, "%"),
+])
+def test_page_figure_suffixes_signs_brackets_and_percent_are_read_the_way_the_prompt_describes(printed, reading, unit):
+    got = check_deck([{"page": 2, "text": printed, "kind": "text"}], candidate(reading, unit=unit, currency=None if unit == "%" else "USD"))
+    assert got["outcome"] == "confirmed", printed
+
+
+def test_a_suffix_multiplies_the_printed_number_and_a_wrong_scale_is_still_not_a_match():
+    page = [{"page": 2, "text": "ARR $22.9B at year end", "kind": "text"}]
+    assert check_deck(page, candidate(22.9, currency="USD"))["outcome"] == "cannot_check", "22.9 against 22.9B: the scale differs"
+    assert check_deck(page, candidate(23_900_000_000, currency="USD"))["outcome"] == "rejected"
+
+
+def test_a_date_only_claim_cannot_be_checked_because_it_has_no_value_not_because_it_has_no_cell():
+    got = check_deck([{"page": 2, "text": "Launch planned for Q3 2025", "kind": "text"}], candidate(None, claim_type="product"))
+    assert got["outcome"] == "cannot_check" and got["reason"] == "No value to compare; date only."
+    nothing = check_deck([{"page": 2, "text": "Launch", "kind": "text"}], candidate(None, period_text=None, target_date=None))
+    assert nothing["reason"] == checks.C_NO_REF, "no value and no period keeps the old reason"
+
+
+def test_a_period_that_came_from_the_page_heading_stays_null_and_the_heading_goes_in_the_label():
+    page = [{"page": 2, "text": "ARR 447,223", "kind": "text"}]
+    d = deck(page)
+    heading = deck_figures.figure_of(candidate(447223, flags=["period from page heading"], date_from="2021 Key performance indicators"), d)
+    assert heading["period"] is None and heading["label"] == "2021 Key performance indicators"
+    printed = deck_figures.figure_of(candidate(447223, flags=["period from page heading"], label_from="ARR"), d)
+    assert printed["period"] is None and printed["label"] == "ARR", "a printed label stays the label"
+    own = deck_figures.figure_of(candidate(447223, label_from="ARR"), d)
+    assert own["period"] == "Dec 2024" and own["label"] == "ARR", "a period of the figure's own line or column is kept"

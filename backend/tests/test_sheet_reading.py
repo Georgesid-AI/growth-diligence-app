@@ -504,3 +504,49 @@ def test_a_re_read_of_a_record_with_no_prompt_text_makes_no_call():
     adapter = t.FakeAdapter(replies=[json.dumps(file_map())])
     again, adapter = read(db, adapter=adapter, recheck=[{"item": "x", "reason": "y"}], reread_of=first.reading_key)
     assert again.status == "not_read" and adapter.calls == 0
+
+
+class BlockedRetry(t.FakeAdapter):
+    """Answers the first call, refuses every later one as the fixture job's cap does (a RuntimeError, which the gateway sees as an outage)."""
+
+    def complete(self, **kw):
+        if self.calls >= 1:
+            self.calls += 1
+            raise RuntimeError("blocked")
+        return super().complete(**kw)
+
+
+def _not_read_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+
+
+@pytest.mark.parametrize("retry", ["fails", "blocked"])
+def test_a_reading_that_fails_validation_is_logged_as_schema_mismatch_with_three_errors_never_as_provider_unreachable(caplog, retry):
+    bad = file_map()
+    bad["sheets"][0]["header_row"] = "two-secret"
+    bad["sheets"][0]["rows"][0]["row"] = "three-secret"
+    bad["figures"] = [{"metric": "revenue", "value": "n/a-secret", "evidence": f"f{i}"} for i in range(5)]
+    adapter = BlockedRetry(replies=[json.dumps(bad)]) if retry == "blocked" else t.FakeAdapter(replies=[json.dumps(bad)])
+    db = audit_db()
+    caplog.set_level(logging.INFO)
+    result, adapter = read(db, adapter=adapter)
+    assert result.status == "not_read" and result.reason == gateway.SHEET_READING_NOT_MATCHED
+    assert result.rejected.startswith("schema: ")
+    line, = _not_read_lines(caplog)
+    assert " reason=schema_mismatch " in line and "provider_unreachable" not in line and "parse_failed" not in line
+    listed = line.split(" errors=")[1].split("; ")
+    assert listed[0] == "sheets.0.header_row: Input should be a valid integer, unable to parse string as an integer"
+    assert len(listed) == 3 == gateway.LOGGED_ERRORS and all(": " in e for e in listed), "field path and message, the first three only"
+    assert "secret" not in line and "secret" not in caplog.text, "no value of the reply"
+    assert [c["status"] for c in db["llm_calls"].docs] == ["parse_failed"], "the call log keeps the code"
+    record = db[readings.READINGS].docs
+    assert len(record) == 1 and record[0]["status"] == "not_read" and record[0]["reason"] == gateway.SHEET_READING_NOT_MATCHED
+    if retry == "blocked":
+        assert "type=-" in line and adapter.calls >= 2, "the retry was tried and refused"
+
+
+def test_an_outage_on_the_first_call_is_still_provider_unreachable(caplog):
+    caplog.set_level(logging.INFO)
+    result, _ = read(audit_db(), adapter=t.FakeAdapter(raise_with=RuntimeError("down")))
+    line, = _not_read_lines(caplog)
+    assert result.status == "not_read" and " reason=provider_unreachable " in line and "errors=" not in line

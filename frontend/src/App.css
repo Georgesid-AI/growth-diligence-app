@@ -1,6 +1,6 @@
 .App { min-height: 100vh; }
 
-/* The reading screen (docs/design/audit-page-mockup.html): the mockup's rules, scoped to the screen. Below 900 px a table row becomes a card. */
+/* The reading screen (docs/design/audit-page-mockup.html): the mockup's rules, scoped to the screen. Desktop only: there is no narrow-screen layout. */
 .reading-top, .reading { --ink: #1a1a1a; --muted: #5f6368; --line: #e3e5e8; --soft: #f6f7f8; --link: #1f5fbf; --ok: #1f7a3a; --warn: #b4540a; --bad: #b3261e;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); font-size: 15px; line-height: 1.45; }
 .reading-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
@@ -42,7 +42,16 @@
 .reading .source-view { white-space: normal; font-size: 12px; margin-top: 4px; }
 .reading .source-view td { padding: 2px 6px; border: 1px solid var(--soft); }
 .reading .source-view td.cited { background: #fff3cd; font-weight: 600; }
-.reading .results { padding-top: 22px; }
+.reading h1.section { font-size: 20px; font-weight: 600; margin: 40px 0 6px; padding-top: 28px; border-top: 2px solid var(--ink); }
+.reading .lead { color: var(--muted); max-width: 80ch; }
+.reading .tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-top: 14px; }
+.reading .tabs a { padding: 8px 14px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.reading .tabs a span { color: var(--muted); font-size: 13px; margin-left: 6px; }
+.reading .tabs a.on { color: var(--ink); border-bottom-color: var(--ink); }
+.reading .tabs a:hover { text-decoration: none; color: var(--ink); }
+.reading .tabnote { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.reading .box { border: 1px solid var(--line); border-radius: 6px; padding: 0 10px 10px; margin-top: 14px; }
+.reading .results { padding-top: 0; }
 .reading .results h2 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
 .reading .results h2 .n { color: var(--muted); font-weight: 400; }
 .reading .results h2.ok .n { color: var(--ok); }
@@ -55,15 +64,3 @@
 .reading .card .two div { background: var(--soft); border-radius: 4px; padding: 10px 12px; }
 .reading .card .two b { display: block; margin-bottom: 4px; }
 .reading .card .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-@media (max-width: 900px) {
-  .reading-top { flex-direction: column; }
-  .reading .anchors { grid-template-columns: 1fr; }
-  .reading .card .two { grid-template-columns: 1fr; }
-  .reading table.rows thead { display: none; }
-  .reading table.rows, .reading table.rows tbody, .reading table.rows tr, .reading table.rows td { display: block; width: 100%; }
-  .reading table.rows tr { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; }
-  .reading table.rows td { border: 0; padding: 2px 0; text-align: left; white-space: normal; }
-  .reading table.rows td.num { text-align: left; }
-  .reading table.rows td::before { content: attr(data-h) ": "; color: var(--muted); }
-  .reading table.rows td.src { white-space: normal; }
-}

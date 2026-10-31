@@ -18,7 +18,6 @@ import re
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
-from ..decks.claims import page_number_line
 from ..llm.redaction import TOKEN_PREFIX, norm
 from ..llm.schemas import MAPPING_FIELDS
 
@@ -1010,9 +1009,8 @@ def parse_page_text(text: str) -> Optional[Dict[int, List[Dict]]]:
     return pages or None
 
 
-# A figure written in digits, as the gateway checks it: a number that is not a bare year, an ISO date or the page's own printed
-# number (claims.page_number_line, shared with the page grid so both readers agree; M1 of the review of PR #159, 2026-10-22). The
-# sender applies the parser's own reader (app/decks/pages.py) and then this floor on the lines (structures/pages.redacted_pages).
+# A page goes to the page reader whenever its text layer holds at least one digit (George, 2026-10-31); only a page with no digit in its text
+# is skipped. The sender (structures/pages.sendable_pages) and the gateway's floor (page_text_problem) apply the same test.
 def personal_count(counts: Dict[str, int]) -> int:
     """The personal items one masking pass removed: emails, phone numbers, IBANs, ID numbers and names (the count on screen)."""
     return sum(counts.get(k, 0) for k in ("email", "phone", "iban", "id", "person"))
@@ -1072,21 +1070,20 @@ def digit_figure(text: str) -> bool:
     return any(m.group("num") and not _BARE_YEAR.match(m.group("num")) for m in NUMBER[False].finditer(blanked))
 
 
-def page_figure(text: str, page: int) -> bool:
-    """True when a line of `page` holds a figure written in digits that is not the page's own printed number."""
-    return digit_figure(text) and not page_number_line(text, page)
+def has_digit(text: str) -> bool:
+    """True when the text holds at least one digit."""
+    return bool(re.search(r"\d", text or ""))
 
 
 def page_text_problem(text: str) -> Optional[str]:
     """Why a page text may not reach the model, or None: a line that is not a page cell line (not_cells), more than
-    PAGES_PER_CALL pages (too_many_pages), or a page with no figure written in digits (no_figure; a line that is only the page's
-    own number is none)."""
+    PAGES_PER_CALL pages (too_many_pages), or a page with no digit in its text (no_figure)."""
     pages = parse_page_text(text)
     if pages is None:
         return "not_cells"
     if len(pages) > PAGES_PER_CALL:
         return "too_many_pages"
-    if any(not any(page_figure(c["text"], page) for c in cells) for page, cells in pages.items()):
+    if any(not any(has_digit(c["text"]) for c in cells) for page, cells in pages.items()):
         return "no_figure"
     return None
 

@@ -12,6 +12,7 @@ Nothing is corrected, nothing is stored here: the outcome is computed from the s
 so it always follows the deck as it now stands. No deck text leaves this module: a figure carries its page number, its value and the closed
 words of the candidate, never a line of the page (rule 17).
 """
+import re
 from typing import Dict, List, Optional
 
 from . import checks
@@ -22,6 +23,11 @@ from .structures import checker
 R_PAGE_RANGE = "Reading cites page {page}; the deck ends at page {last}."
 R_PAGE = "Reading says {value}; page {n} holds no such figure."
 R_PAGE_SCALE = "Page {n} states {page}; reading says {value}. Unit or scale differs; not compared."
+
+# A suffix the parser leaves unread or reads case-sensitively: "3.5Mn", "$22.9 Bn", "12 MM". The prompt's rule 10: K, M, MM, Mn, B, Bn attached to a
+# printed number multiply it.
+_SUFFIX = re.compile(r"\s?(?P<mult>MM|Mn|Bn|mm|mn|bn)(?![A-Za-z])|(?P<short>[KkMmBb])(?![A-Za-z])")
+_FACTOR = {"k": 1e3, "m": 1e6, "mm": 1e6, "mn": 1e6, "b": 1e9, "bn": 1e9}
 
 
 def page_lines(deck: Dict, page: int) -> List[Dict]:
@@ -36,12 +42,32 @@ def page_lines(deck: Dict, page: int) -> List[Dict]:
     return lines
 
 
+def _signed(text: str, found: Dict) -> List[float]:
+    """The values one printed number stands for, in full units: the scale of its suffix applied (K, M, MM, Mn, B, Bn), and, when a minus sign or
+    brackets stand on it ("-1.2m", "(3,400)", "$(1.2)M"), the negative and the plain value both, since a cost line is read with or without its sign.
+    A trailing % does not change the number: the rate is compared in points."""
+    value, end = found["value"], found["end"]
+    bracketed = text[end:end + 1] == ")" and "(" in text[found["start"]:found["pos"]] + text[max(0, found["start"] - 1):found["start"]]
+    tail = end + 1 if bracketed else end
+    if found.get("mult") is None:
+        m = _SUFFIX.match(text, tail)
+        if m:
+            value = round(found["num"] * _FACTOR[(m.group("mult") or m.group("short")).lower()], 6)
+            value = int(value) if float(value).is_integer() else value
+    sign = text[max(0, found["start"] - 1):found["start"]]
+    before = text[max(0, found["start"] - 2):found["start"] - 1]
+    minus = sign in ("-", "\u2212") and not before.isalnum() and before not in (")", "%")
+    return [value, -value] if (bracketed or minus) and value else [value]
+
+
 def page_numbers(deck: Dict, page: int) -> List[float]:
-    """Every figure the page's text states, in full units (claims.figures scales k, m, bn). Only the scaled value is a figure of the page: "2.5m"
-    is 2,500,000 and never 2.5."""
+    """Every figure the page's text states, in full units (a suffix K, M, MM, Mn, B or Bn multiplies the printed number: "2.5m" is 2,500,000 and
+    never 2.5). A printed minus or brackets give the negative as well as the plain value."""
     out: List[float] = []
     for line in page_lines(deck, page):
-        out += [f["value"] for f in claims.figures(line["text"]) if f.get("value") is not None]
+        for f in claims.figures(line["text"]):
+            if f.get("value") is not None:
+                out += _signed(line["text"], f)
     return out
 
 
@@ -58,7 +84,7 @@ COUNT_UNITS = ("count", "x", "days", "months", "years")
 
 def unit_of(candidate: Dict) -> Optional[str]:
     """The comparison unit of the unit the reader gave: a currency is money (0.5 %), a percent a rate (1 point), a count, a multiple or a
-    duration is compared exactly. No unit, or "other", has none: the figure cannot be checked (C_NO_UNIT); the page does not choose it."""
+    duration is compared exactly. No unit, or "other", has none: unit_of gives None and the page figure is compared exactly (a count; check_figure)."""
     if candidate.get("currency"):
         return "money"
     unit = candidate.get("unit")
@@ -81,8 +107,14 @@ def figure_of(candidate: Dict, deck: Dict) -> Dict:
     value = candidate.get("value")
     if unit == "rate" and value is not None:
         value = value / 100.0            # the page states points; a rate is held as a fraction everywhere else (schemas/metrics.Fraction)
+    period, label = candidate.get("period_text") or candidate.get("target_date"), candidate.get("label_from")
+    if checker.PERIOD_FROM_HEADING in (candidate.get("flags") or []):
+        # A period that came from the page's heading and not from the figure's own line or column is no period of the figure: the heading is its
+        # label (a page title never stands in Period).
+        label = label or candidate.get("date_from") or period
+        period = None
     return {"id": candidate.get("id"), "deck_id": candidate.get("deck_id"), "metric": candidate.get("claim_type"), "value": value,
-            "unit": unit, "currency": candidate.get("currency"), "period": candidate.get("period_text") or candidate.get("target_date"),
+            "unit": unit, "currency": candidate.get("currency"), "period": period, "label": label,
             "actual_plan": "plan" if candidate.get("basis") == "projection" else "actual" if candidate.get("basis") == "actual" else None,
             "segment": candidate.get("page_segment"), "source": {"page": page, "text_layer": bool(page and page_numbers(deck, page))}}
 
@@ -92,13 +124,15 @@ def check_figure(figure: Dict, candidate: Dict, deck: Dict) -> Dict:
     page, value = figure["source"]["page"], figure.get("value")
     base = {"key": f"deck:{figure.get('deck_id')}:{figure.get('id')}", "kind": "deck_figure", "metric": figure.get("metric"), "value": value,
             "page": page, "deck_id": figure.get("deck_id")}
+    if value is None and figure.get("period"):
+        return {**base, "outcome": checks.CANNOT, "reason": checks.C_DATE_ONLY}
     if page is None or value is None:
         return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_REF}
     if deck.get("pages") and page > int(deck["pages"]):
         return {**base, "outcome": checks.REJECTED, "reason": R_PAGE_RANGE.format(page=page, last=deck["pages"])}
     unit = figure["unit"]
     if unit not in ("money", "count", "rate"):
-        return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_UNIT}
+        unit = "count"            # no unit: compared exactly against the page text; "no unit" is never a reason to skip a page figure
     numbers = page_numbers(deck, page)
     if unit == "rate":
         numbers = [n / 100.0 for n in numbers]           # the page's percent points as fractions, as the reading is held

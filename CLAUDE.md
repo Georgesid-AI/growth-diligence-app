@@ -23,13 +23,16 @@
     a figure written in digits: the page's text lines, prose lines included, as extracted text with cell positions, at most 5 pages
     per call, and in the same request one PNG of each whole page (1,568 px on the long edge, no crops), with no cap on images per
     call. The reading instructions say that printed values only are read and that no value is estimated from an unlabelled bar,
-    point or slice. A page with no such figure never goes, and number-words do not count as figures. The consent text says that
+    point or slice. A page with no digit in its text never goes, and number-words do not count as digits. Amended 2026-10-31 (George, item 10 of the audit-page
+    fixes; Architecture change, rule 32): a page goes whenever its text layer holds at least one digit (a year, a date, a page number, a phone number and a
+    figure inside a sentence included); only a page with no digit in its text is skipped; the earlier floors (a year, a date, the page's own number, furniture,
+    a page dropped as background or cited research) no longer keep a page back. The consent text says that
     deck pages go to the model as printed, as text and as an image, with no redaction, and the Upload page explainer carries the
     disclosure line word for word: "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is
     retained after the reply and nothing is used for training."
     Amended 2026-10-22 (George, review of PR #159): the gateway refuses the step unless DECK_PIPELINE is "ai"; a line over 200
     characters is left out by the sender and refused by the gateway, as a structure cell is; a line that is only the page's own
-    number ("3", "Slide 3", "3/25") is no figure.
+    number ("3", "Slide 3", "3/25") was no figure (superseded 2026-10-31, above).
     Amended 2026-10-22 (George, the build of docs/design/ai-reads-rules-check.md): the page read replaces the rules read as the
     source of deck claims (the rules read stays for Add from deck and under DECK_PIPELINE=rules). It uses the `deck_reading`
     prompt of the store (the repository holds a test stub only) and answers claims in the register's fields plus `basis`

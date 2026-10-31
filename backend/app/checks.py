@@ -48,6 +48,7 @@ C_MASKED = "Depends on a name that was masked before reading."
 C_VARIANCE_ROWS = "variance row without its two source rows"
 C_SEGMENT_TOTAL = "segment row without its total row"
 C_NO_UNIT = "No unit given; not compared."
+C_DATE_ONLY = "No value to compare; date only."
 # --- Wording for rejections the note does not list (for the owner's approval; same discipline: a template, formatted from code). ---
 R_ROW = "Reading cites {ref}; the sheet ends at row {last}."
 R_NO_SHEET = "Reading cites sheet {name}; the file has no such sheet."
@@ -272,6 +273,8 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
     sheet_name, cell_ref = source.get("sheet"), source.get("cell")
     key = f"figure:{sheet_name}:{cell_ref}:{figure.get('metric')}" if cell_ref else f"figure:#{index}"
     base = {"key": key, "kind": "figure", "sheet": sheet_name, "cell": cell_ref, "metric": figure.get("metric"), "value": figure.get("value")}
+    if figure.get("value") is None and figure.get("period") and not cell_ref:
+        return {**base, "outcome": CANNOT, "reason": C_DATE_ONLY}
     if source.get("page") is not None and not cell_ref:
         if source.get("text_layer") is False:
             return {**base, "outcome": CANNOT, "reason": C_NO_TEXT.format(n=source["page"])}

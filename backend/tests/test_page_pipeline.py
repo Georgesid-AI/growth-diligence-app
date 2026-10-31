@@ -78,41 +78,48 @@ def test_a_table_joins_the_grid_below_the_text_with_its_table_row_and_column():
     assert got["status"] == page_check.MATCHED and got["period"] == "2025"
 
 
-@pytest.mark.parametrize("line, figure", [
-    ("Revenue grew to three million euros", False), ("Twenty new customers signed", False), ("Founded in 2019", False),
-    ("Launched in January 2011", False), ("Revenue grew to €3M", True), ("20 new customers signed", True), ("97%", True),
-    ("1", False), ("Slide 1", False), ("Page 1 of 25", False), ("1/25", False), ("- 1 -", False), ("2", True), ("Top 1", True)])
-def test_a_page_carries_a_figure_only_when_one_is_written_in_digits(line, figure):
-    """Decision 1b: a page goes to the model only when it carries a figure as digits; number-words and dates do not count, nor
-    does a line that is only the page's own number (M1 of the review of PR #159, 2026-10-22). A bare number that is not the
-    page's own stays a figure."""
-    g = grid_of([TITLE, (50, 500, 12, line)])
-    assert pages.has_digit_figure(g) is figure
-    assert bool(pages.sendable([g])) is figure
-    assert bool(pipeline.sendable_pages([g])) is figure, "the sender's floor agrees"
+@pytest.mark.parametrize("line, digit", [
+    ("Revenue grew to three million euros", False), ("Twenty new customers signed", False), ("Our mission", False),
+    ("Founded in 2019", True), ("Launched in January 2011", True), ("Revenue grew to €3M", True), ("20 new customers signed", True), ("97%", True),
+    ("1", True), ("Slide 1", True), ("Page 1 of 25", True), ("1/25", True), ("- 1 -", True), ("2", True), ("Top 1", True),
+    ("We signed 12 customers in the quarter and expect more", True)])
+def test_a_page_is_sent_whenever_its_text_holds_a_digit_and_only_then(line, digit):
+    """George, 2026-10-31: a page goes to the model whenever its text layer holds at least one digit (a year, a page number, a figure inside a
+    sentence); only a page with no digit in its text is skipped. Number-words are no digit."""
+    g = grid_of([(50, 560, 20, "Mission"), (50, 500, 12, line)])
+    assert pages.has_digit_figure(g) is digit
+    assert bool(pages.sendable([g])) is digit
+    assert bool(pipeline.sendable_pages([g])) is digit, "the sender's floor agrees"
     problem = redact.page_text_problem(redact.page_text([(1, g["cells"])]))
-    assert (problem is None) is figure, "the gateway's floor agrees"
+    assert (problem is None) is digit, "the gateway's floor agrees"
 
 
-def test_a_page_whose_only_digits_are_its_page_number_is_not_sent():
-    """A footer page number on a prose page (06-uber.pdf page 4: 17 lines, the digit line "4") is no figure, so the page stays on
-    the server; page 2 of the same deck carries "14mpg" and goes."""
+def test_a_figure_inside_a_sentence_on_a_page_is_sent():
+    g = grid_of([(50, 560, 20, "Mission"), (50, 500, 12, "Over the last year the team signed 12 new customers and kept every one of them")])
+    sent, = pipeline.sendable_pages([g])
+    assert "12 new customers" in pipeline.batch_text([sent])
+    assert pipeline.skipped_pages([g], 1) == []
+
+
+def test_a_page_whose_only_digit_is_its_page_number_is_sent():
+    """A footer page number on a prose page (06-uber.pdf page 4: 17 lines, the digit line "4") is a digit, so the page goes (2026-10-31)."""
     pytest.importorskip("pdfplumber")
     deck_path = DECKS / "06-uber.pdf"
     if not deck_path.exists():
         pytest.skip("public test decks not checked out")
     grids = pages.page_grids(parse_deck(deck_path.read_bytes(), deck_path.name)["blocks"])
     by_page = {pages.page_number(g): g for g in grids}
-    assert [c["text"] for c in by_page[4]["cells"] if redact.digit_figure(c["text"])] == ["4"], "fixture: the only digit line"
-    assert pages.has_digit_figure(by_page[4]) is False and pipeline.sendable_pages([by_page[4]]) == []
-    assert pages.has_digit_figure(by_page[2]) is True and len(pipeline.sendable_pages([by_page[2]])) == 1
+    assert pages.has_digit_figure(by_page[4]) is True and len(pipeline.sendable_pages([by_page[4]])) == 1
     synthetic = grid_of([(50, 560, 20, "Our mission"), (50, 500, 12, "We help teams ship faster"), (500, 30, 8, "1")])
-    assert pipeline.sendable_pages([synthetic]) == []
+    assert len(pipeline.sendable_pages([synthetic])) == 1
+    nothing = grid_of([(50, 560, 20, "Our mission"), (50, 500, 12, "We help teams ship faster")])
+    assert pipeline.sendable_pages([nothing]) == []
 
 
-def test_a_background_or_cited_research_page_is_never_sent():
+def test_a_background_or_cited_research_page_is_sent_like_any_page_with_a_digit():
     g = grid_of([(50, 560, 20, "Problem"), (50, 500, 12, "Companies lose 3 hours a day")])
-    assert g.get("excluded") is True and pages.sendable([g]) == []
+    assert g.get("excluded") is True, "the rules read still drops its figures"
+    assert len(pages.sendable([g])) == 1
 
 
 def test_batches_hold_five_pages_and_the_text_comes_through_the_one_builder_as_printed():
@@ -255,13 +262,11 @@ def test_an_axis_tick_is_marked_on_its_own_cell_and_a_bar_value_in_the_same_colu
     assert got["dropped"] == 0 and got["items"][0]["status"] == page_check.MATCHED
 
 
-def test_a_page_whose_only_digits_are_a_phone_number_is_not_sent():
-    """The page grid does not count the digits of "+44 20 7946 0958" (claims.page_figures, George, 2026-10-23), so the page carries no
-    figure and never goes (the gateway would refuse it as no_figure, and would refuse the whole batch with it)."""
+def test_a_page_whose_only_digits_are_a_phone_number_is_sent():
+    """A phone number is a digit (2026-10-31); the page goes, and the masking of the page text is the gateway's own."""
     g = grid_of([(50, 560, 20, "Contact"), (50, 500, 12, "Call us on +44 20 7946 0958 or write to the team")])
-    assert pages.has_digit_figure(g) is False
-    assert pipeline.sendable_pages([g]) == []
-    assert pipeline.batches([g, grid_of([TITLE, *LINES])])[0][0]["grid"]["cells"][0]["text"] == "Traction"
+    assert pages.has_digit_figure(g) is True
+    assert len(pipeline.sendable_pages([g])) == 1
 
 
 # ---------------------------------------------------------------------------

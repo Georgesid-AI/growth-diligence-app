@@ -214,6 +214,7 @@ def test_deck_figures_land_in_the_same_three_tables_and_the_deck_block_counts_th
     assert [r_["reason"] for r_ in got["tables"]["cannot_check"]] == ["Page 3 has no text layer; figure read from the image."]
     deck_block = next(b for b in got["files"] if b["kind"] == "deck")
     assert deck_block["anchors"]["figures"] == {"read": 3, "found_on_page": 1, "from_image": 1} and deck_block["summary"]["pages_with_figures"] == 1
+    assert [(f["page"], f["outcome"]) for f in deck_block["figures"]] == [(2, "confirmed"), (2, "rejected"), (3, "cannot_check")], "every figure read, with its page and outcome"
 
 
 def test_delete_audit_removes_the_reviews_and_the_cards(flow):
@@ -292,3 +293,15 @@ def test_a_reading_gives_the_first_actual_month_of_its_series(flow):
     got = reading(flow)
     (block,) = got["files"]
     assert block["summary"]["first_actual"] and got["period"]["last"] == "2025-06" and got["period"]["first"] <= got["period"]["last"]
+
+
+def test_a_deck_figure_row_carries_its_printed_label_and_no_period_when_the_period_came_from_the_page_heading(flow):
+    start(flow, map_with("bookings"))
+    uid = audit_of(flow)["id"]
+    flow.db[TEXT_COLLECTION].docs.append({**deck([{"page": 2, "text": "ARR 447,223", "kind": "text"}]), "audit_id": uid, "figure_pages": 1})
+    flow.db[CANDIDATES_COLLECTION].docs.append({**candidate(447223, label_from="Closing ARR", flags=["period from page heading"],
+                                                            date_from="2021 Key performance indicators"), "audit_id": uid})
+    flow.db[CANDIDATES_COLLECTION].docs.append({**candidate(447223, id="c2", label_from="Opening ARR"), "audit_id": uid})
+    rows = {r_["label"]: r_ for r_ in reading(flow)["tables"]["confirmed"] if r_["kind"] == "deck_figure"}
+    assert rows["Closing ARR"]["period"] is None, "a page title never stands in Period"
+    assert rows["Opening ARR"]["period"] == "Dec 2024"

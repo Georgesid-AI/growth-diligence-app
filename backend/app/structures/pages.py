@@ -47,15 +47,12 @@ _UNITS = {"%", "x", "days", "months", "years"}
 
 
 def sendable_pages(grids: List[Dict]) -> List[Dict]:
-    """[{"grid", "cells"}] for the pages that may go: a sendable grid (a figure as digits by the parser's reader, not a dropped
-    page) whose lines, as printed, with the lines over LINE_MAX characters left out, still hold a figure as digits by the gateway's
-    own floor (redact.page_figure: not a year, a date or the page's own number), so a page whose only digits were a phone number or
-    its page number never goes."""
+    """[{"grid", "cells"}] for the pages that may go: every page whose text layer holds at least one digit (George, 2026-10-31). The lines over
+    LINE_MAX characters are left out, so a page whose only digit sat in such a line has none and stays on the server."""
     out = []
     for grid in page_grids_mod.sendable(grids):
-        page = page_grids_mod.page_number(grid)
         kept = [c for c in grid["cells"] if len(c["text"]) <= LINE_MAX]
-        if any(redact.page_figure(c["text"], page) for c in kept):
+        if any(redact.has_digit(c["text"]) for c in kept):
             out.append({"grid": grid, "cells": kept})
     return out
 
@@ -73,8 +70,7 @@ def batch_text(batch: List[Dict]) -> str:
 
 
 def skipped_pages(grids: List[Dict], page_count: Optional[int] = None) -> List[int]:
-    """The pages of a deck that no call is made for: those the figure rules do not let go (no digits, or only a year, a date, a phone
-    number or the page's own number), decided before any call, so the panel can name them. Nothing about what the model sees changes."""
+    """The pages of a deck that no call is made for: those with no digit in their text, decided before any call, so the panel can name them."""
     going = {page_grids_mod.page_number(p["grid"]) for p in sendable_pages(grids)}
     numbers = {page_grids_mod.page_number(g) for g in grids}
     return sorted((set(range(1, page_count + 1)) if page_count else numbers) - going)

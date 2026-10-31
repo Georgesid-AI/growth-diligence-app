@@ -20,6 +20,7 @@ export const HOVERS = {
     Metric: "What the figure measures, e.g. recognised revenue, ARR, customers.",
     Value: "The number as it stands in the file, shown rounded; the full value is kept.",
     Period: "The month, quarter or year this value belongs to.",
+    Label: "The label printed with the figure in the file or on the deck page, as the reader took it.",
     Basis: "How the value accumulates: monthly, quarterly, yearly, cumulative to date, or last 12 months.",
     "Actual / plan": "Whether the cell sits before or after the file's last actual month.",
     Row: "What the whole row or table was read as: revenue, bookings, ARR, churn rate, customers, forecast, variance, other.",
@@ -38,6 +39,7 @@ export const HOVERS = {
     Metric: "What the figure measures.",
     Value: "The value the reader recorded.",
     Period: "The month, quarter or year it belongs to.",
+    Label: "The label printed with the figure in the file or on the deck page, as the reader took it.",
     Why: "Why no check was possible: layout description not a value; deck page is an image; unit or scale differs from the cell; no cell cited; depends on a masked name.",
     "Used in": "Which computed figures rely on it, so you know what is affected.",
     Source: "Where it was read from. For a deck page without text, the page number only.",
@@ -47,13 +49,23 @@ export const HOVERS = {
 /** Column widths in percent, in the order of the design note's tables (section 11.3); the lines table follows the mockup. */
 export const WIDTHS = {
   lines: [34, 16, 14, 16, 20],
-  confirmed: [20, 12, 10, 10, 8, 14, 26],
+  confirmed: [18, 10, 10, 14, 8, 8, 8, 24],
   rejected: [14, 12, 12, 22, 12, 10, 18],
-  cannot_check: [16, 12, 10, 26, 16, 20],
+  cannot_check: [14, 10, 10, 14, 22, 12, 18],
 };
+/** The deck tab's full figures list (docs/design/audit-page-mockup.html): every figure read from the deck, with its page and outcome. */
+export const FIGURE_HOVERS = {
+  Metric: "What the figure measures.",
+  Value: "The number as the reader took it from the page; the full value is kept.",
+  Period: "The month, quarter or year it belongs to; a dash when the figure's own line or column names none.",
+  Label: "The label printed with the figure on the page, as the reader took it.",
+  Page: "The deck page the figure was read from.",
+  Outcome: "Confirmed, Rejected or Cannot check, after code compared the value with the page text.",
+};
+export const FIGURE_WIDTHS = [22, 14, 14, 26, 8, 16];
+
 export const NUMERIC = { lines: [], confirmed: ["Value"], rejected: ["Reading says", "Cell holds"], cannot_check: ["Value"] };
 export const TITLES = { confirmed: "Confirmed", rejected: "Rejected", cannot_check: "Cannot check" };
-export const NARROW_PX = 900;
 
 /** "2022-05" -> "May 2022"; "2024-Q1" -> "Q1 2024"; "2024" -> "FY 2024"; anything else as it is; none -> "—". */
 export function periodLabel(period) {
@@ -91,37 +103,52 @@ export function lastActualText(month, granularity) {
   return granularity === "yearly" ? `FY ${month.slice(0, 4)}` : monthName(month);
 }
 
-/** The summary line of a spreadsheet block as parts, in the mockup's form (the screen draws the bold ones). */
+/** The masking line, below the summary (docs/design/audit-page-mockup.html): "0 personal items removed · 17 company names coded". */
+const maskingLine = (s) => [
+  { text: plural(s.personal_removed ?? 0, "personal item removed", "personal items removed") },
+  { text: plural(s.company_coded ?? 0, "company name coded", "company names coded") },
+];
+
+/** The summary lines of a spreadsheet block, in the mockup's words: a number first, then its text. Each line is a list of parts; a part with
+ *  `bold` draws that number (or period) in the heavier weight. */
 export function sheetSummary(s) {
+  const grain = GRAIN[s.granularity] || "period";
   return [
-    { text: `${plural(s.period_columns ?? 0, `${GRAIN[s.granularity] || "period"} column`, `${GRAIN[s.granularity] || "period"} columns`)}` },
-    { text: `${plural(s.rows_mapped ?? 0, "row mapped", "rows mapped")}` },
-    { text: "last actual ", bold: lastActualText(s.last_actual, s.granularity) },
-    { bold: fmtCount(s.confirmed), text: " confirmed" },
-    { text: `${fmtCount(s.rejected)} rejected` },
-    { text: `${fmtCount(s.cannot_check)} cannot check` },
-    { text: `personal items removed ${fmtCount(s.personal_removed)}` },
-    { text: `company names coded ${fmtCount(s.company_coded)}` },
+    [
+      { text: plural(s.period_columns ?? 0, `${grain} column`, `${grain} columns`) },
+      { text: plural(s.rows_mapped ?? 0, "row mapped", "rows mapped") },
+      { bold: fmtCount(s.confirmed), text: ` ${s.confirmed === 1 ? "figure" : "figures"} confirmed` },
+      { text: `${fmtCount(s.rejected)} rejected` },
+      { text: `${fmtCount(s.cannot_check)} cannot check` },
+      { text: "actual to ", bold: lastActualText(s.last_actual, s.granularity) },
+    ],
+    maskingLine(s),
   ];
 }
 
-export function deckSummary(s) {
-  const skipped = (s.skipped_pages || []).length ? `skipped ${s.skipped_pages.join(", ")} (no numbers)` : null;
+/** The three summary lines of a deck block: the pages; the figures, "confirmed on the page they cite"; the masking. */
+export function deckSummary(s, figures) {
+  const pages = s.pages ?? 0;
+  const skipped = s.skipped_pages || [];
+  const read = Math.max(pages - skipped.length, 0);
+  const first = [{ text: plural(pages, "page", "pages") }, { text: `${plural(read, "page", "pages")} read` }];
+  if (skipped.length) {
+    first.push({ text: `${plural(skipped.length, "page", "pages")} skipped (no digits in ${skipped.length === 1 ? "its" : "their"} text: ${skipped.join(", ")})` });
+  }
+  const f = figures || { read: 0 };
   return [
-    { text: `${fmtCount(s.pages ?? 0)} pages` },
-    ...(s.pages_with_figures != null ? [{ text: `${fmtCount(s.pages_with_figures)} with figures` }] : []),
-    { bold: fmtCount(s.confirmed), text: " read" },
-    { text: `${fmtCount(s.rejected)} rejected` },
-    { text: `${fmtCount(s.cannot_check)} cannot check` },
-    { text: `personal items removed ${fmtCount(s.personal_removed)}` },
-    { text: `company names coded ${fmtCount(s.company_coded)}` },
-    ...(skipped ? [{ text: skipped }] : []),
+    first,
+    [
+      { bold: fmtCount(f.read), text: ` ${f.read === 1 ? "figure" : "figures"} read` },
+      { bold: fmtCount(s.confirmed), text: " confirmed on the page they cite" },
+      { text: `${fmtCount(s.rejected)} rejected` },
+      { text: `${fmtCount(s.cannot_check)} cannot check${s.cannot_check ? " (charts without text)" : ""}` },
+    ],
+    maskingLine(s),
   ];
 }
 
-export function deckFiguresText(f) {
-  return `${fmtCount(f.read)} read, ${fmtCount(f.found_on_page)} found on their page, ${fmtCount(f.from_image)} from charts without text`;
-}
+export const OUTCOME_LABELS = { confirmed: "Confirmed", rejected: "Rejected", cannot_check: "Cannot check" };
 
 /** The "Confirmed on column AP" part of the evidence line, and the text before it: the evidence as the reader wrote it, less its checked column. */
 export function splitEvidence(line) {
