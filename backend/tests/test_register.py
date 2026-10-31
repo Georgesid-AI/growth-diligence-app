@@ -277,3 +277,18 @@ def test_a_row_level_outcome_is_a_note_on_its_row_and_not_in_the_tables_and_the_
     assert [n["reason"] for n in block["notes"]] == ["header unclear"]
     assert {k: block["summary"][k] for k in ("confirmed", "rejected", "cannot_check")} == got["counts"] == {"confirmed": 1, "rejected": 0, "cannot_check": 0}
 
+
+def test_the_reporting_period_runs_from_the_first_to_the_last_actual_month_across_files():
+    files = [{"kind": "sheet", "summary": {"first_actual": "2019-01", "last_actual": "2021-12"}},
+             {"kind": "sheet", "summary": {"first_actual": "2020-03", "last_actual": "2022-05"}},
+             {"kind": "sheet", "summary": {"first_actual": None, "last_actual": None}}, {"kind": "deck", "summary": {}}]
+    assert register.reporting_period(files) == {"first": "2019-01", "last": "2022-05"}
+    assert register.reporting_period([{"kind": "sheet", "summary": {"first_actual": None, "last_actual": "2022-05"}}]) == {"first": "2022-05", "last": "2022-05"}
+    assert register.reporting_period([{"kind": "sheet", "summary": {"last_actual": None}}]) is None
+
+
+def test_a_reading_gives_the_first_actual_month_of_its_series(flow):
+    start(flow, good_map())
+    got = reading(flow)
+    (block,) = got["files"]
+    assert block["summary"]["first_actual"] and got["period"]["last"] == "2025-06" and got["period"]["first"] <= got["period"]["last"]

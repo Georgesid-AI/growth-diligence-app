@@ -52,11 +52,16 @@ function InlineChange({ label, placeholder, onSave, testid, type = "text" }) {
   );
 }
 
-export function ReadingStrip({ audit, onAsOf }) {
+/** The reporting period of the strip: the first and last actual month across the files; else the engine's revenue period; never "—" while an as-of month exists. */
+export function reportingPeriodText(audit, period) {
+  return periodText(period) || periodText(audit.datasets?.revenue?.months) || (audit.as_of_month ? monthName(audit.as_of_month) : "—");
+}
+
+export function ReadingStrip({ audit, onAsOf, period }) {
   const asOf = audit.as_of_month;
   const items = [
     ["currency", "Currency", audit.reporting_currency || "—"],
-    ["period", "Reporting period", periodText(audit.datasets?.revenue?.months) || "—"],
+    ["period", "Reporting period", reportingPeriodText(audit, period)],
     ["fy-end", "FY end", MONTHS[(Number(audit.fiscal_year_end) || DEFAULT_FISCAL_YEAR_END) - 1]],
   ];
   const evidence = splitEvidence(asOfEvidenceLine(audit));
@@ -180,7 +185,7 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
   const view = data || EMPTY;
   return (
     <div className="reading" data-testid="reading-screen">
-      <ReadingStrip audit={audit} onAsOf={onAsOf} />
+      <ReadingStrip audit={audit} onAsOf={onAsOf} period={view.period} />
       {view.files.map((f) => (f.kind === "sheet"
         ? <SheetBlock key={f.file_hash} file={f} auditId={auditId} onChanged={() => { load(); reloadAudit(); }} onAsOf={onAsOf} />
         : <DeckBlock key={f.deck_id} file={f} onShowAll={() => setConfirmedOpen(true)} />))}

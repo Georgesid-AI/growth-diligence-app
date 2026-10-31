@@ -10,6 +10,7 @@ and decks. Cards exist only for the three cases of section 7.4 (app/cards.py). T
 
 Numbers are raw here, at full precision; the screen formats them (one formatter, section 11.5). Nothing in this module reads a file.
 """
+import re
 from typing import Dict, List, Optional
 
 from . import cards, checks, deck_figures, lines as lines_mod, readings
@@ -118,6 +119,28 @@ def item_notes(doc: Dict) -> Dict:
     return {"rows": rows, "file": file_notes}
 
 
+_MONTH = re.compile(r"^\d{4}-\d{2}$")
+
+
+def first_actual(file_map: Dict) -> Optional[str]:
+    """The earliest month (YYYY-MM) of any actual series in the file's map, or None (a quarterly or yearly file has no month to give)."""
+    found = [p for smap in file_map.get("sheets") or [] for row in smap.get("rows") or [] for p in (row.get("series") or {}).get("periods") or []
+             if _MONTH.match(str(p))]
+    return min(found) if found else None
+
+
+def reporting_period(files: List[Dict]) -> Optional[Dict]:
+    """{"first", "last"}: the first and the last actual month across the spreadsheets, or None when no file gives a last actual month.
+    A file with a last actual month and no series gives that month for both ends."""
+    firsts, lasts = [], []
+    for f in files:
+        last = f["kind"] == "sheet" and f["summary"].get("last_actual")
+        if last and _MONTH.match(str(last)):
+            lasts.append(last)
+            firsts.append(f["summary"].get("first_actual") or last)
+    return {"first": min(firsts), "last": max(lasts)} if lasts else None
+
+
 def deck_rows(deck: Dict) -> Dict[str, List[Dict]]:
     out: Dict[str, List[Dict]] = {"confirmed": [], "rejected": [], "cannot_check": []}
     for f in deck["figures"]:
@@ -192,7 +215,7 @@ async def build(db, audit_id: str) -> Dict:
             for ln in entry["lines"]:
                 ln["note"] = "; ".join(notes["rows"].get((entry["sheet"], ln["row"]), [])) or None
         files.append({"kind": "sheet", "file": doc.get("file"), "file_hash": doc["file_hash"], "size": (datasets.get(doc["file_hash"]) or {}).get("size"),
-                      "summary": {"period_columns": doc.get("period_columns"), "rows_mapped": doc.get("rows_mapped"), "last_actual": doc.get("month"),
+                      "summary": {"period_columns": doc.get("period_columns"), "rows_mapped": doc.get("rows_mapped"), "last_actual": doc.get("month"), "first_actual": first_actual(effective),
                                   "granularity": next((x.get("granularity") for x in effective.get("sheets") or []), None),
                                   "confirmed": len(rows["confirmed"]), "rejected": len(rows["rejected"]),
                                   "cannot_check": len(rows["cannot_check"]), **privacy_counts(doc.get("masked"))},
@@ -218,7 +241,7 @@ async def build(db, audit_id: str) -> Dict:
     summary = {"status": status, "reason": (review or {}).get("reason"),
                "not_completed": f"review not completed: {review.get('reason') or 'not read'}" if review and status not in ("read", "none") else None,
                "findings": sum(1 for f in (review or {}).get("findings") or [] if f.get("state") == "valid"), "dropped": (review or {}).get("dropped", 0)}
-    return {"files": files, "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": all_cards, "review": summary}
+    return {"files": files, "period": reporting_period(files), "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": all_cards, "review": summary}
 
 
 def _effective_lines(doc: Dict, effective: Dict) -> List[Dict]:

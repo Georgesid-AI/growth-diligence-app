@@ -91,6 +91,14 @@ describe("the strip and the file blocks", () => {
     expect(q("assumption-as-of-evidence").querySelector("b").textContent).toBe("Confirmed on column AP.");
   });
 
+  test("the reporting period reads the first and last actual month across the files, and is never a dash while an as-of month exists", async () => {
+    await show({ ...REGISTER, period: { first: "2019-01", last: "2022-05" } }, { ...AUDIT, datasets: {} });
+    expect(q("assumption-period").textContent).toBe("Reporting periodJan 2019 – May 2022");
+    await act(async () => { root.unmount(); }); host.remove();
+    await show(REGISTER, { ...AUDIT, datasets: {} });
+    expect(q("assumption-period").textContent).toBe("Reporting periodMay 2022");
+  });
+
   test("a row-level check outcome is a note on its row in the lines table; a file-level one is a note under the summary", async () => {
     const files = REGISTER.files.map((f, i) => (i ? f : { ...f, notes: [{ name: "Period columns", outcome: "cannot_check", reason: "header unclear" }],
       lines: [{ sheet: "Sales", lines: [line(11, "Recognised revenue", { note: "segment row without its total row" })] }] }));
