@@ -131,7 +131,7 @@ function SheetBlock({ file, auditId, onChanged, onAsOf }) {
       <Summary parts={sheetSummary(file.summary)} />
       {(file.notes || []).map((n, i) => <p key={i} className="note" data-testid="file-note">{n.name}: {n.reason}</p>)}
       <div className="anchors">
-        <span className="k">As-of month</span>
+        <span className="k">Last actual</span>
         <span data-testid="anchor-as-of">{a.as_of ? `${lastActualText(a.as_of.month, file.summary.granularity)} — ${splitEvidence(a.as_of.evidence).text}` : "not determined"}</span>
         <InlineChange label="As-of month" placeholder="Jun 2021" testid="anchor-as-of-change" onSave={onAsOf} />
         <span className="k">Revenue row</span>

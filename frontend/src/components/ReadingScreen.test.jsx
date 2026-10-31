@@ -122,6 +122,15 @@ describe("the strip and the file blocks", () => {
     expect(deck.querySelector('[data-testid="anchor-figures"]').textContent).toBe("112 read, 109 found on their page, 3 from charts without text");
   });
 
+  test("a file's anchor line says Last actual, never As-of month, which belongs to the strip only", async () => {
+    await show();
+    const anchors = all("file-block")[0].querySelector(".anchors");
+    expect(anchors.querySelector(".k").textContent).toBe("Last actual");
+    expect(anchors.textContent).not.toContain("As-of month");
+    expect(anchors.querySelector('[data-testid="anchor-as-of"]').textContent).toMatch(/^May 2022 — /);
+    expect(q("assumption-as-of").textContent).toContain("As-of month");
+  });
+
   test("the lines table sits in the details box, in file order; a rate row is directly under its line with the note; part rows are indented", async () => {
     await show();
     const details = q("lines-details");
