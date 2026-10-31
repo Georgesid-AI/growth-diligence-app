@@ -35,8 +35,8 @@ describe("questions for management", () => {
   });
 
   test("values follow the number display rules", () => {
-    expect(computedValue("win_rate", { win_rate: { win_rate_pct: 0.496 } })).toBe("50 %");
-    expect(computedValue("nrr", { nrr: { overall_pct: 1.0641 } })).toBe("106 %");
+    expect(computedValue("win_rate", { win_rate: { win_rate_pct: 0.496 } })).toBe("50%");
+    expect(computedValue("nrr", { nrr: { overall_pct: 1.0641 } })).toBe("106%");
     expect(computedValue("cac_payback", {
       cac_payback: { default_l: 1, headline_quarter: "2024-Q2", quarters: { "2024-Q2": { L1: { months: 12.24 } } } },
     })).toBe("12 months (2024-Q2)");

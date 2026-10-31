@@ -57,7 +57,7 @@ const LOADED_LABELS = { revenue: "A revenue file", crm: "A CRM file", pnl: "A P&
 export const S5_head = (view) => {
   if (view.recognition_only) return "Detected: Revenue file";                    // no rows, no columns: its recognition line says the rest
   const head = `Detected: ${typeLabel(view)} · ${fmtCount(view.row_count)} ${view.sheet_map ? "lines" : "rows"}`;
-  return view.months ? `${head} · ${view.months.count} months (${fmtMonth(view.months.first)} – ${fmtMonth(view.months.last)})` : head;
+  return view.months ? `${head} · ${fmtCount(view.months.count)} months (${fmtMonth(view.months.first)} – ${fmtMonth(view.months.last)})` : head;
 };
 // S26a-c (2026-10-16): the detected type with its source and the Change button; the sheet read; what a miss says.
 export const TYPE_SOURCES = { rules: "by rules", ai: "AI suggestion", you: "your choice" };
@@ -73,7 +73,7 @@ const LOOKS = {
 export const S27_SHOW_COLUMNS = "Show columns";
 export const S27_miss = (view) => {
   const looks = view.miss.looks || {};
-  const what = LOOKS[looks.shape] || `a table of ${fmtCount(looks.rows ?? 0)} rows and ${looks.columns ?? 0} columns`;
+  const what = LOOKS[looks.shape] || `a table of ${fmtCount(looks.rows ?? 0)} rows and ${fmtCount(looks.columns ?? 0)} columns`;
   return `Could not read this file as ${typeLabel(view)}. Missing: ${view.miss.missing.map(fieldName).join(", ")}. It looks like ${what}.`;
 };
 // S28a-d (2026-10-16, section 20): a forecast table read as claims, one plan line × one year; nothing is saved before Confirm.
@@ -184,8 +184,8 @@ export const S14_same = (version) => `Same file as before: saved mapping v${vers
 
 // S30a-h (2026-10-18, section 26): a P&L read as a statement, one row per line. Wording chosen under rule 19 for George's review.
 const plural = (n, one, many) => `${fmtCount(n)} ${n === 1 ? one : many}`;
-export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Personal items removed: ${c.email + c.phone + c.person + (c.iban || 0) + (c.id || 0)}. `
-  + `Company names tokenised: ${c.customer + c.company}. Columns withheld: ${c.columns}.`;
+export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Personal items removed: ${fmtCount(c.email + c.phone + c.person + (c.iban || 0) + (c.id || 0))}. `
+  + `Company names tokenised: ${fmtCount(c.customer + c.company)}. Columns withheld: ${fmtCount(c.columns)}.`;
 export const S30B_HEADERS = ["Line", "Role", "Meaning", "Basis", "Used", "Confidence", "Checks"];
 export const CONFIRM_ALL = "Confirm all";
 // docs/design/pnl-lines.md sections 1 and 8: every mapped line has a use, assigned by its mapped role: series, sum check, recompute check or

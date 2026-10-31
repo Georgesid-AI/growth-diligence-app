@@ -12,11 +12,11 @@ Rules (kind -> behaviour):
     count_up   required / implied count, rounds UP            128.3     -> "129"
     days       rounds UP to the next whole day, unit suffix   42.1      -> "43 days"
     months     the display rule below, "months" suffix        12.24     -> "12 months"
-    pct        a fraction as a percent, the display rule       1.0641    -> "106 %", 0.045 -> "4.5 %"
+    pct        a fraction as a percent, the display rule       1.0641    -> "106%", 0.045 -> "4.5%"
     ratio      the display rule, "x" suffix                    3.28      -> "3.3x"
 
 The display rule (docs/design/read-check-review.md section 11.5, one rule for every number on any page, in the memo and in the exports):
-whole numbers; one decimal only for a single-digit multiple (3.3x), a single-digit number (1.2) or a single-digit percent (4.5 %); a
+whole numbers; one decimal only for a single-digit multiple (3.3x), a single-digit number (1.2) or a single-digit percent (4.5%); a
 trailing ".0" is dropped ("2x", not "2.0x"). Rounding is half up, at display time only: stored values are never rounded.
     plain      integer identifier / setting, no grouping      1         -> "1"
 
@@ -117,9 +117,30 @@ def fmt_months(value: Any) -> str:
 
 
 def fmt_pct(value: Any) -> str:
-    """A fraction as a percent by the display rule: 1.0641 -> "106 %", 0.045 -> "4.5 %". Reading the raw number for display means times 100."""
+    """A fraction as a percent by the display rule: 1.0641 -> "106%", 0.045 -> "4.5%". Reading the raw number for display means times 100."""
     d = _dec(value)
-    return PLACEHOLDER if d is None else f"{display_number(d * 100)} %"
+    return PLACEHOLDER if d is None else f"{display_number(d * 100)}%"
+
+
+def fmt_signed(value: Any) -> str:
+    """A signed number by the display rule: "+1.2", "-12", "0". For a gap in points."""
+    d = _dec(value)
+    if d is None:
+        return PLACEHOLDER
+    text = display_number(d)
+    return f"+{text}" if d > 0 and text != "0" else text
+
+
+def fmt_signed_pct(value: Any) -> str:
+    """A fraction as a signed percent by the display rule: 0.05 -> "+5%", -0.5 -> "-50%"."""
+    d = _dec(value)
+    return PLACEHOLDER if d is None else fmt_signed(d * 100) + "%"
+
+
+def fmt_exact(value: Any) -> str:
+    """A value shown as stored, no rounding: an exchange rate or a threshold, which is an input and not a result."""
+    d = _dec(value)
+    return PLACEHOLDER if d is None else f"{float(d):g}"
 
 
 def fmt_ratio(value: Any) -> str:

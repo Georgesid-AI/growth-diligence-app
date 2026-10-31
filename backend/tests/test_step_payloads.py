@@ -245,7 +245,7 @@ def test_smoothness_is_the_integrity_modules_reading_not_not_computed():
     check = checks_by_name(sp.build_integrity(results))["Month-on-month revenue smoothness"]
     read = integrity.smoothness(results)
     assert check == {"check": "Month-on-month revenue smoothness", "status": "computed", "source_key": "S1",
-                     "first_month": read["first"], "last_month": read["last"], "deviation_points": "0.0 points",
+                     "first_month": read["first"], "last_month": read["last"], "deviation_points": "0 points",
                      "limit_points": "0.5 points", "result": "Amber", "threshold_note": "provisional threshold, 3 synthetic series"}
     noisy = checks_by_name(sp.build_integrity(_with_series([100, 108, 103, 121, 118, 131, 127, 149, 141, 160, 158, 181, 170, 196])))
     assert noisy["Month-on-month revenue smoothness"]["result"] == "Green"

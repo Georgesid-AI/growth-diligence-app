@@ -395,7 +395,7 @@ def _format(unit: str, value: float, currency: Optional[str]) -> str:
     if unit == "currency":
         return _money(value, currency)
     if unit == "%":
-        return f"{_shown(value)} %"
+        return f"{_shown(value)}%"
     if unit in ("days", "months"):
         return f"{_shown(value)} {unit}"
     if unit == "x":
@@ -602,7 +602,7 @@ def format_figure(unit: Optional[str], value: float, currency: Optional[str], un
     """A figure in the unit it is measured in (the metric's unit, or the claim's own): the register's one number format."""
     if unit in ("currency", "%", "days", "months", "count", "x"):
         return _format(unit, value, currency)
-    return f"{value:g} {unit}" if unit else f"{value:g}{' ' + unit_text if unit_text else ''}"
+    return f"{_shown(value)} {unit}" if unit else f"{_shown(value)}{' ' + unit_text if unit_text else ''}"
 
 
 def as_of_date(as_of: Optional[str]) -> Optional[str]:
@@ -643,7 +643,7 @@ def converted_note(row: dict, money) -> str:
         return ""
     text = money(low) if high is None else f"{money(low)}–{money(high)}"
     when = fx_date_text(row.get("fx_date"))
-    return f" ({text} at {row['fx_rate']:g}{', ' + when if when else ''})"
+    return f" ({text} at {fmt.fmt_exact(row['fx_rate'])}{', ' + when if when else ''})"
 
 
 def _claimed_text(c: dict) -> str:
@@ -978,8 +978,8 @@ def deck_revenue_hint(c: dict, peers: List[dict]) -> Optional[dict]:
     where = f"slide {src['slide']}" if src.get("slide") is not None else f"page {src['page']}" if src.get("page") is not None else ""
     rate = revenue["value"] / low
     currency = f" {revenue['currency']}" if revenue.get("currency") else ""
-    return {"take_rate": rate, "note": f"Deck revenue for the same period: {revenue['value']:,.0f}{currency}"
-                                       f"{f' ({where})' if where else ''}; implied take rate {rate:.0%}, derived, not verified"}
+    return {"take_rate": rate, "note": f"Deck revenue for the same period: {_shown(revenue['value'])}{currency}"
+                                       f"{f' ({where})' if where else ''}; implied take rate {fmt.fmt_pct(rate)}, derived, not verified"}
 
 
 def _population(c: dict, metric: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
@@ -1378,8 +1378,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out.update(definition_check=answer or DEFINITION_ASK, definition_question=DEFINITION_QUESTION.format(
             observed=_format(spec["unit"], observed, reporting), claimed=_format(spec["unit"], claimed, reporting)))
         if answer is None:                      # a status, not an evidence label: no label until the analyst answers
-            return finish(None, DEFINITION_OPEN_REASON_RATE.format(points=f"{BIG_GAP_RATE_POINTS:g}") if spec["unit"] == "%"
-                          else DEFINITION_OPEN_REASON.format(share=f"{BIG_GAP_THRESHOLD:.0%}"))
+            return finish(None, DEFINITION_OPEN_REASON_RATE.format(points=_shown(BIG_GAP_RATE_POINTS)) if spec["unit"] == "%"
+                          else DEFINITION_OPEN_REASON.format(share=fmt.fmt_pct(BIG_GAP_THRESHOLD)))
         if answer == "no":
             return finish("Unverified", DEFINITION_MISMATCH)
     if kind == "beat":                          # amended 2026-10-13 (George): a beat is Verified, marked (beat), not Contradicted
@@ -1538,7 +1538,7 @@ def _forecast_view(results: dict, metric: Optional[str], segment: str, start: Op
     if metric not in FORECAST_METRICS or low is None or start is None or end is None or as_of_i is None:
         return {"lines": [], "details": [], "text": FORECAST_NO_CALC}
     currency = results.get("reporting_currency")
-    money = (lambda v: _money(v, currency)) if metric != "Customer count" else (lambda v: f"{v:,.0f}")
+    money = (lambda v: _money(v, currency)) if metric != "Customer count" else (lambda v: _shown(v))
     shown = money(low) if high is None else f"{money(min(low, high))}–{money(max(low, high))}"
     if mismatch:
         view = forecast_calc.unavailable(mismatch, shown, start, end, fiscal_year_end, flow=metric in forecast_calc.FLOWS)
@@ -1604,8 +1604,8 @@ def _annual_payback(out: dict, results: dict, text: str, start: int, end: int):
         label = f" ({YEARLY_REVENUE_BASED})" if revenue else ""
         head = f"CAC payback {name}" if revenue else f"Annual payback {name} ({proxy})"
         if months is not None:
-            lines.append(f"{head}: {months:.1f} months{label} = 12 × S&M "
-                         f"{money(year['sm_expense'])} ÷ ({denominator} {money(amount)} × gross margin {gm * 100:.1f}%)")
+            lines.append(f"{head}: {fmt.fmt_months(months)}{label} = 12 × S&M "
+                         f"{money(year['sm_expense'])} ÷ ({denominator} {money(amount)} × gross margin {fmt.fmt_pct(gm)})")
         else:
             lines.append(f"{head}{label}: not calculated – {reason}")
     scope = year.get("sm_scope") or "unknown"
@@ -1994,7 +1994,7 @@ def _value_at_stake(row: dict, results: dict, settings: dict) -> dict:
         row["value_at_stake_arr"] = min(abs(amount) * 12 / months, float(settings["target_arr"]))
         if months != 12 and not level:
             row["vas_reason"] = VAS_RUN_RATE.format(period=row.get("period") or f"{months} month{'s' if months != 1 else ''}",
-                                                    multiplier=f"{12 / months:g}")
+                                                    multiplier=_shown(12 / months))
     else:
         row["vas_reason"] = VAS_NO_LINK.format(why=f"{kind} has no ARR conversion")
     return row
@@ -2055,7 +2055,7 @@ def _fold_forecast_table(claims: List[dict], plans: List[dict]) -> List[dict]:
 
 def _plan_lines(p: dict, currency: Optional[str]) -> List[str]:
     """The calculation lines of a plan row: the implied rate, the observed one and the gap in points, each with the columns it compares."""
-    shown = lambda v: "not calculated" if v is None else f"{v * 100:.1f}%"      # noqa: E731
+    shown = lambda v: "not calculated" if v is None else fmt.fmt_pct(v)      # noqa: E731
     implied, observed, gap = p["implied"], p["observed"], p["gap_points"]
     first, second = (p["compared"].split(" against ") + [""])[:2]
     word = "growth" if p["measure"] == "growth" else "share of revenue"
@@ -2063,7 +2063,7 @@ def _plan_lines(p: dict, currency: Optional[str]) -> List[str]:
              f"Implied {word} {first}: {shown(implied)}" + (f" – {p['reason']}" if implied is None else "")]
     lines.append(f"Observed {word} {second}: {shown(observed)}" + (f" – {p['reason']}" if implied is not None and observed is None else ""))
     if gap is not None:
-        lines.append(f"Gap: {gap:+.1f} points")
+        lines.append(f"Gap: {fmt.fmt_signed(gap)} points")
     return lines
 
 
@@ -2097,8 +2097,8 @@ def _compare_plan(rows: List[dict], results: dict) -> List[dict]:
                     continue
                 claimed, filed = deck["claimed_value"], implied * 100
                 gap = filed - claimed
-                within, shown = abs(gap) <= RATE_TOLERANCE_PP, lambda v: f"{_one_place(v)}%"      # noqa: E731
-                tol, size = RATE_TOLERANCE_TEXT, f"{gap:+.1f} points"
+                within, shown = abs(gap) <= RATE_TOLERANCE_PP, lambda v: f"{_shown(v)}%"      # noqa: E731
+                tol, size = RATE_TOLERANCE_TEXT, f"{fmt.fmt_signed(gap)} points"
                 what = f"implied {'growth' if plan['plan_measure'] == 'growth' else 'share of revenue'} "
             else:
                 if plan["claim_type"] != deck["claim_type"] or deck["claim_type"] not in PLAN_DECK_TYPES:
@@ -2109,7 +2109,7 @@ def _compare_plan(rows: List[dict], results: dict) -> List[dict]:
                 filed = plan["claimed_value"]
                 gap = filed - claimed
                 within, shown = within_tolerance("Revenue", gap, claimed), lambda v: _money(v, currency)      # noqa: E731
-                tol, size = tolerance_text("Revenue"), f"{gap / abs(claimed):+.0%}" if claimed else ""
+                tol, size = tolerance_text("Revenue"), fmt.fmt_signed_pct(gap / abs(claimed)) if claimed else ""
                 what = ""
             if within:
                 deck["page_ref"] = ", ".join(x for x in (deck.get("page_ref"), plan["page_ref"]) if x)

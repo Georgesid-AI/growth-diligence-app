@@ -54,7 +54,7 @@ def test_format_payload_leaves_no_raw_numbers():
     m = out["metrics"]
     assert out["target_arr"] == "5,000,000 EUR"
     assert m["arr"]["value"] == "3,129,104 EUR"
-    assert m["nrr"]["overall_pct"] == "106 %" and m["nrr"]["n"] == "100"
+    assert m["nrr"]["overall_pct"] == "106%" and m["nrr"]["n"] == "100"
     assert m["sales_cycle"]["median_days"] == "43 days" and m["sales_cycle"]["iqr"] == ["17 days", "59 days"]
     assert m["acv_path"]["total_customers_at_target"] == "129"
     assert m["cac_payback"]["quarters"]["2026-Q1"]["L1"]["months"] == "12 months"
@@ -75,7 +75,7 @@ def test_numeric_guard_still_matches_formatted_strings():
 
     out = f.format_payload(RAW)
     n = Narrative(headline="ARR is 3,129,104 EUR", what_this_means="Needs 129 customers at 1.3x.",
-                  table_rows=[TableRow(label="NRR", value="106 %", source_key="metrics.nrr.overall_pct")])
+                  table_rows=[TableRow(label="NRR", value="106%", source_key="metrics.nrr.overall_pct")])
     assert gateway.numeric_guard(n, out).all == []
 
 
@@ -281,7 +281,7 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
         table_rows=[
             TableRow(label="metrics.acv_path.customers_needed", value="129",
                      source_key="metrics.acv_path.customers_needed"),
-            TableRow(label="NRR", value="106 %", source_key="metrics.nrr.overall_pct"),
+            TableRow(label="NRR", value="106%", source_key="metrics.nrr.overall_pct"),
         ],
     )
     resp = NarrativeResponse(run_id="r", step="growth_engine", narrative_status="ok", narrative=n)
@@ -429,7 +429,7 @@ def test_segment_path_figures_format_by_the_rules():
     assert rs["new_customers_by_target"] == "69"            # implied count rounds UP
     assert rs["required_new_per_year_at_current_mix"] == "320"   # required count rounds UP
     assert rs["required_vs_observed_gross"] == "13x"
-    assert rs["by_segment"]["A"]["shift_pct_points"] == "-12 %"
+    assert rs["by_segment"]["A"]["shift_pct_points"] == "-12%"
     assert out["landed"]["12"]["gross_new_per_year"] == "24"     # observed rate rounds normally
 
 

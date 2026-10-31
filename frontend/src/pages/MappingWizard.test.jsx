@@ -581,7 +581,7 @@ describe("a forecast table read as claims (chat-upload.md section 20)", () => {
     expect([5, 8, 16].map((r) => q(`forecast-tick-${r}`).checked)).toEqual([true, true, true]);
     expect(q("forecast-label-5").textContent).toBe("Revenue");
     expect(q("forecast-values-5").textContent).toBe("2025F 1,980,000 EUR · 2026F 3,100,000 EUR · 2027F 4,650,000 EUR");
-    expect(q("forecast-values-8").textContent).toBe("2025F 65 % · 2026F 66 % · 2027F 67 %");
+    expect(q("forecast-values-8").textContent).toBe("2025F 65% · 2026F 66% · 2027F 67%");
     expect(q("forecast-values-16").textContent).toBe("2025F 26 people · 2026F 34 people · 2027F 43 people");
     expect(q("forecast-cells-5").textContent).toBe("E5:G5");
     expect(q("forecast-confirm-pnl").textContent).toBe("Save claims");

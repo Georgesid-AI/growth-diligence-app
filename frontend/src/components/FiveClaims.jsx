@@ -4,6 +4,7 @@ import { FOUR_COLUMNS, ForecastNote, fourCells } from "@/components/ClaimFourCol
 import { getClaimRegister } from "@/lib/api";
 import { detailItems, hasForecast, registerRows } from "@/lib/claimRegister";
 import { partsLabel } from "@/lib/claimGroups";
+import { fmtCount } from "@/lib/format";
 
 export const FIVE_HEADING = "The five selected claims";
 export const FIVE_COLUMNS = FOUR_COLUMNS;
@@ -29,7 +30,7 @@ function Row({ f, row, rows, ccy, auditId }) {
           {cells ? cells.claim : <span className="text-slate-900" data-testid="five-claim">{f.claim}</span>}
           {f.group && (
             <div className="text-[11px] text-slate-500" data-testid="five-group">
-              Annual total with {partsLabel(f.group.parts)}{f.group.contradicted.length > 0 ? ` · ${f.group.contradicted.length} contradicted` : ""}
+              Annual total with {partsLabel(f.group.parts)}{f.group.contradicted.length > 0 ? ` · ${fmtCount(f.group.contradicted.length)} contradicted` : ""}
             </div>
           )}
         </div>

@@ -367,7 +367,7 @@ test("the yearly-basis section shows each year, the track record and the missing
   const labels = [...section.querySelectorAll('[data-testid="yearly-basis-label"]')].map((x) => x.textContent);
   expect(labels).toEqual(Array(3).fill("yearly basis, not monthly"));
   const y23 = section.querySelector('[data-testid="yearly-year-FY2023"]').textContent;
-  expect(y23).toContain("42 %");
+  expect(y23).toContain("42%");
   expect(y23).toContain("+1.3 pts");
   expect(y23).toContain("30 months");
   expect(section.querySelector('[data-testid="yearly-year-FY2022"]').textContent).toContain("n/c");

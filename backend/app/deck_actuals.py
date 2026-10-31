@@ -11,6 +11,8 @@ from decimal import Decimal
 from itertools import combinations
 from typing import Dict, Iterable, List, Optional
 
+from . import formatting as fmt
+
 ACTUAL, PLAN, UNSET = "actual", "plan", "unset"
 TAG = "deck only"
 DIFFERS = "deck differs from file"
@@ -77,8 +79,7 @@ def holds_nothing(reason: Optional[str]) -> bool:
 
 def number(value: float, places: int = 2) -> str:
     """501378.04 -> "501,378.04", 482475.0 -> "482,475": trailing zeros of the decimals dropped."""
-    text = f"{value:,.{places}f}"
-    return text.rstrip("0").rstrip(".") if "." in text else text
+    return fmt.fmt_number(value)
 
 
 def file_text(source: Optional[dict]) -> Optional[str]:
@@ -130,17 +131,17 @@ def deck_block(row: dict, label: Optional[str], formula: Optional[str] = None, n
         formula = formula or f"{said} = {number(value)} as printed" + (f" on {page_words(page)}" if page else "")
     else:
         observed = row.get("observed_value")
-        shown = (f"{observed:.2f}x" if multiple else number(observed)) if observed is not None else "no figure"
+        shown = (fmt.fmt_ratio(observed) if multiple else number(observed)) if observed is not None else "no figure"
         if status == DIFFERS_STATUS:
             by = f" by {number(abs(value - observed) / abs(observed) * 100, 1)}%" if observed else ""
-            checked, unchecked = [f"{said} differs from {where or 'the file'}{by} (deck {f'{value:g}x' if multiple else number(value)}, file {shown})"], []
+            checked, unchecked = [f"{said} differs from {where or 'the file'}{by} (deck {fmt.fmt_ratio(value) if multiple else number(value)}, file {shown})"], []
         elif status == CONSISTENT and where:
             checked, unchecked = [f"{said} matches {where} ({shown})"], []
         else:
             checked, unchecked = [f"{said} checked against the files ({shown})"], []
         parts = (row.get("observed_source") or {}).get("inputs") or []
         if len(parts) == 2 and observed is not None:         # a multiple: the two years' revenue with the numbers filled in
-            formula = formula or f"{parts[0]['name']} ÷ {parts[1]['name']} = {number(parts[0]['value'])} ÷ {number(parts[1]['value'])} = {observed:.2f}x"
+            formula = formula or f"{parts[0]['name']} ÷ {parts[1]['name']} = {number(parts[0]['value'])} ÷ {number(parts[1]['value'])} = {fmt.fmt_ratio(observed)}"
         formula = formula or (f"{row.get('metric') or name}, {row.get('observed_at') or period} = {shown}"
                               + (f" ({(row.get('observed_source') or {}).get('rule')})" if (row.get("observed_source") or {}).get("rule") else ""))
     block = {"inputs": inputs, "formula": formula, "checked": checked, "not_checked": unchecked}

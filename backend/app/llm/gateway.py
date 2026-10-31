@@ -1537,7 +1537,7 @@ SHEET_READER_BLOCKED = "AI read: blocked – the sheet reader model is not on th
 SHEET_READING_INPUT_CAP = 40_000        # tokens of the masked cells, by the provider's token counter: above it the file is refused, nothing is cut
 SHEET_READING_MAX_TOKENS = 16_000       # the file map's reply
 SHEET_READING_TIMEOUT_SECONDS = 300.0   # a long map takes minutes to write
-SHEET_READING_TOO_LARGE = ("This file is too large to read in full (the limit is {limit:,} tokens of cells). "
+SHEET_READING_TOO_LARGE = ("This file is too large to read in full (the limit is {limit} tokens of cells). "
                            "Remove the sheets that are not needed or split the file, then upload it again.")
 SHEET_READING_CUT = ("The reading of this file was cut off because the file has too many rows to map in one read. "
                      "Remove the sheets that are not needed or split the file, then upload it again.")
@@ -2283,7 +2283,7 @@ async def read_structure(
         text_tokens = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > input_cap:
-            reason = SHEET_READING_TOO_LARGE.format(limit=input_cap) if structure_type == SHEET_READING else TOO_LARGE
+            reason = SHEET_READING_TOO_LARGE.format(limit=formatting.fmt_count(input_cap)) if structure_type == SHEET_READING else TOO_LARGE
             return _structure_result("too_large", structure_type, reason, input_tokens=0, masked=masked_counts, **base)
         counted = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=system,
                                       user_payload=user_payload, json_schema=schemas.output_schema(structure_type))
@@ -2443,7 +2443,7 @@ async def read_structure(
 REVIEWER_INPUT_CAP = 60_000      # tokens of the masked review input, by the provider's token counter: above it the review is refused, nothing is cut
 REVIEWER_MAX_TOKENS = 4_000      # the findings' reply
 REVIEWER_TIMEOUT_SECONDS = 180.0
-REVIEWER_TOO_LARGE = "The files are too large to review in one call (the limit is {limit:,} tokens). Nothing was reviewed."
+REVIEWER_TOO_LARGE = "The files are too large to review in one call (the limit is {limit} tokens). Nothing was reviewed."
 REVIEW_STRUCTURE_TYPE = "reviewer"
 
 
@@ -2531,7 +2531,7 @@ async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, slee
                        estimated_cost_usd=0.0, cache_hit=False, status=exc.reason, content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE)
         return ReviewRead("not_read", reason=NOT_READ, **base)
     if counted > REVIEWER_INPUT_CAP:
-        return ReviewRead("too_large", reason=REVIEWER_TOO_LARGE.format(limit=REVIEWER_INPUT_CAP), **base)
+        return ReviewRead("too_large", reason=REVIEWER_TOO_LARGE.format(limit=formatting.fmt_count(REVIEWER_INPUT_CAP)), **base)
     token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
     rounds = 0
     while token is None and rounds < SHEET_READING_LOCK_ROUNDS:

@@ -345,7 +345,7 @@ def test_a_sum_over_a_period_entirely_in_the_future_has_no_figure_to_date():
     assert unclassified["reason"].startswith("claim period not in supplied data"), "a later period alone is missing coverage, not a forecast"
     row = run_claim({"claim_type": "revenue", "snippet": "Revenue €9M", "value": 9_000_000, "target_date": "2026", "basis": "projection"})
     assert (row["evidence_label"], row["observed_value"], row["gap_kind"]) == ("Unverified", None, None)
-    assert row["reason"] == "Forecast: required growth 263.3% a year", "the calculation or why there is none (forecast-and-payback.md section 3), not a repeated disclaimer"
+    assert row["reason"] == "Forecast: required growth 263% a year", "the calculation or why there is none (forecast-and-payback.md section 3), not a repeated disclaimer"
 
 
 def test_a_forecast_of_a_quarter_figure_shows_the_latest_complete_quarter():

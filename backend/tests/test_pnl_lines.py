@@ -158,7 +158,7 @@ def test_the_growth_row_recomputes_within_the_rate_tolerance():
     assert not [f for f in near if f["line"] == "Revenue growth rate"], "half a point is inside ±1 point and is not shown"
     far = [f for f in analysis(edit("0.875,0.6,0.5", "0.875,0.65,0.5"))["findings"] if f["line"] == "Revenue growth rate"]
     assert len(far) == 1 and far[0]["kind"] == "recompute" and far[0]["period"] == "FY 2022"
-    assert far[0]["unit"] == "points" and far[0]["gap"] == pytest.approx(5.0) and "5.0 points" in far[0]["text"]
+    assert far[0]["unit"] == "points" and far[0]["gap"] == pytest.approx(5.0) and "5 points" in far[0]["text"]
 
 
 GROWTH_OPEX = "OPEX growth %,,0.5667,0.5957,0.3867,0.3269,0.2754\n"
@@ -178,7 +178,7 @@ def test_a_growth_row_that_differs_from_the_growth_of_its_base_is_a_finding():
     wrong = GROWTH_OPEX.replace("0.5957", "0.7957")
     found = [f for f in analysis(edit("OPEX %,", wrong + "OPEX %,"))["findings"] if f["line"] == "OPEX growth %"]
     assert [(f["period"], f["unit"]) for f in found] == [("FY 2021", "points")] and found[0]["gap"] == pytest.approx(20.0, abs=0.1)
-    assert "recomputed 59.6%" in found[0]["text"]
+    assert "recomputed 60%" in found[0]["text"]
 
 
 def test_a_growth_row_that_names_no_line_of_the_file_is_not_checked_against_revenue():
@@ -245,7 +245,7 @@ def test_a_plan_claim_enters_the_register_unverified_with_its_source_and_a_value
     assert rev["evidence_label"] == "Unverified" and rev["page_ref"] == "File CSV!E3 (plan)"
     assert all(x["evidence_label"] == "Unverified" for x in plan.values()), "never Verified or Contradicted"
     assert rev["value_at_stake_arr"] == 2_400_000 and rev["figure_type"] == "target"
-    assert "Implied growth FY 2021 → FY 2022: 60.0%" in rev["calc_lines"][1] and "Gap: -27.5 points" in rev["calc_lines"]
+    assert "Implied growth FY 2021 → FY 2022: 60%" in rev["calc_lines"][1] and "Gap: -28 points" in rev["calc_lines"]
     assert not any(x["value_at_stake_arr"] for x in plan.values() if x["claim_type"] in ("cost_of_revenue", "s_and_m", "opex")), "a cost has no ARR link"
 
 
@@ -322,7 +322,7 @@ def test_a_deck_percentage_is_compared_with_the_plans_implied_percentage_not_its
     assert not [x for x in vd.flagged_rows(rows) if x["claim_type"] == "ebitda"] and "File CSV!G" in one["page_ref"]
     far = claim("EBITDA margin 12% in FY2024", 12, "FY2024", "2024", claim_type="ebitda", currency=None, unit="%", basis="projection")
     plan = next(x for x in cm.build_register([far], r, settings(AS_OF)) if x["claim_id"] == "plan:CSV:ebitda:FY2024")
-    assert plan["reason"] == f"{cm.PLAN_DIFFERS}: file implied share of revenue 6.6%, deck 12.0% (-5.4 points)"
+    assert plan["reason"] == f"{cm.PLAN_DIFFERS}: file implied share of revenue 6.6%, deck 12% (-5.4 points)"
 
 
 def test_a_deck_money_figure_is_compared_with_the_plans_money_figure():
@@ -376,10 +376,10 @@ def test_the_yearly_cac_payback_leaves_internal_events_out_of_sm_and_is_labelled
 
 def test_the_register_words_the_yearly_payback_in_months_labelled_yearly_revenue_based():
     r = results_for()
-    deck = payback_claim("CAC payback 12.5 months in FY2021: sales and marketing spend over revenue growth, gross margin adjusted", 12.5, 2021)
+    deck = payback_claim("CAC payback 13 months in FY2021: sales and marketing spend over revenue growth, gross margin adjusted", 12.5, 2021)
     row = cm.build_register([deck], r, settings(AS_OF))[0]
     first = row["calc_lines"][0]
-    assert first.startswith("CAC payback FY 2021: 12.5 months (yearly, revenue-based) = 12 × S&M €540,000 ÷ (revenue growth €700,000")
+    assert first.startswith("CAC payback FY 2021: 13 months (yearly, revenue-based) = 12 × S&M €540,000 ÷ (revenue growth €700,000")
     assert row["evidence_label"] == "Verified" and row["observed_value"] == 12.51
 
 

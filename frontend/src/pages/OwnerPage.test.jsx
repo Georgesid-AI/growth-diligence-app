@@ -147,7 +147,7 @@ test("exactly 10,000 characters are sent whole", async () => {
   api.ownerUploadPrompt.mockResolvedValue({});
   const text = "ab".repeat(5000);
   await act(async () => { setValue(q("owner-prompt-text"), text); });
-  expect(q("owner-prompt-count").textContent.trim()).toBe("10000 / 10,000");
+  expect(q("owner-prompt-count").textContent.trim()).toBe("10,000 / 10,000");
   await act(async () => { q("owner-prompt-upload").click(); });
   expect(api.ownerUploadPrompt).toHaveBeenCalledTimes(1);
   expect(api.ownerUploadPrompt.mock.calls[0][2]).toBe(text);
@@ -157,10 +157,10 @@ test("10,001 characters are refused with the message, nothing is sent, and the t
   await enter();
   const text = "x".repeat(10001);
   await act(async () => { setValue(q("owner-prompt-text"), text); });
-  expect(q("owner-prompt-count").textContent.trim()).toBe("10001 / 10,000");
+  expect(q("owner-prompt-count").textContent.trim()).toBe("10,001 / 10,000");
   await act(async () => { q("owner-prompt-upload").click(); });
   expect(api.ownerUploadPrompt).not.toHaveBeenCalled();
-  expect(q("owner-error").textContent).toBe("Prompt is 10001 characters; the limit is 10,000.");
+  expect(q("owner-error").textContent).toBe("Prompt is 10,001 characters; the limit is 10,000.");
   expect(q("owner-prompt-text").value).toBe(text);
 });
 

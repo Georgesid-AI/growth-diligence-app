@@ -368,7 +368,7 @@ def vas_cells(rows: List[dict], currency: Optional[str]) -> Dict[int, str]:
             text += f" ({r['vas_reason']})"
         if amount is not None and carrier.get(r["rank"], r["rank"]) != r["rank"]:
             text += f" (counted in #{carrier[r['rank']]})"
-        cells[r["rank"]] = text + (f" · shortfall {fmt.display_number(Decimal(str(shortfall * 100)))} %" if shortfall is not None else "")
+        cells[r["rank"]] = text + (f" · shortfall {fmt.display_number(Decimal(str(shortfall * 100)))}%" if shortfall is not None else "")
     return cells
 
 
@@ -491,10 +491,10 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     flags = anomaly_count(results)
     verified = counts.get("Verified", 0)
     if rec.get("available"):
-        pct = "—" if rec.get("gap_pct") is None else f"{abs(rec['gap_pct']) * 100:g}"
+        pct = "—" if rec.get("gap_pct") is None else fmt.fmt_pct(abs(rec["gap_pct"]))
         src = rec.get("source") or {}
         side = src.get("revenue_file") or {}
-        recon = (f"Revenue file and P&L differ by {pct}% over {rec.get('first')}–{rec.get('last')}"
+        recon = (f"Revenue file and P&L differ by {pct} over {rec.get('first')}–{rec.get('last')}"
                  f"{notes.source('Revenue reconciliation', 'revenue_reconciliation.gap_pct', side, (src.get('pnl') or {}).get('rule'))}")
     else:
         recon = "no P&L to reconcile"
@@ -734,7 +734,7 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
     head, text = _build(**common, thesis=thesis)
     words = count_words(head)
     if words > WORD_LIMIT:
-        raise MemoRefused("words", W19_WORDS.format(n=f"{words:,}"), words=words)
+        raise MemoRefused("words", W19_WORDS.format(n=fmt.fmt_count(words)), words=words)
     return text
 
 

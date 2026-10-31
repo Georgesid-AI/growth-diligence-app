@@ -23,7 +23,7 @@ def test_a_period_after_the_data_alone_is_missing_coverage_not_a_forecast():
 def test_a_projection_for_a_period_after_the_data_is_a_forecast():
     row = row_of(forecast())
     assert row["figure_type"] == "target" and row["evidence_label"] == "Unverified"
-    assert row["calc_lines"] and row["calc_lines"][0].startswith("Required growth: 20.0% a year")
+    assert row["calc_lines"] and row["calc_lines"][0].startswith("Required growth: 20% a year")
     arr = row_of(claim("ARR €1.7M target by Dec 2025", 1_728_000, "Dec 2025", "2025-12", claim_type="arr", basis="projection"))
     assert arr["gap_kind"] == "to go", "the existing 'to go' gap stays for a forecast that has a latest figure"
 
@@ -65,7 +65,7 @@ def test_a_forecast_is_unverified_however_far_the_figure_is_from_the_history(val
 
 def test_the_row_reason_is_the_calculation_not_a_repeated_disclaimer():
     row = row_of(forecast())
-    assert row["reason"] == "Forecast: required growth 20.0% a year against 20.0% historical"
+    assert row["reason"] == "Forecast: required growth 20% a year against 20% historical"
     assert not hasattr(cm, "FORECAST_AFTER_DATA") and not hasattr(cm, "forecast_after_data")
     for field in ("reason", "gloss", "vas_reason", "period_note"):
         assert "cannot be tested" not in str(row[field] or "") and NOTE not in str(row[field] or "")
@@ -97,23 +97,23 @@ def test_the_forecast_note_is_one_sentence_shown_once_whenever_a_forecast_appear
 def test_the_lines_name_the_base_the_comparator_the_difference_and_the_details_hold_the_inputs():
     row = row_of(forecast())
     text = " | ".join(row["calc_lines"])
-    assert "FY2024" in text and "24 months" in text and "Historical growth: 20.0% (FY2023 → FY2024)" in text
-    assert "Difference: +0.0 percentage points (required less historical)" in text
+    assert "FY2024" in text and "24 months" in text and "Historical growth: 20% (FY2023 → FY2024)" in text
+    assert "Difference: 0 percentage points (required less historical)" in text
     assert any("base €1,440,000 for FY2024" in d for d in row["calc_details"]) and "required annual growth" in row["calc_details"][0]
 
 
 def test_a_range_is_shown_as_a_range():
     row = row_of(claim("Revenue €1.7M to €2.2M in FY2025", 1_728_000, "FY2025", "2025", basis="projection", value_high=2_160_000))
-    assert row["calc_lines"][0].startswith("Required growth: 20.0% to 50.0% a year")
+    assert row["calc_lines"][0].startswith("Required growth: 20% to 50% a year")
     assert row["evidence_label"] == "Unverified"
 
 
 def test_arr_is_set_against_the_latest_observation_of_arr_and_customers_against_customers():
     row = row_of(claim("ARR €1.7M target by Dec 2025", 1_728_000 * 1.0, "Dec 2025", "2025-12", claim_type="arr", basis="projection"))
-    assert row["metric"] == "ARR" and row["calc_lines"][0].startswith("Required growth: 20.0% a year")
+    assert row["metric"] == "ARR" and row["calc_lines"][0].startswith("Required growth: 20% a year")
     assert any("base" in d and "2024-12" in d for d in row["calc_details"])
     row = row_of(claim("180 customers by Dec 2025", 180, "Dec 2025", "2025-12", claim_type="customers", currency=None, basis="projection"))
-    assert row["metric"] == "Customer count" and row["calc_lines"][0].startswith("Required growth: 50.0% a year")
+    assert row["metric"] == "Customer count" and row["calc_lines"][0].startswith("Required growth: 50% a year")
 
 
 def test_a_part_year_of_actuals_keeps_the_remaining_amount_labelled_a_calculation():

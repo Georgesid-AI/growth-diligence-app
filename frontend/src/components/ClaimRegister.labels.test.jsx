@@ -61,7 +61,7 @@ test("plan 5: the evidence status sits in the Result column and the extraction c
     expect(status.textContent).toBe("Contradicted");
     expect(confidence.closest("td")).not.toBe(status.closest("td"));
     expect(row.querySelector('[data-testid="register-observed"]').textContent).toContain("198,143 EUR");
-    expect(row.querySelector('[data-testid="register-gap"]').textContent).toBe("41,857 EUR · 17 %");
+    expect(row.querySelector('[data-testid="register-gap"]').textContent).toBe("41,857 EUR · 17%");
   } finally { await done(); }
 });
 

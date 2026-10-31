@@ -4,6 +4,7 @@
  * confidence number or a cost; a reason code has one closed text.
  */
 import { fmtMonth, typeLabel } from "./chatUpload";
+import { fmtCount } from "./format";
 
 // The six types, in the order of the specification (section 3); the keys are the codes the server accepts.
 export const TYPE_LABELS = {
@@ -101,7 +102,7 @@ export const claimsText = (rows) => {
   const kinds = [...new Set(rows.map((r) => r.kind))].join(", ");
   return rows.length === 1
     ? `1 row (${kinds}) is not used as revenue and is kept as a claim for matching.`
-    : `${rows.length} rows (${kinds}) are not used as revenue and are kept as claims for matching.`;
+    : `${fmtCount(rows.length)} rows (${kinds}) are not used as revenue and are kept as claims for matching.`;
 };
 
 /** S31k: the currencies a drop-down offers, the audit's reporting currency first. */

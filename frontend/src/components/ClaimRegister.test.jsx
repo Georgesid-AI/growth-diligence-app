@@ -65,7 +65,7 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.querySelector('[data-testid="register-observed"]').textContent).toContain("202,125 EUR");
   // issue #136: the figure's own citation stands beside the number, not only on hover
   expect(row.querySelector('[data-testid="register-observed-citation"]').textContent).toBe("(mrr_series.data.total, CSV, rows 2–71, Feb 2024)");
-  expect(row.querySelector('[data-testid="register-gap"]').textContent).toBe("beat 2,125 EUR · 1.1 %");
+  expect(row.querySelector('[data-testid="register-gap"]').textContent).toBe("beat 2,125 EUR · 1.1%");
   expect(row.querySelector('[data-testid="register-gloss"]').textContent).toBe("€2,125 better than claimed");
   expect(row.querySelector('[data-testid="register-evidence"]').textContent).toBe("Verified");
   expect(row.querySelector('[data-testid="register-evidence-reason"]').textContent).toBe("within ±5% of the claim");
@@ -145,7 +145,7 @@ test("overlaps name the other rows (no rank) and a shortfall shows beside the va
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
   expect(rows[0].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with Revenue, FY2024");
   expect(rows[1].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with ARR, Feb 2024");
-  expect(rows[0].querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("VaS not yet computed · shortfall 18 %");
+  expect(rows[0].querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("VaS not yet computed · shortfall 18%");
 });
 
 test("the segment and metric are selects of the right options, under Details; the rest is text", async () => {
@@ -244,7 +244,7 @@ test("a confirmed row can be switched back, and the implied take rate shows both
   const volume = { ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst",
     implied_take_rate: 0.1, implied_take_rate_source: "revenue: revenue.csv · CSV · rows 2–71; volume: deck.pptx · slide 3" };
   const { host } = await mount([volume]);
-  expect(host.querySelector('[data-testid="register-take-rate"]').textContent).toContain("Implied take rate 10 % (derived, not verified)");
+  expect(host.querySelector('[data-testid="register-take-rate"]').textContent).toContain("Implied take rate 10% (derived, not verified)");
   expect(host.querySelector('[data-testid="register-take-rate-source"]').textContent).toContain("deck.pptx");
   api.answerTurnover.mockResolvedValue({ register: [{ ...volume, turnover_state: "revenue" }] });
   await act(async () => { host.querySelector('[data-testid="register-turnover-revenue"]').click(); });

@@ -363,7 +363,7 @@ export default function Dashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        <Card className="lg:col-span-8" testid="mrr-by-segment-chart" period={periods.mrr_series} source={r.mrr_series.source} title="Monthly MRR by Segment" hint={`${r.mrr_series.months.length} months · recurring only`}>
+        <Card className="lg:col-span-8" testid="mrr-by-segment-chart" period={periods.mrr_series} source={r.mrr_series.source} title="Monthly MRR by Segment" hint={`${fmtCount(r.mrr_series.months.length)} months · recurring only`}>
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={r.mrr_series.data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />

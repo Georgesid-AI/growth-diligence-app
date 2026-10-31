@@ -18,6 +18,8 @@ import hashlib
 from datetime import datetime, timezone
 from typing import List, NamedTuple, Optional
 
+from .. import formatting as fmt
+
 COLLECTION = "prompts"
 
 # What the narrative endpoint answers when a prompt the step needs is not in the store. No model call is made.
@@ -107,7 +109,7 @@ async def upload(db, name: str, text: str) -> dict:
     if not text.strip():
         raise PromptRefused("the prompt text is empty")
     if len(text) > MAX_TEXT_CHARS:
-        raise PromptRefused(f"Prompt is {len(text)} characters; the limit is {MAX_TEXT_CHARS:,}.")
+        raise PromptRefused(f"Prompt is {len(text)} characters; the limit is {fmt.fmt_count(MAX_TEXT_CHARS)}.")
     from pymongo.errors import DuplicateKeyError
     await db[COLLECTION].create_index([("name", 1), ("version", 1)], unique=True)
     for _ in range(5):                      # a second upload at the same moment takes the number: try the next one

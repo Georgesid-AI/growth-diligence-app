@@ -17,6 +17,7 @@ import { asOfInputValue } from "@/lib/auditForm";
 import { mapState } from "@/lib/chatUpload";
 import { seeGlossary } from "@/lib/glossary";
 import { splitFiles } from "@/lib/runAudit";
+import { fmtCount } from "@/lib/format";
 
 export default function MappingWizard() {
   const { id } = useParams();
@@ -260,7 +261,7 @@ function BillingTerms({ auditId, customerCol, hasServiceDates, billingTerms, set
               className="h-8 pl-8 bg-white border-[#E5E7EB] text-xs" data-testid="billing-search-input" />
           </div>
           <div className="text-[10px] font-mono text-slate-500 mb-2">
-            {customers?.length} customers · {overrideCount} non-monthly override{overrideCount === 1 ? "" : "s"}
+            {fmtCount(customers?.length ?? 0)} customers · {overrideCount} non-monthly override{overrideCount === 1 ? "" : "s"}
           </div>
           <div className="max-h-56 overflow-y-auto pr-1 space-y-1.5">
             {filtered.slice(0, 200).map((cust) => (

@@ -544,7 +544,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
     read = integrity.smoothness(stored)
     assert read is not None, "fixture: the sample run has 13 consecutive months"
     check = next(c for c in gateway._slice_for_step(stored, "data_integrity")["integrity"] if c["check"] == "Month-on-month revenue smoothness")
-    assert check["status"] == "computed" and check["deviation_points"] == f"{read['deviation']:.1f} points"
+    assert check["status"] == "computed" and check["deviation_points"] == f"{__import__("app.formatting", fromlist=["x"]).fmt_number(read['deviation'])} points"
     assert (check["first_month"], check["last_month"]) == (read["first"], read["last"])
     block = next(r for r in integrity.assess(stored, 0, [])["results"] if r["check"] == "Smoothness")
     assert block["result"] == check["result"], "the screen and the narrative never disagree"

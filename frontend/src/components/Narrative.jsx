@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, FileText } from "lucide-react";
 import { NARRATIVE_EXPECTED_SECONDS, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 import { seeGlossary } from "@/lib/glossary";
+import { fmtCount } from "@/lib/format";
 
 /**
  * Renders a generated narrative and, more importantly, how much of it is
@@ -148,7 +149,7 @@ function Section({ title, items, ranked = false }) {
       <ul className="mt-1 space-y-1">
         {items.map((item, i) => (
           <li key={i} className="flex gap-2 text-sm text-slate-700">
-            <span className="text-slate-500">{ranked ? `${i + 1}.` : "·"}</span>
+            <span className="text-slate-500">{ranked ? `${fmtCount(i + 1)}.` : "·"}</span>
             {seeGlossary(item)}
           </li>
         ))}

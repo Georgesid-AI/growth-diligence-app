@@ -10,7 +10,7 @@
  *   countUp   required / implied count, rounds up   128.3 -> "129"
  *   days      rounds up, "days" suffix              42.1  -> "43 days"
  *   months    the display rule, "months" suffix      12.24 -> "12 months"
- *   pct       a fraction as a percent, display rule  1.0641 -> "106 %", 0.045 -> "4.5 %"
+ *   pct       a fraction as a percent, display rule  1.0641 -> "106%", 0.045 -> "4.5%"
  *   ratio     the display rule, "x"                  3.28  -> "3.3x"
  *
  * The display rule (docs/design/read-check-review.md section 11.5): whole numbers; one decimal only for a single-digit multiple (3.3x), a
@@ -73,10 +73,10 @@ export const fmtDays = (v) => {
 export const fmtMonths = (v) => (missing(v) ? PLACEHOLDER : `${displayNumber(v)} months`);
 // A percent is held as its fraction (1.0641 is 106.41%); reading it for display means times 100. toPrecision drops the
 // binary noise of the product (0.085 * 100 is 8.500000000000002), so a .5 rounds up as in the backend.
-export const fmtPct = (v) => (missing(v) ? PLACEHOLDER : `${displayNumber(Number((Number(v) * 100).toPrecision(12)))} %`);
+export const fmtPct = (v) => (missing(v) ? PLACEHOLDER : `${displayNumber(Number((Number(v) * 100).toPrecision(12)))}%`);
 export const fmtRatio = (v) => (missing(v) ? PLACEHOLDER : `${displayNumber(v)}x`);
 /** A rate already written as a percent (4.5, not 0.045). */
-export const fmtPercentPoints = (v) => (missing(v) ? PLACEHOLDER : `${displayNumber(v)} %`);
+export const fmtPercentPoints = (v) => (missing(v) ? PLACEHOLDER : `${displayNumber(v)}%`);
 /** Percentage points: "+1.2 pts". */
 export const fmtPoints = (v) => (missing(v) ? PLACEHOLDER : `${Number(v) > 0 ? "+" : ""}${displayNumber(Number((Number(v) * 100).toPrecision(12)))} pts`);
 /** A byte size: "61 KB", "1.2 MB". */

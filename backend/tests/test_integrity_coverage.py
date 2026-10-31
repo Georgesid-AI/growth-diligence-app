@@ -217,7 +217,7 @@ def test_a_series_growing_exactly_one_percent_a_month_is_amber_and_the_finding_n
     assessed, row, ran = _smooth(_series(totals))
     assert row["status"] == "Completed" and row["reason"] is None and row["result"] == "Amber"
     assert ran["result"] == "Amber"
-    assert ran["finding"] == ("Month-on-month revenue growth varies by 0.0 points (standard deviation) over 2023-12–2024-12; "
+    assert ran["finding"] == ("Month-on-month revenue growth varies by 0 points (standard deviation) over 2023-12–2024-12; "
                               "below 0.5 points is unusually smooth (provisional threshold, 3 synthetic series)")
     assert ran["source"] == "revenue.csv · CSV · rows 2–71 (70 rows)"
 

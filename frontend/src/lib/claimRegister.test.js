@@ -46,14 +46,14 @@ describe("what a row shows", () => {
   test("the claim: its type and its figure in its own unit", () => {
     expect(claimText(ARR_ROW)).toBe("Revenue · 200,000 EUR");
     expect(claimText({ ...ARR_ROW, claimed_high: 210000, claimed_value: 190000 })).toBe("Revenue · 190,000–210,000 EUR");
-    expect(claimText(WIN_ROW)).toBe("Sales · 41 %");
+    expect(claimText(WIN_ROW)).toBe("Sales · 41%");
     expect(claimText({ ...ARR_ROW, claim_type: "customers", claimed_value: 4, unit: "customers", currency: null })).toBe("Customers · 4 customers");
     expect(claimText({ ...ARR_ROW, claim_type: "sales", claimed_value: 8, unit: "weeks", currency: null })).toBe("Sales · 8 weeks");
   });
 
   test("the observed value with its date, or a dash with the reason it is missing", () => {
     expect(observedText(ARR_ROW, "EUR")).toEqual({ value: "202,125 EUR", at: "2024-02" });
-    expect(observedText(WIN_ROW, "EUR")).toEqual({ value: "40 %", at: "2024-02" });
+    expect(observedText(WIN_ROW, "EUR")).toEqual({ value: "40%", at: "2024-02" });
     expect(observedText({ ...ARR_ROW, metric: "Median sales cycle", observed_value: 58.5 }, "EUR").value).toBe("59 days");
     expect(observedText({ ...ARR_ROW, metric: "CAC payback", observed_value: 14 }, "EUR").value).toBe("14 months");
     expect(observedText({ ...ARR_ROW, metric: "Customer count", observed_value: 5 }, "EUR").value).toBe("5");
@@ -61,15 +61,15 @@ describe("what a row shows", () => {
   });
 
   test("the gap in native units and as a share of the claim, Verified rows included", () => {
-    expect(gapText(ARR_ROW, "EUR")).toBe("beat 2,125 EUR · 1.1 %");
-    expect(gapText(WIN_ROW, "EUR")).toBe("1 pp · 2.4 %");
-    expect(gapText({ ...ARR_ROW, gap: 41857.32, gap_normalised: 0.174405, gap_kind: "miss" }, "EUR")).toBe("41,857 EUR · 17 %");
-    expect(gapText({ ...ARR_ROW, gap: 4797874.52, gap_normalised: 0.959575, gap_kind: "to go" }, "EUR")).toBe("to go 4,797,875 EUR · 96 %");
-    expect(gapText({ ...ARR_ROW, gap: 0, gap_normalised: 0, gap_kind: null }, "EUR")).toBe("0 EUR · 0 %");
+    expect(gapText(ARR_ROW, "EUR")).toBe("beat 2,125 EUR · 1.1%");
+    expect(gapText(WIN_ROW, "EUR")).toBe("1 pp · 2.4%");
+    expect(gapText({ ...ARR_ROW, gap: 41857.32, gap_normalised: 0.174405, gap_kind: "miss" }, "EUR")).toBe("41,857 EUR · 17%");
+    expect(gapText({ ...ARR_ROW, gap: 4797874.52, gap_normalised: 0.959575, gap_kind: "to go" }, "EUR")).toBe("to go 4,797,875 EUR · 96%");
+    expect(gapText({ ...ARR_ROW, gap: 0, gap_normalised: 0, gap_kind: null }, "EUR")).toBe("0 EUR · 0%");
     expect(gapText({ ...ARR_ROW, gap: null, gap_normalised: null, gap_kind: null }, "EUR")).toBe("—");
-    expect(gapText({ ...ARR_ROW, metric: "Median sales cycle", gap: 13.5, gap_normalised: 0.3, gap_kind: "miss" }, "EUR")).toBe("14 days · 30 %");
-    expect(gapText({ ...ARR_ROW, metric: "Customer count", gap: -1, gap_normalised: -0.25, gap_kind: "beat" }, "EUR")).toBe("beat 1 · 25 %");
-    expect(gapText({ ...ARR_ROW, metric: "CAC payback", gap: 2, gap_normalised: 0.1667, gap_kind: "miss" }, "EUR")).toBe("2 months · 17 %");
+    expect(gapText({ ...ARR_ROW, metric: "Median sales cycle", gap: 13.5, gap_normalised: 0.3, gap_kind: "miss" }, "EUR")).toBe("14 days · 30%");
+    expect(gapText({ ...ARR_ROW, metric: "Customer count", gap: -1, gap_normalised: -0.25, gap_kind: "beat" }, "EUR")).toBe("beat 1 · 25%");
+    expect(gapText({ ...ARR_ROW, metric: "CAC payback", gap: 2, gap_normalised: 0.1667, gap_kind: "miss" }, "EUR")).toBe("2 months · 17%");
   });
 
   test("a multiple reads with one decimal and an x, in the claim cell and the gate context (George, 2026-10-24)", () => {
@@ -88,7 +88,7 @@ describe("what a row shows", () => {
     expect(claimFigure(ARR_ROW)).toBe("200,000 EUR");
     expect(claimFigure({ ...ARR_ROW, unit: "years", currency: null, claimed_value: 1 })).toBe("1 years");
     expect(gateContext(ARR_ROW, "EUR")).toBe("Claimed 200,000 EUR (Feb 2024) · Observed 202,125 EUR (2024-02)");
-    expect(gateContext(WIN_ROW, "EUR")).toBe("Claimed 41 % (no period stated) · Observed 40 % (2024-02)");
+    expect(gateContext(WIN_ROW, "EUR")).toBe("Claimed 41% (no period stated) · Observed 40% (2024-02)");
     expect(gateContext({ ...ARR_ROW, observed_value: null }, "EUR")).toBe("Claimed 200,000 EUR (Feb 2024)");
   });
 
@@ -177,12 +177,12 @@ describe("what the analyst may set", () => {
 describe("the columns and the gate of verdict-and-memo.md sections 2 and 3", () => {
   test("W1: value at stake reads not yet computed, with the shortfall when the claim missed", () => {
     expect(valueAtStakeText(ARR_ROW)).toBe("not yet computed");
-    expect(valueAtStakeText({ ...ARR_ROW, shortfall: 0.183 })).toBe("not yet computed · shortfall 18 %");
+    expect(valueAtStakeText({ ...ARR_ROW, shortfall: 0.183 })).toBe("not yet computed · shortfall 18%");
   });
 
   test("W1: a computed value at stake reads as an amount; an empty target field is named; a row with no ARR link says so", () => {
     expect(valueAtStakeText({ ...ARR_ROW, value_at_stake_arr: 600000 }, "EUR")).toBe("600,000 EUR");
-    expect(valueAtStakeText({ ...ARR_ROW, value_at_stake_arr: 600000, shortfall: 0.183 }, "EUR")).toBe("600,000 EUR · shortfall 18 %");
+    expect(valueAtStakeText({ ...ARR_ROW, value_at_stake_arr: 600000, shortfall: 0.183 }, "EUR")).toBe("600,000 EUR · shortfall 18%");
     expect(valueAtStakeText({ ...ARR_ROW, vas_reason: "not yet computed: Target ARR empty" })).toBe("not yet computed: Target ARR empty");
     expect(valueAtStakeText({ ...ARR_ROW, vas_reason: "no ARR link: untested claim" })).toBe("no ARR link: untested claim");
   });

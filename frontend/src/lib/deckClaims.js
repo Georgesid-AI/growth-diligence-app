@@ -8,7 +8,7 @@
 import { displayDate } from "./datePicker";
 import evidenceLabels from "./evidence_labels.json";
 import informationalFlags from "./informational_flags.json";
-import { fmtExact, fmtNumber } from "./format";
+import { fmtCount, fmtExact, fmtNumber } from "./format";
 import listTexts from "./claims_list_texts.json";
 
 export const PLACEHOLDER = "—";
@@ -145,7 +145,7 @@ function amount(c, value, high, rate) {
   const scale = rate ? Number(rate) : 1;
   const fmt = rate ? whole : figure;
   const n = present(high) ? `${fmt(value * scale)}–${fmt(high * scale)}` : fmt(value * scale);
-  if (c.unit === "%") return `${n} %`;
+  if (c.unit === "%") return `${n}%`;
   if (c.unit === "x") return `${n}x`;
   if (c.unit) return `${n} ${c.unit}`;
   return c.currency ? `${n} ${rate ? c.fx.currency : c.currency}` : n;
@@ -245,7 +245,7 @@ export const MIXED_SLIDE_LABEL = "mixed slide – check";
 // The word the deck uses for the figure ("Turnover", "Revenue"), shown before it so two figures are never mistaken for one metric.
 const figureText = (f) => {
   const n = present(f.value_high) ? `${figure(f.value)}–${figure(f.value_high)}` : figure(f.value);
-  if (f.unit === "%") return `${f.label ? `${f.label} ` : ""}${n} %`;
+  if (f.unit === "%") return `${f.label ? `${f.label} ` : ""}${n}%`;
   if (f.unit === "x") return `${f.label ? `${f.label} ` : ""}${n}x`;
   return [f.label, n, f.currency || f.unit].filter(Boolean).join(" ");
 };
@@ -392,7 +392,7 @@ export function aiReadStatus(deck) {
     case "waiting": return DECK_AI_STATUS.waiting;
     case "reading": {
       const p = deck.read_progress;
-      return p && p.total ? `page ${Math.min(p.done + 1, p.total)} of ${p.total}` : deck.ai_message === "restarted" ? "restarted" : "queued";
+      return p && p.total ? `page ${fmtCount(Math.min(p.done + 1, p.total))} of ${fmtCount(p.total)}` : deck.ai_message === "restarted" ? "restarted" : "queued";
     }
     case "python_only": return "not run (AI-assisted reading is off)";
     case "blocked": return BLOCKED_STATUS;
