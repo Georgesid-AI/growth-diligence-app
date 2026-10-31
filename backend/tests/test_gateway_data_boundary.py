@@ -4458,3 +4458,68 @@ def test_the_reasons_and_the_log_line_of_the_review_follow_up_are_closed_words_w
     db = t.FakeDB()
     db["prompts"].docs[:] = [d for d in db["prompts"].docs if d["name"] != "reviewer"]
     assert asyncio.run(g.reviewer_startup_problem(db)) == "prompt reviewer is not in the store"
+
+
+# ---------------------------------------------------------------------------
+# The reading record keeps the prompt text as sent (so a re-read needs no prompt store). It is the methodology (rule 26): it never leaves the
+# server in an API response that returns a reading or the register, in the map export (JSON or CSV), or in a log line.
+# ---------------------------------------------------------------------------
+def test_the_reading_records_prompt_text_is_in_no_api_response_no_map_export_and_no_log_line(caplog, monkeypatch):
+    import logging
+    import test_sheet_reader_flow as flow_t
+    from fastapi.testclient import TestClient
+    from app import readings
+    import server
+
+    monkeypatch.undo()          # tests/conftest.py switches the sheet reader off for this module; this test lets the upload queue it
+    db = t.FakeDB()
+    db["audits"].docs.append({**flow_t.AUDIT_DOC, "company_name": flow_t.COMPANY, "usage": __import__("app.usage", fromlist=["x"]).empty()})
+    mp = monkeypatch
+    mp.setattr(server, "db", db)
+    mp.setenv("SHEET_READER_MODEL", flow_t.MODEL)
+    mp.delenv("READER_V1", raising=False)
+    server._RECOGNITION_CACHE.clear()
+    router = flow_t.Router(flow_t.good_map())
+    mp.setattr(gateway, "AnthropicAdapter", lambda *a, **k: router)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    client.db = db
+    caplog.set_level(logging.DEBUG)
+    assert flow_t.upload(client, flow_t.MONTHLY, flow_t.monthly()).status_code == 200
+
+    (record,) = db[readings.READINGS].docs
+    prompt_text = record["prompt_text"]
+    assert len(prompt_text) > 20, "the record holds the prompt text, or this test checks nothing"
+    file_hash, audit = record["file_hash"], flow_t.AUDIT
+    pieces = [prompt_text, prompt_text.strip()[:60]]            # the whole text and its opening line
+
+    def holds(blob):
+        return any(p and p in blob for p in pieces)
+
+    def keys(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                yield k
+                yield from keys(v)
+        elif isinstance(node, list):
+            for v in node:
+                yield from keys(v)
+
+    responses = {
+        "register": client.get(f"/api/audits/{audit}/reading"),
+        "audit": client.get(f"/api/audits/{audit}"),
+        "export json": client.get(f"/api/audits/{audit}/readings/{file_hash}/export"),
+        "export csv": client.get(f"/api/audits/{audit}/readings/{file_hash}/export?format=csv"),
+        "cell": client.get(f"/api/audits/{audit}/readings/{file_hash}/cell", params={"sheet": flow_t.SHEET, "cell": "G4"}),
+    }
+    for name, response in responses.items():
+        assert response.status_code == 200, name
+        assert not holds(response.text), f"the prompt text is in the {name} response"
+        if "json" in response.headers.get("content-type", ""):
+            assert "prompt_text" not in set(keys(response.json())), f"the key prompt_text is in the {name} response"
+    # the same after an analyst's Change and a card's decision, which add records beside the reading
+    changed = client.post(f"/api/audits/{audit}/readings/{file_hash}/change", json={"what": "boundary", "sheet": flow_t.SHEET, "column": "F"})
+    assert not holds(changed.text)
+    after = client.get(f"/api/audits/{audit}/readings/{file_hash}/export")
+    assert after.status_code == 200 and not holds(after.text) and "prompt_text" not in set(keys(after.json()))
+    logs = "\n".join(r.getMessage() for r in caplog.records) + "\n".join(str(getattr(r, "__dict__", "")) for r in caplog.records)
+    assert not holds(logs), "the prompt text is in a log line"
