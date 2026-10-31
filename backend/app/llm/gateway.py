@@ -60,6 +60,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from schemas.metrics import safe_problems
@@ -2134,7 +2135,7 @@ async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
-    fiscal_year_end: int = 12, reread_of: Optional[dict] = None,
+    fiscal_year_end: int = 12, reread_of: Optional[Any] = None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2221,6 +2222,8 @@ async def read_structure(
         model = page_reader_model()
     elif structure_type == SHEET_READING:
         model, images = sheet_reader_model(), None
+        if isinstance(reread_of, str):
+            reread_of = {"key": reread_of}
         if reread_of:
             model = reread_of.get("model") or model
             if not _sheet_reader_model_ok(model):
@@ -2228,9 +2231,20 @@ async def read_structure(
     else:
         images = None
     try:
-        prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
-                                              PAGE_CLAIMS: PAGE_CLAIMS_PROMPT, SHEET_READING: SHEET_READING_PROMPT}.get(structure_type, STRUCTURE_PROMPT),
-                                         version=(reread_of or {}).get("prompt_version") if structure_type == SHEET_READING else None)
+        if structure_type == SHEET_READING and recheck:
+            # A re-read takes the prompt text, version and model from the reading record it belongs to, never from the prompt store:
+            # the second reading is made under the text the first was made under, whatever the store holds now.
+            record = await db[readings.READINGS].find_one({"key": reread_of.get("key"), "status": {"$ne": readings.NOT_READ}}, {"_id": 0}) if reread_of else None
+            if not record or not record.get("prompt_text") or readings.prompt_hash(record["prompt_text"]) != record.get("prompt_hash"):
+                return _structure_result("not_read", structure_type, "the reading record holds no prompt text for a re-read")
+            prompt = SimpleNamespace(text=record["prompt_text"], version=record.get("prompt_version") or "", name=SHEET_READING_PROMPT)
+            model = record.get("model") or model
+            if not _sheet_reader_model_ok(model):
+                return _structure_result("blocked", structure_type, "the reading record's model is not permitted")
+        else:
+            prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
+                                                  PAGE_CLAIMS: PAGE_CLAIMS_PROMPT, SHEET_READING: SHEET_READING_PROMPT}.get(structure_type, STRUCTURE_PROMPT),
+                                             version=(reread_of or {}).get("prompt_version") if structure_type == SHEET_READING else None)
     except prompt_store.PromptMissing:
         if structure_type == PAGE_CLAIMS:
             logger.warning("%s prompt missing: run_id=%s step=%s", PAGE_CLAIMS_PROMPT, audit_id, STRUCTURE_STEP)
@@ -2239,7 +2253,8 @@ async def read_structure(
         return _structure_result("not_read", structure_type, PROMPT_MISSING_TEXT if structure_type == PAGE_CLAIMS else NOT_READ)
     if price_model(model) not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)
-    key = structure_key(text, structure_type, prompt_store.cache_tag(prompt), model, images)
+    tag = (prompt.version if isinstance(prompt, SimpleNamespace) else prompt_store.cache_tag(prompt))
+    key = structure_key(text, structure_type, tag, model, images)
     digest = content_hash(text)
     base = {"key": key, "prompt_version": prompt.version, "model": model}
     system = prompt.text
@@ -2421,7 +2436,7 @@ async def read_structure(
                 await readings.put_reread(db, reading=reading_key, items=recheck_items, reason=recheck_id, prompt_version=prompt.version, model=model,
                                           output=restored, input_tokens=in_tok, output_tokens=out_tok, cost=cost)
             else:
-                await readings.put(db, account=account, file_hash=file_hash, prompt_version=prompt.version, prompt_hash=prompt_hash, model=model, reading=restored,
+                await readings.put(db, account=account, file_hash=file_hash, prompt_version=prompt.version, prompt_hash=prompt_hash, model=model, reading=restored, prompt_text=system,
                                    input_tokens=in_tok, output_tokens=out_tok, cost=cost)
                 await readings.use(db, audit_id, reading_key)
         else:
