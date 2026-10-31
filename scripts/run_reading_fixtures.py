@@ -9,10 +9,9 @@ notice, exit 0, when any is absent:
     ANTHROPIC_API_KEY     the provider key (a GitHub Actions secret)
     SHEET_READING_PROMPT  the text of the `sheet_reading` prompt (a GitHub Actions secret: the prompt is never in the repository)
     SHEET_READER_MODEL    optional: an allow-listed model id (a repository variable); the structure model when unset
-    DECK_FIXTURE          "1" when the pull request changed a file of .github/deck-reading-path.txt (the workflow sets it); without it the deck fixture is
-                          skipped, whatever else is set
-    DECK_READING_PROMPT   the text of the `deck_reading` prompt (a secret) for the deck fixture; without it the deck fixture alone is skipped with a
-                          notice (PR 3: the deck joins the job, the page reader's figures are checked against the stored page text)
+    DECK_FIXTURE          "1" when the pull request changed a file of .github/deck-reading-path.txt (the workflow sets it)
+    DECK_READING_PROMPT   the text of the `deck_reading` prompt (a secret). The deck fixture is read only when both are set, the workflow's own
+                          condition for installing the converter; otherwise it is listed as "skipped: deck path unchanged" and is no difference
 
 The cap is one provider call per fixture per run: each file is read once, with no re-read, and the first reading is what is compared. The
 reading goes through the same gateway as the product (masking, token cap, allow-listed model, prompt from a store), with an in-memory store holding
@@ -39,13 +38,15 @@ class OneCall:
     """The provider adapter, counting: one call per fixture is the cap, and a second one is an error."""
 
     def __init__(self, adapter):
-        self.adapter, self.calls = adapter, 0
+        self.adapter, self.calls, self.tokens_in, self.tokens_out = adapter, 0, 0, 0
 
     def complete(self, **kw):
         self.calls += 1
         if self.calls > 1:
             raise RuntimeError("the cap is one provider call per fixture per run")
-        return self.adapter.complete(**kw)
+        reply = self.adapter.complete(**kw)
+        self.tokens_in, self.tokens_out = reply[1], reply[2]
+        return reply
 
     def count_tokens(self, **kw):
         return self.adapter.count_tokens(**kw)
@@ -64,6 +65,11 @@ def empty_store(prompt_text: str, deck_prompt: str = ""):
     for collection in readings.COLLECTIONS:
         assert not db[collection].docs, f"the job's store must start without {collection}"
     return db
+
+
+def deck_due() -> bool:
+    """The deck fixture is read only when the workflow's condition for installing the converter holds: DECK_FIXTURE=1 and the deck prompt set."""
+    return os.environ.get("DECK_FIXTURE") == "1" and bool(os.environ.get("DECK_READING_PROMPT", "").strip())
 
 
 def deck_images_problem() -> str:
@@ -120,16 +126,16 @@ async def read_all() -> int:
         diffs = rf.compare(fixture["expected_map"], month, got["file_map"])
         failed += bool(diffs)
         counts = doc["counts"]
-        print(f"{name:26} {'read':10} {month or '-':8} {'-':14} "
+        print(f"{name:26} {'read':10} {month or '-':8} {f'{adapter.tokens_in}/{adapter.tokens_out}':14} "
               f"{'; '.join(diffs) if diffs else 'none'}  [confirmed {counts['confirmed']}, rejected {counts['rejected']}, cannot check {counts['cannot_check']}]")
         result = {"items": doc["items"]}
         for item in result["items"]:
             if item["outcome"] == checks.CANNOT:
                 print(f"    cannot check {item['key']}: {item['reason']}")
-    if os.environ.get("DECK_FIXTURE") == "1":
+    if deck_due():
         failed += await read_decks(db)
     else:
-        print("::notice title=Deck fixture skipped::DECK_FIXTURE is not 1: no file of the deck reading path (.github/deck-reading-path.txt) changed.")
+        print(f"{'deck_rotated_axis':26} {'skipped':10} {'-':8} {'-':14} skipped: deck path unchanged")
     print(f"{failed} fixture(s) differ from their expected map" if failed else "every fixture agrees with its expected map")
     return 1 if failed else 0
 
@@ -202,7 +208,7 @@ def main() -> int:
         return 0
     # The deck fixture is drawn first and then read by the model like the sheets (read_all -> read_decks); when it is due and its pages cannot
     # be drawn the job stops before any provider call.
-    problem = deck_images_problem() if os.environ.get("DECK_FIXTURE") == "1" and os.environ.get("DECK_READING_PROMPT", "").strip() else ""
+    problem = deck_images_problem() if deck_due() else ""
     if problem:
         print(f"page images unavailable: {problem}")
         return 1

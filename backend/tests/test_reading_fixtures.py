@@ -293,6 +293,8 @@ def test_the_job_reads_every_fixture_once_and_exits_0_when_every_reading_agrees(
     assert len(router.requests) == len(SHEETS), "one provider call per fixture, no re-read"
     assert "every fixture agrees with its expected map" in out and all(f["name"] in out for f in SHEETS)
     assert "recheck" not in json.dumps(router.requests)
+    assert out.count("3000/400") == len(SHEETS), "the tokens in/out column shows the call's tokens"
+    assert "skipped: deck path unchanged" in out and "differ from" not in out
     assert "Client-01" not in out and "447223" not in out, "no cell text in the job's output"
 
 
@@ -423,8 +425,12 @@ def test_the_job_reads_the_deck_fixture_only_when_the_deck_path_changed(monkeypa
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("DECK_FIXTURE", raising=False)
     assert runner.main() == 0 and not called
-    assert "Deck fixture skipped::DECK_FIXTURE is not 1" in capsys.readouterr().out
+    assert "skipped: deck path unchanged" in capsys.readouterr().out
     monkeypatch.setenv("DECK_FIXTURE", "1")
+    monkeypatch.delenv("DECK_READING_PROMPT")
+    assert runner.main() == 0 and not called
+    assert "skipped: deck path unchanged" in capsys.readouterr().out
+    monkeypatch.setenv("DECK_READING_PROMPT", "TEST ONLY deck")
     assert runner.main() == 0 and called == [1]
 
 
