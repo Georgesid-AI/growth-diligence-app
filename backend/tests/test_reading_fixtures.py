@@ -255,7 +255,8 @@ def test_the_job_skips_with_a_notice_and_exit_0_when_the_key_the_prompt_or_the_m
 class FixtureRouter:
     """Stands for the provider: answers a reading with the ideal map of the fixture whose sheets it was sent."""
 
-    def __init__(self, differ=None):
+    def __init__(self, differ=None, boundary=None):
+        self.boundary = boundary
         self.maps = {tuple(sorted(s["sheet"] for s in f["expected_map"]["file_map"]["sheets"])): f for f in SHEETS}
         self.differ, self.requests = differ, []
 
@@ -273,6 +274,10 @@ class FixtureRouter:
         file_map = copy.deepcopy(fixture["expected_map"]["file_map"])
         if self.differ and fixture["name"] == self.differ:
             file_map["sheets"][0]["rows"][0]["role"] = "bookings"
+        if self.boundary and fixture["name"] == self.boundary:
+            la = next(sh for sh in file_map["sheets"] if sh.get("last_actual"))["last_actual"]
+            from app.structures.redact import col_letters, col_number
+            la["column"] = col_letters(col_number(la["column"]) + 1)          # rejected by the checks, so a re-read is asked for
         return json.dumps(file_map), 3000, 400
 
 
@@ -335,7 +340,8 @@ def test_the_job_starts_from_an_empty_store_and_fails_with_a_clear_line_when_a_f
     assert all(not db[c].docs for c in readings.COLLECTIONS), "no stored reading at the start of a run"
     # a store that already holds a reading is never what the job reads from: the job builds its own, so a cache hit can only be a bug
     monkeypatch.setattr(gateway, "AnthropicAdapter", FixtureRouter())
-    served = gateway.StructureRead(status="read", type="sheet_reading", cache_hit=True)
+    fx = SHEETS[0]
+    served = gateway.StructureRead(status="read", type="sheet_reading", cache_hit=True, file_map=fx["expected_map"]["file_map"], payload="x", reading_key="k")
 
     async def stored(*a, **k):
         return served
@@ -345,3 +351,36 @@ def test_the_job_starts_from_an_empty_store_and_fails_with_a_clear_line_when_a_f
     assert runner.main() == 1
     out = capsys.readouterr().out
     assert out.count("served from storage, not read by the model") == len(SHEETS) and "fixture(s) differ" in out
+
+
+def test_a_failing_re_read_leaves_the_file_read_with_its_rejected_items_noted_and_the_job_reports_the_count(monkeypatch, capsys):
+    runner = load_runner()
+    router = FixtureRouter(boundary="monthly_report")
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    runner.main()                                  # the cap refuses the second call: the re-read fails
+    out = capsys.readouterr().out
+    line = next(l for l in out.splitlines() if l.startswith("monthly_report"))
+    assert " read " in line and "not_read" not in line and re.search(r"rejected [1-9]", line), line
+    assert len(router.requests) == len(SHEETS), "the failed re-read made no provider call beyond the cap"
+
+
+def test_a_re_read_that_fails_never_marks_the_reading_not_read_and_notes_each_rejected_item():
+    fixture = next(f for f in SHEETS if f["name"] == "monthly_report")
+    bad = copy.deepcopy(fixture["expected_map"]["file_map"])
+    la = next(s for s in bad["sheets"] if s.get("last_actual"))["last_actual"]
+    from app.structures.redact import col_letters, col_number
+    la["column"] = col_letters(col_number(la["column"]) + 1)
+    for failure in (RuntimeError("cap"), gateway.GatewayError("model_refused", "no")):
+        class Failing(Ideal):
+            def complete(self, **kw):
+                if "recheck" in json.loads(kw["user_payload"]):
+                    raise failure
+                return super().complete(**kw)
+        db = t.FakeDB()
+        db["audits"].docs.append({"id": "fx", "company_name": rf.COMPANY, "structure_reading_consent": True})
+        doc = asyncio.run(sheet_reader.read_file(db, {"id": "fx"}, workbook(fixture), "f" * 64, fixture["path"].name, 12, adapter=Failing(bad)))
+        assert doc["status"] == "read" and doc["counts"]["rejected"] >= 1
+        assert doc["rereads"] and all(r["reason"].startswith("re-read not completed: ") for r in doc["rereads"])
+        assert all(i["reread_note"].startswith("re-read not completed: ") for i in doc["items"] if i["outcome"] == "rejected")
