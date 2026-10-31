@@ -16,6 +16,7 @@ from typing import Dict, List, Optional
 
 from . import checks
 from .decks import claims
+from .llm.schemas import SCHEMA_CURRENCIES
 from .structures import checker
 
 R_PAGE_RANGE = "Reading cites page {page}; the deck ends at page {last}."
@@ -44,12 +45,20 @@ def page_numbers(deck: Dict, page: int) -> List[float]:
     return out
 
 
-def unit_of(candidate: Dict) -> str:
-    """The comparison unit of a candidate: a currency or money is money, a percent a rate, anything else a count."""
+COUNT_UNITS = (None, "count", "x", "days", "months", "years")
+
+
+def unit_of(candidate: Dict) -> Optional[str]:
+    """The comparison unit of a candidate: a currency is money (0.5 %), a percent a rate (1 point), a count, a multiple or a duration is
+    compared exactly. Any other unit ("other") has none: the figure cannot be checked (C_NO_UNIT)."""
     if candidate.get("currency"):
         return "money"
     unit = candidate.get("unit")
-    return "rate" if unit == "%" else "count" if unit in (None, "x", "days", "months", "years") else "money"
+    if unit == "%":
+        return "rate"
+    if unit in COUNT_UNITS:
+        return "count"
+    return "money" if unit in SCHEMA_CURRENCIES else None
 
 
 def page_of(candidate: Dict) -> Optional[int]:
@@ -75,8 +84,10 @@ def check_figure(figure: Dict, candidate: Dict, deck: Dict) -> Dict:
         return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_REF}
     if deck.get("pages") and page > int(deck["pages"]):
         return {**base, "outcome": checks.REJECTED, "reason": R_PAGE_RANGE.format(page=page, last=deck["pages"])}
-    numbers = page_numbers(deck, page)
     unit = figure["unit"]
+    if unit not in ("money", "count", "rate"):
+        return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_UNIT}
+    numbers = page_numbers(deck, page)
     if any(checks.compare(unit, float(value), n) for n in numbers):
         return {**base, "outcome": checks.CONFIRMED, "reason": None}
     incomplete = checker.EXTRACTION_INCOMPLETE in (candidate.get("flags") or [])

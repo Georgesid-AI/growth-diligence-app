@@ -293,6 +293,16 @@ def test_a_figure_read_from_the_image_only_cannot_be_checked_page_has_no_text_la
     assert unread["outcome"] == "cannot_check"
 
 
+def test_a_count_on_a_page_is_compared_exactly_money_within_half_a_percent_and_other_cannot_be_checked():
+    page = [{"page": 2, "text": "Customers 1,004 at year end", "kind": "text"}]
+    assert check_deck(page, candidate(1000, unit="count", currency=None))["outcome"] == "rejected", "1,000 customers are not confirmed by 1,004"
+    assert check_deck(page, candidate(1004, unit="count", currency=None))["outcome"] == "confirmed"
+    assert check_deck(page, candidate(1000, unit=None, currency=None))["outcome"] == "rejected"
+    assert check_deck([{"page": 2, "text": "ARR EUR 1,004", "kind": "text"}], candidate(1000))["outcome"] == "confirmed", "money: within 0.5 %"
+    other = check_deck(page, candidate(1004, unit="other", currency=None))
+    assert other["outcome"] == "cannot_check" and other["reason"] == checks.C_NO_UNIT
+
+
 def test_a_page_outside_the_deck_is_rejected_and_a_rate_is_compared_in_points():
     assert check_deck([], candidate(5, page=9))["outcome"] == "rejected"
     rate = check_deck([{"page": 2, "text": "Churn 4.5 % a month", "kind": "text"}], candidate(4.5, unit="%", currency=None))
