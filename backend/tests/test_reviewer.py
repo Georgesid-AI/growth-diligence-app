@@ -301,10 +301,12 @@ def test_a_count_on_a_page_is_compared_exactly_money_within_half_a_percent_and_o
     page = [{"page": 2, "text": "Customers 1,004 at year end", "kind": "text"}]
     assert check_deck(page, candidate(1000, unit="count", currency=None))["outcome"] == "rejected", "1,000 customers are not confirmed by 1,004"
     assert check_deck(page, candidate(1004, unit="count", currency=None))["outcome"] == "confirmed"
-    assert check_deck(page, candidate(1004, unit=None, currency=None))["outcome"] == "cannot_check", "no unit given: the page does not choose one"
+    assert check_deck(page, candidate(1004, unit=None, currency=None))["outcome"] == "confirmed", "no unit given: compared exactly against the page text"
+    assert check_deck(page, candidate(1000, unit=None, currency=None))["outcome"] == "rejected", "exact, not within a tolerance"
     assert check_deck([{"page": 2, "text": "ARR EUR 1,004", "kind": "text"}], candidate(1000))["outcome"] == "confirmed", "money: within 0.5 %"
     other = check_deck(page, candidate(1004, unit="other", currency=None))
-    assert other["outcome"] == "cannot_check" and other["reason"] == checks.C_NO_UNIT
+    assert other["outcome"] == "confirmed" and other["reason"] is None, '"other" is no unit either: exact'
+    assert checks.C_NO_UNIT not in {check_deck(page, candidate(v, unit=None, currency=None))["reason"] for v in (1004, 7)}, "never a cannot-check reason for a page"
 
 
 def test_the_page_does_not_choose_the_scale_a_reading_of_2_5_is_not_confirmed_by_2_5m():

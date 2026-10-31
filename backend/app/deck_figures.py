@@ -58,7 +58,7 @@ COUNT_UNITS = ("count", "x", "days", "months", "years")
 
 def unit_of(candidate: Dict) -> Optional[str]:
     """The comparison unit of the unit the reader gave: a currency is money (0.5 %), a percent a rate (1 point), a count, a multiple or a
-    duration is compared exactly. No unit, or "other", has none: the figure cannot be checked (C_NO_UNIT); the page does not choose it."""
+    duration is compared exactly. No unit, or "other", has none: unit_of gives None and the page figure is compared exactly (a count; check_figure)."""
     if candidate.get("currency"):
         return "money"
     unit = candidate.get("unit")
@@ -98,7 +98,7 @@ def check_figure(figure: Dict, candidate: Dict, deck: Dict) -> Dict:
         return {**base, "outcome": checks.REJECTED, "reason": R_PAGE_RANGE.format(page=page, last=deck["pages"])}
     unit = figure["unit"]
     if unit not in ("money", "count", "rate"):
-        return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_UNIT}
+        unit = "count"            # no unit: compared exactly against the page text; "no unit" is never a reason to skip a page figure
     numbers = page_numbers(deck, page)
     if unit == "rate":
         numbers = [n / 100.0 for n in numbers]           # the page's percent points as fractions, as the reading is held
