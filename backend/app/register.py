@@ -60,8 +60,8 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
     out: Dict[str, List[Dict]] = {"confirmed": [], "rejected": [], "cannot_check": []}
     seen = set()
     for item in doc.get("items") or []:
-        if item["kind"] == "evidence" and item["outcome"] == checks.CONFIRMED:
-            continue
+        if item["kind"] != "figure":
+            continue                                  # the three tables and the file's counts hold figures only; other outcomes are notes (item_notes)
         key = f"last_actual:{item['sheet']}" if item["kind"] == "evidence" else item["key"]
         figure = figures.get(item["key"]) or {}
         row = {"key": item["key"], "kind": item["kind"], "metric": _item_name(item, doc), "value": item.get("value", figure.get("value")),
@@ -69,8 +69,6 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
                "actual_plan": figure.get("actual_plan"), "row_role": _row_role(file_map, item.get("sheet"), item.get("cell")),
                "source": {"file": doc.get("file"), "file_hash": doc.get("file_hash"), "sheet": item.get("sheet"), "cell": item.get("cell")},
                "reason": item.get("reason"), "note": None}
-        if item["kind"] not in ("figure",) and item["outcome"] == checks.CONFIRMED:
-            continue                                  # structure that checked out is in the file's counts, not a row of the table
         if (item["key"], item["kind"]) in seen:
             continue
         seen.add((item["key"], item["kind"]))
@@ -98,6 +96,26 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
                 continue
             out["cannot_check"].append({**row, "used_in": USED_IN.get(figure.get("metric") or item.get("metric")) or "—", "card_id": card_ids.get(item["key"])})
     return out
+
+
+ROW_KINDS = ("row", "variance", "parts")
+
+
+def item_notes(doc: Dict) -> Dict:
+    """The check outcomes that are not figures: {"rows": {(sheet, row): reason}, "file": [{"name", "outcome", "reason"}]}. A row-level outcome
+    (a row, its variance or its parts) is a note on that row of the lines table; the rest (periods, currency, last actual, evidence) are notes of the file.
+    Neither is counted: the summary line and the three tables count figures only."""
+    rows: Dict = {}
+    file_notes: List[Dict] = []
+    for item in doc.get("items") or []:
+        if item["kind"] == "figure" or item["outcome"] == checks.CONFIRMED:
+            continue
+        reason = item.get("reason") or item["outcome"].replace("_", " ")
+        if item["kind"] in ROW_KINDS and item.get("row") is not None:
+            rows.setdefault((item["sheet"], item["row"]), []).append(reason)
+        else:
+            file_notes.append({"name": _item_name(item, doc), "outcome": item["outcome"], "reason": reason})
+    return {"rows": rows, "file": file_notes}
 
 
 def deck_rows(deck: Dict) -> Dict[str, List[Dict]]:
@@ -168,13 +186,17 @@ async def build(db, audit_id: str) -> Dict:
         rows = sheet_rows(doc, effective, decided, card_ids)
         for name in tables:
             tables[name] += rows[name]
-        counts = doc.get("counts") or {}
+        notes = item_notes(doc)
         shown = _effective_lines(doc, effective)
+        for entry in shown:
+            for ln in entry["lines"]:
+                ln["note"] = "; ".join(notes["rows"].get((entry["sheet"], ln["row"]), [])) or None
         files.append({"kind": "sheet", "file": doc.get("file"), "file_hash": doc["file_hash"], "size": (datasets.get(doc["file_hash"]) or {}).get("size"),
                       "summary": {"period_columns": doc.get("period_columns"), "rows_mapped": doc.get("rows_mapped"), "last_actual": doc.get("month"),
                                   "granularity": next((x.get("granularity") for x in effective.get("sheets") or []), None),
-                                  "confirmed": counts.get("confirmed", 0), "rejected": counts.get("rejected", 0),
-                                  "cannot_check": counts.get("cannot_check", 0), **privacy_counts(doc.get("masked"))},
+                                  "confirmed": len(rows["confirmed"]), "rejected": len(rows["rejected"]),
+                                  "cannot_check": len(rows["cannot_check"]), **privacy_counts(doc.get("masked"))},
+                      "notes": notes["file"],
                       "anchors": anchors(doc, effective, shown, overrides), "lines": shown, "overrides": len(overrides)})
     deck_docs = {d["deck_id"]: d for d in await db["deck_text"].find({"audit_id": audit_id}, {"_id": 0, "blocks": 0, "structures": 0, "layout": 0}).to_list(100)}
     for deck in await deck_figures.checked(db, audit_id):

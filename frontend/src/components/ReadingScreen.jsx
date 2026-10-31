@@ -97,7 +97,7 @@ function LinesTable({ lines, file, auditId, sheet }) {
       <tbody>
         {lines.map((ln) => (
           <tr key={ln.row} className={[ln.indent ? "sub" : "", ln.moved ? "moved" : ""].join(" ").trim()} data-testid={`line-${ln.row}`}>
-            <td data-h="Line" data-indent={ln.indent || 0} style={ln.indent > 1 ? { paddingLeft: `${10 + 16 * ln.indent}px` } : undefined}>{ln.label}{ln.moved && <span className="note" data-testid="moved-note"> · shown under its line</span>}</td>
+            <td data-h="Line" data-indent={ln.indent || 0} style={ln.indent > 1 ? { paddingLeft: `${10 + 16 * ln.indent}px` } : undefined}>{ln.label}{ln.moved && <span className="note" data-testid="moved-note"> · shown under its line</span>}{ln.note && <span className="note" data-testid="line-note"> · {ln.note}</span>}</td>
             <td data-h="Read as">{ln.read_as}</td>
             <td data-h="Basis">{ln.basis}</td>
             <td data-h="Actual / plan">{ln.actual_plan}</td>
@@ -124,6 +124,7 @@ function SheetBlock({ file, auditId, onChanged, onAsOf }) {
     <section className="file" data-testid="file-block">
       <h2>{file.file} {file.size != null && <small>{fmtBytes(file.size)}</small>}</h2>
       <Summary parts={sheetSummary(file.summary)} />
+      {(file.notes || []).map((n, i) => <p key={i} className="note" data-testid="file-note">{n.name}: {n.reason}</p>)}
       <div className="anchors">
         <span className="k">As-of month</span>
         <span data-testid="anchor-as-of">{a.as_of ? `${lastActualText(a.as_of.month, file.summary.granularity)} — ${splitEvidence(a.as_of.evidence).text}` : "not determined"}</span>

@@ -91,6 +91,14 @@ describe("the strip and the file blocks", () => {
     expect(q("assumption-as-of-evidence").querySelector("b").textContent).toBe("Confirmed on column AP.");
   });
 
+  test("a row-level check outcome is a note on its row in the lines table; a file-level one is a note under the summary", async () => {
+    const files = REGISTER.files.map((f, i) => (i ? f : { ...f, notes: [{ name: "Period columns", outcome: "cannot_check", reason: "header unclear" }],
+      lines: [{ sheet: "Sales", lines: [line(11, "Recognised revenue", { note: "segment row without its total row" })] }] }));
+    await show({ ...REGISTER, files });
+    expect(q("line-11").querySelector('[data-testid="line-note"]').textContent).toContain("segment row without its total row");
+    expect(q("file-note").textContent).toBe("Period columns: header unclear");
+  });
+
   test("a spreadsheet block reads in the mockup's form, with three anchor lines and Change, and Show all lines", async () => {
     await show();
     const [sheet, deck] = all("file-block");
