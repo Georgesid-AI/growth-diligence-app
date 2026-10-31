@@ -2,7 +2,7 @@
  * The reading screen's words and shapes (docs/design/read-check-review.md section 11, docs/design/audit-page-mockup.html; PR 3 step d).
  * Pure functions over the register the server sends (GET /audits/{id}/reading). Every number goes through lib/format.js (section 11.5).
  */
-import { PLACEHOLDER, fmtCount, fmtCurrency, fmtPct, fmtPercentPoints } from "./format";
+import { PLACEHOLDER, fmtCount, fmtCurrency, fmtPct } from "./format";
 import { monthName } from "./periods";
 
 export const EXPLAINER = "The model reads each file in full. Names, contact details and ID numbers are removed first; client names are replaced by codes that exist only in this audit. Code checks every figure against its cell.";
@@ -64,10 +64,11 @@ export function periodLabel(period) {
   return /^\d{4}$/.test(period) ? `FY ${period}` : period;
 }
 
-/** A figure with its unit by the one formatter: money with its currency, a count, a rate as a percent (a fraction up to 1.5 is read as one). */
+/** A figure with its unit by the one formatter: money with its currency, a count, a rate as a percent. A rate is a fraction (0.045 is 4.5%): the
+ *  reader's unit decides, no scale is guessed from the size of the number. */
 export function valueText(value, unit, currency) {
   if (value === null || value === undefined) return PLACEHOLDER;
-  if (unit === "rate") return Math.abs(value) <= 1.5 ? fmtPct(value) : fmtPercentPoints(value);
+  if (unit === "rate") return fmtPct(value);
   if (unit === "money") return fmtCurrency(value, currency);
   return fmtCount(value);
 }

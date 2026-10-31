@@ -14,7 +14,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from . import readings
+from . import checks, readings
 
 CITATION, DISAGREEMENT, MASKED = "citation_failed_twice", "reviewer_disagreement", "masked_value"
 KINDS = (CITATION, DISAGREEMENT, MASKED)
@@ -108,11 +108,9 @@ async def open_for_checks(db, audit_id: str, doc: Dict) -> List[Dict]:
     by_key = {i["key"]: i for i in doc.get("items") or [] if i["kind"] != "evidence"}
 
     def figure_path(key: str) -> Optional[str]:
-        from . import checks
         return next((f"figures.{n}.value" for n, f in enumerate(figures) if checks._figure_key(n, f) == key), None)
 
     def entry(key: str) -> Optional[Dict]:
-        from . import checks
         return next((f for n, f in enumerate(figures) if checks._figure_key(n, f) == key), None)
 
     for again in doc.get("rereads") or []:
@@ -133,7 +131,7 @@ async def open_for_checks(db, audit_id: str, doc: Dict) -> List[Dict]:
             path=figure_path(again["item"]) if is_figure else None, subject={"metric": item.get("metric"), "period": first.get("period")},
             actions=None if is_figure else [USE_READER]))
     for item in doc.get("items") or []:
-        if item["kind"] != "figure" or item["outcome"] != "cannot_check" or "masked before reading" not in (item.get("reason") or ""):
+        if item["kind"] != "figure" or item["outcome"] != "cannot_check" or item.get("reason") != checks.C_MASKED:
             continue
         first = entry(item["key"]) or {}
         out.append(await open_card(

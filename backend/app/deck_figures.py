@@ -21,7 +21,7 @@ from .structures import checker
 
 R_PAGE_RANGE = "Reading cites page {page}; the deck ends at page {last}."
 R_PAGE = "Reading says {value}; page {n} holds no such figure."
-PLAN_BASES = ("projection", "scenario")
+R_PAGE_SCALE = "Page {n} states {page}; reading says {value}. Unit or scale differs; not compared."
 
 
 def page_lines(deck: Dict, page: int) -> List[Dict]:
@@ -37,20 +37,28 @@ def page_lines(deck: Dict, page: int) -> List[Dict]:
 
 
 def page_numbers(deck: Dict, page: int) -> List[float]:
-    """Every figure the page's text states, as written and in full units (claims.figures scales k, m, bn; the unscaled number is kept too)."""
+    """Every figure the page's text states, in full units (claims.figures scales k, m, bn). Only the scaled value is a figure of the page: "2.5m"
+    is 2,500,000 and never 2.5."""
     out: List[float] = []
     for line in page_lines(deck, page):
-        for f in claims.figures(line["text"]):
-            out += [v for v in (f.get("value"), f.get("num")) if v is not None]
+        out += [f["value"] for f in claims.figures(line["text"]) if f.get("value") is not None]
     return out
 
 
-COUNT_UNITS = (None, "count", "x", "days", "months", "years")
+def page_unscaled(deck: Dict, page: int) -> List[float]:
+    """The numbers of the page as written, before k, m or bn: used only to say that a scale differs, never to confirm."""
+    out: List[float] = []
+    for line in page_lines(deck, page):
+        out += [f["num"] for f in claims.figures(line["text"]) if f.get("num") is not None]
+    return out
+
+
+COUNT_UNITS = ("count", "x", "days", "months", "years")
 
 
 def unit_of(candidate: Dict) -> Optional[str]:
-    """The comparison unit of a candidate: a currency is money (0.5 %), a percent a rate (1 point), a count, a multiple or a duration is
-    compared exactly. Any other unit ("other") has none: the figure cannot be checked (C_NO_UNIT)."""
+    """The comparison unit of the unit the reader gave: a currency is money (0.5 %), a percent a rate (1 point), a count, a multiple or a
+    duration is compared exactly. No unit, or "other", has none: the figure cannot be checked (C_NO_UNIT); the page does not choose it."""
     if candidate.get("currency"):
         return "money"
     unit = candidate.get("unit")
@@ -69,9 +77,13 @@ def page_of(candidate: Dict) -> Optional[int]:
 def figure_of(candidate: Dict, deck: Dict) -> Dict:
     """One deck figure in the file map's fields (value, unit, currency, period, actual/plan, source), its candidate's id for the register."""
     page = page_of(candidate)
-    return {"id": candidate.get("id"), "deck_id": candidate.get("deck_id"), "metric": candidate.get("claim_type"), "value": candidate.get("value"),
-            "unit": unit_of(candidate), "currency": candidate.get("currency"), "period": candidate.get("period_text") or candidate.get("target_date"),
-            "actual_plan": "plan" if candidate.get("basis") in PLAN_BASES else "actual" if candidate.get("basis") == "actual" else None,
+    unit = unit_of(candidate)
+    value = candidate.get("value")
+    if unit == "rate" and value is not None:
+        value = value / 100.0            # the page states points; a rate is held as a fraction everywhere else (schemas/metrics.Fraction)
+    return {"id": candidate.get("id"), "deck_id": candidate.get("deck_id"), "metric": candidate.get("claim_type"), "value": value,
+            "unit": unit, "currency": candidate.get("currency"), "period": candidate.get("period_text") or candidate.get("target_date"),
+            "actual_plan": "plan" if candidate.get("basis") == "projection" else "actual" if candidate.get("basis") == "actual" else None,
             "segment": candidate.get("page_segment"), "source": {"page": page, "text_layer": bool(page and page_numbers(deck, page))}}
 
 
@@ -88,12 +100,22 @@ def check_figure(figure: Dict, candidate: Dict, deck: Dict) -> Dict:
     if unit not in ("money", "count", "rate"):
         return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_UNIT}
     numbers = page_numbers(deck, page)
+    if unit == "rate":
+        numbers = [n / 100.0 for n in numbers]           # the page's percent points as fractions, as the reading is held
     if any(checks.compare(unit, float(value), n) for n in numbers):
         return {**base, "outcome": checks.CONFIRMED, "reason": None}
+    unscaled = page_unscaled(deck, page) if unit != "rate" else []
+    other = next((n for n in unscaled if checks.compare(unit, float(value), n)), None)
+    if other is None:
+        other = next((n for n in numbers if checks._scale_check(float(value), n)), None)
+    if other is not None:
+        shown = other * 100.0 if unit == "rate" else other
+        return {**base, "outcome": checks.CANNOT, "reason": R_PAGE_SCALE.format(n=page, page=checks.shown(shown), value=checks.shown(
+            float(value) * 100.0 if unit == "rate" else float(value)))}
     incomplete = checker.EXTRACTION_INCOMPLETE in (candidate.get("flags") or [])
     if not numbers or incomplete:
         return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_TEXT.format(n=page)}
-    return {**base, "outcome": checks.REJECTED, "reason": R_PAGE.format(value=checks.shown(float(value)), n=page)}
+    return {**base, "outcome": checks.REJECTED, "reason": R_PAGE.format(value=checks.shown(float(value) * (100.0 if unit == "rate" else 1.0)), n=page)}
 
 
 async def checked(db, audit_id: str) -> List[Dict]:

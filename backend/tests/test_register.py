@@ -108,12 +108,15 @@ def test_a_masked_value_the_reading_needs_opens_a_card_and_nothing_else_does():
         {"key": "figure:S:B2:revenue", "kind": "figure", "outcome": "cannot_check", "reason": "Depends on a name that was masked before reading.",
          "sheet": "S", "cell": "B2", "metric": "revenue", "value": 5.0},
         {"key": "figure:S:B3:revenue", "kind": "figure", "outcome": "cannot_check", "reason": "No cell reference given.", "sheet": "S", "cell": None,
-         "metric": "revenue", "value": 6.0}]}
+         "metric": "revenue", "value": 6.0},
+        {"key": "figure:S:B4:revenue", "kind": "figure", "outcome": "cannot_check", "sheet": "S", "cell": "B4", "metric": "revenue", "value": 7.0,
+         "reason": "Some other reason that happens to say masked before reading."}]}
     db[readings.READINGS].docs.append({"key": "k", "file_map": {"figures": [{"metric": "revenue", "value": 5.0, "unit": "money", "currency": "EUR",
                                                                          "period": "2025-01", "evidence": "x", "source": {"sheet": "S", "cell": "B2"}}]}})
     made = asyncio.run(cards.open_for_checks(db, "a1", doc))
     assert [c["kind"] for c in made] == [cards.MASKED] and made[0]["actions"] == ["use_reader", "type_value"]
     assert made[0]["reader"]["value"] == 5.0 and made[0]["path"] == "figures.0.value"
+    assert len(db[readings.CARDS].docs) == 1, "the card follows the check's own closed reason, not a word found in some text"
 
 
 def test_a_figure_that_cannot_be_checked_is_on_the_register_with_its_reason_and_what_relies_on_it(flow):
@@ -146,7 +149,7 @@ def test_a_rate_row_is_shown_directly_under_its_line_with_the_note_and_part_rows
     built = lines.build(smap, LABELS)
     assert [(ln["row"], ln["indent"], ln["moved"]) for ln in built] == [(4, 0, False), (3, 1, True), (5, 1, False), (6, 1, False), (7, 0, False),
                                                                           (8, 0, False), (9, 0, False)]
-    assert built[1]["read_as"] == "growth rate of row 4" and built[2]["read_as"] == "revenue, part of row 4"
+    assert built[1]["read_as"] == "growth rate" and built[2]["read_as"] == "revenue, part of row 4"
     assert built[0]["actual_plan"] == "mixed, boundary D" and built[0]["basis"] == "yearly" and built[0]["cells"] == "B4:H4"
 
 
@@ -185,6 +188,9 @@ def test_a_change_of_the_revenue_row_and_of_the_boundary_are_override_records_an
     assert moved.status_code == 200
     block = reading(flow)["files"][0]
     assert block["anchors"]["revenue_row"]["row"] == 10 and block["anchors"]["actual_plan"]["last_actual"] == "F"
+    shown = {ln["row"]: ln["read_as"] for ln in block["lines"][0]["lines"]}
+    assert shown[4] == "revenue" and shown[10] == "revenue", "the analyst named one row: the row that was the revenue row keeps the reader's role"
+    assert {o["item"] for o in flow.db[readings.OVERRIDES].docs if o["why"] == "Change: revenue row"} == {f"row:{SHEET}:10"}
     assert block["lines"][0]["lines"][0]["actual_plan"] == "mixed, boundary F"
     assert flow.db[readings.READINGS].docs[0]["file_map"] == stored and all(o["who"] == "analyst" for o in flow.db[readings.OVERRIDES].docs)
     assert flow.post(f"/api/audits/{AUDIT}/readings/{file_hash}/change", json={"what": "revenue_row", "sheet": SHEET, "row": 99}).status_code == 400

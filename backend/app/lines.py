@@ -3,8 +3,10 @@
 
     - rows keep the order they have in the file;
     - a part row (its map entry names a `parent_row`) is indented under its total, after it;
-    - a rate row (growth, churn, margin: basis "rate") whose line can be told from its label is shown directly under that line, indented, and
-      marked `moved` when it stood elsewhere in the file ("shown under its line"). A rate whose line cannot be told uniquely stays where it is.
+    - PLACEMENT ONLY: a rate row (growth, churn, margin: basis "rate") whose label holds the words of one other line's label is shown directly
+      under that line, indented, and marked `moved` when it stood elsewhere in the file ("shown under its line"). The label match decides where
+      a row is drawn and nothing else: it is no reading of what the row means, nothing is written into "Read as", and no check or figure uses it.
+      A rate whose line cannot be told uniquely stays where it is.
 
 Pure: the map and the label text of each row go in, plain dicts come out. Labels are read from the cells the reader was sent (masked space);
 the caller restores the names before storing (sheet_reader).
@@ -16,8 +18,8 @@ ROLE_WORDS = {"arr": "ARR", "mrr": "MRR", "rnd": "R&D", "ga": "G&A", "ebitda": "
               "contract_value": "contract value", "cost_of_revenue": "cost of revenue", "churn_rate": "churn rate", "growth_rate": "growth rate",
               "margin_rate": "margin rate"}
 RATE_ROLES = ("churn_rate", "growth_rate", "margin_rate")
-# Words that make a label a rate; what is left of a rate's label names the line it refers to.
-_RATE_WORDS = frozenset("rate growth churn churned margin percent pct as of the in yoy mom qoq".split())
+# PLACEMENT ONLY. Words that make a label a rate; what is left of a rate's label names the line to draw it under.
+_PLACEMENT_RATE_WORDS = frozenset("rate growth churn churned margin percent pct as of the in yoy mom qoq".split())
 _WORD = re.compile(r"[a-z0-9&]+")
 
 
@@ -44,10 +46,10 @@ def is_rate(row: Dict) -> bool:
     return row.get("basis") == "rate" or row.get("role") in RATE_ROLES
 
 
-def base_of(rate: Dict, label: str, rows: List[Dict], labels: Dict[int, str]) -> Optional[Dict]:
-    """The one non-rate row whose label holds every word that is left of the rate's label once the rate words are taken out, the one with the
+def placement_line_of(rate: Dict, label: str, rows: List[Dict], labels: Dict[int, str]) -> Optional[Dict]:
+    """PLACEMENT ONLY (where to draw a rate row, not what it is): the one non-rate row whose label holds every word that is left of the rate's label once the rate words are taken out, the one with the
     fewest other words. None when no row does, or when two do equally (the line cannot be told)."""
-    wanted = [w for w in words(label) if w not in _RATE_WORDS]
+    wanted = [w for w in words(label) if w not in _PLACEMENT_RATE_WORDS]
     if not wanted:
         return None
     fits = []
@@ -76,7 +78,7 @@ def build(sheet_map: Dict, labels: Dict[int, str]) -> List[Dict]:
     rate_of: Dict[int, Dict] = {}
     for row in rows:
         if is_rate(row) and not row.get("parent_row"):
-            base = base_of(row, labels.get(row["row"], ""), rows, labels)
+            base = placement_line_of(row, labels.get(row["row"], ""), rows, labels)
             if base is not None:
                 rate_of[row["row"]] = base
     under: Dict[int, List[Dict]] = {}
@@ -115,7 +117,4 @@ def build(sheet_map: Dict, labels: Dict[int, str]) -> List[Dict]:
         if row["row"] not in seen and row["row"] not in rate_of:
             seen.add(row["row"])
             out.append(line_of(row, labels.get(row["row"], ""), indent=1))
-    for line in out:
-        if line.get("rate_of"):
-            line["read_as"] = f"{line['read_as']} of row {line['rate_of']}"
     return out

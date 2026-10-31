@@ -120,12 +120,27 @@ def privacy_counts(masked: Dict) -> Dict[str, int]:
             "company_coded": int((masked or {}).get("company") or 0)}
 
 
-def anchors(doc: Dict, effective_map: Dict, lines: List[Dict]) -> Dict:
+CHANGE_REVENUE = "Change: revenue row"
+
+
+def named_revenue_row(overrides: List[Dict]) -> Optional[tuple]:
+    """(sheet, row) of the revenue row the analyst last named with Change, or None. Only the row they named is touched by a Change; this is how the
+    anchor line follows it while the row that was the revenue row keeps the role the reader gave it."""
+    named = [o for o in overrides if o.get("why") == CHANGE_REVENUE and str(o.get("path", "")).endswith(".role") and o.get("new") == "revenue"]
+    if not named:
+        return None
+    _, sheet, row = str(max(named, key=lambda o: o.get("at") or "")["item"]).split(":", 2)
+    return sheet, int(row)
+
+
+def anchors(doc: Dict, effective_map: Dict, lines: List[Dict], overrides: Optional[List[Dict]] = None) -> Dict:
     """The three anchor lines of a spreadsheet (section 11.2): the as-of month with its evidence, the revenue row, the actual / plan boundary."""
     best = max(doc.get("months") or [], key=lambda m: m["month"], default=None)
     revenue = None
+    named = named_revenue_row(overrides or [])
     for entry in lines:
-        found = next((ln for ln in entry["lines"] if ln.get("role") == "revenue" and not ln.get("parent_row")), None)
+        found = next((ln for ln in entry["lines"] if named and (entry["sheet"], ln["row"]) == named), None) or \
+            next((ln for ln in entry["lines"] if ln.get("role") == "revenue" and not ln.get("parent_row")), None)
         if found:
             revenue = {"sheet": entry["sheet"], "row": found["row"], "label": found["label"], "basis": found["basis"]}
             break
@@ -160,7 +175,7 @@ async def build(db, audit_id: str) -> Dict:
                                   "granularity": next((x.get("granularity") for x in effective.get("sheets") or []), None),
                                   "confirmed": counts.get("confirmed", 0), "rejected": counts.get("rejected", 0),
                                   "cannot_check": counts.get("cannot_check", 0), **privacy_counts(doc.get("masked"))},
-                      "anchors": anchors(doc, effective, shown), "lines": shown, "overrides": len(overrides)})
+                      "anchors": anchors(doc, effective, shown, overrides), "lines": shown, "overrides": len(overrides)})
     deck_docs = {d["deck_id"]: d for d in await db["deck_text"].find({"audit_id": audit_id}, {"_id": 0, "blocks": 0, "structures": 0, "layout": 0}).to_list(100)}
     for deck in await deck_figures.checked(db, audit_id):
         rows = deck_rows(deck)
@@ -218,7 +233,8 @@ async def _stored(db, audit_id: str, file_hash: str):
 
 
 async def change_revenue_row(db, audit_id: str, file_hash: str, sheet: str, row: int, who: str = "analyst") -> List[Dict]:
-    """Make a mapped row the sheet's revenue row: it is read as revenue; the row that was the revenue row is read as "other"."""
+    """Make a mapped row the sheet's revenue row: it is read as revenue. The row that was the revenue row keeps the role the reader gave it: the
+    analyst named one row, and no other row is retyped."""
     _, reading = await _stored(db, audit_id, file_hash)
     effective = readings.effective(reading["file_map"], await readings.overrides_for(db, audit_id, reading["key"]))
     si = next((i for i, s in enumerate(effective.get("sheets") or []) if s["sheet"] == sheet), None)
@@ -226,15 +242,12 @@ async def change_revenue_row(db, audit_id: str, file_hash: str, sheet: str, row:
         raise ChangeRefused("That row is not one of the mapped rows.")
     out = []
     for ri, r in enumerate(effective["sheets"][si]["rows"]):
-        if r["row"] == row and r.get("role") != "revenue":
-            changes = {"role": "revenue", "metric": "revenue"}
-        elif r["row"] != row and r.get("role") == "revenue" and not r.get("parent_row"):
-            changes = {"role": "other", "metric": None}
-        else:
+        if r["row"] != row or r.get("role") == "revenue":
             continue
+        changes = {"role": "revenue", "metric": "revenue"}
         for field, new in changes.items():
             out.append(await readings.add_override(db, reading=reading["key"], audit_id=audit_id, item=f"row:{sheet}:{r['row']}",
-                                                   path=f"sheets.{si}.rows.{ri}.{field}", old=r.get(field), new=new, who=who, why="Change: revenue row"))
+                                                   path=f"sheets.{si}.rows.{ri}.{field}", old=r.get(field), new=new, who=who, why=CHANGE_REVENUE))
     return out
 
 

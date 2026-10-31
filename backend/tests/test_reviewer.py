@@ -297,10 +297,33 @@ def test_a_count_on_a_page_is_compared_exactly_money_within_half_a_percent_and_o
     page = [{"page": 2, "text": "Customers 1,004 at year end", "kind": "text"}]
     assert check_deck(page, candidate(1000, unit="count", currency=None))["outcome"] == "rejected", "1,000 customers are not confirmed by 1,004"
     assert check_deck(page, candidate(1004, unit="count", currency=None))["outcome"] == "confirmed"
-    assert check_deck(page, candidate(1000, unit=None, currency=None))["outcome"] == "rejected"
+    assert check_deck(page, candidate(1004, unit=None, currency=None))["outcome"] == "cannot_check", "no unit given: the page does not choose one"
     assert check_deck([{"page": 2, "text": "ARR EUR 1,004", "kind": "text"}], candidate(1000))["outcome"] == "confirmed", "money: within 0.5 %"
     other = check_deck(page, candidate(1004, unit="other", currency=None))
     assert other["outcome"] == "cannot_check" and other["reason"] == checks.C_NO_UNIT
+
+
+def test_the_page_does_not_choose_the_scale_a_reading_of_2_5_is_not_confirmed_by_2_5m():
+    page = [{"page": 2, "text": "ARR EUR 2.5m at year end", "kind": "text"}]
+    assert check_deck(page, candidate(2_500_000))["outcome"] == "confirmed"
+    got = check_deck(page, candidate(2.5))
+    assert got["outcome"] == "cannot_check" and got["reason"] == "Page 2 states 2.5; reading says 2.5. Unit or scale differs; not compared."
+    assert check_deck(page, candidate(7))["outcome"] == "rejected"
+
+
+def test_a_deck_rate_is_held_as_a_fraction_and_compared_within_one_point_of_the_page():
+    page = [{"page": 2, "text": "Churn 5.4 % a month", "kind": "text"}]
+    figure = deck_figures.figure_of(candidate(4.5, unit="%", currency=None), deck(page))
+    assert figure["unit"] == "rate" and abs(figure["value"] - 0.045) < 1e-12, "the screen writes it with the one formatter: 4.5%"
+    assert check_deck(page, candidate(4.5, unit="%", currency=None))["outcome"] == "confirmed"      # 0.9 points apart
+    assert check_deck(page, candidate(3.0, unit="%", currency=None))["outcome"] == "rejected"      # 2.4 points apart
+
+
+def test_actual_or_plan_is_the_readers_own_word_a_scenario_is_not_turned_into_a_plan():
+    d = deck([{"page": 2, "text": "ARR 447,223", "kind": "text"}])
+    assert deck_figures.figure_of(candidate(447223, basis="projection"), d)["actual_plan"] == "plan"
+    assert deck_figures.figure_of(candidate(447223, basis="actual"), d)["actual_plan"] == "actual"
+    assert deck_figures.figure_of(candidate(447223, basis="scenario"), d)["actual_plan"] is None
 
 
 def test_a_page_outside_the_deck_is_rejected_and_a_rate_is_compared_in_points():

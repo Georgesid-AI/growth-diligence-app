@@ -36,7 +36,7 @@ const REGISTER = {
                  revenue_row: { sheet: "Sales", row: 11, label: "Recognised revenue", basis: "monthly" }, actual_plan: { sheet: "Sales", last_actual: "AP", plan_from: "AQ" } },
       lines: [{ sheet: "Sales", lines: [
         line(11, "Recognised revenue"),
-        line(3, "revenue growth rate", { read_as: "growth rate of row 11", basis: "rate", indent: 1, moved: true, role: "growth_rate" }),
+        line(3, "revenue growth rate", { read_as: "growth rate", basis: "rate", indent: 1, moved: true, role: "growth_rate" }),
         line(14, "MRR from annual subscriptions", { read_as: "MRR, part of row 11", indent: 1, parent_row: 11, role: "mrr" }),
         line(15, "Annual, enterprise", { read_as: "MRR, part of row 14", indent: 2, parent_row: 14, role: "mrr" }),
         line(23, "Total clients", { read_as: "customers", role: "customers" }),
@@ -49,7 +49,7 @@ const REGISTER = {
     confirmed: [
       { key: "k1", kind: "figure", metric: "revenue", value: 78829.4, unit: "money", currency: "EUR", period: "2022-05", basis: "monthly", actual_plan: "actual",
         row_role: "revenue", source: src("AP11"), note: "set by analyst", set_at: "2026-10-31", hover: "value set by analyst; the check did not confirm it" },
-      { key: "k2", kind: "deck_figure", metric: "arr", value: 4.5, unit: "rate", currency: null, period: "2021", basis: null, actual_plan: "actual", row_role: null,
+      { key: "k2", kind: "deck_figure", metric: "arr", value: 0.045, unit: "rate", currency: null, period: "2021", basis: null, actual_plan: "actual", row_role: null,
         source: { file: "Board report.pdf", deck_id: "d1", page: 3 }, note: null },
     ],
     rejected: [
