@@ -9,6 +9,8 @@ notice, exit 0, when any is absent:
     ANTHROPIC_API_KEY     the provider key (a GitHub Actions secret)
     SHEET_READING_PROMPT  the text of the `sheet_reading` prompt (a GitHub Actions secret: the prompt is never in the repository)
     SHEET_READER_MODEL    optional: an allow-listed model id (a repository variable); the structure model when unset
+    DECK_FIXTURE          "1" when the pull request changed a file of .github/deck-reading-path.txt (the workflow sets it); without it the deck fixture is
+                          skipped, whatever else is set
     DECK_READING_PROMPT   the text of the `deck_reading` prompt (a secret) for the deck fixture; without it the deck fixture alone is skipped with a
                           notice (PR 3: the deck joins the job, the page reader's figures are checked against the stored page text)
 
@@ -99,7 +101,10 @@ async def read_all() -> int:
         for item in result["items"]:
             if item["outcome"] == checks.CANNOT:
                 print(f"    cannot check {item['key']}: {item['reason']}")
-    failed += await read_decks(db)
+    if os.environ.get("DECK_FIXTURE") == "1":
+        failed += await read_decks(db)
+    else:
+        print("::notice title=Deck fixture skipped::DECK_FIXTURE is not 1: no file of the deck reading path (.github/deck-reading-path.txt) changed.")
     print(f"{failed} fixture(s) differ from their expected map" if failed else "every fixture agrees with its expected map")
     return 1 if failed else 0
 

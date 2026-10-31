@@ -322,7 +322,7 @@ def test_the_workflow_runs_only_on_the_reading_path_and_skips_without_the_key():
     assert job["env"]["ANTHROPIC_API_KEY"] == "${{ secrets.ANTHROPIC_API_KEY }}"
     skip = job["steps"][0]
     assert skip["if"] == "env.ANTHROPIC_API_KEY == ''" and "::notice" in skip["run"]
-    assert all(step.get("if") == "env.ANTHROPIC_API_KEY != ''" for step in job["steps"][1:]), "nothing else runs without the key"
+    assert all(step.get("if", "").startswith("env.ANTHROPIC_API_KEY != ''") for step in job["steps"][1:]), "nothing else runs without the key"
     assert any("scripts/run_reading_fixtures.py" in step.get("run", "") for step in job["steps"])
     tests_flow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY" not in tests_flow, "the general checks stay free of secrets"
@@ -399,3 +399,23 @@ def test_the_job_skips_the_deck_alone_with_a_notice_without_the_deck_prompt(caps
     db = runner.empty_store("TEST ONLY sheet prompt")
     assert asyncio.run(runner.read_decks(db, adapter=DeckModel())) == 0
     assert "::notice title=Deck fixture skipped::DECK_READING_PROMPT is not set" in capsys.readouterr().out
+
+
+def test_the_job_reads_the_deck_fixture_only_when_the_deck_path_changed(monkeypatch, capsys):
+    runner = load_runner()
+    router = FixtureRouter()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    called = []
+
+    async def fake_decks(db, adapter=None):
+        called.append(1)
+        return 0
+    monkeypatch.setattr(runner, "read_decks", fake_decks)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("DECK_READING_PROMPT", "TEST ONLY deck"),
+                        ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("DECK_FIXTURE", raising=False)
+    assert runner.main() == 0 and not called
+    assert "Deck fixture skipped::DECK_FIXTURE is not 1" in capsys.readouterr().out
+    monkeypatch.setenv("DECK_FIXTURE", "1")
+    assert runner.main() == 0 and called == [1]

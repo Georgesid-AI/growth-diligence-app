@@ -1,0 +1,8 @@
+# Files whose change can change what the deck page reader reads or how a deck figure is checked. One path prefix per line, matched as text
+# against the files a pull request changes (grep -F). The deck fixture (paid page reads with images, and a LibreOffice install) runs only when
+# a changed file matches a line here; the sheet fixtures run on the whole reading path (.github/reading-path.txt).
+# Every line must also be on the reading path: backend/tests/test_reading_path.py asserts that and that the workflow reads this file.
+backend/app/decks/
+backend/app/structures/
+backend/app/deck_figures.py
+backend/tests/fixtures/prompts/deck_reading.md
