@@ -434,6 +434,24 @@ def test_the_job_reads_the_deck_fixture_only_when_the_deck_path_changed(monkeypa
     assert runner.main() == 0 and called == [1]
 
 
+def test_deck_differences_are_printed_but_never_fail_the_job_while_a_sheet_difference_does(monkeypatch, capsys):
+    runner = load_runner()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", FixtureRouter())
+
+    async def deck_differs(db, adapter=None):
+        print("deck_rotated_axis  read  differs")
+        return 1
+    monkeypatch.setattr(runner, "read_decks", deck_differs)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("DECK_READING_PROMPT", "TEST ONLY deck"),
+                        ("DECK_FIXTURE", "1"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    assert runner.main() == 0
+    out = capsys.readouterr().out
+    assert "deck_rotated_axis  read  differs" in out and "deck fixture: report-only until the converter works in CI (issue #207)" in out
+    monkeypatch.setattr(gateway, "AnthropicAdapter", FixtureRouter(differ=SHEETS[0]["name"]))
+    assert runner.main() == 1, "a sheet fixture still fails the job"
+
+
 def test_a_failing_re_read_leaves_the_file_read_with_its_rejected_items_noted_and_the_job_reports_the_count(monkeypatch, capsys):
     runner = load_runner()
     router = FixtureRouter(boundary="monthly_report")
@@ -477,7 +495,7 @@ def test_the_converter_presence_check_names_what_is_missing(monkeypatch):
     assert render.converter_problem("pptx") is None
 
 
-def test_the_job_stops_before_any_provider_call_when_the_deck_fixtures_page_images_cannot_be_made(monkeypatch, capsys):
+def test_the_deck_fixture_is_not_read_and_is_report_only_when_its_page_images_cannot_be_made(monkeypatch, capsys):
     import importlib.util
     from app.decks import render
     spec = importlib.util.spec_from_file_location("run_reading_fixtures_real", ROOT / "scripts" / "run_reading_fixtures.py")
@@ -489,11 +507,14 @@ def test_the_job_stops_before_any_provider_call_when_the_deck_fixtures_page_imag
     for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("DECK_READING_PROMPT", "TEST ONLY deck"),
                         ("DECK_FIXTURE", "1"), ("SHEET_READER_MODEL", MODEL)):
         monkeypatch.setenv(name, value)
-    assert runner.main() == 1
+    runner.read_decks = lambda *a, **k: (_ for _ in ()).throw(AssertionError("the deck must not be read as text alone"))
+    code = runner.main()
     out = capsys.readouterr().out
-    assert out.strip() == ("page images unavailable: no converter: soffice/libreoffice not found on the path "
-                           "[binary not found (soffice, libreoffice)]")
-    assert router.requests == [], "no text-only read of anything"
+    assert out.splitlines()[0] == ("page images unavailable: no converter: soffice/libreoffice not found on the path "
+                                   "[binary not found (soffice, libreoffice)]")
+    assert "deck fixture: report-only until the converter works in CI (issue #207)" in out
+    assert not any("deck_rotated_axis" in r for r in map(str, router.requests)), "no text-only read of the deck"
+    assert code == 0 or "differ from their expected map" in out, "only a sheet difference may fail the job"
 
 
 def test_the_preflight_line_carries_the_converters_exit_code_and_first_stderr_line(monkeypatch):
