@@ -57,6 +57,10 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
         if: env.ANTHROPIC_API_KEY != ''
+      # The deck fixture is drawn page by page (backend/app/decks/render.py): a .pptx goes to PDF through LibreOffice, which the runner image
+      # does not carry. Without it the job stops before any provider call with "page images unavailable: <reason>".
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-impress
+        if: env.ANTHROPIC_API_KEY != ''
       # One provider call per fixture, no re-read: the cap of section 10. Skips itself, exit 0, when the prompt or the model is not set.
       - run: python scripts/run_reading_fixtures.py
         if: env.ANTHROPIC_API_KEY != ''
