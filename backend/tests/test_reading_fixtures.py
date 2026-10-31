@@ -480,7 +480,8 @@ def test_the_job_stops_before_any_provider_call_when_the_deck_fixtures_page_imag
     router = FixtureRouter()
     monkeypatch.setattr(gateway, "AnthropicAdapter", router)
     monkeypatch.setattr(render.shutil, "which", lambda name: None)
-    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("SHEET_READER_MODEL", MODEL)):
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("DECK_READING_PROMPT", "TEST ONLY deck"),
+                        ("DECK_FIXTURE", "1"), ("SHEET_READER_MODEL", MODEL)):
         monkeypatch.setenv(name, value)
     assert runner.main() == 1
     out = capsys.readouterr().out
@@ -494,4 +495,4 @@ def test_the_workflow_installs_the_converter_the_deck_fixture_needs():
     steps = flow["jobs"]["reading"]["steps"]
     install = next(i for i, st in enumerate(steps) if "libreoffice" in st.get("run", ""))
     run = next(i for i, st in enumerate(steps) if "scripts/run_reading_fixtures.py" in st.get("run", ""))
-    assert install < run and steps[install].get("if") == "env.ANTHROPIC_API_KEY != ''"
+    assert install < run and steps[install].get("if") == "env.ANTHROPIC_API_KEY != '' && env.DECK_FIXTURE == '1'"

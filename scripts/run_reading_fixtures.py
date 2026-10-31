@@ -200,7 +200,9 @@ def main() -> int:
     if missing:
         notice("not set: " + ", ".join(missing) + ". The job needs the key and the prompt as secrets and the model as a variable.")
         return 0
-    problem = deck_images_problem()
+    # The deck fixture is drawn first and then read by the model like the sheets (read_all -> read_decks); when it is due and its pages cannot
+    # be drawn the job stops before any provider call.
+    problem = deck_images_problem() if os.environ.get("DECK_FIXTURE") == "1" and os.environ.get("DECK_READING_PROMPT", "").strip() else ""
     if problem:
         print(f"page images unavailable: {problem}")
         return 1
