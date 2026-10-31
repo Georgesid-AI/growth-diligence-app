@@ -60,15 +60,15 @@ async def get(db, account: Optional[str], file_hash: str, prompt_hash: str, mode
     return await db[READINGS].find_one({"key": reading_key(account, file_hash, prompt_hash, model), "status": {"$ne": NOT_READ}}, {"_id": 0})
 
 
-async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, prompt_hash: str, model: str, reading: dict, input_tokens: int = 0,
-              output_tokens: int = 0, cost: float = 0.0) -> dict:
+async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, prompt_hash: str, model: str, reading: dict, prompt_text: str = "",
+              input_tokens: int = 0, output_tokens: int = 0, cost: float = 0.0) -> dict:
     """Store a reading once. A reading already stored under the key is returned as it stands and nothing is written."""
     key = reading_key(account, file_hash, prompt_hash, model)
     kept = await db[READINGS].find_one({"key": key}, {"_id": 0})
     if kept and kept.get("status") != NOT_READ:
         return kept
     doc = {"key": key, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version, "prompt_hash": prompt_hash,
-           "model": model, "file_map": copy.deepcopy(reading),
+           "model": model, "file_map": copy.deepcopy(reading), "prompt_text": prompt_text,
            "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6),
            "created_at": _now()}
     if kept:

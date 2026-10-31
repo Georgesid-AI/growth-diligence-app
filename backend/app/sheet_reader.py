@@ -64,7 +64,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
         groups = _group(before["items"])
         ask = [{"item": k, "reason": _worst(groups[k])["reason"]} for k in keys]
         second = await asyncio.wait_for(
-            gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask), READ_SECONDS)
+            gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask, reread_of=first.reading_key), READ_SECONDS)
         if second.status == "read" and second.file_map is not None:
             merged = checks.merge_reread(first.file_map, second.file_map, keys)
             final = checks.check_map(cells, merged, fiscal_year_end)
