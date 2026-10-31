@@ -14,7 +14,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
-from app import cards, lines, readings, register  # noqa: E402
+from app import cards, checks, lines, readings, register  # noqa: E402
 from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION  # noqa: E402
 from test_chat_upload import AUDIT  # noqa: E402
 from test_reviewer import (ReviewRouter, audit_of, candidate, deck, finding, map_with, review, start)  # noqa: E402
@@ -255,3 +255,40 @@ def test_the_link_of_a_source_opens_the_cell_with_the_cells_around_it(flow):
     assert flow.get(f"/api/audits/{AUDIT}/readings/{file_hash}/cell", params={"sheet": "No such", "cell": "G4"}).status_code == 404
     assert flow.get(f"/api/audits/{AUDIT}/readings/{'0' * 64}/cell", params={"sheet": SHEET, "cell": "G4"}).status_code == 404
     assert reading(flow)["files"][0]["summary"]["granularity"] == "monthly"
+
+
+# ---------------------------------------------------------------------------
+# Figures only: row-level outcomes are notes on their row, not table rows, and the summary counts what the tables count
+# ---------------------------------------------------------------------------
+def test_a_row_level_outcome_is_a_note_on_its_row_and_not_in_the_tables_and_the_summary_counts_the_tables(flow):
+    start(flow, good_map())
+    doc = flow.db[readings.CHECKS].docs[0]
+    row_no = doc["lines"][0]["lines"][0]["row"]
+    doc["items"] += [
+        {"key": f"row:{SHEET}:{row_no}", "kind": "row", "outcome": "cannot_check", "reason": checks.C_SEGMENT_TOTAL, "sheet": SHEET, "cell": "A1", "row": row_no},
+        {"key": f"parts:{SHEET}:{row_no}", "kind": "parts", "outcome": "rejected", "reason": "parts differ", "sheet": SHEET, "cell": "A1", "row": row_no},
+        {"key": f"periods:{SHEET}", "kind": "periods", "outcome": "cannot_check", "reason": "header unclear", "sheet": SHEET, "cell": None}]
+    got = reading(flow)
+    shown = [x["reason"] for name in got["tables"] for x in got["tables"][name]]
+    assert checks.C_SEGMENT_TOTAL not in shown and "parts differ" not in shown and "header unclear" not in shown
+    (block,) = got["files"]
+    line = next(ln for e in block["lines"] for ln in e["lines"] if ln["row"] == row_no)
+    assert checks.C_SEGMENT_TOTAL in line["note"] and "parts differ" in line["note"]
+    assert [n["reason"] for n in block["notes"]] == ["header unclear"]
+    assert {k: block["summary"][k] for k in ("confirmed", "rejected", "cannot_check")} == got["counts"] == {"confirmed": 1, "rejected": 0, "cannot_check": 0}
+
+
+def test_the_reporting_period_runs_from_the_first_to_the_last_actual_month_across_files():
+    files = [{"kind": "sheet", "summary": {"first_actual": "2019-01", "last_actual": "2021-12"}},
+             {"kind": "sheet", "summary": {"first_actual": "2020-03", "last_actual": "2022-05"}},
+             {"kind": "sheet", "summary": {"first_actual": None, "last_actual": None}}, {"kind": "deck", "summary": {}}]
+    assert register.reporting_period(files) == {"first": "2019-01", "last": "2022-05"}
+    assert register.reporting_period([{"kind": "sheet", "summary": {"first_actual": None, "last_actual": "2022-05"}}]) == {"first": "2022-05", "last": "2022-05"}
+    assert register.reporting_period([{"kind": "sheet", "summary": {"last_actual": None}}]) is None
+
+
+def test_a_reading_gives_the_first_actual_month_of_its_series(flow):
+    start(flow, good_map())
+    got = reading(flow)
+    (block,) = got["files"]
+    assert block["summary"]["first_actual"] and got["period"]["last"] == "2025-06" and got["period"]["first"] <= got["period"]["last"]

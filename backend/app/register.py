@@ -10,6 +10,7 @@ and decks. Cards exist only for the three cases of section 7.4 (app/cards.py). T
 
 Numbers are raw here, at full precision; the screen formats them (one formatter, section 11.5). Nothing in this module reads a file.
 """
+import re
 from typing import Dict, List, Optional
 
 from . import cards, checks, deck_figures, lines as lines_mod, readings
@@ -60,8 +61,8 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
     out: Dict[str, List[Dict]] = {"confirmed": [], "rejected": [], "cannot_check": []}
     seen = set()
     for item in doc.get("items") or []:
-        if item["kind"] == "evidence" and item["outcome"] == checks.CONFIRMED:
-            continue
+        if item["kind"] != "figure":
+            continue                                  # the three tables and the file's counts hold figures only; other outcomes are notes (item_notes)
         key = f"last_actual:{item['sheet']}" if item["kind"] == "evidence" else item["key"]
         figure = figures.get(item["key"]) or {}
         row = {"key": item["key"], "kind": item["kind"], "metric": _item_name(item, doc), "value": item.get("value", figure.get("value")),
@@ -69,8 +70,6 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
                "actual_plan": figure.get("actual_plan"), "row_role": _row_role(file_map, item.get("sheet"), item.get("cell")),
                "source": {"file": doc.get("file"), "file_hash": doc.get("file_hash"), "sheet": item.get("sheet"), "cell": item.get("cell")},
                "reason": item.get("reason"), "note": None}
-        if item["kind"] not in ("figure",) and item["outcome"] == checks.CONFIRMED:
-            continue                                  # structure that checked out is in the file's counts, not a row of the table
         if (item["key"], item["kind"]) in seen:
             continue
         seen.add((item["key"], item["kind"]))
@@ -98,6 +97,48 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
                 continue
             out["cannot_check"].append({**row, "used_in": USED_IN.get(figure.get("metric") or item.get("metric")) or "—", "card_id": card_ids.get(item["key"])})
     return out
+
+
+ROW_KINDS = ("row", "variance", "parts")
+
+
+def item_notes(doc: Dict) -> Dict:
+    """The check outcomes that are not figures: {"rows": {(sheet, row): reason}, "file": [{"name", "outcome", "reason"}]}. A row-level outcome
+    (a row, its variance or its parts) is a note on that row of the lines table; the rest (periods, currency, last actual, evidence) are notes of the file.
+    Neither is counted: the summary line and the three tables count figures only."""
+    rows: Dict = {}
+    file_notes: List[Dict] = []
+    for item in doc.get("items") or []:
+        if item["kind"] == "figure" or item["outcome"] == checks.CONFIRMED:
+            continue
+        reason = item.get("reason") or item["outcome"].replace("_", " ")
+        if item["kind"] in ROW_KINDS and item.get("row") is not None:
+            rows.setdefault((item["sheet"], item["row"]), []).append(reason)
+        else:
+            file_notes.append({"name": _item_name(item, doc), "outcome": item["outcome"], "reason": reason})
+    return {"rows": rows, "file": file_notes}
+
+
+_MONTH = re.compile(r"^\d{4}-\d{2}$")
+
+
+def first_actual(file_map: Dict) -> Optional[str]:
+    """The earliest month (YYYY-MM) of any actual series in the file's map, or None (a quarterly or yearly file has no month to give)."""
+    found = [p for smap in file_map.get("sheets") or [] for row in smap.get("rows") or [] for p in (row.get("series") or {}).get("periods") or []
+             if _MONTH.match(str(p))]
+    return min(found) if found else None
+
+
+def reporting_period(files: List[Dict]) -> Optional[Dict]:
+    """{"first", "last"}: the first and the last actual month across the spreadsheets, or None when no file gives a last actual month.
+    A file with a last actual month and no series gives that month for both ends."""
+    firsts, lasts = [], []
+    for f in files:
+        last = f["kind"] == "sheet" and f["summary"].get("last_actual")
+        if last and _MONTH.match(str(last)):
+            lasts.append(last)
+            firsts.append(f["summary"].get("first_actual") or last)
+    return {"first": min(firsts), "last": max(lasts)} if lasts else None
 
 
 def deck_rows(deck: Dict) -> Dict[str, List[Dict]]:
@@ -168,13 +209,17 @@ async def build(db, audit_id: str) -> Dict:
         rows = sheet_rows(doc, effective, decided, card_ids)
         for name in tables:
             tables[name] += rows[name]
-        counts = doc.get("counts") or {}
+        notes = item_notes(doc)
         shown = _effective_lines(doc, effective)
+        for entry in shown:
+            for ln in entry["lines"]:
+                ln["note"] = "; ".join(notes["rows"].get((entry["sheet"], ln["row"]), [])) or None
         files.append({"kind": "sheet", "file": doc.get("file"), "file_hash": doc["file_hash"], "size": (datasets.get(doc["file_hash"]) or {}).get("size"),
-                      "summary": {"period_columns": doc.get("period_columns"), "rows_mapped": doc.get("rows_mapped"), "last_actual": doc.get("month"),
+                      "summary": {"period_columns": doc.get("period_columns"), "rows_mapped": doc.get("rows_mapped"), "last_actual": doc.get("month"), "first_actual": first_actual(effective),
                                   "granularity": next((x.get("granularity") for x in effective.get("sheets") or []), None),
-                                  "confirmed": counts.get("confirmed", 0), "rejected": counts.get("rejected", 0),
-                                  "cannot_check": counts.get("cannot_check", 0), **privacy_counts(doc.get("masked"))},
+                                  "confirmed": len(rows["confirmed"]), "rejected": len(rows["rejected"]),
+                                  "cannot_check": len(rows["cannot_check"]), **privacy_counts(doc.get("masked"))},
+                      "notes": notes["file"],
                       "anchors": anchors(doc, effective, shown, overrides), "lines": shown, "overrides": len(overrides)})
     deck_docs = {d["deck_id"]: d for d in await db["deck_text"].find({"audit_id": audit_id}, {"_id": 0, "blocks": 0, "structures": 0, "layout": 0}).to_list(100)}
     for deck in await deck_figures.checked(db, audit_id):
@@ -196,7 +241,7 @@ async def build(db, audit_id: str) -> Dict:
     summary = {"status": status, "reason": (review or {}).get("reason"),
                "not_completed": f"review not completed: {review.get('reason') or 'not read'}" if review and status not in ("read", "none") else None,
                "findings": sum(1 for f in (review or {}).get("findings") or [] if f.get("state") == "valid"), "dropped": (review or {}).get("dropped", 0)}
-    return {"files": files, "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": all_cards, "review": summary}
+    return {"files": files, "period": reporting_period(files), "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": all_cards, "review": summary}
 
 
 def _effective_lines(doc: Dict, effective: Dict) -> List[Dict]:

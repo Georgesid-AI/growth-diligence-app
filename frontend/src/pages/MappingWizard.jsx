@@ -92,7 +92,8 @@ export default function MappingWizard() {
       {missing && <p role="status" className="mb-4 text-sm text-amber-800" data-testid="run-missing-line">{missing}</p>}
 
       <UploadChat audit={audit} onViews={setViews} onStaged={setAttached} onMapping={setMapping}
-        onFiles={attach} leftover={leftover} mapButton={map} compact />
+        onFiles={attach} leftover={leftover} mapButton={map} compact
+        deck={<div className="px-5 pt-4"><DeckPanel auditId={audit.id} reloadKey={fxVersion} compact /></div>} />
 
       <ReadingScreen audit={audit} setAudit={setAudit} reloadKey={readKey + fxVersion} />
 

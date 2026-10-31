@@ -412,6 +412,14 @@ export function deckReadLine(deck) {
   return `${deck.pages} ${deck.page_unit || "page"}s parsed · ${deck.figure_pages} with figures · AI read: ${aiReadStatus(deck)}${masked}`;
 }
 
+/** The line under an uploaded deck on the default Upload page: pages parsed, with figures, read, rejected, personal items removed, company names coded
+ *  and the skipped pages. A deck whose page read has not reported figures yet says what the read is doing. */
+export function deckSummaryLine(deck) {
+  const [first] = deckRunLog(deck);
+  const skipped = deck.skipped_pages?.length ? ` · skipped pages ${deck.skipped_pages.join(", ")}` : "";
+  return `${(first || "AI read: queued").replace("company names tokenised", "company names coded")}${skipped}`;
+}
+
 /** The upload row's text: the one it got at upload, until the stored deck of a page read is known; then the same line the panel shows
  *  (George, 2026-10-23: the row said "queued" while the panel said "done"). */
 export function uploadLineText(line, decks) {

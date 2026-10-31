@@ -52,11 +52,16 @@ function InlineChange({ label, placeholder, onSave, testid, type = "text" }) {
   );
 }
 
-export function ReadingStrip({ audit, onAsOf }) {
+/** The reporting period of the strip: the first and last actual month across the files; else the engine's revenue period; never "—" while an as-of month exists. */
+export function reportingPeriodText(audit, period) {
+  return periodText(period) || periodText(audit.datasets?.revenue?.months) || (audit.as_of_month ? monthName(audit.as_of_month) : "—");
+}
+
+export function ReadingStrip({ audit, onAsOf, period }) {
   const asOf = audit.as_of_month;
   const items = [
     ["currency", "Currency", audit.reporting_currency || "—"],
-    ["period", "Reporting period", periodText(audit.datasets?.revenue?.months) || "—"],
+    ["period", "Reporting period", reportingPeriodText(audit, period)],
     ["fy-end", "FY end", MONTHS[(Number(audit.fiscal_year_end) || DEFAULT_FISCAL_YEAR_END) - 1]],
   ];
   const evidence = splitEvidence(asOfEvidenceLine(audit));
@@ -97,7 +102,7 @@ function LinesTable({ lines, file, auditId, sheet }) {
       <tbody>
         {lines.map((ln) => (
           <tr key={ln.row} className={[ln.indent ? "sub" : "", ln.moved ? "moved" : ""].join(" ").trim()} data-testid={`line-${ln.row}`}>
-            <td data-h="Line" data-indent={ln.indent || 0} style={ln.indent > 1 ? { paddingLeft: `${10 + 16 * ln.indent}px` } : undefined}>{ln.label}{ln.moved && <span className="note" data-testid="moved-note"> · shown under its line</span>}</td>
+            <td data-h="Line" data-indent={ln.indent || 0} style={ln.indent > 1 ? { paddingLeft: `${10 + 16 * ln.indent}px` } : undefined}>{ln.label}{ln.moved && <span className="note" data-testid="moved-note"> · shown under its line</span>}{ln.note && <span className="note" data-testid="line-note"> · {ln.note}</span>}</td>
             <td data-h="Read as">{ln.read_as}</td>
             <td data-h="Basis">{ln.basis}</td>
             <td data-h="Actual / plan">{ln.actual_plan}</td>
@@ -124,6 +129,7 @@ function SheetBlock({ file, auditId, onChanged, onAsOf }) {
     <section className="file" data-testid="file-block">
       <h2>{file.file} {file.size != null && <small>{fmtBytes(file.size)}</small>}</h2>
       <Summary parts={sheetSummary(file.summary)} />
+      {(file.notes || []).map((n, i) => <p key={i} className="note" data-testid="file-note">{n.name}: {n.reason}</p>)}
       <div className="anchors">
         <span className="k">As-of month</span>
         <span data-testid="anchor-as-of">{a.as_of ? `${lastActualText(a.as_of.month, file.summary.granularity)} — ${splitEvidence(a.as_of.evidence).text}` : "not determined"}</span>
@@ -179,7 +185,7 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
   const view = data || EMPTY;
   return (
     <div className="reading" data-testid="reading-screen">
-      <ReadingStrip audit={audit} onAsOf={onAsOf} />
+      <ReadingStrip audit={audit} onAsOf={onAsOf} period={view.period} />
       {view.files.map((f) => (f.kind === "sheet"
         ? <SheetBlock key={f.file_hash} file={f} auditId={auditId} onChanged={() => { load(); reloadAudit(); }} onAsOf={onAsOf} />
         : <DeckBlock key={f.deck_id} file={f} onShowAll={() => setConfirmedOpen(true)} />))}
