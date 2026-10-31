@@ -72,6 +72,31 @@ def deck_due() -> bool:
     return os.environ.get("DECK_FIXTURE") == "1" and bool(os.environ.get("DECK_READING_PROMPT", "").strip())
 
 
+def converter_detail(fmt: str) -> str:
+    """Why the converter did not produce a PDF, for the log: the binary found (or not found), then the exit code and the first line of stderr
+    of one conversion of the fixture. Fixtures are synthetic, so their stderr may be logged."""
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    import reading_fixtures as rf
+    binary = shutil.which("soffice") or shutil.which("libreoffice")
+    if not binary:
+        return "binary not found (soffice, libreoffice)"
+    path = rf.FIXTURES / "deck_rotated_axis.pptx"
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / f"deck.{fmt}"
+        source.write_bytes(path.read_bytes())
+        try:
+            run = subprocess.run([binary, "--headless", "--norestore", f"-env:UserInstallation=file://{tmp}/profile", "--convert-to", "pdf",
+                                  "--outdir", tmp, str(source)], capture_output=True, text=True, timeout=120)
+        except (subprocess.SubprocessError, OSError) as exc:
+            return f"binary {binary}: {type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}".strip()
+        stderr = ((run.stderr or run.stdout or "").strip().splitlines() or ["(no output)"])[0]
+        produced = (Path(tmp) / "deck.pdf").exists()
+        return f"binary {binary}, exit code {run.returncode}, pdf {'produced' if produced else 'not produced'}, stderr: {stderr}"
+
+
 def deck_images_problem() -> str:
     """Draws the page images of the deck fixture before anything is read: "" when they can be made, else the reason. The job never reads a
     deck as text alone, so a missing converter fails here, before the first provider call."""
@@ -81,14 +106,14 @@ def deck_images_problem() -> str:
     fmt = path.suffix.lstrip(".").lower()
     problem = render.converter_problem(fmt)
     if problem:
-        return problem
+        return f"{problem} [{converter_detail(fmt)}]"
     try:
         pdf = render.to_pdf(path.read_bytes(), fmt)
         if not render.page_count(pdf):
             return "the deck fixture has no page"
         render.render_page(pdf, 1)
     except render.PageImageError as exc:
-        return exc.reason
+        return f"{exc.reason} [{converter_detail(fmt)}]"
     except Exception as exc:
         return f"the deck fixture could not be drawn ({type(exc).__name__})"
     return ""

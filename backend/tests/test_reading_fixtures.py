@@ -491,8 +491,24 @@ def test_the_job_stops_before_any_provider_call_when_the_deck_fixtures_page_imag
         monkeypatch.setenv(name, value)
     assert runner.main() == 1
     out = capsys.readouterr().out
-    assert out.strip() == "page images unavailable: no converter: soffice/libreoffice not found on the path"
+    assert out.strip() == ("page images unavailable: no converter: soffice/libreoffice not found on the path "
+                           "[binary not found (soffice, libreoffice)]")
     assert router.requests == [], "no text-only read of anything"
+
+
+def test_the_preflight_line_carries_the_converters_exit_code_and_first_stderr_line(monkeypatch):
+    import importlib.util
+    import subprocess
+    from app.decks import render
+    spec = importlib.util.spec_from_file_location("run_reading_fixtures_real2", ROOT / "scripts" / "run_reading_fixtures.py")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    monkeypatch.setattr(render.shutil, "which", lambda name: "/usr/bin/soffice" if name == "soffice" else None)
+    monkeypatch.setattr(runner.subprocess if hasattr(runner, "subprocess") else subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 81, "", "Error: source file could not be loaded\nsecond line"))
+    problem = runner.converter_detail("pptx")
+    assert "exit code 81" in problem and "stderr: Error: source file could not be loaded" in problem and "second line" not in problem
+    assert "/usr/bin/soffice" in problem
 
 
 def test_the_workflow_installs_the_converter_the_deck_fixture_needs():
