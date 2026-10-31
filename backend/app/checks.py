@@ -29,7 +29,7 @@ OUTCOMES = (CONFIRMED, REJECTED, CANNOT)
 
 # Tolerances (section 5).
 MONEY_TOLERANCE = 0.005        # money within 0.5 %
-RATE_TOLERANCE = 0.01          # rates within 1 point (a fraction; a rate written as a percent is compared in points)
+RATE_TOLERANCE = 0.01          # rates within 1 point; a rate is a fraction (0.045 is 4.5 %), the reader's unit decides, no scale is guessed
 EXACT = 1e-9                   # counts and dates: exact
 
 # --- The reasons of a rejection, as the design note lists them (section 5). Same wording every time, formatted from code. ---
@@ -242,7 +242,7 @@ def _scale_check(reading: float, cell: float) -> bool:
 def compare(unit: str, reading: float, cell: float) -> bool:
     """The tolerance of a unit (section 5)."""
     if unit == "rate":
-        return abs(reading - cell) <= (RATE_TOLERANCE if abs(cell) <= 1.5 and abs(reading) <= 1.5 else RATE_TOLERANCE * 100) + EXACT
+        return abs(reading - cell) <= RATE_TOLERANCE + EXACT        # a reading on another scale than its cell is not compared: C_SCALE (_scale_check)
     if unit == "count":
         return abs(reading - cell) <= EXACT
     return abs(reading - cell) <= MONEY_TOLERANCE * abs(cell) + EXACT
@@ -291,6 +291,7 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
     if _masked(text):
         return {**base, "outcome": CANNOT, "reason": C_MASKED}
     number = to_number(text)
+    base["found_value"] = number            # what the code found when it opened the cell (the register's "Cell holds")
     unit = figure.get("unit")
     if number is None:
         return {**base, "outcome": REJECTED, "reason": R_VALUE.format(value=shown(reading), ref=cell_ref, cell=cell_shown(text))}
@@ -307,6 +308,7 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
         head_ref = ref_of(head_row, head_col)
         head_text = sheet.header(head_row, head_col)
         found = period_in_form(header_period(head_text, fye), period)
+        base["found_period"] = found
         if found != period:
             return {**base, "outcome": REJECTED, "reason": R_PERIOD.format(period=period, ref=head_ref, header=describe_header(head_text, period, fye))}
     clash = _clash(figure, pos, smap, boundaries or {}) if smap else None

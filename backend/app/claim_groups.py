@@ -13,6 +13,7 @@ from itertools import combinations
 from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from . import claim_matching as cm
+from . import formatting as fmt
 
 TOLERANCE = Decimal("0.02")         # provisional (design note section 1): abs(parts - total) <= 2% of abs(total); a zero total needs equality
 TOLERANCE_TEXT = "±2%"
@@ -179,7 +180,7 @@ def _amount(value, row: dict) -> str:
     sign = "-" if value < 0 else ""
     if row.get("currency"):
         return sign + cm._money(float(value), row["currency"])
-    text = f"{float(value):,.0f}"
+    text = fmt.fmt_number(float(value))
     return f"{text} {row['unit']}" if row.get("unit") else text
 
 

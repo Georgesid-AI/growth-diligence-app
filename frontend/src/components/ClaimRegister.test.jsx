@@ -145,7 +145,7 @@ test("overlaps name the other rows (no rank) and a shortfall shows beside the va
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
   expect(rows[0].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with Revenue, FY2024");
   expect(rows[1].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with ARR, Feb 2024");
-  expect(rows[0].querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("VaS not yet computed · shortfall 18.3%");
+  expect(rows[0].querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("VaS not yet computed · shortfall 18%");
 });
 
 test("the segment and metric are selects of the right options, under Details; the rest is text", async () => {
@@ -244,7 +244,7 @@ test("a confirmed row can be switched back, and the implied take rate shows both
   const volume = { ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst",
     implied_take_rate: 0.1, implied_take_rate_source: "revenue: revenue.csv · CSV · rows 2–71; volume: deck.pptx · slide 3" };
   const { host } = await mount([volume]);
-  expect(host.querySelector('[data-testid="register-take-rate"]').textContent).toContain("Implied take rate 10.00% (derived, not verified)");
+  expect(host.querySelector('[data-testid="register-take-rate"]').textContent).toContain("Implied take rate 10% (derived, not verified)");
   expect(host.querySelector('[data-testid="register-take-rate-source"]').textContent).toContain("deck.pptx");
   api.answerTurnover.mockResolvedValue({ register: [{ ...volume, turnover_state: "revenue" }] });
   await act(async () => { host.querySelector('[data-testid="register-turnover-revenue"]').click(); });

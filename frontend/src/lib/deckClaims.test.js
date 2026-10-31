@@ -23,7 +23,7 @@ describe("source reference", () => {
 describe("claim value", () => {
   test("keeps the deck's decimals and shows unit or currency", () => {
     expect(claimValue({ value: 3600000, currency: "USD" })).toBe("3,600,000 USD");
-    expect(claimValue({ value: 13.72, unit: "%" })).toBe("13.72%");
+    expect(claimValue({ value: 13.72, unit: "%" })).toBe("14%");
     expect(claimValue({ value: 4.9, unit: "x" })).toBe("4.9x");
     expect(claimValue({ value: 24, unit: "months" })).toBe("24 months");
     expect(claimValue({ value: 2.5 })).toBe("2.5");

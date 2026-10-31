@@ -28,6 +28,11 @@ from schemas import metrics as contract
 from app import as_of as as_of_mod
 from app import readings as readings_mod
 from app import sheet_reader
+from app import reading_export
+from app import reviewer
+from app import register
+from app import cards as cards_mod
+from app import deck_figures
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
@@ -1616,6 +1621,111 @@ async def upload_dataset(audit_id: str, dtype: str, background: BackgroundTasks,
     return view
 
 
+async def _stored_reading(audit_id: str, file_hash: str) -> tuple:
+    """(the audit's stored check outcome of the file, the reading it names): 404 when the audit has read no such file."""
+    check = next((c for c in await readings_mod.checks_for(db, audit_id) if c.get("file_hash") == file_hash and c.get("status") == "read"), None)
+    doc = await db[readings_mod.READINGS].find_one({"key": check.get("reading_key")}, {"_id": 0}) if check else None
+    if not doc:
+        raise HTTPException(404, "No reading of this file in this audit")
+    return check, doc
+
+
+@api.get("/audits/{audit_id}/readings/{file_hash}/export")
+async def export_reading(audit_id: str, file_hash: str, format: Literal["json", "csv"] = "json"):
+    """The full file map of one file's reading with its series (docs/design/read-check-review.md section 9, PR 3 step a): JSON, or CSV with one
+    line per row-period. Stored values at full precision; the overrides made on the reading go with the JSON as records of their own."""
+    check, doc = await _stored_reading(audit_id, file_hash)
+    overrides = await readings_mod.overrides_for(db, audit_id, doc["key"])
+    decided = [c for c in await cards_mod.for_audit(db, audit_id) if c["status"] == cards_mod.DECIDED and (c.get("source") or {}).get("file_hash") == file_hash]
+    if format == "csv":
+        return Response(reading_export.as_csv(doc, overrides, check.get("file") or "", decided), media_type="text/csv",
+                        headers={"Content-Disposition": 'attachment; filename="reading.csv"'})
+    return reading_export.as_json({**doc, "file": check.get("file") or doc.get("file")}, overrides, decided)
+
+
+@api.get("/audits/{audit_id}/reading")
+async def reading_register(audit_id: str):
+    """What the audit page shows (docs/design/read-check-review.md section 11): one block per file, the three result tables across all files
+    (Confirmed, Rejected, Cannot check), the open cards and the review's summary. Numbers are raw; the screen formats them."""
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+    return sanitize(await register.build(db, audit_id))
+
+
+@api.get("/audits/{audit_id}/readings/{file_hash}/cell")
+async def reading_cell(audit_id: str, file_hash: str, sheet: str, cell: str):
+    """The cell a Source cites, with the cells around it, as the stored file holds them (the link of the register's Source column)."""
+    got = await register.cell_window(db, audit_id, file_hash, sheet, cell)
+    if got is None:
+        raise HTTPException(404, "Cell not found")
+    return sanitize(got)
+
+
+class CardDecision(BaseModel):
+    model_config = {"extra": "forbid"}
+    action: Literal["use_cell", "use_reader", "type_value"]
+    value: Optional[float] = Field(default=None, allow_inf_nan=False)
+
+
+@api.post("/audits/{audit_id}/cards/{card_id}")
+async def decide_card(audit_id: str, card_id: str, body: CardDecision):
+    """The analyst's decision on an open card: use the cell, use the reader, or type a value. A dated override record; the reading is not edited."""
+    try:
+        card = await cards_mod.decide(db, audit_id, card_id, body.action, body.value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if card is None:
+        raise HTTPException(404, "No open card")
+    return sanitize(card)
+
+
+class ReadingChange(BaseModel):
+    model_config = {"extra": "forbid"}
+    what: Literal["revenue_row", "boundary"]
+    sheet: str = Field(max_length=200)
+    row: Optional[int] = Field(default=None, ge=1)
+    column: Optional[str] = Field(default=None, max_length=3)
+
+
+@api.post("/audits/{audit_id}/readings/{file_hash}/change")
+async def change_reading(audit_id: str, file_hash: str, body: ReadingChange):
+    """The analyst's Change on a spreadsheet's anchors: the revenue row or the actual / plan boundary. Override records; the reading stays."""
+    try:
+        if body.what == "revenue_row":
+            made = await register.change_revenue_row(db, audit_id, file_hash, body.sheet, body.row or 0)
+        else:
+            made = await register.change_boundary(db, audit_id, file_hash, body.sheet, body.column or "")
+    except register.ChangeRefused as exc:
+        raise HTTPException(400, str(exc))
+    return {"overrides": len(made)}
+
+
+async def _review_safely(audit_id: str, force: bool = False) -> None:
+    """The reviewer for one audit (read-check-review.md section 7; app/reviewer.py), after the audit's files are read and its calculations ran. A
+    failure of any kind leaves the register as it is (rule 20) and is logged by its type only."""
+    try:
+        a = await db.audits.find_one({"id": audit_id})
+        if not a or a.get("structure_reading_consent") is not True:
+            return
+        doc = await reviewer.review_audit(db, a, force=force)
+        await _usage_update(audit_id, lambda u: u["steps"].setdefault("reviewer", {}).__setitem__(
+            doc["status"], u["steps"]["reviewer"].get(doc["status"], 0) + 1))
+        await _refresh_as_of(audit_id)
+        logger.info("review: run_id=%s status=%s findings=%d dropped=%d", audit_id, doc["status"], len(doc.get("findings") or []), doc.get("dropped", 0))
+    except Exception as exc:
+        logger.error("review failed: run_id=%s error=%s", audit_id, type(exc).__name__)
+
+
+@api.post("/audits/{audit_id}/review-readings")
+async def review_readings(audit_id: str, background: BackgroundTasks, force: bool = False):
+    """Ask for the review of the audit's readings now (the reviewer also runs after the calculations of Run audit). One call per audit and input;
+    `force` reviews again an input already reviewed."""
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+    background.add_task(_review_safely, audit_id, force)
+    return {"status": "queued"}
+
+
 @api.get("/audits/{audit_id}/datasets")
 async def list_datasets(audit_id: str):
     """One view per stored file, for rebuilding the chat on reload."""
@@ -2255,16 +2365,9 @@ SNIPPET_MAX = 300           # the longest passage Add from deck takes (claim-typ
 
 
 def _page_lines(deck: dict, page: int) -> List[dict]:
-    """A stored page as the analyst sees it under View page: its text, notes and table lines ("b{n}", the block's index in the
-    stored deck) and its chart labels ("c{structure}:{cell}"), in the stored order. Nothing is read again from the file."""
-    key = "slide" if deck.get("page_unit") == "slide" else "page"
-    lines = [{"ref": f"b{n}", "kind": b.get("kind"), "text": b.get("text") or ""}
-             for n, b in enumerate(deck.get("blocks") or []) if b.get(key) == page and (b.get("text") or "").strip()]
-    for s, structure in enumerate(deck.get("structures") or []):
-        if structure.get("type") == "chart" and structure.get(key) == page:
-            lines += [{"ref": f"c{s}:{n}", "kind": "chart", "text": cell.get("text") or ""}
-                      for n, cell in enumerate(structure.get("cells") or []) if (cell.get("text") or "").strip()]
-    return lines
+    """A stored page as the analyst sees it under View page: its text, notes and table lines and its chart labels, in the stored order.
+    Nothing is read again from the file."""
+    return deck_figures.page_lines(deck, page)
 
 
 async def _stored_deck(audit_id: str, deck_id: str) -> dict:
@@ -2634,6 +2737,8 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
             else:
                 # No month confirmed and none typed: the audit runs everything that does not depend on it (read-check-review.md section 6).
                 await _run_compute(audit_id)
+                if await llm_gateway.reviewer_startup_problem(db) is None:        # no reviewer prompt: Run audit goes on without the reviewer stage
+                    background.add_task(_review_safely, audit_id)        # one review per audit and input; a review already made is kept
                 result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF)
         else:
             if not audit.get("results"):
@@ -4133,6 +4238,13 @@ async def check_sheet_reader():
         return
     if problem:
         logger.error("sheet reader will not read: %s", problem)
+    try:
+        missing = await llm_gateway.reviewer_startup_problem(db)
+    except Exception as exc:
+        logger.error("reviewer check failed at startup: error=%s", type(exc).__name__)
+        return
+    if missing:
+        logger.error("reviewer will not run: %s", missing)
 
 
 @app.on_event("startup")

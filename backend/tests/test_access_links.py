@@ -19,7 +19,7 @@ import test_llm_gateway as t  # noqa: E402
 
 OWNER = "owner-token-for-the-test-suite-only"
 PARAMS = {"dtype": "revenue", "deck_id": "deck-1", "candidate_id": "c1", "claim_id": "c1", "stage": "engine",
-          "step": "growth_engine", "page": "1", "review_id": "r1"}
+          "step": "growth_engine", "page": "1", "review_id": "r1", "file_hash": "0" * 64, "card_id": "card-1"}
 
 
 def audit_routes():

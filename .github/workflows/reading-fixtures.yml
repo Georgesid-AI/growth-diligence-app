@@ -1,8 +1,9 @@
 name: reading-fixtures
 
-# Reads each synthetic fixture once with the real model and compares the reading with its expected map
+# Reads each synthetic fixture once (the deck fixture too, through the page reader: PR 3) with the real model and compares the reading with its expected map
 # (docs/design/read-check-review.md section 10). Runs only when the reading path changes: the prompt stub, the gateway and its model string,
-# the masker, the schema, the checks, the fixtures. No such PR merges without it passing; a changed expected map needs the owner's approval,
+# the masker, the schema, the checks, the fixtures. The deck fixture (paid page reads with images, and a LibreOffice install) runs only when a file of
+# .github/deck-reading-path.txt changed; the sheet fixtures run on every change of the path above. No such PR merges without it passing; a changed expected map needs the owner's approval,
 # recorded in the PR. Without ANTHROPIC_API_KEY (a fork, or the secret not yet added) it skips with a notice.
 on:
   pull_request:
@@ -11,6 +12,9 @@ on:
       - "backend/app/llm/**"
       - "backend/app/sheet_reader.py"
       - "backend/app/readings.py"
+      - "backend/app/series.py"
+      - "backend/app/lines.py"
+      - "backend/app/cards.py"
       - "backend/app/checks.py"
       - "backend/app/recognition.py"
       - "backend/app/column_rules.py"
@@ -28,6 +32,8 @@ on:
       - "backend/schemas/metrics.py"
       - "backend/tests/fixtures/reading/**"
       - "backend/tests/fixtures/prompts/sheet_reading.md"
+      - "backend/tests/fixtures/prompts/deck_reading.md"
+      - "backend/app/deck_figures.py"
       - "backend/tests/reading_fixtures.py"
       - "scripts/run_reading_fixtures.py"
       - "scripts/build_reading_fixtures.py"
@@ -42,6 +48,7 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       SHEET_READING_PROMPT: ${{ secrets.SHEET_READING_PROMPT }}
+      DECK_READING_PROMPT: ${{ secrets.DECK_READING_PROMPT }}
       SHEET_READER_MODEL: ${{ vars.SHEET_READER_MODEL }}
     steps:
       - name: Skip without the API key
@@ -49,6 +56,14 @@ jobs:
         run: echo "::notice title=Reading fixtures skipped::ANTHROPIC_API_KEY is not set, so no fixture was read. Add it to the repository secrets (and SHEET_READING_PROMPT)."
       - uses: actions/checkout@v5
         if: env.ANTHROPIC_API_KEY != ''
+        with:
+          fetch-depth: 0
+      # DECK_FIXTURE=1 only when this pull request changed a file of the deck reading path; the script skips the deck fixture otherwise.
+      - name: Did the deck reading path change?
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > changed.txt
+          if grep -qF -f .github/deck-reading-path.txt changed.txt; then echo "DECK_FIXTURE=1" >> "$GITHUB_ENV"; else echo "::notice title=Deck fixture skipped::no file of the deck reading path changed."; fi
       - uses: actions/setup-python@v7
         if: env.ANTHROPIC_API_KEY != ''
         with:
@@ -57,6 +72,9 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
         if: env.ANTHROPIC_API_KEY != ''
+      # The deck fixture is a pptx: its pages are drawn for the page reader through LibreOffice (app/decks/render.py).
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-impress
+        if: env.ANTHROPIC_API_KEY != '' && env.DECK_FIXTURE == '1'
       # One provider call per fixture, no re-read: the cap of section 10. Skips itself, exit 0, when the prompt or the model is not set.
       - run: python scripts/run_reading_fixtures.py
         if: env.ANTHROPIC_API_KEY != ''

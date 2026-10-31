@@ -1,0 +1,273 @@
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+
+import ReadingScreen, { ReadingTop } from "./ReadingScreen";
+import * as api from "@/lib/api";
+import { HOVERS, WIDTHS } from "@/lib/readingView";
+import fs from "fs";
+import path from "path";
+
+/**
+ * The reading screen (docs/design/read-check-review.md section 11, docs/design/audit-page-mockup.html; PR 3 step d), on a synthetic register. Run with
+ * --no-cache (rule 25).
+ */
+jest.mock("@/lib/api", () => ({
+  getReading: jest.fn(), decideCard: jest.fn(), changeReading: jest.fn(), getCell: jest.fn(), getDeckPage: jest.fn(), downloadReading: jest.fn(),
+  getAudit: jest.fn(), updateAudit: jest.fn(),
+}));
+jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+const q = (id) => document.body.querySelector(`[data-testid="${id}"]`);
+const all = (id) => [...document.body.querySelectorAll(`[data-testid="${id}"]`)];
+let host, root;
+
+const AUDIT = { id: "a1", reporting_currency: "EUR", fiscal_year_end: 12, as_of_month: "2022-05-31", as_of_by: "detected", as_of_file: "revenue.xlsx",
+  as_of_evidence: "customers row 23 stops at AP (confirmed on sheet Sales, column AP)", datasets: { revenue: { months: { first: "2019-01", last: "2022-05" } } } };
+
+const src = (cell, extra = {}) => ({ file: "revenue.xlsx", file_hash: "h1", sheet: "Sales", cell, ...extra });
+const line = (row, label, over = {}) => ({ row, label, read_as: "revenue", basis: "monthly", actual_plan: "mixed, boundary AP", cells: `B${row}:AW${row}`, indent: 0, moved: false,
+  role: "revenue", parent_row: null, ...over });
+const REGISTER = {
+  files: [
+    { kind: "sheet", file: "revenue.xlsx", file_hash: "h1", size: 61440,
+      summary: { period_columns: 48, rows_mapped: 41, last_actual: "2022-05", granularity: "monthly", confirmed: 37, rejected: 1, cannot_check: 1, personal_removed: 0, company_coded: 0 },
+      anchors: { as_of: { month: "2022-05", evidence: "customers row 23 stops at AP (confirmed on sheet Sales, column AP)" },
+                 revenue_row: { sheet: "Sales", row: 11, label: "Recognised revenue", basis: "monthly" }, actual_plan: { sheet: "Sales", last_actual: "AP", plan_from: "AQ" } },
+      lines: [{ sheet: "Sales", lines: [
+        line(11, "Recognised revenue"),
+        line(3, "revenue growth rate", { read_as: "growth rate", basis: "rate", indent: 1, moved: true, role: "growth_rate" }),
+        line(14, "MRR from annual subscriptions", { read_as: "MRR, part of row 11", indent: 1, parent_row: 11, role: "mrr" }),
+        line(15, "Annual, enterprise", { read_as: "MRR, part of row 14", indent: 2, parent_row: 14, role: "mrr" }),
+        line(23, "Total clients", { read_as: "customers", role: "customers" }),
+      ] }] },
+    { kind: "deck", file: "Board report.pdf", deck_id: "d1", pages: 20,
+      summary: { pages: 20, pages_with_figures: 15, confirmed: 15, rejected: 0, cannot_check: 3, personal_removed: 1, company_coded: 17, skipped_pages: [1, 2, 7] },
+      anchors: { figures: { read: 112, found_on_page: 109, from_image: 3 } } },
+  ],
+  tables: {
+    confirmed: [
+      { key: "k1", kind: "figure", metric: "revenue", value: 78829.4, unit: "money", currency: "EUR", period: "2022-05", basis: "monthly", actual_plan: "actual",
+        row_role: "revenue", source: src("AP11"), note: "set by analyst", set_at: "2026-10-31", hover: "value set by analyst; the check did not confirm it" },
+      { key: "k2", kind: "deck_figure", metric: "arr", value: 0.045, unit: "rate", currency: null, period: "2021", basis: null, actual_plan: "actual", row_role: null,
+        source: { file: "Board report.pdf", deck_id: "d1", page: 3 }, note: null },
+    ],
+    rejected: [
+      { key: "k3", kind: "figure", metric: "arr", value: 447223.43, unit: "money", currency: "EUR", period: "2022-04", cell_value: 398736, cell_period: "2022-04",
+        reason: "Reading says 447223; cell AO13 holds 398736.", reread: "repeats the first reading", action: "card", card_id: "c1", source: src("AO13") },
+    ],
+    cannot_check: [
+      { key: "k4", kind: "figure", metric: "mrr", value: 2500, unit: "money", currency: "EUR", period: "2021-01", reason: "Page 8 has no text layer; figure read from the image.",
+        used_in: "MRR series", source: { file: "Board report.pdf", deck_id: "d1", page: 8 } },
+    ],
+  },
+  counts: { confirmed: 2, rejected: 1, cannot_check: 1 },
+  cards: [{ id: "c1", kind: "citation_failed_twice", status: "open", title: "The reader and the file disagree", subject: { metric: "ARR", period: "2022-04" },
+    actions: ["use_cell", "use_reader", "type_value"], source: src("AO13"),
+    reader: { label: "Reader, twice", value: 447223.43, unit: "money", currency: "EUR", period: "2022-04", evidence: "April update ARR as stated on page 20" },
+    other: { label: "Cell AO13", value: 398736, unit: "money", currency: "EUR", period: "2022-04", evidence: null } }],
+  review: {},
+};
+
+async function show(register = REGISTER, audit = AUDIT) {
+  api.getReading.mockResolvedValue(register);
+  api.getAudit.mockResolvedValue(audit);
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<ReadingScreen audit={audit} setAudit={() => {}} />); });
+  await act(async () => { await Promise.resolve(); });
+}
+afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); jest.clearAllMocks(); });
+
+describe("the strip and the file blocks", () => {
+  test("the strip has the currency, the period, the as-of month with Change and the FY end; the evidence line has Confirmed on in green", async () => {
+    await show();
+    expect(q("assumption-currency").textContent).toBe("CurrencyEUR");
+    expect(q("assumption-period").textContent).toBe("Reporting periodJan 2019 – May 2022");
+    expect(q("assumption-as-of").textContent).toBe("As-of monthMay 2022 Change");
+    expect(q("assumption-fy-end").textContent).toBe("FY endDecember");
+    expect(q("assumption-as-of-evidence").textContent).toContain("Confirmed on column AP.");
+    expect(q("assumption-as-of-evidence").querySelector("b").textContent).toBe("Confirmed on column AP.");
+  });
+
+  test("a spreadsheet block reads in the mockup's form, with three anchor lines and Change, and Show all lines", async () => {
+    await show();
+    const [sheet, deck] = all("file-block");
+    expect(sheet.querySelector("h2").textContent).toBe("revenue.xlsx 60 KB");
+    expect(sheet.querySelector('[data-testid="file-summary"]').textContent).toBe(
+      "48 month columns · 41 rows mapped · last actual May 2022 · 37 confirmed · 1 rejected · 1 cannot check · personal items removed 0 · company names coded 0");
+    expect(sheet.querySelector('[data-testid="anchor-revenue"]').textContent).toBe("Row 11, Recognised revenue, monthly");
+    expect(sheet.querySelector('[data-testid="anchor-boundary"]').textContent).toBe("Actual to column AP, plan from AQ");
+    expect([...sheet.querySelectorAll(".anchors a")].map((a) => a.textContent)).toEqual(["Change", "Change", "Change"]);
+    expect(sheet.querySelector("summary").textContent).toBe("Show all lines");
+    expect(deck.querySelector('[data-testid="file-summary"]').textContent).toBe(
+      "20 pages · 15 with figures · 15 read · 0 rejected · 3 cannot check · personal items removed 1 · company names coded 17 · skipped 1, 2, 7 (no numbers)");
+    expect(deck.querySelector('[data-testid="anchor-figures"]').textContent).toBe("112 read, 109 found on their page, 3 from charts without text");
+  });
+
+  test("the lines table sits in the details box, in file order; a rate row is directly under its line with the note; part rows are indented", async () => {
+    await show();
+    const details = q("lines-details");
+    expect(details.open).toBe(false);
+    const rows = [...details.querySelectorAll("tbody tr")];
+    expect(rows.map((r) => r.querySelector("td").textContent.replace(" · shown under its line", ""))).toEqual(
+      ["Recognised revenue", "revenue growth rate", "MRR from annual subscriptions", "Annual, enterprise", "Total clients"]);
+    expect(rows[1].className).toContain("moved");
+    expect(rows[1].className).toContain("sub");
+    expect(rows[1].querySelector('[data-testid="moved-note"]').textContent).toBe(" · shown under its line");
+    expect(rows[2].className).toBe("sub");
+    expect(rows[3].className).toBe("sub");
+    expect(rows[3].querySelector("td").dataset.indent).toBe("2");
+    expect(rows[3].querySelector("td").style.paddingLeft).toBe("42px");
+    expect(rows[2].querySelector("td").style.paddingLeft).toBe("");
+    expect(rows[0].className).toBe("");
+    expect([...details.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Line", "Read as", "Basis", "Actual / plan", "Cells"]);
+    await act(async () => { details.querySelector("summary").click(); });
+    expect(q("lines-details").querySelector("summary").textContent).toBe("Hide all lines");
+  });
+
+  test("Change on the revenue row sends the row to the server", async () => {
+    api.changeReading.mockResolvedValue({ overrides: 2 });
+    await show();
+    await act(async () => { q("anchor-revenue-change").click(); });
+    const input = q("anchor-revenue-change-input");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "14");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { q("anchor-revenue-change-save").click(); });
+    expect(api.changeReading).toHaveBeenCalledWith("a1", "h1", { what: "revenue_row", sheet: "Sales", row: 14 });
+  });
+});
+
+describe("the three result tables", () => {
+  test("Confirmed starts collapsed behind its count; Rejected and Cannot check show every row", async () => {
+    await show();
+    expect(q("confirmed-details").open).toBe(false);
+    expect(q("heading-confirmed").textContent).toBe("Confirmed · 2");
+    expect(q("heading-rejected").textContent).toBe("Rejected · 1");
+    expect(q("heading-cannot_check").textContent).toBe("Cannot check · 1");
+    expect(all("row-rejected")).toHaveLength(1);
+    expect(all("row-cannot_check")).toHaveLength(1);
+    expect(q("confirmed-details").querySelector("summary").textContent).toBe("Show");
+    await act(async () => { q("confirmed-details").querySelector("summary").click(); });
+    expect(q("confirmed-details").open).toBe(true);
+  });
+
+  test("a figure the analyst set on a card is Confirmed, marked set by analyst with its date and the hover text", async () => {
+    await show();
+    const marks = all("set-by-analyst");
+    expect(marks).toHaveLength(1);
+    expect(marks[0].textContent).toBe("set by analyst, 2026-10-31");
+    expect(marks[0].getAttribute("title")).toBe("value set by analyst; the check did not confirm it");
+    expect(q("table-confirmed").contains(marks[0])).toBe(true);
+  });
+
+  test("every heading of every table has hover text", async () => {
+    await show();
+    const heads = [...document.body.querySelectorAll("th")];
+    expect(heads.length).toBe(Object.values(HOVERS).reduce((n, h) => n + Object.keys(h).length, 0));          // the lines table and the three result tables
+    for (const th of heads) expect(th.getAttribute("title")).toBeTruthy();
+    for (const kind of Object.keys(HOVERS)) for (const [name, text] of Object.entries(HOVERS[kind])) expect(`${kind}.${name}`.length && text.length).toBeGreaterThan(10);
+  });
+
+  test("column order, widths, right-aligned numbers, and Source last with the cell first", async () => {
+    await show();
+    expect([...q("table-confirmed").querySelectorAll("th")].map((t) => t.textContent)).toEqual(["Metric", "Value", "Period", "Basis", "Actual / plan", "Row", "Source"]);
+    expect([...q("table-rejected").querySelectorAll("th")].map((t) => t.textContent)).toEqual(["Metric", "Reading says", "Cell holds", "Reason", "Re-read", "Action", "Source"]);
+    expect([...q("table-cannot_check").querySelectorAll("th")].map((t) => t.textContent)).toEqual(["Metric", "Value", "Period", "Why", "Used in", "Source"]);
+    for (const kind of ["confirmed", "rejected", "cannot_check"]) {
+      const widths = [...q(`table-${kind}`).querySelectorAll("col")].map((c) => c.style.width);
+      expect(widths).toEqual(WIDTHS[kind].map((w) => `${w}%`));
+      expect(WIDTHS[kind].reduce((a, b) => a + b, 0)).toBe(100);
+      const last = [...q(`table-${kind}`).querySelectorAll("th")].pop();
+      expect(last.textContent).toBe("Source");
+    }
+    expect([...q("table-confirmed").querySelectorAll("th.num")].map((t) => t.textContent)).toEqual(["Value"]);
+    expect([...q("table-rejected").querySelectorAll("th.num")].map((t) => t.textContent)).toEqual(["Reading says", "Cell holds"]);
+    const src1 = q("table-confirmed").querySelector("tbody tr td.src");
+    expect(src1.textContent).toBe("AP11 · Sales · revenue.xlsx");
+    expect(src1.querySelector("b").textContent).toBe("AP11");
+    expect(all("row-confirmed")[1].querySelector("td.src").textContent).toBe("p3 · Board report.pdf");
+  });
+
+  test("every number goes through the one formatter: whole numbers, one decimal below ten", async () => {
+    await show();
+    await act(async () => { q("confirmed-details").querySelector("summary").click(); });
+    const [sheetRow, deckRow] = all("row-confirmed");
+    expect(sheetRow.querySelector('td[data-h="Value"]').textContent).toBe("78,829 EUR");
+    expect(deckRow.querySelector('td[data-h="Value"]').textContent).toBe("4.5%");
+    const rejected = q("row-rejected");
+    expect(rejected.querySelector('td[data-h="Reading says"]').textContent).toBe("447,223 EURApr 2022".replace("Apr", "April"));
+    expect(rejected.querySelector('td[data-h="Cell holds"]').textContent).toContain("398,736 EUR");
+  });
+
+  test("rows carry data-h labels and the narrow-screen rule turns a row into a card below 900 px", () => {
+    const css = fs.readFileSync(path.resolve(__dirname, "../App.css"), "utf8");
+    expect(css).toMatch(/@media \(max-width: 900px\)[\s\S]*\.reading table\.rows tr \{ border: 1px solid/);
+    expect(css).toContain("content: attr(data-h)");
+    expect(css).toContain("thead { display: none; }");
+  });
+
+  test("the Source link shows the cell with its neighbours", async () => {
+    api.getCell.mockResolvedValue({ sheet: "Sales", cell: "AO13", rows: [{ row: 13, cells: [{ ref: "AN13", text: "1", cited: false }, { ref: "AO13", text: "398736", cited: true }] }] });
+    await show();
+    await act(async () => { q("table-rejected").querySelector('[data-testid="source-link"]').click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(api.getCell).toHaveBeenCalledWith("a1", "h1", "Sales", "AO13");
+    expect(q("source-view").querySelector("td.cited").textContent).toBe("398736");
+  });
+});
+
+describe("the cards", () => {
+  test("a card shows both readings with their evidence, the cell link, and the three actions", async () => {
+    await show();
+    const card = q("card-citation_failed_twice");
+    expect(card.querySelector("h3").textContent).toBe("ARR, April 2022: the reader and the file disagree");
+    const two = card.querySelector(".two").textContent;
+    expect(two).toContain("Reader, twice");
+    expect(two).toContain('447,223 EUR, April 2022 — "April update ARR as stated on page 20"');
+    expect(two).toContain("Cell AO13398,736 EUR, April 2022");
+    expect([...card.querySelectorAll(".actions button")].map((b) => b.textContent)).toEqual(["Use the cell", "Use the reader", "Type a value"]);
+    expect(card.querySelector('[data-testid="source-link"]').textContent).toContain("AO13");
+  });
+
+  test("Use the cell, Use the reader and a typed value are sent to the server", async () => {
+    api.decideCard.mockResolvedValue({});
+    await show();
+    await act(async () => { q("card-use_cell").click(); });
+    expect(api.decideCard).toHaveBeenCalledWith("a1", "c1", { action: "use_cell" });
+    await act(async () => { q("card-use_reader").click(); });
+    expect(api.decideCard).toHaveBeenLastCalledWith("a1", "c1", { action: "use_reader" });
+    await act(async () => { q("card-type_value").click(); });
+    const input = q("card-typed");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "400000");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { q("card-typed-save").click(); });
+    expect(api.decideCard).toHaveBeenLastCalledWith("a1", "c1", { action: "type_value", value: 400000 });
+  });
+
+  test("nothing flagged: no card, no Rejected rows", async () => {
+    await show({ ...REGISTER, tables: { ...REGISTER.tables, rejected: [] }, counts: { ...REGISTER.counts, rejected: 0 }, cards: [] });
+    expect(all("card-citation_failed_twice")).toHaveLength(0);
+    expect(document.body.querySelector(".card")).toBeNull();
+    expect(q("heading-rejected").textContent).toBe("Rejected · 0");
+  });
+});
+
+describe("the top of the page", () => {
+  test("one sentence, the AI-reading tick, and no Why this step matters", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root.render(<ReadingTop audit={{ ...AUDIT, structure_reading_consent: true }} setAudit={() => {}} host={<button data-testid="run">Run audit</button>} />); });
+    expect(q("reading-explainer").textContent).toMatch(/^The model reads each file in full\./);
+    expect(q("setup-consent-checkbox").checked).toBe(true);
+    expect(q("setup-consent-tick-label").textContent).toBe("AI reading");
+    expect(q("run").textContent).toBe("Run audit");
+    expect(document.body.textContent).not.toContain("Why this step matters");
+  });
+});

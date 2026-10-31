@@ -61,6 +61,13 @@
     model returns the file map (`FileMap`, schemas/metrics.py); Python opens every cited cell (app/checks.py) and decides what the cell
     cannot show to be unchecked. The spreadsheet calls of rule 16 above (file_type, structure_reading, column mapping) are unchanged,
     still learn no names, and stay behind `READER_V1` (off turns them off; default on) for PR 2 only.
+    Amended 2026-10-30 (read-check-review.md sections 7, 9 and 13, PR 3; for George's approval before merge, rule 32): a new step `reviewer`. One
+    call per audit, with the audit's consent, on the sheet reader's model allow-list, with the `reviewer` prompt of the store (rule 26). It may
+    receive the stored file map of every spreadsheet with its stored series (period, value, cell) and without the readers' evidence lines, the
+    deck figures (page, metric, value, unit, period; never a line of page text), the computed results as the narratives see them, and the
+    cannot-check list, every string masked by the one module (company tokens first, then the personal rules). It returns findings as plain JSON
+    validated in code; Python opens every reference, drops a finding that cites what does not exist, and a valid finding sends one re-read of
+    that item through the sheet reader's recheck path with the finding attached (the finding's text masked like any payload).
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt
@@ -70,7 +77,11 @@
     (docs/design/page-image.md); it is deleted with its deck and with the audit (rule 22). Amended 2026-10-29 (PR 2, for George's approval): a reading of a
     spreadsheet is stored once in `readings`, keyed on file hash + prompt version + model version, never edited, with the names restored
     (display un-masks on the server); a second upload of the same file, in any audit, gets it with no model call. Its automatic second
-    reading, an analyst's Change and a reviewer's correction are records of their own (`reading_rereads`, `reading_overrides`). A reading
+    reading, an analyst's Change and a reviewer's correction are records of their own (`reading_rereads`, `reading_overrides`). Amended 2026-10-30 (PR 3, for
+    George's approval, rule 32): the reading also holds, beside each row's map entry, the series code read from the file's cells (period, value at full
+    precision, cell reference; cells after the actual/plan boundary in a separate plan series), written once with the reading and never edited; the
+    only place a cell value sits in MongoDB besides the dataset itself. The reviewer's findings, the cards and the analyst's decisions are records of
+    their own (`reading_reviews`, `reading_cards`, `reading_overrides`) and go with the audit. A reading
     is kept only while an audit uses it and goes with the last audit that does (rule 22). Rules 16–18: see docs/architecture.md.
 18. Model output never becomes Verified on its own. Python must match every value to a
     source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.

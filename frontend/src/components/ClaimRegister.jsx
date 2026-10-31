@@ -1,3 +1,4 @@
+import { fmtNumber } from "@/lib/format";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
@@ -186,7 +187,7 @@ function RowDetails({ row, rows, ccy, results, save }) {
 
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
 const DETAIL_PARTS = [["Inputs", "inputs"], ["Formula", "formula"], ["Checked against files", "checked"], ["Not checked", "not_checked"]];
-const inputText = (i) => `${i.label} ${typeof i.value === "number" ? i.value.toLocaleString("en-US", { maximumFractionDigits: 2 }) : i.value}${i.page ? ` (${i.page})` : ""}`;
+const inputText = (i) => `${i.label} ${typeof i.value === "number" ? fmtNumber(i.value) : i.value}${i.page ? ` (${i.page})` : ""}`;
 
 /** The "deck only" tag and the details block of a deck figure (docs/design/deck-actuals.md section 3): inputs, formula, checked, not checked. */
 function DeckDetails({ row }) {

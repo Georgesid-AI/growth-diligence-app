@@ -322,7 +322,7 @@ def test_the_workflow_runs_only_on_the_reading_path_and_skips_without_the_key():
     assert job["env"]["ANTHROPIC_API_KEY"] == "${{ secrets.ANTHROPIC_API_KEY }}"
     skip = job["steps"][0]
     assert skip["if"] == "env.ANTHROPIC_API_KEY == ''" and "::notice" in skip["run"]
-    assert all(step.get("if") == "env.ANTHROPIC_API_KEY != ''" for step in job["steps"][1:]), "nothing else runs without the key"
+    assert all(step.get("if", "").startswith("env.ANTHROPIC_API_KEY != ''") for step in job["steps"][1:]), "nothing else runs without the key"
     assert any("scripts/run_reading_fixtures.py" in step.get("run", "") for step in job["steps"])
     tests_flow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY" not in tests_flow, "the general checks stay free of secrets"
@@ -345,3 +345,77 @@ def test_the_job_starts_from_an_empty_store_and_fails_with_a_clear_line_when_a_f
     assert runner.main() == 1
     out = capsys.readouterr().out
     assert out.count("served from storage, not read by the model") == len(SHEETS) and "fixture(s) differ" in out
+
+
+# ---------------------------------------------------------------------------
+# PR 3, item 4: the deck fixture joins the job. The page reader's figures are checked against the stored page text.
+# ---------------------------------------------------------------------------
+class DeckModel(t.FakeAdapter):
+    """Answers a page read with one claim for the figure written as digits in the page text (the headline), as an ideal reader would."""
+
+    def __init__(self, extra=()):
+        super().__init__()
+        self.extra = list(extra)
+
+    def complete(self, **kw):
+        self.calls += 1
+        sent = json.loads(kw["user_payload"])
+        claims = []
+        for line in sent["text"].split("\n"):
+            m = re.match(r"^(p\d+r\d+c\d+): .*?([\d,]+)$", line)
+            if m and "revenue" in line.lower():
+                claims.append({"metric": "revenue", "value": float(m.group(2).replace(",", "")), "value_high": None, "unit": "EUR", "unit_other": None,
+                               "period": "2024", "basis": "actual", "scenario": "none", "value_cell": m.group(1), "label_cell": None,
+                               "period_cell": None})
+        return json.dumps({"type": "page_claims", "claims": claims + self.extra}), 1000, 100
+
+
+def deck_job(adapter):
+    runner = load_runner()
+    db = runner.empty_store("TEST ONLY sheet prompt", "TEST ONLY deck prompt")
+    return runner, db, asyncio.run(runner.read_decks(db, adapter=adapter))
+
+
+def test_the_deck_fixture_runs_in_the_job_and_its_figures_are_checked_against_the_page_text(monkeypatch, capsys):
+    monkeypatch.setenv("PAGE_READER_MODEL", MODEL)
+    runner, db, failed = deck_job(DeckModel())
+    out = capsys.readouterr().out
+    assert "deck_rotated_axis" in out
+    # The headline is read and confirmed by the page text; the four quarters need the image (the offline model does not read it), so the
+    # job reports them as a difference: the comparison names what the reading lacks.
+    assert failed == 1 and "no figure 300 read" in out and "confirmed 1" in out
+
+
+def test_the_deck_comparison_passes_when_every_expected_figure_is_read_and_confirmed_and_the_parts_sum_to_the_headline():
+    exp = rf.expected("deck_rotated_axis")
+    figs = [{"value": f["value"], "outcome": "confirmed", "source": {"page": f["page"]}} for f in exp["figures"]]
+    assert rf.compare_deck(exp, figs) == []
+    assert any("not confirmed" in d for d in rf.compare_deck(exp, [{**figs[0], "outcome": "rejected"}, *figs[1:]]))
+    assert any("add up" in d for d in rf.compare_deck(exp, [figs[0], *[{**f, "value": f["value"] + 50} for f in figs[1:]]]))
+
+
+def test_the_job_skips_the_deck_alone_with_a_notice_without_the_deck_prompt(capsys):
+    runner = load_runner()
+    db = runner.empty_store("TEST ONLY sheet prompt")
+    assert asyncio.run(runner.read_decks(db, adapter=DeckModel())) == 0
+    assert "::notice title=Deck fixture skipped::DECK_READING_PROMPT is not set" in capsys.readouterr().out
+
+
+def test_the_job_reads_the_deck_fixture_only_when_the_deck_path_changed(monkeypatch, capsys):
+    runner = load_runner()
+    router = FixtureRouter()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    called = []
+
+    async def fake_decks(db, adapter=None):
+        called.append(1)
+        return 0
+    monkeypatch.setattr(runner, "read_decks", fake_decks)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("DECK_READING_PROMPT", "TEST ONLY deck"),
+                        ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("DECK_FIXTURE", raising=False)
+    assert runner.main() == 0 and not called
+    assert "Deck fixture skipped::DECK_FIXTURE is not 1" in capsys.readouterr().out
+    monkeypatch.setenv("DECK_FIXTURE", "1")
+    assert runner.main() == 0 and called == [1]

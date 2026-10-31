@@ -3,6 +3,7 @@
  * pure helpers the screen uses. The wording lives here once so the components and their tests read the same text.
  */
 import { seeGlossary } from "./glossary";
+import { fmtBytes as formatBytes, fmtCount, fmtNumber, fmtPercentPoints } from "./format";
 
 // The deck sentence of S2 (Upload page restructure, George, 2026-10-28): the zero-data-retention wording only when the server says PROVIDER_ZDR is on.
 export const ZDR_SENTENCE_ON = "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.";
@@ -55,8 +56,8 @@ const LOADED_LABELS = { revenue: "A revenue file", crm: "A CRM file", pnl: "A P&
 // S5: the month range appears once the date column is confirmed; before that the line ends on the row count.
 export const S5_head = (view) => {
   if (view.recognition_only) return "Detected: Revenue file";                    // no rows, no columns: its recognition line says the rest
-  const head = `Detected: ${typeLabel(view)} · ${view.row_count.toLocaleString("en-US")} ${view.sheet_map ? "lines" : "rows"}`;
-  return view.months ? `${head} · ${view.months.count} months (${fmtMonth(view.months.first)} – ${fmtMonth(view.months.last)})` : head;
+  const head = `Detected: ${typeLabel(view)} · ${fmtCount(view.row_count)} ${view.sheet_map ? "lines" : "rows"}`;
+  return view.months ? `${head} · ${fmtCount(view.months.count)} months (${fmtMonth(view.months.first)} – ${fmtMonth(view.months.last)})` : head;
 };
 // S26a-c (2026-10-16): the detected type with its source and the Change button; the sheet read; what a miss says.
 export const TYPE_SOURCES = { rules: "by rules", ai: "AI suggestion", you: "your choice" };
@@ -72,21 +73,21 @@ const LOOKS = {
 export const S27_SHOW_COLUMNS = "Show columns";
 export const S27_miss = (view) => {
   const looks = view.miss.looks || {};
-  const what = LOOKS[looks.shape] || `a table of ${(looks.rows ?? 0).toLocaleString("en-US")} rows and ${looks.columns ?? 0} columns`;
+  const what = LOOKS[looks.shape] || `a table of ${fmtCount(looks.rows ?? 0)} rows and ${fmtCount(looks.columns ?? 0)} columns`;
   return `Could not read this file as ${typeLabel(view)}. Missing: ${view.miss.missing.map(fieldName).join(", ")}. It looks like ${what}.`;
 };
 // S28a-d (2026-10-16, section 20): a forecast table read as claims, one plan line × one year; nothing is saved before Confirm.
-const claimsWord = (n) => `${n.toLocaleString("en-US")} ${n === 1 ? "claim" : "claims"}`;
+const claimsWord = (n) => `${fmtCount(n)} ${n === 1 ? "claim" : "claims"}`;
 export const S28_read = (fc) => `Read as ${claimsWord(fc.count)} from ${fc.sheet}!${fc.range}. Default label: Unverified.`;
 export const S28_SHOW_CLAIMS = "Show claims";
-export const S28_cap = (fc) => `The table holds ${fc.total.toLocaleString("en-US")} claims; the first 60 by row order are read.`;
+export const S28_cap = (fc) => `The table holds ${fmtCount(fc.total)} claims; the first 60 by row order are read.`;
 export const S28_CONFIRM = "Save claims";      // George, 2026-10-16
 export const S28_saved = (n) => `Saved ${claimsWord(n)} as Unverified.`;
 /** One year of a line in the Show claims list: its period as the file states it (or the fiscal year it was rolled up to) and its
  *  value with its unit: "2025F 1,980,000 EUR", "FY2026 65.2%", "2025F 26 people". */
 export const forecastValueText = (line, v) => {
-  const n = Number(v.value).toLocaleString("en-US", { maximumFractionDigits: 2 });
-  const figure = line.unit === "%" ? `${n}%` : [n, line.currency || line.unit].filter(Boolean).join(" ");
+  const n = fmtNumber(v.value);
+  const figure = line.unit === "%" ? fmtPercentPoints(v.value) : [n, line.currency || line.unit].filter(Boolean).join(" ");
   return `${v.period_text || `FY${v.target_date}`} ${figure}${v.tag && v.tag !== "unknown" ? ` (${v.tag})` : ""}`;
 };
 /** The cells a line's claims cite, first to last: "C5:H5", "H5:BC5". */
@@ -182,9 +183,9 @@ export const S13_status = (view) => {
 export const S14_same = (version) => `Same file as before: saved mapping v${version} applied.`;
 
 // S30a-h (2026-10-18, section 26): a P&L read as a statement, one row per line. Wording chosen under rule 19 for George's review.
-const plural = (n, one, many) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
-export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Personal items removed: ${c.email + c.phone + c.person + (c.iban || 0) + (c.id || 0)}. `
-  + `Company names tokenised: ${c.customer + c.company}. Columns withheld: ${c.columns}.`;
+const plural = (n, one, many) => `${fmtCount(n)} ${n === 1 ? one : many}`;
+export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Personal items removed: ${fmtCount(c.email + c.phone + c.person + (c.iban || 0) + (c.id || 0))}. `
+  + `Company names tokenised: ${fmtCount(c.customer + c.company)}. Columns withheld: ${fmtCount(c.columns)}.`;
 export const S30B_HEADERS = ["Line", "Role", "Meaning", "Basis", "Used", "Confidence", "Checks"];
 export const CONFIRM_ALL = "Confirm all";
 // docs/design/pnl-lines.md sections 1 and 8: every mapped line has a use, assigned by its mapped role: series, sum check, recompute check or
@@ -251,12 +252,8 @@ export function fmtMonth(ym) {
   return `${MONTH_NAMES[m - 1]} ${y}`;
 }
 
-export function fmtBytes(n) {
-  if (n == null) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
+// A byte size by the one display rule (lib/format.js), kept under its old name here.
+export const fmtBytes = (n) => (n == null ? "" : n < 1024 ? `${fmtCount(n)} B` : formatBytes(n));
 
 export const extensionOf = (name) => {
   const i = (name || "").lastIndexOf(".");

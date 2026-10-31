@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from openpyxl.utils import get_column_letter
 
 from . import sheet as sh
+from .. import formatting as fmt
 
 SERIES, SUM_CHECK, RECOMPUTE_CHECK, EXCLUDED = "series", "sum check", "recompute check", "excluded"
 USES = (SERIES, SUM_CHECK, RECOMPUTE_CHECK, EXCLUDED)
@@ -81,7 +82,7 @@ def annualise(rate: float, grain: str) -> Optional[Dict]:
     if not n or n == 1:
         return None
     value = (1 + rate) ** n - 1
-    return {"value": value, "formula": f"(1 + {rate * 100:.1f}%)^{n} − 1 = {value * 100:.1f}%", "label": ANNUALISED}
+    return {"value": value, "formula": f"(1 + {fmt.fmt_pct(rate)})^{n} − 1 = {fmt.fmt_pct(value)}", "label": ANNUALISED}
 
 
 def _previous(periods: List[Dict], k: int) -> Optional[int]:
@@ -254,7 +255,7 @@ def sum_gaps(lines: List[Dict], periods: List[Dict]) -> List[Dict]:
 # The statement block the engine stores (section 3, 4)
 # ---------------------------------------------------------------------------
 def _amount(value: float) -> str:
-    return f"{abs(value):,.0f}"
+    return fmt.fmt_number(abs(value))
 
 
 def _cells(periods: List[Dict], line: Dict, headers: List[str]) -> List[str]:
@@ -272,7 +273,7 @@ def findings(lines: List[Dict], periods: List[Dict], scale: float) -> List[Dict]
         sign = g["code"] == "sign_differs"
         if sign:
             text = (f"{line['label']}: sign differs from its lines in {g['period']} "
-                    f"(total {g['total'] * scale:,.0f}, lines {g['parts'] * scale:,.0f})")
+                    f"(total {fmt.fmt_number(g['total'] * scale)}, lines {fmt.fmt_number(g['parts'] * scale)})")
         else:
             text = f"{line['label']} differs from the sum of its lines by {_amount(g['gap'] * scale)} in {g['period']}"
         out.append({"kind": "sign" if sign else "sum", "line": line["label"], "row": line["row"], "period": g["period"],
@@ -281,8 +282,8 @@ def findings(lines: List[Dict], periods: List[Dict], scale: float) -> List[Dict]
     for g in recompute_checks(lines, periods):
         line = by_row[g["row"]]
         if g["unit"] == "points":
-            text = (f"{line['label']} differs from the money rows by {abs(g['gap']):.1f} points in {g['period']} "
-                    f"(file {g['actual'] * 100:.1f}%, recomputed {g['expected'] * 100:.1f}%)")
+            text = (f"{line['label']} differs from the money rows by {fmt.fmt_number(abs(g['gap']))} points in {g['period']} "
+                    f"(file {fmt.fmt_pct(g['actual'])}, recomputed {fmt.fmt_pct(g['expected'])})")
             gap = g["gap"]
         else:
             text = (f"{line['label']} differs from its recomputed value by {_amount((g['actual'] - g['expected']) * scale)} in "

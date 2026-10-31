@@ -8,6 +8,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from statistics import pstdev
 from typing import List, Optional
 
+from . import formatting as fmt
+
 COMPLETED = "Completed"
 NOT_APPLICABLE = "Not applicable"
 BLOCKED = "Blocked — company data missing"
@@ -55,9 +57,9 @@ def _reconciliation(results: dict) -> Optional[dict]:
     tolerance = rec.get("tolerance_pct") or 0
     months_beyond = [m for m in rec.get("by_month") or () if m.get("gap_pct") is not None and abs(m["gap_pct"]) > tolerance]
     result = RED if rec.get("blocker") else AMBER if months_beyond else GREEN
-    pct = "—" if rec.get("gap_pct") is None else f"{abs(rec['gap_pct']) * 100:g}"
+    pct = "—" if rec.get("gap_pct") is None else fmt.fmt_pct(abs(rec["gap_pct"]))
     src = rec.get("source") or {}
-    return {"result": result, "finding": f"Revenue file and P&L differ by {pct}% over {rec.get('first')}–{rec.get('last')}",
+    return {"result": result, "finding": f"Revenue file and P&L differ by {pct} over {rec.get('first')}–{rec.get('last')}",
             "source": "; ".join(s for s in (_cite(src.get("revenue_file")), _cite(src.get("pnl"))) if s)}
 
 
@@ -99,8 +101,8 @@ def _smoothness(results: dict) -> Optional[dict]:
     read = smoothness(results)
     if read is None:
         return None
-    finding = (f"Month-on-month revenue growth varies by {read['deviation']:.1f} points (standard deviation) over "
-               f"{read['first']}–{read['last']}" + (f"; below {SMOOTHNESS_LIMIT_POINTS:g} points is unusually smooth" if read["smooth"] else "") +
+    finding = (f"Month-on-month revenue growth varies by {fmt.fmt_number(read['deviation'])} points (standard deviation) over "
+               f"{read['first']}–{read['last']}" + (f"; below {fmt.fmt_exact(SMOOTHNESS_LIMIT_POINTS)} points is unusually smooth" if read["smooth"] else "") +
                f" ({SMOOTHNESS_LABEL})")
     return {"result": AMBER if read["smooth"] else GREEN, "finding": finding, "source": _cite((results.get("revenue_series") or {}).get("source"))}
 
@@ -122,7 +124,7 @@ def clustering(results: dict, fiscal_year_end: int = 12) -> Optional[dict]:
     else:       # read from the whole percent shown, so the colour always matches the figure
         result = RED if share > CLUSTERING_RED_PCT else AMBER if share >= CLUSTERING_AMBER_PCT else GREEN
     return {"won": n, "last_10_days": late, "share": share, "result": result,
-            "finding": CLUSTERING_FINDING.format(share=share, n=f"{n:,}") if result else None, "source": block.get("source")}
+            "finding": CLUSTERING_FINDING.format(share=share, n=fmt.fmt_count(n)) if result else None, "source": block.get("source")}
 
 
 def _clustering(read: Optional[dict]) -> Optional[dict]:

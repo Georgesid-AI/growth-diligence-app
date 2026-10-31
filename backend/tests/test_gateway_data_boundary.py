@@ -4313,7 +4313,12 @@ def test_sheet_reading_keeps_no_text_in_a_log_a_call_record_or_beside_the_struct
     for secret in ("Zenith", "Pat Sample", sr.EMAIL, "447223", "451000"):
         assert secret not in logged and secret not in stored["llm_calls"]
     holders = {n for n, blob in stored.items() if "447223" in blob or "451000" in blob}
-    assert holders == set(), "model output carries cell references, never the cell values it was sent: " + str(holders)
+    # PR 3 step a (Architecture change, for George's approval): the stored series of a row hold the cell values CODE read, period by period
+    # with their cell references, on the reading record and nowhere else. The model's own output still carries references only.
+    assert holders == {"readings"}, "cell values sit in the stored series of the reading only: " + str(holders)
+    from app import series as series_mod
+    bare = [series_mod.strip(d["file_map"]) for d in db["readings"].docs]
+    assert "447223" not in json.dumps(bare) and "451000" not in json.dumps(bare), "outside its series a reading holds no cell value"
     assert set(stored["llm_calls"] and json.loads(stored["llm_calls"])[0]) >= {"content_hash", "structure_type", "prompt_version", "model"}
 
 
@@ -4388,3 +4393,68 @@ def test_the_4xx_provider_message_on_a_structure_line_holds_no_cell_token_or_pro
             assert prompt_text[:20] not in tail and GOOD_ITEMS[:20] not in tail, line
     assert all("message=" not in line for line in lines(error(echoes[1]), GOOD_ITEMS)), "a message holding a token is left out"
     assert all("sk-ant" not in line for line in lines(error(echoes[3]), GOOD_ITEMS)), "a key is never logged"
+
+
+def test_the_reviewer_payload_is_masked_at_the_gateway_and_no_log_or_call_record_holds_its_text(caplog):
+    """PR 3 (read-check-review.md section 7; rule 16 as amended): the review input goes out masked like every payload (the target's name, a
+    customer in the map, an email, a first-name personal name); figures are not rewritten; the log lines and the call record hold a hash,
+    counts and closed words, never a finding, a name or a value."""
+    import logging
+
+    import test_sheet_reading as sr
+    caplog.set_level(logging.DEBUG)
+    os.environ["SHEET_READER_MODEL"] = sr.MODEL
+    try:
+        db = sr.audit_db()
+        asyncio.run(redaction.add_customers(db, "a1", ["Zenith Retail Ltd"]))
+        review_input = {"files": [{"file": 1, "kind": "sheet", "map": {"sheets": [{"sheet": f"{sr.COMPANY} report", "rows": [{"row": 3, "series": {
+            "periods": ["2024-01"], "values": [447223.43], "refs": ["B3"]}}]}]}}], "cannot_check": [
+                {"file": 1, "segment": "Jane Doe", "reason": f"Cell holds {sr.EMAIL}, for Zenith Retail Ltd"}], "computed": None}
+        reply = json.dumps({"findings": [{"what": "Zenith Retail Ltd row 3 reads as bookings", "reading": "bookings", "confidence": "low",
+                                          "refs": [{"file": 1, "sheet": f"{sr.COMPANY} report", "cell": "B3", "page": None}]}]})
+        adapter = t.FakeAdapter(replies=[reply])
+        got = asyncio.run(gateway.run_reviewer(db, "a1", review_input, adapter=adapter, sleep=t._noop_sleep))
+    finally:
+        del os.environ["SHEET_READER_MODEL"]
+    assert got.status == "read" and adapter.calls == 1
+    sent = adapter.payloads[0]
+    for secret in (sr.COMPANY, "Zenith", "Jane Doe", sr.EMAIL):
+        assert secret not in sent, f"{secret!r} left the server in the review payload"
+    assert "447223.43" in sent and "Client-" in sent, "figures stay as they are and names become tokens"
+    assert got.findings[0]["what"].startswith("Zenith Retail Ltd"), "display un-masks on the server"
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    calls = json.dumps(db["llm_calls"].docs, default=str)
+    for leak in ("Zenith", "Jane Doe", sr.EMAIL, "447223", "reads as bookings", sr.COMPANY):
+        assert leak not in logged and leak not in calls, f"{leak!r} in a log line or a call record"
+    assert json.loads(calls)[-1]["structure_type"] == "reviewer" and "review read: run_id=a1" in logged
+
+
+def test_the_reviewer_refuses_a_payload_that_still_holds_personal_data_and_a_model_off_the_list():
+    import test_sheet_reading as sr
+    os.environ["SHEET_READER_MODEL"] = "latest"
+    try:
+        db = sr.audit_db()
+        adapter = t.FakeAdapter(replies=["{}"])
+        blocked = asyncio.run(gateway.run_reviewer(db, "a1", {"files": []}, adapter=adapter, sleep=t._noop_sleep))
+    finally:
+        del os.environ["SHEET_READER_MODEL"]
+    assert blocked.status == "blocked" and adapter.calls == 0
+    from app.structures import redact as masker
+    assert masker.personal_items("call +44 20 7946 0958 or b@c.test") == ["email", "phone"], "the last line before the provider names kinds"
+
+
+# ---------------------------------------------------------------------------
+# PR 206 review: the reasons, results keys and log line it adds hold closed words and figures, never file, deck or reviewer text (rule 14)
+# ---------------------------------------------------------------------------
+def test_the_reasons_and_the_log_line_of_the_review_follow_up_are_closed_words_with_no_file_deck_or_finding_text():
+    import asyncio
+    from app import checks, deck_figures, reviewer
+    from app.llm import gateway as g
+    for text in (g.SHEET_PROMPT_MISSING_TEXT, g.SHEET_READING_NOT_STORED, reviewer.REASON_NO_CELLS, reviewer.REASON_NOT_READ):
+        assert "{" not in text and len(text) < 80, text
+    page = deck_figures.R_PAGE_SCALE.format(n=2, page="2.5", value="2500000")
+    assert page == "Page 2 states 2.5; reading says 2500000. Unit or scale differs; not compared.", "a page number and two figures, no line of the page"
+    assert set(checks.C_NO_UNIT.split()) <= set("No unit given; not compared.".split())
+    db = t.FakeDB()
+    db["prompts"].docs[:] = [d for d in db["prompts"].docs if d["name"] != "reviewer"]
+    assert asyncio.run(g.reviewer_startup_problem(db)) == "prompt reviewer is not in the store"

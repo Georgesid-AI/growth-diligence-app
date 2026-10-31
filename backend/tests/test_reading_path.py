@@ -65,3 +65,18 @@ def test_listed_paths_cover_everything_the_sheet_reader_imports():
 
 def test_recognition_is_listed():
     assert "backend/app/recognition.py" in LISTED
+
+
+DECK_LISTED = [line.strip() for line in (REPO / ".github" / "deck-reading-path.txt").read_text().splitlines() if line.strip() and not line.startswith("#")]
+
+
+def test_the_deck_fixture_has_its_own_narrower_path_that_the_workflow_reads():
+    text = (REPO / ".github" / "workflows" / "reading-fixtures.yml").read_text()
+    assert DECK_LISTED and ".github/deck-reading-path.txt" in text and "DECK_FIXTURE=1" in text
+    assert "env.DECK_FIXTURE == '1'" in text, "the LibreOffice install runs only when the deck fixture does"
+    for entry in DECK_LISTED:
+        assert (REPO / entry).exists(), entry
+        assert matches(entry, FILTER) or matches(entry.rstrip("/") + "/x", FILTER), f"{entry} is not on the reading path, so the job would not run for it"
+    assert len(DECK_LISTED) < len(LISTED), "the deck path is narrower than the reading path"
+    for sheet_only in ("backend/app/sheet_reader.py", "backend/app/checks.py", "backend/app/readings.py"):
+        assert not any(sheet_only.startswith(e) for e in DECK_LISTED), f"{sheet_only} must not run the deck fixture"

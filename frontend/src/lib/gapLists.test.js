@@ -39,7 +39,7 @@ describe("questions for management", () => {
     expect(computedValue("nrr", { nrr: { overall_pct: 1.0641 } })).toBe("106%");
     expect(computedValue("cac_payback", {
       cac_payback: { default_l: 1, headline_quarter: "2024-Q2", quarters: { "2024-Q2": { L1: { months: 12.24 } } } },
-    })).toBe("12.2 months (2024-Q2)");
+    })).toBe("12 months (2024-Q2)");
     expect(computedValue("sales_cycle", {})).toBe("—");
   });
 

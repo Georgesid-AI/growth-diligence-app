@@ -37,7 +37,7 @@ def test_page_3_reads_eight_figures_with_no_card_and_the_verdicts_of_the_addendu
     assert len([c for c in stored if c["sources"][0]["page"] == 3]) == 8, "eight figures on the page"
     folded = deck_claims.fold_twins(copy.deepcopy(stored))
     rows = cm.build_register(folded, results(), settings())
-    assert len(rows) == 7, "501,378 and 501,378.04 are one figure, and page 12 states the table again"
+    assert len(rows) == 7, "501,378 and 501,378 are one figure, and page 12 states the table again"
     assert cards(rows, folded) == {"rows": [], "flags": [], "conflicts": [], "reviews": []}, "zero cards, nothing to set, nothing for Needs your attention"
 
     # the three years: deck actuals, reconciled with the P&L revenue row, Verified
@@ -151,8 +151,8 @@ def test_the_details_block_of_a_file_based_metric_has_the_four_parts_with_cell_r
     d = r["details"]
     assert list(d) == ["inputs", "formula", "checked", "not_checked"]
     assert d["inputs"] == [{"label": "Recognised Revenue", "value": 501_378.04, "page": "p3"}]
-    assert "501,378.04" in d["formula"] and "FY2021" in d["formula"]
-    assert d["checked"] == ["Revenue, FY2021 matches File P&L!E3 (501,378.04)"] and d["not_checked"] == []
+    assert "501,378" in d["formula"] and "FY2021" in d["formula"]
+    assert d["checked"] == ["Revenue, FY2021 matches File P&L!E3 (501,378)"] and d["not_checked"] == []
 
 
 def test_the_details_block_of_a_deck_only_metric_names_what_no_file_confirmed():
@@ -164,8 +164,8 @@ def test_the_details_block_of_a_deck_only_metric_names_what_no_file_confirmed():
 
 def test_the_growth_multiple_details_show_the_formula_with_the_numbers_filled_in():
     d = row_of(register(page3()), 3.3)["details"]
-    assert d["formula"] == "FY2021 revenue ÷ FY2020 revenue = 501,378.04 ÷ 151,056.65 = 3.32x"
-    assert d["checked"] == ["Revenue growth multiple, FY2021 matches File P&L!D3, File P&L!E3 (3.32x)"]
+    assert d["formula"] == "FY2021 revenue ÷ FY2020 revenue = 501,378 ÷ 151,057 = 3.3x"
+    assert d["checked"] == ["Revenue growth multiple, FY2021 matches File P&L!D3, File P&L!E3 (3.3x)"]
 
 
 def test_the_memo_prints_the_details_blocks_in_appendix_c():

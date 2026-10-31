@@ -231,7 +231,7 @@ def _smoothness(results: dict) -> dict:
     if read is None:
         return _check(name, NOT_COMPUTED, reason=REASONS["no_smoothness_window"])
     return _check(name, COMPUTED, source_key=SOURCES["revenue"][0], first_month=read["first"], last_month=read["last"],
-                  deviation_points=f"{read['deviation']:.1f} points", limit_points=f"{read['limit']:g} points",
+                  deviation_points=f"{fmt.fmt_number(read['deviation'])} points", limit_points=f"{fmt.fmt_exact(read['limit'])} points",
                   result=integrity.AMBER if read["smooth"] else integrity.GREEN, threshold_note=read["label"])
 
 

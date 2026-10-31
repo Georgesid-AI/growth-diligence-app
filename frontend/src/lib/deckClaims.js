@@ -8,6 +8,7 @@
 import { displayDate } from "./datePicker";
 import evidenceLabels from "./evidence_labels.json";
 import informationalFlags from "./informational_flags.json";
+import { fmtCount, fmtExact, fmtNumber } from "./format";
 import listTexts from "./claims_list_texts.json";
 
 export const PLACEHOLDER = "—";
@@ -134,9 +135,9 @@ export function sourceRef(ref) {
   return parts.join(" · ");
 }
 
-const figure = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const figure = (v) => fmtNumber(v);
 // A converted figure is in whole units of the reporting currency: the rate and the date it applies at are on hover.
-const whole = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
+const whole = (v) => fmtNumber(v);
 const present = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
 
 function amount(c, value, high, rate) {
@@ -170,7 +171,7 @@ export const STALE_LABEL = "Stale – re-run audit";
 export function conversionHover(c) {
   if (!c?.fx || !c.currency || c.unit || c.fx.rate == null) return null;
   const on = c.fx.date_stale ? STALE_LABEL : displayDate(c.fx.date);
-  return `Rate used: 1 ${c.currency} = ${figure(c.fx.rate)} ${c.fx.currency}${on ? ` on ${on}` : ""}`;
+  return `Rate used: 1 ${c.currency} = ${fmtExact(c.fx.rate)} ${c.fx.currency}${on ? ` on ${on}` : ""}`;
 }
 
 /** The claim's figure in the audit's currency, when it is stated in another one: "150,000 GBP (171,000 EUR)", whole units. The
@@ -391,7 +392,7 @@ export function aiReadStatus(deck) {
     case "waiting": return DECK_AI_STATUS.waiting;
     case "reading": {
       const p = deck.read_progress;
-      return p && p.total ? `page ${Math.min(p.done + 1, p.total)} of ${p.total}` : deck.ai_message === "restarted" ? "restarted" : "queued";
+      return p && p.total ? `page ${fmtCount(Math.min(p.done + 1, p.total))} of ${fmtCount(p.total)}` : deck.ai_message === "restarted" ? "restarted" : "queued";
     }
     case "python_only": return "not run (AI-assisted reading is off)";
     case "blocked": return BLOCKED_STATUS;

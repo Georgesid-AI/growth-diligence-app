@@ -15,6 +15,9 @@ import {
 } from "@/lib/chatUpload";
 
 const NONE = "";
+/** The compact upload (the reading screen, docs/design/read-check-review.md section 11) lists a file's mapping bubble only while the file waits for
+ *  the analyst's answer; a settled file is a block of the reading screen. The rules reading goes in PR 4. */
+const systemWaits = (view) => !!view && S13_status(view) !== S13_READY;
 const AI_FAILED = ["timeout", "not_read", "refused", "stopped", "too_large"];
 let nextId = 1;
 const uid = () => `m${nextId++}`;
@@ -27,7 +30,7 @@ const uid = () => `m${nextId++}`;
  * `onFiles(files)` hands the attached files up; the page's Run audit reads them and then passes `leftover` (the files it did not
  * send): the bubbles of every other file are dropped, and the stored files are read again.
  */
-export default function UploadChat({ audit, extras, onViews, onStaged, onMapping, mapButton, onFiles, leftover, deck = null }) {
+export default function UploadChat({ audit, extras, onViews, onStaged, onMapping, mapButton, onFiles, leftover, deck = null, compact = false }) {
   const [messages, setMessages] = useState([]);
   const [decided, setDecided] = useState(false);          // the analyst confirmed or corrected a column on this page
   const [busy, setBusy] = useState(0);
@@ -241,7 +244,7 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
       </div>
       {deck}
       <div data-testid="chat-messages" className="px-5 py-4 space-y-3">
-        {messages.map((m) => (
+        {messages.filter((m) => !compact || m.kind !== "system" || systemWaits(m.view)).map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
             decide={decide} decideLines={decideSheetLines} decideRecognition={decideRecognitionPart} retype={retype} claimsSaved={claimsSaved} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
@@ -249,7 +252,7 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
             onKeep={() => { openPrompts.current.delete(m.bubble); setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble)); }} />
         ))}
         {busy > 0 && <div className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…</div>}
-        {allConfirmed && <p className="text-xs text-emerald-700" data-testid="all-confirmed">{ALL_CONFIRMED_LINE}</p>}
+        {allConfirmed && !compact && <p className="text-xs text-emerald-700" data-testid="all-confirmed">{ALL_CONFIRMED_LINE}</p>}
       </div>
     </section>
   );

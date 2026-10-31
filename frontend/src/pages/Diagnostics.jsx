@@ -6,7 +6,7 @@ import { Provenance } from "@/components/Provenance";
 import { getAudit, getDecks, getResults, reportUsage } from "@/lib/api";
 import { S22_RECONCILIATION, S22_SAME_SOURCE } from "@/lib/chatUpload";
 import { DIAGNOSTICS_DECK_HEADING, STALE_LABEL, diagnosticLines } from "@/lib/deckClaims";
-import { fmtCount, fmtCurrency } from "@/lib/format";
+import { fmtCount, fmtCurrency, fmtPct } from "@/lib/format";
 import { ANOMALIES_NOT_COMPUTED } from "@/lib/gapLists";
 import { seeGlossary } from "@/lib/glossary";
 
@@ -93,7 +93,7 @@ export default function Diagnostics() {
                 <div key={a.label}>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-700">{a.label}</span>
-                    <span className={`font-mono text-xs px-2 py-0.5 rounded ${a.items.length ? "bg-amber-500/15 text-amber-700" : "bg-slate-100 text-slate-500"}`}>{a.items.length}</span>
+                    <span className={`font-mono text-xs px-2 py-0.5 rounded ${a.items.length ? "bg-amber-500/15 text-amber-700" : "bg-slate-100 text-slate-500"}`}>{fmtCount(a.items.length)}</span>
                   </div>
                   {a.items.length > 0 && <div className="text-[11px] font-mono text-slate-500 mt-1">{a.items.slice(0, 12).join(", ")}</div>}
                   <div className="text-[10px] text-slate-600 mt-1">{a.note}</div>
@@ -102,7 +102,7 @@ export default function Diagnostics() {
               <div className="border-t border-[#E5E7EB] pt-3">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-700">Revenue lines missing customer ID</span>
-                  <span className="font-mono text-xs text-slate-900">{r.anomalies.revenue_missing_customer_id.count}</span>
+                  <span className="font-mono text-xs text-slate-900">{fmtCount(r.anomalies.revenue_missing_customer_id.count)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm mt-2">
                   <span className="text-slate-700">Deals close-before-created (flagged & excluded)</span>
@@ -133,7 +133,7 @@ export default function Diagnostics() {
 export function ReconciliationTable({ rec, currency }) {
   if (!rec) return null;
   const money = (v) => (v == null ? "—" : fmtCurrency(v, currency));
-  const pct = (v) => (v == null ? "—" : `${Math.round(v * 10000) / 100}%`);   // gap_pct is a fraction (0.035 is 3.5%)
+  const pct = (v) => (v == null ? "—" : fmtPct(v));   // gap_pct is a fraction (0.035 is 3.5%)
   return (
     <section data-testid="reconciliation" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6">
       <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">{S22_RECONCILIATION}</h3>
