@@ -236,7 +236,10 @@ async def build(db, audit_id: str) -> Dict:
                                   "confirmed": n["confirmed"], "rejected": n["rejected"], "cannot_check": n["cannot_check"],
                                   "personal_removed": masked["personal"], "company_coded": masked["names"],
                                   "skipped_pages": meta.get("skipped_pages") or []},
-                      "anchors": {"figures": {"read": len(deck["figures"]), "found_on_page": n["confirmed"], "from_image": n["cannot_check"]}}})
+                      "anchors": {"figures": {"read": len(deck["figures"]), "found_on_page": n["confirmed"], "from_image": n["cannot_check"]}},
+                      "figures": [{"key": f["key"], "metric": f.get("metric"), "value": f.get("value"), "unit": f.get("unit"), "currency": f.get("currency"),
+                                   "period": f.get("period"), "label": f.get("label"), "page": f["source"]["page"], "outcome": f["outcome"]}
+                                  for f in deck["figures"]]})
     review = await db[readings.REVIEWS].find_one({"audit_id": audit_id}, {"_id": 0})
     status = (review or {}).get("status")
     summary = {"status": status, "reason": (review or {}).get("reason"),

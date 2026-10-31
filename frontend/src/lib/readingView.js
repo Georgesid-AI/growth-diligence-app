@@ -53,9 +53,19 @@ export const WIDTHS = {
   rejected: [14, 12, 12, 22, 12, 10, 18],
   cannot_check: [14, 10, 10, 14, 22, 12, 18],
 };
+/** The deck tab's full figures list (docs/design/audit-page-mockup.html): every figure read from the deck, with its page and outcome. */
+export const FIGURE_HOVERS = {
+  Metric: "What the figure measures.",
+  Value: "The number as the reader took it from the page; the full value is kept.",
+  Period: "The month, quarter or year it belongs to; a dash when the figure's own line or column names none.",
+  Label: "The label printed with the figure on the page, as the reader took it.",
+  Page: "The deck page the figure was read from.",
+  Outcome: "Confirmed, Rejected or Cannot check, after code compared the value with the page text.",
+};
+export const FIGURE_WIDTHS = [22, 14, 14, 26, 8, 16];
+
 export const NUMERIC = { lines: [], confirmed: ["Value"], rejected: ["Reading says", "Cell holds"], cannot_check: ["Value"] };
 export const TITLES = { confirmed: "Confirmed", rejected: "Rejected", cannot_check: "Cannot check" };
-export const NARROW_PX = 900;
 
 /** "2022-05" -> "May 2022"; "2024-Q1" -> "Q1 2024"; "2024" -> "FY 2024"; anything else as it is; none -> "—". */
 export function periodLabel(period) {
@@ -138,9 +148,7 @@ export function deckSummary(s, figures) {
   ];
 }
 
-export function deckFiguresText(f) {
-  return `${fmtCount(f.read)} read, ${fmtCount(f.found_on_page)} found on their page, ${fmtCount(f.from_image)} from charts without text`;
-}
+export const OUTCOME_LABELS = { confirmed: "Confirmed", rejected: "Rejected", cannot_check: "Cannot check" };
 
 /** The "Confirmed on column AP" part of the evidence line, and the text before it: the evidence as the reader wrote it, less its checked column. */
 export function splitEvidence(line) {

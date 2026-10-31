@@ -343,8 +343,10 @@ def test_deck_figures_reach_the_reviewer_and_a_finding_on_a_page_is_a_card(flow)
         {"what": "The page figure is a plan value read as actual.", "refs": [{"file": 2, "sheet": None, "cell": None, "page": 2}],
          "reading": "plan", "confidence": "low"}]})
     flow.db[TEXT_COLLECTION].docs.append({**deck([{"page": 2, "text": "ARR 447,223", "kind": "text"}]), "audit_id": audit_of(flow)["id"]})
-    flow.db[CANDIDATES_COLLECTION].docs.append({**candidate(447223), "audit_id": audit_of(flow)["id"]})
+    flow.db[CANDIDATES_COLLECTION].docs.append({**candidate(447223, label_from="Closing ARR Printed Label"), "audit_id": audit_of(flow)["id"]})
     done = review(flow)
+    assert "Closing ARR Printed Label" not in json.dumps(router.review_payloads[0]) and "label" not in router.review_payloads[0]["input"]["files"][1]["figures"][0], \
+        "the printed label of a figure is shown to the analyst and never sent to the reviewer (rule 14)"
     deck_file = router.review_payloads[0]["input"]["files"][1]
     assert deck_file["kind"] == "deck" and deck_file["figures"][0]["value"] == 447223 and deck_file["figures"][0]["page"] == 2
     assert "ARR 447,223" not in json.dumps(router.review_payloads[0]), "no page text goes to the reviewer"

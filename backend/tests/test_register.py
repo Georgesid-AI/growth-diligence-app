@@ -214,6 +214,7 @@ def test_deck_figures_land_in_the_same_three_tables_and_the_deck_block_counts_th
     assert [r_["reason"] for r_ in got["tables"]["cannot_check"]] == ["Page 3 has no text layer; figure read from the image."]
     deck_block = next(b for b in got["files"] if b["kind"] == "deck")
     assert deck_block["anchors"]["figures"] == {"read": 3, "found_on_page": 1, "from_image": 1} and deck_block["summary"]["pages_with_figures"] == 1
+    assert [(f["page"], f["outcome"]) for f in deck_block["figures"]] == [(2, "confirmed"), (2, "rejected"), (3, "cannot_check")], "every figure read, with its page and outcome"
 
 
 def test_delete_audit_removes_the_reviews_and_the_cards(flow):

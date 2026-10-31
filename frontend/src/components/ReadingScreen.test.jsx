@@ -43,7 +43,11 @@ const REGISTER = {
       ] }] },
     { kind: "deck", file: "Board report.pdf", deck_id: "d1", pages: 20,
       summary: { pages: 20, pages_with_figures: 15, confirmed: 15, rejected: 0, cannot_check: 3, personal_removed: 1, company_coded: 17, skipped_pages: [1, 2, 7] },
-      anchors: { figures: { read: 112, found_on_page: 109, from_image: 3 } } },
+      anchors: { figures: { read: 112, found_on_page: 109, from_image: 3 } },
+      figures: [
+        { key: "f1", metric: "arr", value: 0.045, unit: "rate", currency: null, period: "2021", label: "Closing ARR", page: 3, outcome: "confirmed" },
+        { key: "f2", metric: "mrr", value: 2500, unit: "money", currency: "EUR", period: null, label: null, page: 8, outcome: "cannot_check" },
+      ] },
   ],
   tables: {
     confirmed: [
@@ -107,7 +111,7 @@ describe("the strip and the file blocks", () => {
     expect(q("file-note").textContent).toBe("Period columns: header unclear");
   });
 
-  test("a spreadsheet block reads in the mockup's words: the number first, the masking counts on a line of their own", async () => {
+  test("a spreadsheet block reads in the mockup's words: the number first, the masking counts on a line of their own, Last actual and not As-of month", async () => {
     await show();
     const [sheet, deck] = all("file-block");
     expect(sheet.querySelector("h2").textContent).toBe("revenue.xlsx 60 KB");
@@ -115,6 +119,9 @@ describe("the strip and the file blocks", () => {
       "48 month columns · 41 rows mapped · 37 figures confirmed · 1 rejected · 1 cannot check · actual to May 2022",
       "0 personal items removed · 0 company names coded"]);
     expect(sheet.querySelector('[data-testid="file-summary"] b').textContent).toBe("37");
+    expect(sheet.querySelector(".anchors .k").textContent).toBe("Last actual");
+    expect(sheet.querySelector(".anchors").textContent).not.toContain("As-of month");
+    expect(sheet.querySelector('[data-testid="anchor-as-of"]').textContent).toMatch(/^May 2022 — /);
     expect(sheet.querySelector('[data-testid="anchor-revenue"]').textContent).toBe("Row 11, Recognised revenue, monthly");
     expect(sheet.querySelector('[data-testid="anchor-boundary"]').textContent).toBe("Actual to column AP, plan from AQ");
     expect([...sheet.querySelectorAll(".anchors a")].map((a) => a.textContent)).toEqual(["Change", "Change", "Change"]);
@@ -124,6 +131,8 @@ describe("the strip and the file blocks", () => {
       "112 figures read · 15 confirmed on the page they cite · 0 rejected · 3 cannot check (charts without text)",
       "1 personal item removed · 17 company names coded"]);
     expect([...deck.querySelectorAll('[data-testid="file-summary"]')[1].querySelectorAll("b")].map((b) => b.textContent)).toEqual(["112", "15"]);
+    expect(deck.querySelector('[data-testid="anchor-figures"]')).toBeNull();
+    expect(q("deck-show-all")).toBeNull();
   });
 
   test("page and pages, its and their: one skipped page reads in the singular", async () => {
@@ -134,15 +143,6 @@ describe("the strip and the file blocks", () => {
       "1 page · 0 pages read · 1 page skipped (no digits in its text: 1)",
       "1 figure read · 0 confirmed on the page they cite · 0 rejected · 0 cannot check",
       "0 personal items removed · 1 company name coded"]);
-  });
-
-  test("a file's anchor line says Last actual, never As-of month, which belongs to the strip only", async () => {
-    await show();
-    const anchors = all("file-block")[0].querySelector(".anchors");
-    expect(anchors.querySelector(".k").textContent).toBe("Last actual");
-    expect(anchors.textContent).not.toContain("As-of month");
-    expect(anchors.querySelector('[data-testid="anchor-as-of"]').textContent).toMatch(/^May 2022 — /);
-    expect(q("assumption-as-of").textContent).toContain("As-of month");
   });
 
   test("the lines table sits in the details box, in file order; a rate row is directly under its line with the note; part rows are indented", async () => {
@@ -177,6 +177,61 @@ describe("the strip and the file blocks", () => {
     });
     await act(async () => { q("anchor-revenue-change-save").click(); });
     expect(api.changeReading).toHaveBeenCalledWith("a1", "h1", { what: "revenue_row", sheet: "Sales", row: 14 });
+  });
+});
+
+describe("the Check results section", () => {
+  test("a heading with a lead sentence, a tab row with All and one tab per file with its figure count, and the note under it", async () => {
+    await show();
+    expect(q("results-heading").textContent).toBe("Check results");
+    expect(q("results-lead").textContent).toBe("Every figure the model read, after code opened its cell or page and compared the value. Three tables: Confirmed, Rejected, Cannot check.");
+    expect([q("tab-all"), ...all("tab-file")].map((a) => a.textContent)).toEqual(["All 52", "revenue.xlsx 37", "Board report.pdf 15"]);
+    expect(q("tab-all").className).toBe("on");
+    expect(q("tab-note").textContent).toBe("Each tab shows the Confirmed, Rejected and Cannot check results for one file. For decks, it also lists every figure read from the deck, with its page number and outcome.");
+    const css = fs.readFileSync(path.resolve(__dirname, "../App.css"), "utf8");
+    expect(css).toMatch(/h1\.section \{[^}]*border-top: 2px solid var\(--ink\)/);
+  });
+
+  test("All shows the strip, every file's block and the three tables across files", async () => {
+    await show();
+    expect(q("assumptions-strip")).not.toBeNull();
+    expect(all("file-block")).toHaveLength(2);
+    expect(q("heading-confirmed").textContent).toBe("Confirmed · 2");
+    expect(q("deck-figures")).toBeNull();
+  });
+
+  test("a spreadsheet's tab shows its block and the three tables for that file only", async () => {
+    await show();
+    await act(async () => { all("tab-file")[0].click(); });
+    expect(all("file-block")).toHaveLength(1);
+    expect(q("file-block").querySelector("h2").textContent).toContain("revenue.xlsx");
+    expect(q("assumptions-strip")).toBeNull();
+    expect(q("heading-confirmed").textContent).toBe("Confirmed · 1");
+    expect(q("heading-rejected").textContent).toBe("Rejected · 1");
+    expect(q("heading-cannot_check").textContent).toBe("Cannot check · 0");
+    expect(all("card-citation_failed_twice")).toHaveLength(1);
+    expect(q("deck-figures")).toBeNull();
+    expect(q("tab-all").className).toBe("");
+    expect(all("tab-file").map((a) => a.className)).toEqual(["on", ""]);
+  });
+
+  test("a deck's tab shows its summary lines, every figure with metric, value, period, label, page and outcome, and its three tables", async () => {
+    await show();
+    await act(async () => { all("tab-file")[1].click(); });
+    expect(all("file-block")).toHaveLength(1);
+    expect(all("file-summary")).toHaveLength(3);
+    const box = q("deck-figures");
+    expect([...box.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Metric", "Value", "Period", "Label", "Page", "Outcome"]);
+    for (const th of box.querySelectorAll("th")) expect(th.getAttribute("title")).toBeTruthy();
+    expect(all("deck-figure").map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent))).toEqual([
+      ["arr", "4.5%", "FY 2021", "Closing ARR", "3", "Confirmed"], ["mrr", "2,500 EUR", "—", "—", "8", "Cannot check"]]);
+    expect(box.className).toBe("box");
+    expect(q("heading-confirmed").textContent).toBe("Confirmed · 1");
+    expect(q("heading-cannot_check").textContent).toBe("Cannot check · 1");
+    expect(q("heading-rejected").textContent).toBe("Rejected · 0");
+    expect(all("card-citation_failed_twice")).toHaveLength(0);
+    await act(async () => { q("tab-all").click(); });
+    expect(all("file-block")).toHaveLength(2);
   });
 });
 
@@ -242,11 +297,10 @@ describe("the three result tables", () => {
     expect(rejected.querySelector('td[data-h="Cell holds"]').textContent).toContain("398,736 EUR");
   });
 
-  test("rows carry data-h labels and the narrow-screen rule turns a row into a card below 900 px", () => {
+  test("rows carry data-h labels and there is no narrow-screen layout: desktop only", () => {
     const css = fs.readFileSync(path.resolve(__dirname, "../App.css"), "utf8");
-    expect(css).toMatch(/@media \(max-width: 900px\)[\s\S]*\.reading table\.rows tr \{ border: 1px solid/);
-    expect(css).toContain("content: attr(data-h)");
-    expect(css).toContain("thead { display: none; }");
+    expect(css).not.toMatch(/@media \(max-width/);
+    expect(css).not.toContain("content: attr(data-h)");
   });
 
   test("Period is a dash when the figure has none and Label, right after it, shows the printed label", async () => {
