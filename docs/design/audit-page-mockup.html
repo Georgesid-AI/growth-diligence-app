@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Audit page mockup — read, check, review</title>
 <style>
   :root {
@@ -63,8 +62,18 @@
   tr.sub td:first-child { padding-left: 26px; color: var(--muted); }
   tr.moved td:first-child::after { content: " · shown under its line"; color: var(--muted); font-size: 12px; }
 
+  /* tabs */
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-top: 14px; }
+  .tabs a { padding: 8px 14px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs a span { color: var(--muted); font-size: 13px; margin-left: 6px; }
+  .tabs a.on { color: var(--ink); border-bottom-color: var(--ink); }
+  .tabs a:hover { text-decoration: none; color: var(--ink); }
+  .tabnote { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+
   /* result blocks */
-  .results { padding-top: 22px; }
+  .results { padding-top: 0; }
+  h1.section { font-size: 20px; font-weight: 600; margin: 40px 0 6px; padding-top: 28px; border-top: 2px solid var(--ink); }
+  .lead { color: var(--muted); max-width: 80ch; }
   .results h2 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
   .results h2 .n { color: var(--muted); font-weight: 400; }
   .results h2.ok .n { color: var(--ok); }
@@ -80,20 +89,6 @@
   .card .two b { display: block; margin-bottom: 4px; }
   .card .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-  /* narrow screens: rows become cards */
-  @media (max-width: 900px) {
-    main { padding: 16px; }
-    .top { flex-direction: column; }
-    .anchors { grid-template-columns: 1fr; }
-    .card .two { grid-template-columns: 1fr; }
-    table.rows thead { display: none; }
-    table.rows, table.rows tbody, table.rows tr, table.rows td { display: block; width: 100%; }
-    table.rows tr { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; }
-    table.rows td { border: 0; padding: 2px 0; text-align: left; white-space: normal; }
-    table.rows td.num { text-align: left; }
-    table.rows td::before { content: attr(data-h) ": "; color: var(--muted); }
-    table.rows td.src { white-space: normal; }
-  }
 </style>
 </head>
 <body>
@@ -118,7 +113,8 @@
   <!-- file 1: monthly revenue report -->
   <section class="file">
     <h2>revenue_2019-2022.xlsx <small>61 KB</small></h2>
-    <p class="summary">48 month columns · 41 rows mapped · last actual <b>May 2022</b> · <b>37</b> confirmed · 0 rejected · 1 cannot check · personal items removed 0 · company names coded 0</p>
+    <p class="summary">48 month columns · 41 rows mapped · <b>37</b> figures confirmed · 0 rejected · 1 cannot check · actual to <b>May 2022</b></p>
+    <p class="summary">0 personal items removed · 0 company names coded</p>
     <div class="anchors">
       <span class="k">As-of month</span><span>May 2022 — customers row 23 ends at AP; recognised revenue from AQ equals the new sales row.</span><a href="#">Change</a>
       <span class="k">Revenue row</span><span>Row 11, Recognised revenue, monthly</span><a href="#">Change</a>
@@ -155,7 +151,8 @@
   <!-- file 2: yearly P&L -->
   <section class="file">
     <h2>pnl.xlsx <small>88 KB</small></h2>
-    <p class="summary">7 year columns · 38 rows mapped · last actual <b>FY 2021</b> · <b>29</b> confirmed · 0 rejected · 0 cannot check · personal items removed 0 · company names coded 0</p>
+    <p class="summary">7 year columns · 38 rows mapped · <b>29</b> figures confirmed · 0 rejected · 0 cannot check · actual to <b>FY 2021</b></p>
+    <p class="summary">0 personal items removed · 0 company names coded</p>
     <div class="anchors">
       <span class="k">Last actual</span><span>FY 2021 — columns E to H are headed forecast; D holds the last actual year.</span><a href="#">Change</a>
       <span class="k">Revenue row</span><span>Row 4, Revenue (recognised), yearly</span><a href="#">Change</a>
@@ -200,14 +197,25 @@
   <!-- file 3: deck -->
   <section class="file">
     <h2>Board report 2021 and 2022 plan.pdf <small>20 pages</small></h2>
-    <p class="summary">20 pages · 15 with figures · <b>15</b> read · 0 rejected · 3 cannot check · personal items removed 1 · company names coded 17 · skipped 1, 2, 7, 11, 18 (no numbers)</p>
+    <p class="summary">20 pages · 16 pages read · 4 pages skipped (no digits in their text: 1, 2, 11, 18)</p>
+    <p class="summary"><b>112</b> figures read · <b>109</b> confirmed on the page they cite · 0 rejected · 3 cannot check (charts without text)</p>
+    <p class="summary">1 personal item removed · 17 company names coded</p>
     <div class="anchors">
-      <span class="k">Figures</span><span>112 read, 109 found on their page, 3 from charts without text</span><a href="#">Show all</a>
     </div>
   </section>
 
   <!-- results -->
   <section class="results">
+
+    <h1 class="section">Check results</h1>
+    <p class="lead">Every figure the model read, after code opened its cell or page and compared the value. Three tables: Confirmed, Rejected, Cannot check.</p>
+    <nav class="tabs" aria-label="Files">
+      <a href="#" class="on">All <span>175</span></a>
+      <a href="#">revenue_2019-2022.xlsx <span>37</span></a>
+      <a href="#">pnl.xlsx <span>29</span></a>
+      <a href="#">Board report 2021 and 2022 plan.pdf <span>109</span></a>
+    </nav>
+    <p class="tabnote">Each tab shows the Confirmed, Rejected and Cannot check results for one file. For decks, it also lists every figure read from the deck, with its page number and outcome.</p>
 
     <h2 class="ok">Confirmed <span class="n">· 175</span></h2>
     <details>
