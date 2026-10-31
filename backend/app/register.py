@@ -194,6 +194,20 @@ def anchors(doc: Dict, effective_map: Dict, lines: List[Dict], overrides: Option
     return {"as_of": {"month": doc.get("month"), "evidence": doc.get("evidence")} if best else None, "revenue_row": revenue, "actual_plan": boundary}
 
 
+# What the reviewer's last llm_calls status says, in the words the status line uses (never the bare "Not read by AI").
+_CAP_STATUSES = frozenset({"reviewer_token_cap_reached", "structure_token_cap_reached", "monthly_allowance_reached", "daily_spend_cap_exceeded"})
+
+
+async def _not_read_reason(db, audit_id: str) -> str:
+    rows = await db["llm_calls"].find({"run_id": audit_id, "structure_type": "reviewer"}, {"_id": 0, "status": 1}).to_list(1000)
+    status = rows[-1].get("status") if rows else None
+    if status in _CAP_STATUSES:
+        return "token allowance reached"
+    if status == "prompt_missing":
+        return "prompt reviewer not in the store"
+    return "provider error"
+
+
 async def build(db, audit_id: str) -> Dict:
     all_cards = await cards.for_audit(db, audit_id)
     decided = {c["item"]: c for c in all_cards if c["status"] == cards.DECIDED}
@@ -242,8 +256,11 @@ async def build(db, audit_id: str) -> Dict:
                                   for f in deck["figures"]]})
     review = await db[readings.REVIEWS].find_one({"audit_id": audit_id}, {"_id": 0})
     status = (review or {}).get("status")
-    summary = {"status": status, "reason": (review or {}).get("reason"),
-               "not_completed": f"review not completed: {review.get('reason') or 'not read'}" if review and status not in ("read", "none") else None,
+    reason = (review or {}).get("reason")
+    if review and status == "not_read":
+        reason = await _not_read_reason(db, audit_id)
+    summary = {"status": status, "reason": reason,
+               "not_completed": f"review not completed: {reason or 'provider error'}" if review and status not in ("read", "none") else None,
                "findings": sum(1 for f in (review or {}).get("findings") or [] if f.get("state") == "valid"), "dropped": (review or {}).get("dropped", 0)}
     return {"files": files, "period": reporting_period(files), "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": all_cards, "review": summary}
 

@@ -2507,6 +2507,7 @@ REVIEWER_MAX_TOKENS = 4_000      # the findings' reply
 REVIEWER_TIMEOUT_SECONDS = 180.0
 REVIEWER_TOO_LARGE = "The files are too large to review in one call (the limit is {limit} tokens). Nothing was reviewed."
 REVIEW_STRUCTURE_TYPE = "reviewer"
+REVIEWER_PROMPT_MISSING = "prompt_missing"       # the llm_calls status of a review that found no `reviewer` prompt in the store
 
 
 class ReviewRead(NamedTuple):
@@ -2560,6 +2561,8 @@ async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, slee
     try:
         prompt = await prompt_store.load(db, REVIEWER_PROMPT)
     except prompt_store.PromptMissing:
+        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version="-", model=model, input_tokens=0, output_tokens=0,
+                       estimated_cost_usd=0.0, cache_hit=False, status=REVIEWER_PROMPT_MISSING, structure_type=REVIEW_STRUCTURE_TYPE)
         return ReviewRead("not_read", reason=NOT_READ)
     if price_model(model) not in MODEL_PRICING_USD:
         return ReviewRead("not_read", reason=NOT_READ)
