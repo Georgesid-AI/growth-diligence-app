@@ -381,6 +381,18 @@ def test_startup_logs_one_line_naming_what_is_missing_and_the_app_still_starts(m
     assert not caplog.records
 
 
+def test_startup_logs_one_line_when_the_reviewer_prompt_is_missing(monkeypatch, caplog):
+    import server
+    db = t.FakeDB()
+    db["prompts"].docs[:] = [d for d in db["prompts"].docs if d["name"] != "reviewer"]
+    monkeypatch.setattr(server, "db", db)
+    monkeypatch.setenv("SHEET_READER_MODEL", MODEL)
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(server.check_sheet_reader())
+    lines = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert lines == ["reviewer will not run: prompt reviewer is not in the store"]
+
+
 def test_startup_check_stays_up_when_the_store_cannot_be_read(monkeypatch, caplog):
     import server
 

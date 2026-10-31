@@ -358,3 +358,15 @@ def test_a_company_name_with_a_first_name_is_tokenised_in_a_page_payload():
     assert learned == ["Anna Group"]
     masked, counts = redact.mask_pages(text, "Acme", {"Anna Group": "Client-01"})
     assert "p3r2c1: Client-01" in masked and "Anna" not in masked and "p3r4c1: [person]" in masked
+
+
+@pytest.mark.parametrize("with_prompt", [True, False])
+def test_run_audit_goes_on_without_the_reviewer_stage_when_the_reviewer_prompt_is_missing(flow, with_prompt):
+    router = start(flow, map_with("bookings"), review={"findings": []})
+    if not with_prompt:
+        flow.db["prompts"].docs[:] = [d for d in flow.db["prompts"].docs if d["name"] != "reviewer"]
+    done = flow.post(f"/api/audits/{audit_of(flow)['id']}/run/engine")
+    assert done.status_code == 200 and done.json()["status"] in ("done", "needs_review", "waiting"), done.text
+    assert done.json()["status"] != "failed"
+    assert router.review_calls == (1 if with_prompt else 0), "the review stage runs only with its prompt; the audit goes on either way"
+    assert bool(flow.db[readings.REVIEWS].docs) == with_prompt, "no reviewer stage, so no review record and no 'review not completed' line"

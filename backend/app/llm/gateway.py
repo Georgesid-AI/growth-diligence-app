@@ -1615,6 +1615,16 @@ async def sheet_reader_startup_problem(db) -> Optional[str]:
     return "; ".join(missing) or None
 
 
+async def reviewer_startup_problem(db) -> Optional[str]:
+    """None when the reviewer can run, else one line naming what is missing: the `reviewer` prompt in the store. (The model is the sheet
+    reader's and is reported by sheet_reader_startup_problem.) Run audit asks it too, and leaves the reviewer stage out when it is set."""
+    try:
+        await prompt_store.load(db, REVIEWER_PROMPT)
+    except prompt_store.PromptMissing:
+        return f"prompt {REVIEWER_PROMPT} is not in the store"
+    return None
+
+
 def deck_pipeline() -> str:
     """The DECK_PIPELINE switch: "ai" (the default: the model reads the pages, Python checks each claim) or "rules" (the
     former rules read, kept for scripts/compare_pipelines.py). Anything else is the default, so a typo changes nothing on

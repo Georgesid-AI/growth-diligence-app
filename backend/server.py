@@ -2737,7 +2737,8 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
             else:
                 # No month confirmed and none typed: the audit runs everything that does not depend on it (read-check-review.md section 6).
                 await _run_compute(audit_id)
-                background.add_task(_review_safely, audit_id)        # one review per audit and input; a review already made is kept
+                if await llm_gateway.reviewer_startup_problem(db) is None:        # no reviewer prompt: Run audit goes on without the reviewer stage
+                    background.add_task(_review_safely, audit_id)        # one review per audit and input; a review already made is kept
                 result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF)
         else:
             if not audit.get("results"):
@@ -4237,6 +4238,13 @@ async def check_sheet_reader():
         return
     if problem:
         logger.error("sheet reader will not read: %s", problem)
+    try:
+        missing = await llm_gateway.reviewer_startup_problem(db)
+    except Exception as exc:
+        logger.error("reviewer check failed at startup: error=%s", type(exc).__name__)
+        return
+    if missing:
+        logger.error("reviewer will not run: %s", missing)
 
 
 @app.on_event("startup")
