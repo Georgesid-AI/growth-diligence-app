@@ -63,9 +63,13 @@ async def _latest_doc(db, name: str) -> Optional[dict]:
     return max(docs, key=lambda d: _number(d.get("version"))) if docs else None
 
 
-async def load(db, name: str) -> Prompt:
-    """The latest version of a named prompt. Raises PromptMissing when the store holds none."""
-    doc = await _latest_doc(db, name) if name in NAMES else None
+async def load(db, name: str, version: Optional[str] = None) -> Prompt:
+    """The latest version of a named prompt, or the named `version` (a stored version names one text for good: a re-read of a stored reading
+    uses the text that reading was made with). Raises PromptMissing when the store holds none."""
+    if version is not None:
+        doc = await db[COLLECTION].find_one({"name": name, "version": version}, {"_id": 0}) if name in NAMES else None
+    else:
+        doc = await _latest_doc(db, name) if name in NAMES else None
     if not doc or not str(doc.get("text") or "").strip():
         raise PromptMissing(name)
     return Prompt(name=name, version=doc["version"], text=doc["text"], sha256=doc.get("sha256") or _digest(doc["text"]))

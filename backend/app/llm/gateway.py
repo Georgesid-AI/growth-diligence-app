@@ -1544,6 +1544,8 @@ SHEET_READING_CUT = ("The reading of this file was cut off because the file has 
 SHEET_READING_LOCK_ROUNDS = 5
 # A reply that FileMap does not validate, after the one retry (George, 2026-10-30: no strict output schema for the file map; the schema goes
 # as text and the code validates). The strip's and the log's reason; the two raw replies are kept on the reading record (readings.put_failed).
+SHEET_PROMPT_MISSING_TEXT = "the sheet_reading prompt is not in the prompt store"
+SHEET_READING_NOT_STORED = "the stored reading is not there to be read again"
 SHEET_READING_NOT_MATCHED = "reading did not match the map schema"
 # The spreadsheet mapping path of PR 1 and before (file_type, file_recognition, sheet_structure and the column mapping) stays behind a flag
 # for PR 2 only (read-check-review.md section 13): READER_V1=off turns its model calls off, anything else leaves them on. Its three calls
@@ -2122,7 +2124,7 @@ async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
-    fiscal_year_end: int = 12,
+    fiscal_year_end: int = 12, reread_of: Optional[dict] = None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2150,6 +2152,9 @@ async def read_structure(
     cannot be drawn for goes as text alone (page-image.md). The configured page-reader model must be on the allow-list (page_reader_problem) before each
     read, else the result is "blocked" and nothing is sent. The image tokens (the call's count with the images minus its count
     without) and their cost are reported apart from the text's, and logged beside them.
+
+    `reread_of` (a stored reading, SHEET_READING only) pins the call to that reading: the prompt version and the model it was made with, and
+    no provider call for the first reading (a reading not stored is "not_read"). A re-read is never a new full reading (section 9, PR 206).
 
     A sheet reading (SHEET_READING, read-check-review.md sections 3, 4 and 9) sends every non-empty cell of every recognised sheet,
     masked here (name learning included), with the prompt `sheet_reading` and the dated model SHEET_READER_MODEL. The reading is stored
@@ -2206,14 +2211,21 @@ async def read_structure(
         model = page_reader_model()
     elif structure_type == SHEET_READING:
         model, images = sheet_reader_model(), None
+        if reread_of:
+            model = reread_of.get("model") or model
+            if not _sheet_reader_model_ok(model):
+                return _structure_result("blocked", structure_type, SHEET_READER_BLOCKED)
     else:
         images = None
     try:
         prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
-                                              PAGE_CLAIMS: PAGE_CLAIMS_PROMPT, SHEET_READING: SHEET_READING_PROMPT}.get(structure_type, STRUCTURE_PROMPT))
+                                              PAGE_CLAIMS: PAGE_CLAIMS_PROMPT, SHEET_READING: SHEET_READING_PROMPT}.get(structure_type, STRUCTURE_PROMPT),
+                                         version=(reread_of or {}).get("prompt_version") if structure_type == SHEET_READING else None)
     except prompt_store.PromptMissing:
         if structure_type == PAGE_CLAIMS:
             logger.warning("%s prompt missing: run_id=%s step=%s", PAGE_CLAIMS_PROMPT, audit_id, STRUCTURE_STEP)
+        if structure_type == SHEET_READING:
+            return _structure_result("not_read", structure_type, SHEET_PROMPT_MISSING_TEXT)
         return _structure_result("not_read", structure_type, PROMPT_MISSING_TEXT if structure_type == PAGE_CLAIMS else NOT_READ)
     if price_model(model) not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)
@@ -2240,6 +2252,9 @@ async def read_structure(
             stored_map = kept["output"] if recheck else kept["file_map"]
             return _structure_result("read", structure_type, cache_hit=True, masked=masked_counts, payload=text, reading_key=reading_key,
                                      file_map=_mask_map(stored_map, context.get("company_name"), mapping), **base)
+        if reread_of and not recheck:
+            # Pinned to a stored reading that is not there: nothing is read in full here, whatever the prompt or the model now is.
+            return _structure_result("not_read", structure_type, SHEET_READING_NOT_STORED, **base)
     elif use_cache:
         hit = await cache.get_structure(db, audit_id, key)
         if hit:

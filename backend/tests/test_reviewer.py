@@ -48,11 +48,12 @@ class ReviewRouter(Router):
 
     def __init__(self, first, again=None, review=None):
         super().__init__(first, again)
-        self.review, self.review_calls, self.review_payloads = review, 0, []
+        self.review, self.review_calls, self.review_payloads, self.sheet_systems = review, 0, [], []
 
     def complete(self, **kw):
         sent = json.loads(kw["user_payload"])
         if sent["type"] != "reviewer":
+            self.sheet_systems.append(kw["system"])
             return super().complete(**kw)
         self.review_calls += 1
         self.review_payloads.append(sent)
@@ -109,6 +110,52 @@ def test_a_finding_the_reader_rejects_becomes_a_card_with_both_readings(flow):
     assert card["reader"]["label"] == "Reader, twice" and card["reader"]["role"] == "revenue"
     assert card["other"]["label"] == "Reviewer" and "bookings" in card["other"]["evidence"]
     assert card["source"]["cell"] == "B10:M10" and card["source"]["sheet"] == SHEET
+
+
+def test_a_re_read_that_never_ran_opens_no_card_and_the_next_review_tries_it_again(flow):
+    router = start(flow, map_with("revenue"), again=None, review={"findings": [finding()]})        # the reader fails on the re-read
+    done = review(flow)
+    assert done["status"] == "incomplete" and done["reason"] and done["reason"]
+    assert done["findings"][0]["items"][0]["result"] == "not read"
+    assert not cards_of(flow) and not flow.db[readings.OVERRIDES].docs, "a re-read that never ran is no disagreement"
+    stored = flow.db[readings.REVIEWS].docs[0]
+    assert stored["status"] == "incomplete"
+    router.again = map_with("bookings")                                                           # the next Run audit
+    router.review_calls = 0
+    done = review(flow)
+    assert router.review_calls == 1 and done["status"] == "read", "an incomplete review is not kept for its input"
+    assert done["findings"][0]["items"][0]["result"] == "agrees" and not cards_of(flow)
+
+
+def test_the_register_says_review_not_completed_with_the_reason(flow):
+    start(flow, map_with("revenue"), again=None, review={"findings": [finding()]})
+    review(flow)
+    from app import register
+    summary = asyncio.run(register.build(flow.db, audit_of(flow)["id"]))["review"]
+    assert summary["not_completed"].startswith("review not completed: ") and len(summary["not_completed"]) > len("review not completed: ")
+
+
+def test_a_re_read_after_the_prompt_changed_uses_the_stored_readings_prompt_and_makes_no_new_reading(flow):
+    router = start(flow, map_with("revenue"), again=map_with("bookings"), review={"findings": [finding()]})
+    old = next(d for d in flow.db["prompts"].docs if d["name"] == "sheet_reading")
+    flow.db["prompts"].docs.append({**old, "version": "v2", "text": old["text"] + "\nTEST ONLY changed"})
+    router.sheet_systems.clear()
+    calls_before = router.sheet_calls
+    done = review(flow)
+    assert router.sheet_calls == calls_before + 1, "one re-read, never a full reading under the new prompt"
+    assert router.sheet_systems == [old["text"]], "the re-read carries the text the reading was made with"
+    assert len(flow.db[readings.READINGS].docs) == 1
+    assert done["findings"][0]["items"][0]["result"] == "agrees"
+    assert all(o["reading"] == flow.db[readings.READINGS].docs[0]["key"] for o in flow.db[readings.OVERRIDES].docs)
+
+
+def test_a_re_read_whose_stored_prompt_version_is_gone_is_not_read_and_makes_no_call(flow):
+    router = start(flow, map_with("revenue"), again=map_with("bookings"), review={"findings": [finding()]})
+    flow.db[readings.READINGS].docs[0]["prompt_version"] = "v99"
+    calls_before = router.sheet_calls
+    done = review(flow)
+    assert router.sheet_calls == calls_before and done["status"] == "incomplete" and "prompt" in done["reason"]
+    assert not cards_of(flow)
 
 
 def test_a_second_reading_the_checks_reject_is_a_card_not_a_correction(flow):

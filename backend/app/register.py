@@ -177,7 +177,9 @@ async def build(db, audit_id: str) -> Dict:
                                   "skipped_pages": meta.get("skipped_pages") or []},
                       "anchors": {"figures": {"read": len(deck["figures"]), "found_on_page": n["confirmed"], "from_image": n["cannot_check"]}}})
     review = await db[readings.REVIEWS].find_one({"audit_id": audit_id}, {"_id": 0})
-    summary = {"status": (review or {}).get("status"), "reason": (review or {}).get("reason"),
+    status = (review or {}).get("status")
+    summary = {"status": status, "reason": (review or {}).get("reason"),
+               "not_completed": f"review not completed: {review.get('reason') or 'not read'}" if review and status not in ("read", "none") else None,
                "findings": sum(1 for f in (review or {}).get("findings") or [] if f.get("state") == "valid"), "dropped": (review or {}).get("dropped", 0)}
     return {"files": files, "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": all_cards, "review": summary}
 

@@ -28,8 +28,10 @@ from .structures import reading_input, redact
 logger = logging.getLogger("growth.reviewer")
 
 WHO = "reviewer"
+INCOMPLETE = "incomplete"
 CORRECTED = "corrected on review"
 D_FILE, D_SHEET, D_CELL, D_PAGE, D_KIND = "no_such_file", "no_such_sheet", "cell_outside_sheet", "no_such_page", "wrong_kind"
+REASON_NO_CELLS, REASON_NOT_READ = "the file's cells are no longer stored", "the re-read did not run"
 AGREES, REPEATS, THIRD, UNREAD, NO_ITEM = "agrees", "repeats the first reading", "gives a third value", "not read", "no item"
 ROW_FIELDS = ("role", "metric", "basis", "actual_plan", "boundary_col", "segment", "parent_row", "unit", "currency", "cells", "variance_of",
               "variance_columns", "label_cell", "by_column")
@@ -228,17 +230,24 @@ async def reread_file(db, audit: Dict, f: Dict, asks: List[Dict], adapter, compa
     fye = int(audit.get("fiscal_year_end") or 12)
     sheets = await _dataset_sheets(db, audit_id, file_hash)
     text = reading_input.reading_text(sheets)
-    result: Dict[str, Dict] = {a["item"]: {"result": UNREAD} for a in asks}
+    result: Dict[str, Dict] = {a["item"]: {"result": UNREAD, "reason": REASON_NO_CELLS} for a in asks}
+
+    def unread(why: Optional[str]) -> Dict[str, Dict]:
+        for k in result:
+            result[k]["reason"] = why or REASON_NOT_READ
+        return result
     if text is None:
         return result
     masked = [{"item": a["item"], "reason": redact.mask_text(a["reason"], company, mapping)} for a in asks]
-    first = await gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, fiscal_year_end=fye)
+    # Pinned to the stored reading (its prompt version and model): a prompt or a model changed since is no reason for a new full reading.
+    first = await gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, fiscal_year_end=fye,
+                                         reread_of=reading)
     if first.status != "read" or not first.file_map:
-        return result
+        return unread(first.reason)
     second = await gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=masked,
-                                          fiscal_year_end=fye)
+                                          fiscal_year_end=fye, reread_of=reading)
     if second.status != "read" or second.file_map is None:
-        return result
+        return unread(second.reason)
     cells = checks.Cells(first.payload)
     keys = [a["item"] for a in asks]
     changed = [k for k in keys if _plain(checks.reading_of(first.file_map, k)) != _plain(checks.reading_of(second.file_map, k))
@@ -343,13 +352,17 @@ async def review_audit(db, audit: Dict, adapter=None, force: bool = False) -> Di
     for n, ask in asks.items():
         for key, res in (await reread_file(db, audit, files.get(n), ask, adapter, company, mapping)).items():
             outcomes[(n, key)] = res
+    not_run: List[str] = []
     for finding in valid:
         entry = {**finding, "items": [], "state": "valid"}
         for n, key in plan[finding["id"]]:
-            res = outcomes.get((n, key), {"result": UNREAD})
+            res = outcomes.get((n, key), {"result": UNREAD, "reason": REASON_NOT_READ})
             f = files.get(n)
             item = {"file": n, "key": key, "result": res["result"], "overrides": res.get("overrides", [])}
-            if res["result"] != AGREES:
+            if res["result"] == UNREAD:
+                # The re-read never ran: no card (a card is a disagreement that survived one re-read), and the review is not done.
+                not_run.append(res.get("reason") or REASON_NOT_READ)
+            elif res["result"] != AGREES:
                 await _card_for(db, audit_id, finding, f, key, res)
             entry["items"].append(item)
         if not plan[finding["id"]]:
@@ -357,6 +370,9 @@ async def review_audit(db, audit: Dict, adapter=None, force: bool = False) -> Di
             entry["items"].append({"file": finding["refs"][0]["file"], "key": None, "result": NO_ITEM, "overrides": []})
         doc["findings"].append(entry)
     doc["findings"] += [{**d, "state": "dropped", "items": []} for d in dropped]
+    if not_run:
+        # Stored as not completed: only a review with status "read" is kept for its input, so the next Run audit tries the re-read again.
+        doc["status"], doc["reason"] = INCOMPLETE, "; ".join(dict.fromkeys(not_run))
     await _save(db, doc)
     return doc
 

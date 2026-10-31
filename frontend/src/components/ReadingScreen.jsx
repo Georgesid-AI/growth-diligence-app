@@ -183,6 +183,7 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
       {view.files.map((f) => (f.kind === "sheet"
         ? <SheetBlock key={f.file_hash} file={f} auditId={auditId} onChanged={() => { load(); reloadAudit(); }} onAsOf={onAsOf} />
         : <DeckBlock key={f.deck_id} file={f} onShowAll={() => setConfirmedOpen(true)} />))}
+      {view.review?.not_completed && <p className="evidence" data-testid="review-not-completed">{view.review.not_completed}</p>}
       <ReadingResults data={view} auditId={auditId} confirmedOpen={confirmedOpen} setConfirmedOpen={setConfirmedOpen} onChanged={() => { load(); reloadAudit(); }} />
     </div>
   );
