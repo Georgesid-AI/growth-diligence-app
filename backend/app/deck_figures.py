@@ -12,6 +12,7 @@ Nothing is corrected, nothing is stored here: the outcome is computed from the s
 so it always follows the deck as it now stands. No deck text leaves this module: a figure carries its page number, its value and the closed
 words of the candidate, never a line of the page (rule 17).
 """
+import re
 from typing import Dict, List, Optional
 
 from . import checks
@@ -22,6 +23,11 @@ from .structures import checker
 R_PAGE_RANGE = "Reading cites page {page}; the deck ends at page {last}."
 R_PAGE = "Reading says {value}; page {n} holds no such figure."
 R_PAGE_SCALE = "Page {n} states {page}; reading says {value}. Unit or scale differs; not compared."
+
+# A suffix the parser leaves unread or reads case-sensitively: "3.5Mn", "$22.9 Bn", "12 MM". The prompt's rule 10: K, M, MM, Mn, B, Bn attached to a
+# printed number multiply it.
+_SUFFIX = re.compile(r"\s?(?P<mult>MM|Mn|Bn|mm|mn|bn)(?![A-Za-z])|(?P<short>[KkMmBb])(?![A-Za-z])")
+_FACTOR = {"k": 1e3, "m": 1e6, "mm": 1e6, "mn": 1e6, "b": 1e9, "bn": 1e9}
 
 
 def page_lines(deck: Dict, page: int) -> List[Dict]:
@@ -36,12 +42,32 @@ def page_lines(deck: Dict, page: int) -> List[Dict]:
     return lines
 
 
+def _signed(text: str, found: Dict) -> List[float]:
+    """The values one printed number stands for, in full units: the scale of its suffix applied (K, M, MM, Mn, B, Bn), and, when a minus sign or
+    brackets stand on it ("-1.2m", "(3,400)", "$(1.2)M"), the negative and the plain value both, since a cost line is read with or without its sign.
+    A trailing % does not change the number: the rate is compared in points."""
+    value, end = found["value"], found["end"]
+    bracketed = text[end:end + 1] == ")" and "(" in text[found["start"]:found["pos"]] + text[max(0, found["start"] - 1):found["start"]]
+    tail = end + 1 if bracketed else end
+    if found.get("mult") is None:
+        m = _SUFFIX.match(text, tail)
+        if m:
+            value = round(found["num"] * _FACTOR[(m.group("mult") or m.group("short")).lower()], 6)
+            value = int(value) if float(value).is_integer() else value
+    sign = text[max(0, found["start"] - 1):found["start"]]
+    before = text[max(0, found["start"] - 2):found["start"] - 1]
+    minus = sign in ("-", "\u2212") and not before.isalnum() and before not in (")", "%")
+    return [value, -value] if (bracketed or minus) and value else [value]
+
+
 def page_numbers(deck: Dict, page: int) -> List[float]:
-    """Every figure the page's text states, in full units (claims.figures scales k, m, bn). Only the scaled value is a figure of the page: "2.5m"
-    is 2,500,000 and never 2.5."""
+    """Every figure the page's text states, in full units (a suffix K, M, MM, Mn, B or Bn multiplies the printed number: "2.5m" is 2,500,000 and
+    never 2.5). A printed minus or brackets give the negative as well as the plain value."""
     out: List[float] = []
     for line in page_lines(deck, page):
-        out += [f["value"] for f in claims.figures(line["text"]) if f.get("value") is not None]
+        for f in claims.figures(line["text"]):
+            if f.get("value") is not None:
+                out += _signed(line["text"], f)
     return out
 
 

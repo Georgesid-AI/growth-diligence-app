@@ -399,3 +399,23 @@ def test_run_audit_goes_on_without_the_reviewer_stage_when_the_reviewer_prompt_i
     assert done.json()["status"] != "failed"
     assert router.review_calls == (1 if with_prompt else 0), "the review stage runs only with its prompt; the audit goes on either way"
     assert bool(flow.db[readings.REVIEWS].docs) == with_prompt, "no reviewer stage, so no review record and no 'review not completed' line"
+
+
+@pytest.mark.parametrize("printed, reading, unit", [
+    ("ARR $22.9B at year end", 22_900_000_000, None), ("ARR $22.9 Bn at year end", 22_900_000_000, None),
+    ("Bookings 12MM in the year", 12_000_000, None), ("Bookings 3.5Mn in the year", 3_500_000, None),
+    ("Pipeline EUR 450K open", 450_000, None), ("Pipeline EUR 2.5M open", 2_500_000, None),
+    ("Net loss -1.2m for the year", -1_200_000, None), ("Net loss -1.2m for the year", 1_200_000, None),
+    ("Cost of sales (3,400) in the year", -3400, None), ("Cost of sales (3,400) in the year", 3400, None),
+    ("Cost of sales $(1.2)M in the year", -1_200_000, None),
+    ("Churn 4.5% a month", 4.5, "%"), ("Margin (8%) this year", -8, "%"),
+])
+def test_page_figure_suffixes_signs_brackets_and_percent_are_read_the_way_the_prompt_describes(printed, reading, unit):
+    got = check_deck([{"page": 2, "text": printed, "kind": "text"}], candidate(reading, unit=unit, currency=None if unit == "%" else "USD"))
+    assert got["outcome"] == "confirmed", printed
+
+
+def test_a_suffix_multiplies_the_printed_number_and_a_wrong_scale_is_still_not_a_match():
+    page = [{"page": 2, "text": "ARR $22.9B at year end", "kind": "text"}]
+    assert check_deck(page, candidate(22.9, currency="USD"))["outcome"] == "cannot_check", "22.9 against 22.9B: the scale differs"
+    assert check_deck(page, candidate(23_900_000_000, currency="USD"))["outcome"] == "rejected"
