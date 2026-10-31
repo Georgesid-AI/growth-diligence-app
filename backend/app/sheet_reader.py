@@ -127,7 +127,8 @@ def sheet_lines(file_map: Dict, cells: "checks.Cells", items: List[Dict]) -> Lis
         sheet = cells.sheet(smap["sheet"])
         labels = {}
         for row in smap.get("rows") or []:
-            pos = checks.parse_ref(row.get("label_cell"))
+            # A row the reader gave no label cell for (a rate row under its line) has its label in the sheet's label column, on its own row.
+            pos = checks.parse_ref(row.get("label_cell")) or (checks.parse_ref(f"{smap['label_col']}{row['row']}") if smap.get("label_col") else None)
             if sheet is not None and pos:
                 labels[row["row"]] = (sheet.get(*pos) or "").strip()
         built = lines_mod.build(smap, labels)

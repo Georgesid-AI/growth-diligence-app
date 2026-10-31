@@ -539,3 +539,18 @@ def test_the_workflow_installs_the_converter_the_deck_fixture_needs():
     install = next(i for i, st in enumerate(steps) if "libreoffice" in st.get("run", ""))
     run = next(i for i, st in enumerate(steps) if "scripts/run_reading_fixtures.py" in st.get("run", ""))
     assert install < run and steps[install].get("if") == "env.ANTHROPIC_API_KEY != '' && env.DECK_FIXTURE == '1'"
+
+
+def test_a_rate_row_the_reader_gave_no_label_cell_keeps_its_label_and_the_shown_under_its_line_note_on_the_yearly_pnl():
+    """Regression: a rate row placed under its line lost its label (and with it the placement and the note) when the reading cited no label cell."""
+    fixture = next(f for f in SHEETS if f["name"] == "yearly_pnl")
+    sheets = workbook(fixture)
+    sheets[0].grid[6][0] = "Revenue growth rate"                          # row 7 of the P&L, empty in the fixture
+    file_map = copy.deepcopy(fixture["expected_map"]["file_map"])
+    file_map["sheets"][0]["rows"].append({**file_map["sheets"][0]["rows"][0], "row": 7, "label_cell": None, "role": "growth_rate", "metric": "revenue",
+                                          "basis": "rate", "unit": "rate", "currency": None, "cells": "C7:F7", "evidence": "growth rate across the period columns"})
+    cells = checks.Cells(reading_input.reading_text(sheets))
+    (entry,) = sheet_reader.sheet_lines(file_map, cells, [])
+    line = next(ln for ln in entry["lines"] if ln["row"] == 7)
+    assert line["label"] == "Revenue growth rate" and line["moved"] is True and line["indent"] == 1 and line["rate_of"] == 4
+    assert [ln["row"] for ln in entry["lines"]][:2] == [4, 7], "directly under the revenue line"
