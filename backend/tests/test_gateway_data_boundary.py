@@ -4441,3 +4441,20 @@ def test_the_reviewer_refuses_a_payload_that_still_holds_personal_data_and_a_mod
     assert blocked.status == "blocked" and adapter.calls == 0
     from app.structures import redact as masker
     assert masker.personal_items("call +44 20 7946 0958 or b@c.test") == ["email", "phone"], "the last line before the provider names kinds"
+
+
+# ---------------------------------------------------------------------------
+# PR 206 review: the reasons, results keys and log line it adds hold closed words and figures, never file, deck or reviewer text (rule 14)
+# ---------------------------------------------------------------------------
+def test_the_reasons_and_the_log_line_of_the_review_follow_up_are_closed_words_with_no_file_deck_or_finding_text():
+    import asyncio
+    from app import checks, deck_figures, reviewer
+    from app.llm import gateway as g
+    for text in (g.SHEET_PROMPT_MISSING_TEXT, g.SHEET_READING_NOT_STORED, reviewer.REASON_NO_CELLS, reviewer.REASON_NOT_READ):
+        assert "{" not in text and len(text) < 80, text
+    page = deck_figures.R_PAGE_SCALE.format(n=2, page="2.5", value="2500000")
+    assert page == "Page 2 states 2.5; reading says 2500000. Unit or scale differs; not compared.", "a page number and two figures, no line of the page"
+    assert set(checks.C_NO_UNIT.split()) <= set("No unit given; not compared.".split())
+    db = t.FakeDB()
+    db["prompts"].docs[:] = [d for d in db["prompts"].docs if d["name"] != "reviewer"]
+    assert asyncio.run(g.reviewer_startup_problem(db)) == "prompt reviewer is not in the store"

@@ -112,9 +112,13 @@ def test_a_finding_the_reader_rejects_becomes_a_card_with_both_readings(flow):
     assert card["source"]["cell"] == "B10:M10" and card["source"]["sheet"] == SHEET
 
 
-def test_a_re_read_that_never_ran_opens_no_card_and_the_next_review_tries_it_again(flow):
+def test_a_re_read_that_never_ran_opens_no_card_and_the_next_review_tries_it_again(flow, caplog):
+    import logging
     router = start(flow, map_with("revenue"), again=None, review={"findings": [finding()]})        # the reader fails on the re-read
+    caplog.set_level(logging.INFO)
     done = review(flow)
+    assert "bookings" not in done["reason"] and COMPANY not in done["reason"], "the reason is a closed word, never the finding or the file"
+    assert "bookings" not in "\n".join(r.getMessage() for r in caplog.records)
     assert done["status"] == "incomplete" and done["reason"] and done["reason"]
     assert done["findings"][0]["items"][0]["result"] == "not read"
     assert not cards_of(flow) and not flow.db[readings.OVERRIDES].docs, "a re-read that never ran is no disagreement"
