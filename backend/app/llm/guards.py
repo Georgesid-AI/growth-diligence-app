@@ -49,9 +49,11 @@ LOCK_POLL_SECONDS = 0.25
 class GuardRefusal(Exception):
     """A guard refused the call. Carries a client-safe reason code."""
 
-    def __init__(self, reason: str, detail: str = ""):
+    def __init__(self, reason: str, detail: str = "", used: Optional[float] = None, cap: Optional[float] = None):
         self.reason = reason
         self.detail = detail
+        self.used = used          # what the cap counted so far and the cap itself, for the "ai call refused" log line
+        self.cap = cap
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
@@ -112,14 +114,14 @@ async def check_structure_token_cap(db, run_id: str, input_tokens: int, max_toke
     """A call goes out only if the tokens used + its input + its max_tokens fit under the cap."""
     used = await structure_tokens_used(db, run_id)
     if used + input_tokens + max_tokens > STRUCTURE_TOKEN_CAP:
-        raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE)
+        raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE, used=used, cap=STRUCTURE_TOKEN_CAP)
 
 
 async def check_reviewer_token_cap(db, run_id: str, input_tokens: int, max_tokens: int) -> None:
     """The reviewer's own allowance: its tokens used + its input + its max_tokens must fit under REVIEWER_TOKEN_CAP. File reading is not counted."""
     used, cap = await reviewer_tokens_used(db, run_id), reviewer_token_cap()
     if used + input_tokens + max_tokens > cap:
-        raise GuardRefusal("reviewer_token_cap_reached")
+        raise GuardRefusal("reviewer_token_cap_reached", used=used, cap=cap)
 
 
 async def check_call_cap(db, run_id: str) -> None:
@@ -128,7 +130,7 @@ async def check_call_cap(db, run_id: str) -> None:
         raise GuardRefusal(
             "call_cap_exceeded",
             f"run {run_id} has used all {MAX_CALLS_PER_RUN} provider calls; "
-            "refusing without retry or queue",
+            "refusing without retry or queue", used=used, cap=MAX_CALLS_PER_RUN,
         )
 
 
@@ -148,7 +150,7 @@ async def check_spend_cap(db) -> None:
     if spent >= cap:
         raise GuardRefusal(
             "daily_spend_cap_exceeded",
-            f"${spent:.4f} spent today against a ${cap:.2f} cap",
+            f"${spent:.4f} spent today against a ${cap:.2f} cap", used=round(spent, 4), cap=cap,
         )
 
 

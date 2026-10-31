@@ -1254,7 +1254,7 @@ def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_c
 
 
 # The reason a cap refusal's "structure not read" line gives: a closed word per guard, never the guard's message.
-CAP_REASONS = frozenset({"spend_cap", "token_cap", "allowance", "reviewer_token_cap"})
+CAP_REASONS = frozenset({"spend_cap", "token_cap", "allowance", "reviewer_token_cap", "call_cap"})
 
 
 def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
@@ -1262,7 +1262,7 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
     from datetime import datetime, timezone
     assert set(gateway.CAP_REASONS.values()) == CAP_REASONS
     assert set(gateway.CAP_REASONS) == {"daily_spend_cap_exceeded", "structure_token_cap_reached", "monthly_allowance_reached",
-                                         "reviewer_token_cap_reached"}
+                                         "reviewer_token_cap_reached", "call_cap_exceeded"}
     db = _structure_db()
     db["llm_calls"].docs.append({"run_id": STRUCTURE_AUDIT["id"], "step": "structures", "cache_hit": False,
                                  "input_tokens": 398000, "output_tokens": 0, "estimated_cost_usd": 0.0,
@@ -1293,6 +1293,8 @@ def test_an_allowance_refusal_logs_the_closed_word_and_no_amount_label_or_id(cap
     assert "reason=allowance status=- type=-" in lines
     for needle in ("tester-9", "Label Nine", "10.0", "USD", "$"):
         assert needle not in "".join(r.getMessage() for r in caplog.records), f"{needle!r} was logged"
+    refused = [r.getMessage() for r in caplog.records if r.getMessage().startswith("ai call refused:")]
+    assert refused and all(l.endswith("reason=allowance used=- cap=-") for l in refused), "the 'ai call refused' line carries no allowance amount"
 
 
 def test_the_owner_audit_cost_rows_hold_a_closed_key_set_and_the_tester_filter_covers_every_cost_key(caplog):

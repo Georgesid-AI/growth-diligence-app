@@ -449,13 +449,17 @@ def _spent_by_reading(flow, tokens=400_000):
                                       "input_tokens": tokens, "output_tokens": 0, "status": "ok"})
 
 
+def _refusals(caplog):
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("ai call refused: ")]
+
+
 def test_the_reviewer_is_not_refused_because_reading_used_the_reading_cap(flow):
     router = start(flow, map_with("bookings"), review={"findings": []})
     _spent_by_reading(flow)
     assert review(flow, force=True)["status"] == "read" and router.review_calls == 1
 
 
-def test_the_reviewer_has_its_own_cap(flow, monkeypatch, caplog):
+def test_the_reviewer_has_its_own_cap_and_a_refusal_writes_one_log_line_and_the_register_says_why(flow, monkeypatch, caplog):
     import logging
     from app import register
     router = start(flow, map_with("bookings"), review={"findings": []})
@@ -464,7 +468,8 @@ def test_the_reviewer_has_its_own_cap(flow, monkeypatch, caplog):
     done = review(flow, force=True)
     assert done["status"] == "not_read" and router.review_calls == 0
     run_id = audit_of(flow)["id"]
-    assert flow.db["llm_calls"].docs[-1]["status"] == "reviewer_token_cap_reached"
+    (line,) = _refusals(caplog)
+    assert line == f"ai call refused: step=reviewer run_id={run_id} reason=reviewer_token_cap used=0 cap=5000"
 
 
 def test_the_reviewer_cap_defaults_to_80000_and_counts_only_reviewer_tokens(flow, monkeypatch):
@@ -478,3 +483,14 @@ def test_the_reviewer_cap_defaults_to_80000_and_counts_only_reviewer_tokens(flow
                                   {"run_id": run_id, "step": "structures", "structure_type": "reviewer", "cache_hit": False, "input_tokens": 10, "output_tokens": 5}]
     assert asyncio.run(guards.reviewer_tokens_used(flow.db, run_id)) == 15
     assert asyncio.run(guards.structure_tokens_used(flow.db, run_id)) == 70_001
+
+
+def test_a_sheet_read_refused_by_the_reading_cap_writes_the_same_line(flow, monkeypatch, caplog):
+    import logging
+    from app.llm import guards
+    monkeypatch.setattr(guards, "STRUCTURE_TOKEN_CAP", 1000)
+    caplog.set_level(logging.INFO)
+    start(flow, map_with("bookings"))
+    run_id = audit_of(flow)["id"]
+    lines = _refusals(caplog)
+    assert f"ai call refused: step=sheet_reading run_id={run_id} reason=token_cap used=0 cap=1000" in lines      # (the file recognition beside it is refused too)
