@@ -38,6 +38,7 @@ const REGISTER = {
         line(11, "Recognised revenue"),
         line(3, "revenue growth rate", { read_as: "growth rate of row 11", basis: "rate", indent: 1, moved: true, role: "growth_rate" }),
         line(14, "MRR from annual subscriptions", { read_as: "MRR, part of row 11", indent: 1, parent_row: 11, role: "mrr" }),
+        line(15, "Annual, enterprise", { read_as: "MRR, part of row 14", indent: 2, parent_row: 14, role: "mrr" }),
         line(23, "Total clients", { read_as: "customers", role: "customers" }),
       ] }] },
     { kind: "deck", file: "Board report.pdf", deck_id: "d1", pages: 20,
@@ -111,11 +112,15 @@ describe("the strip and the file blocks", () => {
     expect(details.open).toBe(false);
     const rows = [...details.querySelectorAll("tbody tr")];
     expect(rows.map((r) => r.querySelector("td").textContent.replace(" · shown under its line", ""))).toEqual(
-      ["Recognised revenue", "revenue growth rate", "MRR from annual subscriptions", "Total clients"]);
+      ["Recognised revenue", "revenue growth rate", "MRR from annual subscriptions", "Annual, enterprise", "Total clients"]);
     expect(rows[1].className).toContain("moved");
     expect(rows[1].className).toContain("sub");
     expect(rows[1].querySelector('[data-testid="moved-note"]').textContent).toBe(" · shown under its line");
     expect(rows[2].className).toBe("sub");
+    expect(rows[3].className).toBe("sub");
+    expect(rows[3].querySelector("td").dataset.indent).toBe("2");
+    expect(rows[3].querySelector("td").style.paddingLeft).toBe("42px");
+    expect(rows[2].querySelector("td").style.paddingLeft).toBe("");
     expect(rows[0].className).toBe("");
     expect([...details.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Line", "Read as", "Basis", "Actual / plan", "Cells"]);
     await act(async () => { details.querySelector("summary").click(); });

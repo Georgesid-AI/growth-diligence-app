@@ -142,6 +142,16 @@ def test_a_rate_row_is_shown_directly_under_its_line_with_the_note_and_part_rows
     assert built[0]["actual_plan"] == "mixed, boundary D" and built[0]["basis"] == "yearly" and built[0]["cells"] == "B4:H4"
 
 
+def test_a_part_nested_under_another_part_is_a_line_indented_one_level_per_parent():
+    smap = {"rows": [r(4, "revenue"), r(5, "revenue", parent_row=4), r(6, "revenue", parent_row=5), r(7, "revenue", parent_row=5), r(8, "revenue", parent_row=6),
+                     r(9, "other")]}
+    built = lines.build(smap, {n: f"Line {n}" for n in range(4, 10)})
+    assert [(ln["row"], ln["indent"]) for ln in built] == [(4, 0), (5, 1), (6, 2), (8, 3), (7, 2), (9, 0)], "every mapped row is a line"
+    assert built[2]["read_as"] == "revenue, part of row 5"
+    ring = lines.build({"rows": [r(4, "revenue", parent_row=5), r(5, "revenue", parent_row=4)]}, {4: "A", 5: "B"})
+    assert sorted(ln["row"] for ln in ring) == [4, 5], "a ring of parents loses no row"
+
+
 def test_a_rate_whose_line_cannot_be_told_uniquely_stays_where_it_is():
     smap = {"rows": [r(3, "churn_rate", "rate"), r(4, "mrr"), r(5, "mrr")]}
     built = lines.build(smap, {3: "MRR churn rate", 4: "MRR from annual subscriptions", 5: "MRR from monthly subscriptions"})

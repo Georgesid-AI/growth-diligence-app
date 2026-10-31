@@ -97,7 +97,7 @@ function LinesTable({ lines, file, auditId, sheet }) {
       <tbody>
         {lines.map((ln) => (
           <tr key={ln.row} className={[ln.indent ? "sub" : "", ln.moved ? "moved" : ""].join(" ").trim()} data-testid={`line-${ln.row}`}>
-            <td data-h="Line">{ln.label}{ln.moved && <span className="note" data-testid="moved-note"> · shown under its line</span>}</td>
+            <td data-h="Line" data-indent={ln.indent || 0} style={ln.indent > 1 ? { paddingLeft: `${10 + 16 * ln.indent}px` } : undefined}>{ln.label}{ln.moved && <span className="note" data-testid="moved-note"> · shown under its line</span>}</td>
             <td data-h="Read as">{ln.read_as}</td>
             <td data-h="Basis">{ln.basis}</td>
             <td data-h="Actual / plan">{ln.actual_plan}</td>

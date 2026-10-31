@@ -88,18 +88,33 @@ def build(sheet_map: Dict, labels: Dict[int, str]) -> List[Dict]:
         if row.get("parent_row") in present and row["row"] not in rate_of:
             parts.setdefault(row["parent_row"], []).append(row)
     out: List[Dict] = []
-    for position, row in enumerate(rows):
+    seen: set = set()
+
+    def emit_parts(parent: Dict, indent: int) -> None:
+        """The parts of a row, each directly under it and one level in; a part of a part goes one level further."""
+        for part in parts.get(parent["row"], []):
+            if part["row"] in seen:
+                continue
+            seen.add(part["row"])
+            line = line_of(part, labels.get(part["row"], ""), indent=indent, part_of=parent["row"])
+            line["read_as"] = f"{line['read_as']}, part of row {parent['row']}"
+            out.append(line)
+            emit_parts(part, indent + 1)
+
+    for row in rows:
         if row["row"] in rate_of or (row.get("parent_row") in present):
             continue
+        seen.add(row["row"])
         out.append(line_of(row, labels.get(row["row"], "")))
         for rate in under.get(row["row"], []):
             previous = rows[rows.index(rate) - 1] if rows.index(rate) else None
             adjacent = previous is not None and previous["row"] == row["row"]
             out.append(line_of(rate, labels.get(rate["row"], ""), indent=1, moved=not adjacent, rate_of=row["row"]))
-        for part in parts.get(row["row"], []):
-            line = line_of(part, labels.get(part["row"], ""), indent=1, part_of=row["row"])
-            line["read_as"] = f"{line['read_as']}, part of row {row['row']}"
-            out.append(line)
+        emit_parts(row, 1)
+    for row in rows:        # a ring of parents (a is part of b, b of a) has no top row: its rows are still lines, in file order
+        if row["row"] not in seen and row["row"] not in rate_of:
+            seen.add(row["row"])
+            out.append(line_of(row, labels.get(row["row"], ""), indent=1))
     for line in out:
         if line.get("rate_of"):
             line["read_as"] = f"{line['read_as']} of row {line['rate_of']}"
