@@ -54,7 +54,9 @@ export function SourceLink({ auditId, source, label }) {
 
 const cellsFor = {
   confirmed: (r, auditId) => [
-    r.metric, valueText(r.value, r.unit, r.currency), periodLabel(r.period), basisLabel(r.basis), actualPlanLabel(r.actual_plan),
+    <>{r.metric}{r.note === "set by analyst" && (
+      <><br /><span className="muted" data-testid="set-by-analyst" title={r.hover}>{r.note}{r.set_at ? `, ${r.set_at}` : ""}</span></>
+    )}</>, valueText(r.value, r.unit, r.currency), periodLabel(r.period), basisLabel(r.basis), actualPlanLabel(r.actual_plan),
     r.row_role || PLACEHOLDER, <SourceLink key="s" auditId={auditId} source={r.source} />,
   ],
   rejected: (r, auditId) => [

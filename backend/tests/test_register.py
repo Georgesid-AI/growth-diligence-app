@@ -77,7 +77,15 @@ def test_a_card_is_decided_by_use_the_cell_use_the_reader_or_a_typed_value_and_t
     assert override["path"] == "figures.0.value" and override["new"] == expect and override["old"] == 11000 and override["who"] == "analyst"
     got = reading(flow)
     assert got["tables"]["rejected"] == [] and got["tables"]["confirmed"][0]["value"] == expect
-    assert got["tables"]["confirmed"][0]["note"].startswith("set by analyst")
+    row = got["tables"]["confirmed"][0]
+    assert row["note"] == "set by analyst" and row["hover"] == "value set by analyst; the check did not confirm it"
+    assert row["set_at"] and len(row["set_at"]) == 10, "a date"
+    file_hash = flow.db[readings.READINGS].docs[0]["file_hash"]
+    exported = flow.get(f"/api/audits/{AUDIT}/readings/{file_hash}/export").json()
+    (mark,) = exported["set_by_analyst"]
+    assert mark["note"] == "set by analyst" and mark["value"] == expect and mark["hover"] == row["hover"] and mark["set_at"] == row["set_at"]
+    csv_text = flow.get(f"/api/audits/{AUDIT}/readings/{file_hash}/export?format=csv").text
+    assert f"set by analyst, {row['set_at']}: value set by analyst; the check did not confirm it" in csv_text
     assert flow.post(f"/api/audits/{AUDIT}/cards/{card['id']}", json={"action": "use_cell"}).status_code == 404, "a decided card is closed"
 
 

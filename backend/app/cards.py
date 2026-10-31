@@ -23,6 +23,16 @@ USE_CELL, USE_READER, TYPED = "use_cell", "use_reader", "type_value"
 ACTIONS = (USE_CELL, USE_READER, TYPED)
 
 
+SET_NOTE = "set by analyst"
+SET_HOVER = "value set by analyst; the check did not confirm it"
+
+
+def set_by_analyst(card: Dict) -> Dict:
+    """The marker a decided card puts on its figure, wherever the figure is shown or exported: the words, the date and the hover text."""
+    decision = card.get("decision") or {}
+    return {"note": SET_NOTE, "set_at": str(decision.get("at") or "")[:10] or None, "hover": SET_HOVER, "set_action": decision.get("action")}
+
+
 def card_id(audit_id: str, kind: str, item: str) -> str:
     return hashlib.sha256(f"card\x00{audit_id}\x00{kind}\x00{item}".encode("utf-8")).hexdigest()[:24]
 

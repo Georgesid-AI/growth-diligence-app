@@ -84,7 +84,7 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
             card = decided.get(key)
             if card:
                 d = card["decision"]
-                out["confirmed"].append({**row, "value": d["value"], "note": "set by analyst (" + d["action"].replace("_", " ") + ")", "reason": None})
+                out["confirmed"].append({**row, "value": d["value"], **cards.set_by_analyst(card), "reason": None})
                 continue
             again = rereads.get(key, {})
             out["rejected"].append({**row, "cell_value": item.get("found_value"), "cell_period": item.get("found_period"),
@@ -94,7 +94,7 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
             card = decided.get(key)
             if card:
                 d = card["decision"]
-                out["confirmed"].append({**row, "value": d["value"], "note": "set by analyst (" + d["action"].replace("_", " ") + ")", "reason": None})
+                out["confirmed"].append({**row, "value": d["value"], **cards.set_by_analyst(card), "reason": None})
                 continue
             out["cannot_check"].append({**row, "used_in": USED_IN.get(figure.get("metric") or item.get("metric")) or "—", "card_id": card_ids.get(item["key"])})
     return out

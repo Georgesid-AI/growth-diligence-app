@@ -1636,10 +1636,11 @@ async def export_reading(audit_id: str, file_hash: str, format: Literal["json", 
     line per row-period. Stored values at full precision; the overrides made on the reading go with the JSON as records of their own."""
     check, doc = await _stored_reading(audit_id, file_hash)
     overrides = await readings_mod.overrides_for(db, audit_id, doc["key"])
+    decided = [c for c in await cards_mod.for_audit(db, audit_id) if c["status"] == cards_mod.DECIDED and (c.get("source") or {}).get("file_hash") == file_hash]
     if format == "csv":
-        return Response(reading_export.as_csv(doc, overrides, check.get("file") or ""), media_type="text/csv",
+        return Response(reading_export.as_csv(doc, overrides, check.get("file") or "", decided), media_type="text/csv",
                         headers={"Content-Disposition": 'attachment; filename="reading.csv"'})
-    return reading_export.as_json({**doc, "file": check.get("file") or doc.get("file")}, overrides)
+    return reading_export.as_json({**doc, "file": check.get("file") or doc.get("file")}, overrides, decided)
 
 
 @api.get("/audits/{audit_id}/reading")

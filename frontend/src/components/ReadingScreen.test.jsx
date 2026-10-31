@@ -48,7 +48,7 @@ const REGISTER = {
   tables: {
     confirmed: [
       { key: "k1", kind: "figure", metric: "revenue", value: 78829.4, unit: "money", currency: "EUR", period: "2022-05", basis: "monthly", actual_plan: "actual",
-        row_role: "revenue", source: src("AP11"), note: null },
+        row_role: "revenue", source: src("AP11"), note: "set by analyst", set_at: "2026-10-31", hover: "value set by analyst; the check did not confirm it" },
       { key: "k2", kind: "deck_figure", metric: "arr", value: 4.5, unit: "rate", currency: null, period: "2021", basis: null, actual_plan: "actual", row_role: null,
         source: { file: "Board report.pdf", deck_id: "d1", page: 3 }, note: null },
     ],
@@ -153,6 +153,15 @@ describe("the three result tables", () => {
     expect(q("confirmed-details").querySelector("summary").textContent).toBe("Show");
     await act(async () => { q("confirmed-details").querySelector("summary").click(); });
     expect(q("confirmed-details").open).toBe(true);
+  });
+
+  test("a figure the analyst set on a card is Confirmed, marked set by analyst with its date and the hover text", async () => {
+    await show();
+    const marks = all("set-by-analyst");
+    expect(marks).toHaveLength(1);
+    expect(marks[0].textContent).toBe("set by analyst, 2026-10-31");
+    expect(marks[0].getAttribute("title")).toBe("value set by analyst; the check did not confirm it");
+    expect(q("table-confirmed").contains(marks[0])).toBe(true);
   });
 
   test("every heading of every table has hover text", async () => {
