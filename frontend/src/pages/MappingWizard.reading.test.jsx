@@ -15,13 +15,12 @@ jest.mock("@/lib/api", () => ({
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn(), useLocation: () => ({ pathname: "/audit/a1/mapping" }) }), { virtual: true });
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
-jest.mock("@/components/DeckPanel", () => () => <div data-testid="deck-panel" />);
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const AUDIT = { id: "a1", company_name: "Target", reporting_currency: "EUR", fiscal_year_end: 12, structure_reading_consent: true, as_of_month: null, datasets: {} };
 const EMPTY = { files: [], tables: { confirmed: [], rejected: [], cannot_check: [] }, counts: { confirmed: 0, rejected: 0, cannot_check: 0 }, cards: [], review: {} };
 
-test("the default Upload page is the reading screen: one sentence, the tick, Run audit at the right, no Why this step matters, no deck panel", async () => {
+test("the default Upload page is the reading screen: one sentence, the tick, Run audit at the right, no Why this step matters", async () => {
   api.getAudit.mockResolvedValue(AUDIT);
   api.getDatasets.mockResolvedValue([]);
   api.reportUsage.mockResolvedValue({});
@@ -40,10 +39,37 @@ test("the default Upload page is the reading screen: one sentence, the tick, Run
   expect(q("run-audit-top-host")).not.toBeNull();
   expect(q("reading-top").contains(q("run-audit-top-host"))).toBe(true);
   expect(host.textContent).not.toContain("Why this step matters");
-  expect(q("deck-panel")).toBeNull();
+  expect(q("deck-panel")).not.toBeNull();
   expect(q("consent-block")).toBeNull();
   expect(q("heading-confirmed").textContent).toBe("Confirmed · 0");
   expect(q("more-settings").open).toBe(false);
+  await act(async () => { root.unmount(); });
+  host.remove();
+});
+
+const DECK = { deck_id: "d1", file: "board.pdf", pages: 12, page_unit: "page", uploaded_at: "2026-10-01", ai_status: "read", figure_pages: 7, pages_read: 7,
+  pages_rejected: 1, personal_removed: 3, names_replaced: 4, skipped_pages: [2, 5] };
+
+test("the default Upload page has the deck box and, under an uploaded deck, its summary line; the claims list stays behind ?view=legacy", async () => {
+  api.getAudit.mockResolvedValue(AUDIT);
+  api.getDatasets.mockResolvedValue([]);
+  api.reportUsage.mockResolvedValue({});
+  api.getReview.mockResolvedValue({ computed: false });
+  api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", deck_id: "d1", status: "pending", claim_type: "revenue", value: 1, sources: [] }] });
+  api.getReading.mockResolvedValue(EMPTY);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<MappingWizard />); });
+  await act(async () => { await Promise.resolve(); });
+  const q = (id) => host.querySelector(`[data-testid="${id}"]`);
+  expect(q("deck-upload-box")).not.toBeNull();
+  expect(host.textContent).toContain("Board deck or growth plan");
+  expect(q("deck-upload-help").textContent).toMatch(/Up to 8 documents per audit\./);
+  expect(q("deck-summary-line").textContent).toBe(
+    "board.pdf: 12 pages parsed · 7 with figures · AI read: done, 7 read, 1 rejected · personal items removed: 3 · company names coded: 4 · skipped pages 2, 5");
+  expect(q("deck-candidates")).toBeNull();
+  expect(q("claims-table")).toBeNull();
   await act(async () => { root.unmount(); });
   host.remove();
 });

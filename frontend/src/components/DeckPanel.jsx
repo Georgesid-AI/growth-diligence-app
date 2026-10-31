@@ -11,7 +11,7 @@ import { describeRequestError } from "@/lib/requestError";
 import { placeTip } from "@/lib/tipPlacement";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog, uploadLineText,
+  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog, deckSummaryLine, uploadLineText,
   COLUMN_WIDTHS, acceptAllLabel, acceptAllSplit, confidenceText, confidenceReasons, columnText, needChoiceText, statusNotes, typeCellLines, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
@@ -76,7 +76,7 @@ const typeValue = (d) => (d.claim_type === "unknown" ? "other" : d.claim_type !=
   : d.answer === "volume" ? VOLUME_OPTION : d.answer === "ask" ? ASK_OPTION : d.claim_type);
 
 /** Board deck or growth plan: the scope message, the upload, and the candidate approval list. */
-export default function DeckPanel({ auditId, reloadKey = 0 }) {
+export default function DeckPanel({ auditId, reloadKey = 0, compact = false }) {
   const [data, setData] = useState({ decks: [], candidates: [] });
   const [lines, setLines] = useState([]);          // one status line per file of the last drops: waiting / uploading / done / refused / failed
   const [tab, setTab] = useState(null);            // deck id or ALL_DECKS; null until the first load
@@ -353,7 +353,17 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
         </ul>
       )}
 
-      {data.decks.length > 0 && (
+      {compact && data.decks.length > 0 && (
+        <ul className="mt-3 space-y-1 text-xs text-slate-700" data-testid="deck-summaries">
+          {data.decks.map((d) => (
+            <li key={d.deck_id} data-testid="deck-summary-line">
+              <span className="font-mono">{d.file}</span>: {deckSummaryLine(d)}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!compact && data.decks.length > 0 && (
         <div className="mt-5 pt-5 border-t border-[#E5E7EB]" data-testid="deck-candidates">
           <div className="flex items-start justify-between gap-4 flex-wrap mb-3">
             <div className="text-xs text-slate-700 max-w-3xl space-y-1" data-testid="claims-instructions">
