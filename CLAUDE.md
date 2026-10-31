@@ -50,7 +50,7 @@
     masking time and gets the next Client-NN, never [person] and never as printed (George, 2026-10-29, PR 204 review); figures and metric
     labels unchanged. The page image goes unmasked (option A). The token map lives on the audit record only (`token_map`), never in a
     log, a payload or an API response, and goes with the audit; the provider adapter refuses a payload that still holds an email, IBAN,
-    ID number or "+" phone number. Counts per file on screen: lines sent, personal items removed, company names tokenised, columns
+    ID number or "+" phone number. Counts per file on screen: lines sent, personal items removed, company names coded, columns
     withheld.
     Amended 2026-10-29 (read-check-review.md sections 3, 4, 8 and 9, PR 2; for George's approval before merge, rule 32): a new step
     `sheet_reading`. With the audit's consent, one call per uploaded spreadsheet, the model may receive every non-empty cell of every

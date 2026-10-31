@@ -1211,7 +1211,7 @@ describe("a P&L read as a statement (section 26)", () => {
     expect(q("type-label-pnl").textContent).toContain("Type: P&L (yearly summary)");
     expect(q("sheet-map-caption-pnl").textContent).toBe('Sheet "CSV" · header on row 2 · labels in column A');
     expect(q("sheet-map-sent").textContent).toBe(S30a_sent(STATEMENT().sheet_map.counts));
-    expect(q("sheet-map-sent").textContent).toBe("Sent to the AI: 24 lines. Personal items removed: 1. Company names tokenised: 3. Columns withheld: 1.");
+    expect(q("sheet-map-sent").textContent).toBe("Sent to the AI: 24 lines. Personal items removed: 1. Company names coded: 3. Columns withheld: 1.");
     expect(q("line-checks-9").textContent).toBe("No breakdown (FY2021, FY2022)");
     expect(q("line-checks-8").textContent).toBe(S30C_RATE);
     expect(q("line-label-10").style.paddingLeft).toBe("12px");

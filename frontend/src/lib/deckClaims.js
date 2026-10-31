@@ -405,10 +405,10 @@ export function aiReadStatus(deck) {
 const READ_DONE = ["read", "not_read", "stopped", "prompt_missing"];
 
 /** "N pages parsed · M with figures · AI read: <status>", and once the read is done, " · personal items removed: p · company names
- *  tokenised: c" from the server's masking counts (George, 2026-10-29, review of PR 204). The page count is the file's, parsed, never "read". */
+ *  coded: c" from the server's masking counts (George, 2026-10-29, review of PR 204). The page count is the file's, parsed, never "read". */
 export function deckReadLine(deck) {
   const masked = READ_DONE.includes(deck.ai_status) && Number.isFinite(deck.personal_removed)
-    ? ` · personal items removed: ${deck.personal_removed} · company names tokenised: ${deck.names_replaced || 0}` : "";
+    ? ` · personal items removed: ${deck.personal_removed} · company names coded: ${deck.names_replaced || 0}` : "";
   return `${deck.pages} ${deck.page_unit || "page"}s parsed · ${deck.figure_pages} with figures · AI read: ${aiReadStatus(deck)}${masked}`;
 }
 
@@ -417,7 +417,7 @@ export function deckReadLine(deck) {
 export function deckSummaryLine(deck) {
   const [first] = deckRunLog(deck);
   const skipped = deck.skipped_pages?.length ? ` · skipped pages ${deck.skipped_pages.join(", ")}` : "";
-  return `${(first || "AI read: queued").replace("company names tokenised", "company names coded")}${skipped}`;
+  return `${first || "AI read: queued"}${skipped}`;
 }
 
 /** The upload row's text: the one it got at upload, until the stored deck of a page read is known; then the same line the panel shows

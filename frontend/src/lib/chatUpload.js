@@ -185,7 +185,7 @@ export const S14_same = (version) => `Same file as before: saved mapping v${vers
 // S30a-h (2026-10-18, section 26): a P&L read as a statement, one row per line. Wording chosen under rule 19 for George's review.
 const plural = (n, one, many) => `${fmtCount(n)} ${n === 1 ? one : many}`;
 export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Personal items removed: ${fmtCount(c.email + c.phone + c.person + (c.iban || 0) + (c.id || 0))}. `
-  + `Company names tokenised: ${fmtCount(c.customer + c.company)}. Columns withheld: ${fmtCount(c.columns)}.`;
+  + `Company names coded: ${fmtCount(c.customer + c.company)}. Columns withheld: ${fmtCount(c.columns)}.`;
 export const S30B_HEADERS = ["Line", "Role", "Meaning", "Basis", "Used", "Confidence", "Checks"];
 export const CONFIRM_ALL = "Confirm all";
 // docs/design/pnl-lines.md sections 1 and 8: every mapped line has a use, assigned by its mapped role: series, sum check, recompute check or
