@@ -20,6 +20,7 @@ export const HOVERS = {
     Metric: "What the figure measures, e.g. recognised revenue, ARR, customers.",
     Value: "The number as it stands in the file, shown rounded; the full value is kept.",
     Period: "The month, quarter or year this value belongs to.",
+    Label: "The label printed with the figure in the file or on the deck page, as the reader took it.",
     Basis: "How the value accumulates: monthly, quarterly, yearly, cumulative to date, or last 12 months.",
     "Actual / plan": "Whether the cell sits before or after the file's last actual month.",
     Row: "What the whole row or table was read as: revenue, bookings, ARR, churn rate, customers, forecast, variance, other.",
@@ -38,6 +39,7 @@ export const HOVERS = {
     Metric: "What the figure measures.",
     Value: "The value the reader recorded.",
     Period: "The month, quarter or year it belongs to.",
+    Label: "The label printed with the figure in the file or on the deck page, as the reader took it.",
     Why: "Why no check was possible: layout description not a value; deck page is an image; unit or scale differs from the cell; no cell cited; depends on a masked name.",
     "Used in": "Which computed figures rely on it, so you know what is affected.",
     Source: "Where it was read from. For a deck page without text, the page number only.",
@@ -47,9 +49,9 @@ export const HOVERS = {
 /** Column widths in percent, in the order of the design note's tables (section 11.3); the lines table follows the mockup. */
 export const WIDTHS = {
   lines: [34, 16, 14, 16, 20],
-  confirmed: [20, 12, 10, 10, 8, 14, 26],
+  confirmed: [18, 10, 10, 14, 8, 8, 8, 24],
   rejected: [14, 12, 12, 22, 12, 10, 18],
-  cannot_check: [16, 12, 10, 26, 16, 20],
+  cannot_check: [14, 10, 10, 14, 22, 12, 18],
 };
 export const NUMERIC = { lines: [], confirmed: ["Value"], rejected: ["Reading says", "Cell holds"], cannot_check: ["Value"] };
 export const TITLES = { confirmed: "Confirmed", rejected: "Rejected", cannot_check: "Cannot check" };

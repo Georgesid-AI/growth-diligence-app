@@ -190,9 +190,9 @@ describe("the three result tables", () => {
 
   test("column order, widths, right-aligned numbers, and Source last with the cell first", async () => {
     await show();
-    expect([...q("table-confirmed").querySelectorAll("th")].map((t) => t.textContent)).toEqual(["Metric", "Value", "Period", "Basis", "Actual / plan", "Row", "Source"]);
+    expect([...q("table-confirmed").querySelectorAll("th")].map((t) => t.textContent)).toEqual(["Metric", "Value", "Period", "Label", "Basis", "Actual / plan", "Row", "Source"]);
     expect([...q("table-rejected").querySelectorAll("th")].map((t) => t.textContent)).toEqual(["Metric", "Reading says", "Cell holds", "Reason", "Re-read", "Action", "Source"]);
-    expect([...q("table-cannot_check").querySelectorAll("th")].map((t) => t.textContent)).toEqual(["Metric", "Value", "Period", "Why", "Used in", "Source"]);
+    expect([...q("table-cannot_check").querySelectorAll("th")].map((t) => t.textContent)).toEqual(["Metric", "Value", "Period", "Label", "Why", "Used in", "Source"]);
     for (const kind of ["confirmed", "rejected", "cannot_check"]) {
       const widths = [...q(`table-${kind}`).querySelectorAll("col")].map((c) => c.style.width);
       expect(widths).toEqual(WIDTHS[kind].map((w) => `${w}%`));
@@ -224,6 +224,18 @@ describe("the three result tables", () => {
     expect(css).toMatch(/@media \(max-width: 900px\)[\s\S]*\.reading table\.rows tr \{ border: 1px solid/);
     expect(css).toContain("content: attr(data-h)");
     expect(css).toContain("thead { display: none; }");
+  });
+
+  test("Period is a dash when the figure has none and Label, right after it, shows the printed label", async () => {
+    const row = { key: "k9", kind: "deck_figure", metric: "arr", value: 100, unit: "money", currency: "EUR", period: null, label: "Closing ARR", basis: null, actual_plan: null,
+      row_role: null, source: { file: "Board report.pdf", deck_id: "d1", page: 4 }, note: null };
+    await show({ ...REGISTER, tables: { ...REGISTER.tables, confirmed: [row] }, counts: { ...REGISTER.counts, confirmed: 1 } });
+    await act(async () => { q("confirmed-details").querySelector("summary").click(); });
+    const tr = q("row-confirmed");
+    expect(tr.querySelector('td[data-h="Period"]').textContent).toBe("—");
+    expect(tr.querySelector('td[data-h="Label"]').textContent).toBe("Closing ARR");
+    expect(WIDTHS.confirmed[3]).toBe(14);
+    expect([WIDTHS.confirmed[4], WIDTHS.confirmed[6]]).toEqual([8, 8]);
   });
 
   test("the Source link shows the cell with its neighbours", async () => {
