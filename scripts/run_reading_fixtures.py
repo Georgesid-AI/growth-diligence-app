@@ -68,7 +68,7 @@ def empty_store(prompt_text: str, deck_prompt: str = ""):
 
 async def read_all() -> int:
     import reading_fixtures as rf
-    from app import checks, column_rules as cr
+    from app import checks, column_rules as cr, sheet_reader
     from app.llm import gateway
     from app.llm.schemas import SHEET_READING
     from app.structures import reading_input
@@ -80,24 +80,27 @@ async def read_all() -> int:
         audit = f"fx-{name}"
         db["audits"].docs.append({"id": audit, "company_name": rf.COMPANY, "structure_reading_consent": True})
         sheets = cr.read_workbook(path.read_bytes(), path.name)
-        text = reading_input.reading_text(sheets)
         adapter = OneCall(gateway.AnthropicAdapter(timeout=gateway.SHEET_READING_TIMEOUT_SECONDS))
-        read = await gateway.read_structure(db, audit, text, SHEET_READING, file_hash=hashlib.sha256(path.read_bytes()).hexdigest(), adapter=adapter)
-        if read.cache_hit:
+        got = {}
+        doc = await sheet_reader.read_file(db, {"id": audit}, sheets, hashlib.sha256(path.read_bytes()).hexdigest(), path.name, 12, adapter=adapter,
+                                           capture=got)
+        if doc["status"] != "read":
+            failed += 1
+            print(f"{name:26} {doc['status']:10} {'-':8} {'-':14} {doc.get('reason')}")
+            continue
+        if doc["cache_hit"]:
             failed += 1
             print(f"{name:26} {'stored':10} {'-':8} {'-':14} served from storage, not read by the model: a stored reading must never be reused here")
             continue
-        if read.status != "read":
-            failed += 1
-            print(f"{name:26} {read.status:10} {'-':8} {'-':14} {read.reason}")
-            continue
-        result = checks.check_map(checks.Cells(read.payload), read.file_map, 12)
-        month = max((m["month"] for m in result["months"]), default=None)
-        diffs = rf.compare(fixture["expected_map"], month, read.file_map)
+        # The job's cap is one call per fixture, so a re-read of rejected items is refused by the cap and fails; the first reading stands
+        # and the file is reported as read, with the rejected count (a failed re-read never makes a file not read).
+        month = doc["month"]
+        diffs = rf.compare(fixture["expected_map"], month, got["file_map"])
         failed += bool(diffs)
-        counts = result["counts"]
-        print(f"{name:26} {'read':10} {month or '-':8} {read.input_tokens}/{read.output_tokens:<8} "
+        counts = doc["counts"]
+        print(f"{name:26} {'read':10} {month or '-':8} {'-':14} "
               f"{'; '.join(diffs) if diffs else 'none'}  [confirmed {counts['confirmed']}, rejected {counts['rejected']}, cannot check {counts['cannot_check']}]")
+        result = {"items": doc["items"]}
         for item in result["items"]:
             if item["outcome"] == checks.CANNOT:
                 print(f"    cannot check {item['key']}: {item['reason']}")

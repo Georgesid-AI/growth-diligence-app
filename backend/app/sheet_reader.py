@@ -14,7 +14,7 @@ Nothing here corrects a citation: a re-read is the model's, and its answer is ch
 prompt, a missing consent or a file over the limit gives a status and a message, never an exception: the upload goes on (rule 20).
 """
 import asyncio
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from . import cards, checks, lines as lines_mod, readings
 from .llm import gateway, redaction
@@ -37,7 +37,7 @@ def _worst(items: List[Dict]) -> Dict:
     return next((i for i in items if i["outcome"] == checks.REJECTED), items[0])
 
 
-async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fiscal_year_end: int = 12, adapter=None) -> Dict:
+async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fiscal_year_end: int = 12, adapter=None, capture: Optional[Dict] = None) -> Dict:
     """Read, check and re-read one workbook for one audit. Returns the stored outcome:
 
         {"status": "read", "file", "file_hash", "reading_key", "prompt_version", "model", "cache_hit", "masked": {...}, "counts": {...},
@@ -63,9 +63,19 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     if keys:
         groups = _group(before["items"])
         ask = [{"item": k, "reason": _worst(groups[k])["reason"]} for k in keys]
-        second = await asyncio.wait_for(
-            gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask, reread_of=first.reading_key), READ_SECONDS)
-        if second.status == "read" and second.file_map is not None:
+        failure = None
+        second = None
+        try:
+            second = await asyncio.wait_for(
+                gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask,
+                                       reread_of=first.reading_key), READ_SECONDS)
+            if second.status != "read" or second.file_map is None:
+                failure = second.reason or second.status
+        except asyncio.TimeoutError:
+            failure = "timed out"
+        except Exception as exc:           # an error, a cap, a missing prompt: whatever the re-read met, the first reading stands
+            failure = type(exc).__name__ if not str(exc) else str(exc)
+        if failure is None:
             merged = checks.merge_reread(first.file_map, second.file_map, keys)
             final = checks.check_map(cells, merged, fiscal_year_end)
             after = _group(final["items"])
@@ -82,8 +92,15 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
                     entry["first"], entry["second"] = checks.reading_of(first.file_map, key), checks.reading_of(second.file_map, key)
                 rereads.append(entry)
         else:
-            rereads = [{"item": e["item"], "first_reason": e["reason"], "reread": None, "outcome": checks.REJECTED, "reason": e["reason"],
+            # The first reading stands, checked as it was; its rejected items say the re-read was not completed. Never not_read.
+            note = f"re-read not completed: {failure}"
+            rereads = [{"item": e["item"], "first_reason": e["reason"], "reread": None, "outcome": checks.REJECTED, "reason": note,
                         "action": "card", "first": checks.reading_of(first.file_map, e["item"]), "second": None} for e in ask]
+            for item in final["items"]:
+                if item["outcome"] == checks.REJECTED:
+                    item["reread_note"] = note
+    if capture is not None:
+        capture["file_map"] = merged          # for the fixture job's comparison; never stored
     months = final["months"]
     best = max(months, key=lambda m: m["month"], default=None)
     doc = {"status": "read", "file": file, "file_hash": file_hash, "reading_key": first.reading_key, "prompt_version": first.prompt_version,
