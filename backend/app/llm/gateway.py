@@ -1658,7 +1658,7 @@ PROMPT_MISSING_TEXT = "AI reading not run – deck_reading prompt missing in pro
 TOO_LARGE = "Too large for AI reading"
 # The reason a cap refusal's "structure not read" line gives, per guard code (llm_calls keeps the code).
 CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap",
-               "monthly_allowance_reached": "allowance"}
+               "reviewer_token_cap_reached": "reviewer_token_cap", "monthly_allowance_reached": "allowance"}
 # The calls outside the daily spend cap: a column mapping (chat-upload.md 4.2) and a page read (ai-reads-rules-check.md). Both still
 # count in the tester's monthly allowance and in the day's spend every other call is checked against.
 SPEND_CAP_EXEMPT = frozenset({"column_mapping", PAGE_CLAIMS})
@@ -2596,7 +2596,7 @@ async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, slee
         try:
             await guards.check_allowance(db, audit_id)
             await guards.check_spend_cap(db)
-            await guards.check_structure_token_cap(db, audit_id, counted, REVIEWER_MAX_TOKENS)
+            await guards.check_reviewer_token_cap(db, audit_id, counted, REVIEWER_MAX_TOKENS)
         except guards.GuardRefusal as refusal:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
                            estimated_cost_usd=0.0, cache_hit=False, status=refusal.reason, content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE)

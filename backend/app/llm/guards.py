@@ -33,6 +33,8 @@ MAX_CALLS_PER_RUN = 15             # narrative calls only
 DEFAULT_DAILY_SPEND_CAP_USD = 5.00
 STRUCTURE_STEP = "structures"      # the step every structure reading call is logged and locked under
 STRUCTURE_TOKEN_CAP = 400_000      # billed input and output tokens per audit, structure calls only
+REVIEWER_STEP_TYPE = "reviewer"    # structure_type of the reviewer's calls: counted against REVIEWER_TOKEN_CAP, never against the reading cap
+DEFAULT_REVIEWER_TOKEN_CAP = 80_000  # billed input and output tokens per audit, reviewer call only (env REVIEWER_TOKEN_CAP)
 STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 400,000-token limit. The remaining "
                          "structures were read by Python only.")
 
@@ -51,6 +53,17 @@ class GuardRefusal(Exception):
         self.reason = reason
         self.detail = detail
         super().__init__(f"{reason}: {detail}" if detail else reason)
+
+
+def reviewer_token_cap() -> int:
+    """Per-audit token allowance of the reviewer, from REVIEWER_TOKEN_CAP (default 80,000). A malformed or non-positive value falls back
+    to the default: a typo must never mean "unlimited"."""
+    raw = os.environ.get("REVIEWER_TOKEN_CAP", "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_REVIEWER_TOKEN_CAP
+    except ValueError:
+        return DEFAULT_REVIEWER_TOKEN_CAP
+    return value if value > 0 else DEFAULT_REVIEWER_TOKEN_CAP
 
 
 def daily_spend_cap_usd() -> float:
@@ -81,8 +94,18 @@ async def structure_tokens_used(db, run_id: str) -> int:
     """Billed input and output tokens of this audit's structure reading calls."""
     rows = await db[CALLS_COLLECTION].find(
         {"run_id": run_id, "step": STRUCTURE_STEP, "cache_hit": False},
-        {"_id": 0, "input_tokens": 1, "output_tokens": 1}).to_list(100000)
-    return sum(int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0)) for r in rows)
+        {"_id": 0, "input_tokens": 1, "output_tokens": 1, "structure_type": 1}).to_list(100000)
+    return sum(int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0)) for r in rows
+               if r.get("structure_type") != REVIEWER_STEP_TYPE)
+
+
+async def reviewer_tokens_used(db, run_id: str) -> int:
+    """Billed input and output tokens of this audit's reviewer calls."""
+    rows = await db[CALLS_COLLECTION].find(
+        {"run_id": run_id, "step": STRUCTURE_STEP, "cache_hit": False},
+        {"_id": 0, "input_tokens": 1, "output_tokens": 1, "structure_type": 1}).to_list(100000)
+    return sum(int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0)) for r in rows
+               if r.get("structure_type") == REVIEWER_STEP_TYPE)
 
 
 async def check_structure_token_cap(db, run_id: str, input_tokens: int, max_tokens: int) -> None:
@@ -90,6 +113,13 @@ async def check_structure_token_cap(db, run_id: str, input_tokens: int, max_toke
     used = await structure_tokens_used(db, run_id)
     if used + input_tokens + max_tokens > STRUCTURE_TOKEN_CAP:
         raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE)
+
+
+async def check_reviewer_token_cap(db, run_id: str, input_tokens: int, max_tokens: int) -> None:
+    """The reviewer's own allowance: its tokens used + its input + its max_tokens must fit under REVIEWER_TOKEN_CAP. File reading is not counted."""
+    used, cap = await reviewer_tokens_used(db, run_id), reviewer_token_cap()
+    if used + input_tokens + max_tokens > cap:
+        raise GuardRefusal("reviewer_token_cap_reached")
 
 
 async def check_call_cap(db, run_id: str) -> None:
@@ -127,7 +157,7 @@ async def check_allowance(db, run_id: str) -> None:
     mapping included. An audit with no tester has no allowance."""
     current = await allowance.status_for_audit(db, run_id)
     if current and current["state"] == allowance.BLOCKED:
-        raise GuardRefusal("monthly_allowance_reached")
+        raise GuardRefusal("monthly_allowance_reached")        # no amounts: a tester's allowance is never logged
 
 
 async def acquire(db, run_id: str, step: str) -> Optional[str]:

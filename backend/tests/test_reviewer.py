@@ -439,3 +439,42 @@ def test_a_period_that_came_from_the_page_heading_stays_null_and_the_heading_goe
     assert printed["period"] is None and printed["label"] == "ARR", "a printed label stays the label"
     own = deck_figures.figure_of(candidate(447223, label_from="ARR"), d)
     assert own["period"] == "Dec 2024" and own["label"] == "ARR", "a period of the figure's own line or column is kept"
+
+
+# ---------------------------------------------------------------------------
+# The reviewer's own token allowance, the "ai call refused" line, the status line
+# ---------------------------------------------------------------------------
+def _spent_by_reading(flow, tokens=400_000):
+    flow.db["llm_calls"].docs.append({"run_id": audit_of(flow)["id"], "step": "structures", "structure_type": "sheet_reading", "cache_hit": False,
+                                      "input_tokens": tokens, "output_tokens": 0, "status": "ok"})
+
+
+def test_the_reviewer_is_not_refused_because_reading_used_the_reading_cap(flow):
+    router = start(flow, map_with("bookings"), review={"findings": []})
+    _spent_by_reading(flow)
+    assert review(flow, force=True)["status"] == "read" and router.review_calls == 1
+
+
+def test_the_reviewer_has_its_own_cap(flow, monkeypatch, caplog):
+    import logging
+    from app import register
+    router = start(flow, map_with("bookings"), review={"findings": []})
+    monkeypatch.setenv("REVIEWER_TOKEN_CAP", "5000")
+    caplog.set_level(logging.INFO)
+    done = review(flow, force=True)
+    assert done["status"] == "not_read" and router.review_calls == 0
+    run_id = audit_of(flow)["id"]
+    assert flow.db["llm_calls"].docs[-1]["status"] == "reviewer_token_cap_reached"
+
+
+def test_the_reviewer_cap_defaults_to_80000_and_counts_only_reviewer_tokens(flow, monkeypatch):
+    from app.llm import guards
+    monkeypatch.delenv("REVIEWER_TOKEN_CAP", raising=False)
+    assert guards.reviewer_token_cap() == 80_000
+    monkeypatch.setenv("REVIEWER_TOKEN_CAP", "junk")
+    assert guards.reviewer_token_cap() == 80_000
+    run_id = "r1"
+    flow.db["llm_calls"].docs += [{"run_id": run_id, "step": "structures", "structure_type": "sheet_reading", "cache_hit": False, "input_tokens": 70_000, "output_tokens": 1},
+                                  {"run_id": run_id, "step": "structures", "structure_type": "reviewer", "cache_hit": False, "input_tokens": 10, "output_tokens": 5}]
+    assert asyncio.run(guards.reviewer_tokens_used(flow.db, run_id)) == 15
+    assert asyncio.run(guards.structure_tokens_used(flow.db, run_id)) == 70_001
