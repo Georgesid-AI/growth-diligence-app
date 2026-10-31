@@ -66,6 +66,28 @@ def empty_store(prompt_text: str, deck_prompt: str = ""):
     return db
 
 
+def deck_images_problem() -> str:
+    """Draws the page images of the deck fixture before anything is read: "" when they can be made, else the reason. The job never reads a
+    deck as text alone, so a missing converter fails here, before the first provider call."""
+    import reading_fixtures as rf
+    from app.decks import render
+    path = rf.FIXTURES / "deck_rotated_axis.pptx"
+    fmt = path.suffix.lstrip(".").lower()
+    problem = render.converter_problem(fmt)
+    if problem:
+        return problem
+    try:
+        pdf = render.to_pdf(path.read_bytes(), fmt)
+        if not render.page_count(pdf):
+            return "the deck fixture has no page"
+        render.render_page(pdf, 1)
+    except render.PageImageError as exc:
+        return exc.reason
+    except Exception as exc:
+        return f"the deck fixture could not be drawn ({type(exc).__name__})"
+    return ""
+
+
 async def read_all() -> int:
     import reading_fixtures as rf
     from app import checks, column_rules as cr, sheet_reader
@@ -178,6 +200,10 @@ def main() -> int:
     if missing:
         notice("not set: " + ", ".join(missing) + ". The job needs the key and the prompt as secrets and the model as a variable.")
         return 0
+    problem = deck_images_problem()
+    if problem:
+        print(f"page images unavailable: {problem}")
+        return 1
     return asyncio.run(read_all())
 
 

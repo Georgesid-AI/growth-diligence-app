@@ -237,6 +237,7 @@ def load_runner():
     spec = importlib.util.spec_from_file_location("run_reading_fixtures", ROOT / "scripts" / "run_reading_fixtures.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    module.deck_images_problem = lambda: ""          # the job's own preflight is tested below; the CI checks carry no LibreOffice
     return module
 
 
@@ -435,7 +436,7 @@ def test_a_failing_re_read_leaves_the_file_read_with_its_rejected_items_noted_an
         monkeypatch.setenv(name, value)
     runner.main()                                  # the cap refuses the second call: the re-read fails
     out = capsys.readouterr().out
-    line = next(l for l in out.splitlines() if l.startswith("monthly_report"))
+    line = next(ln for ln in out.splitlines() if ln.startswith("monthly_report"))
     assert " read " in line and "not_read" not in line and re.search(r"rejected [1-9]", line), line
     assert len(router.requests) == len(SHEETS), "the failed re-read made no provider call beyond the cap"
 
@@ -458,3 +459,39 @@ def test_a_re_read_that_fails_never_marks_the_reading_not_read_and_notes_each_re
         assert doc["status"] == "read" and doc["counts"]["rejected"] >= 1
         assert doc["rereads"] and all(r["reason"].startswith("re-read not completed: ") for r in doc["rereads"])
         assert all(i["reread_note"].startswith("re-read not completed: ") for i in doc["items"] if i["outcome"] == "rejected")
+
+
+def test_the_converter_presence_check_names_what_is_missing(monkeypatch):
+    from app.decks import render
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    assert render.converter_problem("pptx") == "no converter: soffice/libreoffice not found on the path"
+    assert render.converter_problem("docx") is not None
+    assert render.converter_problem("pdf") is None, "a PDF needs no converter"
+    monkeypatch.setattr(render.shutil, "which", lambda name: "/usr/bin/soffice" if name == "soffice" else None)
+    assert render.converter_problem("pptx") is None
+
+
+def test_the_job_stops_before_any_provider_call_when_the_deck_fixtures_page_images_cannot_be_made(monkeypatch, capsys):
+    import importlib.util
+    from app.decks import render
+    spec = importlib.util.spec_from_file_location("run_reading_fixtures_real", ROOT / "scripts" / "run_reading_fixtures.py")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)                 # the real preflight
+    router = FixtureRouter()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    assert runner.main() == 1
+    out = capsys.readouterr().out
+    assert out.strip() == "page images unavailable: no converter: soffice/libreoffice not found on the path"
+    assert router.requests == [], "no text-only read of anything"
+
+
+def test_the_workflow_installs_the_converter_the_deck_fixture_needs():
+    import yaml
+    flow = yaml.safe_load((ROOT / ".github" / "workflows" / "reading-fixtures.yml").read_text(encoding="utf-8"))
+    steps = flow["jobs"]["reading"]["steps"]
+    install = next(i for i, st in enumerate(steps) if "libreoffice" in st.get("run", ""))
+    run = next(i for i, st in enumerate(steps) if "scripts/run_reading_fixtures.py" in st.get("run", ""))
+    assert install < run and steps[install].get("if") == "env.ANTHROPIC_API_KEY != ''"
