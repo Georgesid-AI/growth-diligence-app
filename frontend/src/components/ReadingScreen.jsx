@@ -85,13 +85,14 @@ export function ReadingStrip({ audit, onAsOf, period }) {
   );
 }
 
-const Summary = ({ parts }) => (
-  <p className="summary" data-testid="file-summary">
+/** One <p> per summary line; the parts of a line are joined by " · ", a part's number (or period) in the heavier weight. */
+const Summary = ({ lines }) => lines.map((parts, n) => (
+  <p key={n} className="summary" data-testid="file-summary">
     {parts.map((p, i) => (
-      <span key={i}>{i ? " · " : ""}{p.bold && p.text.startsWith(" ") ? <>{p.bold}{p.text}</> : p.bold ? <>{p.text}<b>{p.bold}</b></> : p.text}</span>
+      <span key={i}>{i ? " · " : ""}{p.bold && p.text.startsWith(" ") ? <><b>{p.bold}</b>{p.text}</> : p.bold ? <>{p.text}<b>{p.bold}</b></> : p.text}</span>
     ))}
   </p>
-);
+));
 
 function LinesTable({ lines, file, auditId, sheet }) {
   const heads = Object.keys(HOVERS.lines);
@@ -128,7 +129,7 @@ function SheetBlock({ file, auditId, onChanged, onAsOf }) {
   return (
     <section className="file" data-testid="file-block">
       <h2>{file.file} {file.size != null && <small>{fmtBytes(file.size)}</small>}</h2>
-      <Summary parts={sheetSummary(file.summary)} />
+      <Summary lines={sheetSummary(file.summary)} />
       {(file.notes || []).map((n, i) => <p key={i} className="note" data-testid="file-note">{n.name}: {n.reason}</p>)}
       <div className="anchors">
         <span className="k">Last actual</span>
@@ -160,7 +161,7 @@ function DeckBlock({ file, onShowAll }) {
   return (
     <section className="file" data-testid="file-block">
       <h2>{file.file} <small>{file.pages != null ? `${file.pages} pages` : ""}</small></h2>
-      <Summary parts={deckSummary(file.summary)} />
+      <Summary lines={deckSummary(file.summary, file.anchors.figures)} />
       <div className="anchors">
         <span className="k">Figures</span><span data-testid="anchor-figures">{deckFiguresText(file.anchors.figures)}</span>
         <a href="#all" data-testid="deck-show-all" onClick={(e) => { e.preventDefault(); onShowAll(); }}>Show all</a>

@@ -93,31 +93,48 @@ export function lastActualText(month, granularity) {
   return granularity === "yearly" ? `FY ${month.slice(0, 4)}` : monthName(month);
 }
 
-/** The summary line of a spreadsheet block as parts, in the mockup's form (the screen draws the bold ones). */
+/** The masking line, below the summary (docs/design/audit-page-mockup.html): "0 personal items removed · 17 company names coded". */
+const maskingLine = (s) => [
+  { text: plural(s.personal_removed ?? 0, "personal item removed", "personal items removed") },
+  { text: plural(s.company_coded ?? 0, "company name coded", "company names coded") },
+];
+
+/** The summary lines of a spreadsheet block, in the mockup's words: a number first, then its text. Each line is a list of parts; a part with
+ *  `bold` draws that number (or period) in the heavier weight. */
 export function sheetSummary(s) {
+  const grain = GRAIN[s.granularity] || "period";
   return [
-    { text: `${plural(s.period_columns ?? 0, `${GRAIN[s.granularity] || "period"} column`, `${GRAIN[s.granularity] || "period"} columns`)}` },
-    { text: `${plural(s.rows_mapped ?? 0, "row mapped", "rows mapped")}` },
-    { text: "last actual ", bold: lastActualText(s.last_actual, s.granularity) },
-    { bold: fmtCount(s.confirmed), text: " confirmed" },
-    { text: `${fmtCount(s.rejected)} rejected` },
-    { text: `${fmtCount(s.cannot_check)} cannot check` },
-    { text: `personal items removed ${fmtCount(s.personal_removed)}` },
-    { text: `company names coded ${fmtCount(s.company_coded)}` },
+    [
+      { text: plural(s.period_columns ?? 0, `${grain} column`, `${grain} columns`) },
+      { text: plural(s.rows_mapped ?? 0, "row mapped", "rows mapped") },
+      { bold: fmtCount(s.confirmed), text: ` ${s.confirmed === 1 ? "figure" : "figures"} confirmed` },
+      { text: `${fmtCount(s.rejected)} rejected` },
+      { text: `${fmtCount(s.cannot_check)} cannot check` },
+      { text: "actual to ", bold: lastActualText(s.last_actual, s.granularity) },
+    ],
+    maskingLine(s),
   ];
 }
 
-export function deckSummary(s) {
-  const skipped = (s.skipped_pages || []).length ? `skipped ${s.skipped_pages.join(", ")} (no numbers)` : null;
+/** The three summary lines of a deck block: the pages; the figures, "confirmed on the page they cite"; the masking. */
+export function deckSummary(s, figures) {
+  const pages = s.pages ?? 0;
+  const skipped = s.skipped_pages || [];
+  const read = Math.max(pages - skipped.length, 0);
+  const first = [{ text: plural(pages, "page", "pages") }, { text: `${plural(read, "page", "pages")} read` }];
+  if (skipped.length) {
+    first.push({ text: `${plural(skipped.length, "page", "pages")} skipped (no digits in ${skipped.length === 1 ? "its" : "their"} text: ${skipped.join(", ")})` });
+  }
+  const f = figures || { read: 0 };
   return [
-    { text: `${fmtCount(s.pages ?? 0)} pages` },
-    ...(s.pages_with_figures != null ? [{ text: `${fmtCount(s.pages_with_figures)} with figures` }] : []),
-    { bold: fmtCount(s.confirmed), text: " read" },
-    { text: `${fmtCount(s.rejected)} rejected` },
-    { text: `${fmtCount(s.cannot_check)} cannot check` },
-    { text: `personal items removed ${fmtCount(s.personal_removed)}` },
-    { text: `company names coded ${fmtCount(s.company_coded)}` },
-    ...(skipped ? [{ text: skipped }] : []),
+    first,
+    [
+      { bold: fmtCount(f.read), text: ` ${f.read === 1 ? "figure" : "figures"} read` },
+      { bold: fmtCount(s.confirmed), text: " confirmed on the page they cite" },
+      { text: `${fmtCount(s.rejected)} rejected` },
+      { text: `${fmtCount(s.cannot_check)} cannot check${s.cannot_check ? " (charts without text)" : ""}` },
+    ],
+    maskingLine(s),
   ];
 }
 

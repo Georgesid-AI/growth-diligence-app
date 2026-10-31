@@ -107,19 +107,33 @@ describe("the strip and the file blocks", () => {
     expect(q("file-note").textContent).toBe("Period columns: header unclear");
   });
 
-  test("a spreadsheet block reads in the mockup's form, with three anchor lines and Change, and Show all lines", async () => {
+  test("a spreadsheet block reads in the mockup's words: the number first, the masking counts on a line of their own", async () => {
     await show();
     const [sheet, deck] = all("file-block");
     expect(sheet.querySelector("h2").textContent).toBe("revenue.xlsx 60 KB");
-    expect(sheet.querySelector('[data-testid="file-summary"]').textContent).toBe(
-      "48 month columns · 41 rows mapped · last actual May 2022 · 37 confirmed · 1 rejected · 1 cannot check · personal items removed 0 · company names coded 0");
+    expect([...sheet.querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
+      "48 month columns · 41 rows mapped · 37 figures confirmed · 1 rejected · 1 cannot check · actual to May 2022",
+      "0 personal items removed · 0 company names coded"]);
+    expect(sheet.querySelector('[data-testid="file-summary"] b').textContent).toBe("37");
     expect(sheet.querySelector('[data-testid="anchor-revenue"]').textContent).toBe("Row 11, Recognised revenue, monthly");
     expect(sheet.querySelector('[data-testid="anchor-boundary"]').textContent).toBe("Actual to column AP, plan from AQ");
     expect([...sheet.querySelectorAll(".anchors a")].map((a) => a.textContent)).toEqual(["Change", "Change", "Change"]);
     expect(sheet.querySelector("summary").textContent).toBe("Show all lines");
-    expect(deck.querySelector('[data-testid="file-summary"]').textContent).toBe(
-      "20 pages · 15 with figures · 15 read · 0 rejected · 3 cannot check · personal items removed 1 · company names coded 17 · skipped 1, 2, 7 (no numbers)");
-    expect(deck.querySelector('[data-testid="anchor-figures"]').textContent).toBe("112 read, 109 found on their page, 3 from charts without text");
+    expect([...deck.querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
+      "20 pages · 17 pages read · 3 pages skipped (no digits in their text: 1, 2, 7)",
+      "112 figures read · 15 confirmed on the page they cite · 0 rejected · 3 cannot check (charts without text)",
+      "1 personal item removed · 17 company names coded"]);
+    expect([...deck.querySelectorAll('[data-testid="file-summary"]')[1].querySelectorAll("b")].map((b) => b.textContent)).toEqual(["112", "15"]);
+  });
+
+  test("page and pages, its and their: one skipped page reads in the singular", async () => {
+    const files = REGISTER.files.map((f) => (f.kind === "deck" ? { ...f, pages: 1, summary: { ...f.summary, pages: 1, skipped_pages: [1], confirmed: 0, cannot_check: 0, personal_removed: 0, company_coded: 1 },
+      anchors: { figures: { read: 1, found_on_page: 0, from_image: 0 } } } : f));
+    await show({ ...REGISTER, files });
+    expect([...all("file-block")[1].querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
+      "1 page · 0 pages read · 1 page skipped (no digits in its text: 1)",
+      "1 figure read · 0 confirmed on the page they cite · 0 rejected · 0 cannot check",
+      "0 personal items removed · 1 company name coded"]);
   });
 
   test("a file's anchor line says Last actual, never As-of month, which belongs to the strip only", async () => {
