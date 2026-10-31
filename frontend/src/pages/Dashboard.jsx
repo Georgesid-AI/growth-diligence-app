@@ -274,7 +274,7 @@ export default function Dashboard() {
       {legacyView() && <Conclusion auditId={id} verdict={verdict} onChanged={refreshVerdict} />}
       {legacyView() && <FiveClaims auditId={id} verdict={verdict} ccy={ccy} tick={verdictTick + registerKey} />}
       {legacyView() && <NeedsAttention auditId={id} onChanged={answered} />}
-      <ReportDownload auditId={id} note={verdict?.ic_inputs?.note} />
+      <ReportDownload auditId={id} note={verdict?.ic_inputs?.note} noteMax={verdict?.note_max} />
 
       {/* Everything else, collapsed. A native details element keeps its content in the page, so nothing below is unmounted. */}
       <details className="mb-6 rounded-md border border-[#E5E7EB]" data-testid="supporting-detail">

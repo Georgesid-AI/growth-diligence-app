@@ -240,11 +240,11 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
   test("once the read is done the deck line ends with the server's masking counts, and only then (George, 2026-10-29, review of PR 204)", () => {
     const deck = { pages: 24, page_unit: "page", figure_pages: 9, pages_read: 7, pages_rejected: 2, personal_removed: 3, names_replaced: 5 };
     expect(deckReadLine({ ...deck, ai_status: "read" }))
-      .toBe("24 pages parsed · 9 with figures · AI read: done, 7 read, 2 rejected · personal items removed: 3 · company names tokenised: 5");
+      .toBe("24 pages parsed · 9 with figures · AI read: done, 7 read, 2 rejected · personal items removed: 3 · company names coded: 5");
     expect(deckReadLine({ ...deck, ai_status: "stopped", personal_removed: 0, names_replaced: 0 }))
-      .toMatch(/ · personal items removed: 0 · company names tokenised: 0$/);
+      .toMatch(/ · personal items removed: 0 · company names coded: 0$/);
     for (const status of ["waiting", "reading", "python_only", "blocked"]) expect(deckReadLine({ ...deck, ai_status: status })).not.toMatch(/personal items/);
-    expect(deckRunLog({ ...deck, ai_status: "read" })[0]).toMatch(/AI read: done, 7 read, 2 rejected · personal items removed: 3 · company names tokenised: 5$/);
+    expect(deckRunLog({ ...deck, ai_status: "read" })[0]).toMatch(/AI read: done, 7 read, 2 rejected · personal items removed: 3 · company names coded: 5$/);
   });
 
   test("the run log's first line is the deck line when the page read stored the pages with figures, else the former line", () => {

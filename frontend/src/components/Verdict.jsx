@@ -1,3 +1,4 @@
+import { fmtExact } from "@/lib/format";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
@@ -10,7 +11,7 @@ import ContradictionBanner from "@/components/ContradictionBanner";
 import GateEditor from "@/components/GateEditor";
 import { registerRows } from "@/lib/claimRegister";
 import {
-  CHANGE, DETAIL_HEADING, GATE_EDIT, MEMO_BUTTON, NOTE_HELP, NOTE_LABEL, NOTE_MAX, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_RATINGS, PART_REASONS,
+  CHANGE, DETAIL_HEADING, GATE_EDIT, MEMO_BUTTON, NOTE_HELP, NOTE_LABEL, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_RATINGS, PART_REASONS,
   PART_UNRESOLVED, RATING_DETAILS, RATING_RULES, REPLACE, RESET, REVIEW_LABEL, SELECTION_CHANGED, THESIS_MAX, TOP5_HEADING,
   USE_SELECTION, candidateText, initialPicks, refusalText, replacePick, samePicks,
   CONCLUSION_HEADING, NO_OTHER_CONTRADICTIONS, OTHER_CONTRADICTIONS, SCOPE_SENTENCE,
@@ -106,7 +107,7 @@ function Inputs({ auditId, verdict, onChanged }) {
 
 /** The analyst note: one optional free text beside Download report, at most 1,000 characters, stored on the audit, one line in the
  *  report, never sent to a model. It saves when the field loses focus with a changed text. */
-export function AnalystNote({ auditId, note }) {
+export function AnalystNote({ auditId, note, noteMax }) {
   const [text, setText] = useState(note ?? "");
   useEffect(() => setText(note ?? ""), [note]);
   const save = () => text.trim() !== (note ?? "") && putIcInputs(auditId, { note: text.trim() || null })
@@ -114,19 +115,24 @@ export function AnalystNote({ auditId, note }) {
   return (
     <label className="flex flex-col gap-1 text-xs text-slate-700 w-full max-w-xl" data-testid="analyst-note">
       {NOTE_LABEL}
-      <textarea value={text} maxLength={NOTE_MAX} rows={2} onChange={(e) => setText(e.target.value)} onBlur={save}
+      <textarea value={text} maxLength={noteMax} rows={2} onChange={(e) => setText(e.target.value)} onBlur={save}
         className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs" data-testid="analyst-note-text" />
-      <span className="text-[10px] text-slate-500">{NOTE_HELP}</span>
+      {noteMax != null && (
+        <span className={`self-end text-[10px] ${text.length >= noteMax ? "text-red-600" : "text-slate-500"}`} data-testid="analyst-note-count">
+          {fmtExact(text.length)}/{fmtExact(noteMax)}
+        </span>
+      )}
+      <span className="text-[10px] text-slate-500" data-testid="analyst-note-help">{NOTE_HELP}</span>
     </label>
   );
 }
 
 /** Download report: the IC memo, with the one optional analyst note beside it. Nothing is required first: the server builds the report from
  *  what is stored, or refuses (toast) only for a number it cannot find, the word limit or results that fail the contract. */
-export function ReportDownload({ auditId, note }) {
+export function ReportDownload({ auditId, note, noteMax }) {
   return (
     <section className="mb-6 flex flex-wrap items-start gap-4" data-testid="report-download">
-      <AnalystNote auditId={auditId} note={note} />
+      <AnalystNote auditId={auditId} note={note} noteMax={noteMax} />
       <Button size="sm" variant="outline" onClick={() => downloadMemo(auditId)} className="h-8" data-testid="verdict-memo">
         <Download className="h-3.5 w-3.5 mr-1.5" />{MEMO_BUTTON}
       </Button>
