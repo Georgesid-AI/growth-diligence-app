@@ -602,3 +602,9 @@ def test_a_row_of_actual_budget_variance_triples_has_no_single_boundary_to_compa
     m = fmap(sheet_map(rows=[r], header_row=3, first_period_col="B", last_period_col="J", last_actual=False),
              [figure(100, cell="C5", period="2024-01", actual_plan="plan")])
     assert item(check(m, _triples({(3, 3): "Jan-24"})), "figure:Report:C5:revenue")["outcome"] == checks.CONFIRMED
+
+
+def test_a_sheet_figure_with_a_period_and_no_value_or_cell_is_date_only():
+    got = checks.check_figure(0, {"metric": "product", "value": None, "period": "2025-Q3", "source": {"sheet": None, "cell": None}},
+                              cells_of(build()), {}, 12)
+    assert got["outcome"] == checks.CANNOT and got["reason"] == "No value to compare; date only."

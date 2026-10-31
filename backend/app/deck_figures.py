@@ -118,6 +118,8 @@ def check_figure(figure: Dict, candidate: Dict, deck: Dict) -> Dict:
     page, value = figure["source"]["page"], figure.get("value")
     base = {"key": f"deck:{figure.get('deck_id')}:{figure.get('id')}", "kind": "deck_figure", "metric": figure.get("metric"), "value": value,
             "page": page, "deck_id": figure.get("deck_id")}
+    if value is None and figure.get("period"):
+        return {**base, "outcome": checks.CANNOT, "reason": checks.C_DATE_ONLY}
     if page is None or value is None:
         return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_REF}
     if deck.get("pages") and page > int(deck["pages"]):

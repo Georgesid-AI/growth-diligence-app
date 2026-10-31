@@ -4455,6 +4455,7 @@ def test_the_reasons_and_the_log_line_of_the_review_follow_up_are_closed_words_w
     page = deck_figures.R_PAGE_SCALE.format(n=2, page="2.5", value="2500000")
     assert page == "Page 2 states 2.5; reading says 2500000. Unit or scale differs; not compared.", "a page number and two figures, no line of the page"
     assert set(checks.C_NO_UNIT.split()) <= set("No unit given; not compared.".split())
+    assert set(checks.C_DATE_ONLY.split()) <= set("No value to compare; date only.".split())
     db = t.FakeDB()
     db["prompts"].docs[:] = [d for d in db["prompts"].docs if d["name"] != "reviewer"]
     assert asyncio.run(g.reviewer_startup_problem(db)) == "prompt reviewer is not in the store"

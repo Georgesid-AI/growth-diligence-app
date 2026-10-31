@@ -419,3 +419,10 @@ def test_a_suffix_multiplies_the_printed_number_and_a_wrong_scale_is_still_not_a
     page = [{"page": 2, "text": "ARR $22.9B at year end", "kind": "text"}]
     assert check_deck(page, candidate(22.9, currency="USD"))["outcome"] == "cannot_check", "22.9 against 22.9B: the scale differs"
     assert check_deck(page, candidate(23_900_000_000, currency="USD"))["outcome"] == "rejected"
+
+
+def test_a_date_only_claim_cannot_be_checked_because_it_has_no_value_not_because_it_has_no_cell():
+    got = check_deck([{"page": 2, "text": "Launch planned for Q3 2025", "kind": "text"}], candidate(None, claim_type="product"))
+    assert got["outcome"] == "cannot_check" and got["reason"] == "No value to compare; date only."
+    nothing = check_deck([{"page": 2, "text": "Launch", "kind": "text"}], candidate(None, period_text=None, target_date=None))
+    assert nothing["reason"] == checks.C_NO_REF, "no value and no period keeps the old reason"
