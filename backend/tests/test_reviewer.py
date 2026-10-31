@@ -426,3 +426,14 @@ def test_a_date_only_claim_cannot_be_checked_because_it_has_no_value_not_because
     assert got["outcome"] == "cannot_check" and got["reason"] == "No value to compare; date only."
     nothing = check_deck([{"page": 2, "text": "Launch", "kind": "text"}], candidate(None, period_text=None, target_date=None))
     assert nothing["reason"] == checks.C_NO_REF, "no value and no period keeps the old reason"
+
+
+def test_a_period_that_came_from_the_page_heading_stays_null_and_the_heading_goes_in_the_label():
+    page = [{"page": 2, "text": "ARR 447,223", "kind": "text"}]
+    d = deck(page)
+    heading = deck_figures.figure_of(candidate(447223, flags=["period from page heading"], date_from="2021 Key performance indicators"), d)
+    assert heading["period"] is None and heading["label"] == "2021 Key performance indicators"
+    printed = deck_figures.figure_of(candidate(447223, flags=["period from page heading"], label_from="ARR"), d)
+    assert printed["period"] is None and printed["label"] == "ARR", "a printed label stays the label"
+    own = deck_figures.figure_of(candidate(447223, label_from="ARR"), d)
+    assert own["period"] == "Dec 2024" and own["label"] == "ARR", "a period of the figure's own line or column is kept"

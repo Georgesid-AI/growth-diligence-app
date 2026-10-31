@@ -107,8 +107,14 @@ def figure_of(candidate: Dict, deck: Dict) -> Dict:
     value = candidate.get("value")
     if unit == "rate" and value is not None:
         value = value / 100.0            # the page states points; a rate is held as a fraction everywhere else (schemas/metrics.Fraction)
+    period, label = candidate.get("period_text") or candidate.get("target_date"), candidate.get("label_from")
+    if checker.PERIOD_FROM_HEADING in (candidate.get("flags") or []):
+        # A period that came from the page's heading and not from the figure's own line or column is no period of the figure: the heading is its
+        # label (a page title never stands in Period).
+        label = label or candidate.get("date_from") or period
+        period = None
     return {"id": candidate.get("id"), "deck_id": candidate.get("deck_id"), "metric": candidate.get("claim_type"), "value": value,
-            "unit": unit, "currency": candidate.get("currency"), "period": candidate.get("period_text") or candidate.get("target_date"),
+            "unit": unit, "currency": candidate.get("currency"), "period": period, "label": label,
             "actual_plan": "plan" if candidate.get("basis") == "projection" else "actual" if candidate.get("basis") == "actual" else None,
             "segment": candidate.get("page_segment"), "source": {"page": page, "text_layer": bool(page and page_numbers(deck, page))}}
 
