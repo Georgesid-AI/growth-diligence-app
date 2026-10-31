@@ -1841,6 +1841,17 @@ def _validation_errors(exc: Exception) -> List[dict]:
     return [{"loc": "", "type": "json_invalid", "msg": f"the reply is not one JSON object: {type(exc).__name__} {exc}"[:200]}]
 
 
+LOGGED_ERRORS = 3          # the validation errors a "structure not read" line lists
+LOGGED_ERROR_CHARS = 120
+
+
+def _error_list(exc: Exception) -> str:
+    """The first LOGGED_ERRORS validation errors of a failed sheet reading for its log line: `path: message`, joined with "; ". The
+    errors are built without the input (_validation_errors); a message is capped. "-" when there are none."""
+    errors = getattr(exc, "errors", None) or []
+    return "; ".join(f"{e.get('loc') or '-'}: {str(e.get('msg', ''))[:LOGGED_ERROR_CHARS]}" for e in errors[:LOGGED_ERRORS]) or "-"
+
+
 def _cited_cells(text: str, structure_type: str) -> set:
     """The cell ids a reply may cite: every cell of a deck structure, the header cells of a sheet, every cell of a page batch by
     its page id."""
@@ -2064,6 +2075,18 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
     billed_calls = 0
     replies: List[str] = []
     payload = user_payload
+    failed_parse: Optional[GatewayError] = None          # the reply that failed validation, while its one retry is under way
+
+    def schema_stands(exc_out):
+        """A reading that failed validation stays "schema_mismatch" when its retry fails or is blocked (an outage, a cap): the first
+        failure is the one the line names, never "provider_unreachable"."""
+        if failed_parse is None or structure_type != SHEET_READING:
+            return exc_out
+        failed_parse.billed = (billed_in, billed_out)
+        failed_parse.billed_calls = billed_calls
+        failed_parse.replies = replies
+        return failed_parse
+
     while True:
         try:
             try:
@@ -2082,20 +2105,21 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
                 exc_out = _unreachable(exc)
                 exc_out.billed = (billed_in, billed_out)
                 exc_out.billed_calls = billed_calls
-                raise exc_out
+                raise schema_stands(exc_out)
             await sleep(_backoff_seconds(exc, network_attempts))
             continue
         except GatewayError as exc:
             cut = getattr(exc, "tokens", (0, 0))                 # a truncated reply billed its tokens too
             exc.billed = (billed_in + cut[0], billed_out + cut[1])
             exc.billed_calls = billed_calls + (1 if any(cut) else 0)
-            raise
+            raise schema_stands(exc)
         billed_in, billed_out, billed_calls = billed_in + in_tok, billed_out + out_tok, billed_calls + 1
         replies.append(reply)
         try:
             return parse_structure_reply(reply, structure_type, text), billed_in, billed_out, billed_calls
         except GatewayError as exc:
             parse_attempts += 1
+            failed_parse = exc
             if parse_attempts > MAX_PARSE_RETRIES:
                 exc.billed = (billed_in, billed_out)
                 exc.billed_calls = billed_calls
@@ -2391,9 +2415,13 @@ async def read_structure(
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
                            deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type,
                            image_tokens=image_billed, image_cost_usd=image_cost)
+            # A sheet reading that failed validation says "schema_mismatch" and lists the first three errors (field path and message, no
+            # value); llm_calls keeps the code. The same line whether the retry's reply failed again or the retry itself was blocked.
+            mismatch = structure_type == SHEET_READING and code == "parse_failed"
+            listed = f" errors={_error_list(exc)}" if mismatch else ""
             logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s "
-                           "status=%s type=%s fields=%s check=%s%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
-                           code, status or "-", kind or "-", fields, check, shown)
+                           "status=%s type=%s fields=%s check=%s%s%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
+                           "schema_mismatch" if mismatch else code, status or "-", kind or "-", fields, check, listed, shown)
             # "truncated" (the reply cut at max_tokens) is kept apart, so the page step can split the batch and read it again.
             # A page reply that failed validation says so, with the check and the schema fields (closed words), so the deck
             # panel and the run log tell it from an outage.
