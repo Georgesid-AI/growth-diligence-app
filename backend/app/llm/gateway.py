@@ -17,10 +17,10 @@ chat-upload.md section 26): every text cell of one sheet (title rows, headers, r
 num/blank markers), after redaction and the withhold rule, never a figure, at most 400 rows with
 text; checked again here (structures/redact.sheet_text_problem). For the page_claims step only (George, 2026-10-22,
 PR #158, decision 1b; the default path since 2026-10-22, DECK_PIPELINE=ai, docs/design/ai-reads-rules-check.md): the text
-lines of deck pages that carry a figure as digits, prose lines included, as `p<page>r<row>c<col>: <text>` lines, at most 5
+lines of deck pages whose text holds at least one digit, prose lines included, as `p<page>r<row>c<col>: <text>` lines, at most 5
 pages per call, with one PNG of each whole page (docs/design/page-image.md; George, 2026-10-27): pages go as printed, with no
 redaction, to a Sonnet or Opus model only (page_reader_problem), read with the `deck_reading` prompt of the store; a page with no
-figure as digits is refused (structures/redact.page_text_problem). A page call is exempt from the daily spend cap and counted in the tester's
+digit in its text is refused (structures/redact.page_text_problem). A page call is exempt from the daily spend cap and counted in the tester's
 monthly allowance, as a column mapping is (docs/specs/usage-and-allowance.md section 4). A deck structure's text carries, below its cells, the item
 list Python made (docs/specs/structure-labelling.md): one line per figure with its cell, its raw
 text cut from the redacted cell, its values and header cells, and a roadmap's date cells and text
@@ -1724,8 +1724,7 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         return "file_name"
     company = context.get("company_name")
     if structure_type == PAGE_CLAIMS:
-        # Only while DECK_PIPELINE is "ai" (the default). The lines of pages that carry a figure as digits (the page's own printed
-        # number is none), as printed, with no redaction (page-image.md section 2): at most 5 pages, every page with such a figure, no
+        # Only while DECK_PIPELINE is "ai" (the default). The lines of pages whose text holds a digit, as printed, with no redaction (page-image.md section 2): at most 5 pages, every page with a digit, no
         # line over 200 characters (as for a structure cell; George, 2026-10-22, decision 1b on the review of PR #159).
         if deck_pipeline() != "ai":
             return "pipeline_rules"

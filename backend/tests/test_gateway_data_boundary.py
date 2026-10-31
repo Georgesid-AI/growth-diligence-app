@@ -3372,12 +3372,6 @@ def test_the_image_goes_only_with_a_page_read():
 @pytest.mark.parametrize("name, text, reason", [
     ("a page with no figure as digits", _page(2, "Our mission", "We help teams ship faster"), "no_figure"),
     ("a page whose only figure is a number-word", _page(2, "Revenue grew to three million euros", "Twenty customers"), "no_figure"),
-    ("a page whose only digits are a year", _page(2, "Founded in 2019", "Launched in January 2021"), "no_figure"),
-    ("a page whose only digits are its page number", _page(3, "Our mission", "We help teams ship faster", "3"), "no_figure"),
-    ("a page number as Slide n", _page(3, "Our mission", "Slide 3"), "no_figure"),
-    ("a page number as n/m", _page(3, "Our mission", "3/25"), "no_figure"),
-    ("a page number as Page n of m", _page(3, "Our mission", "Page 3 of 25"), "no_figure"),
-    ("a page number between dashes", _page(3, "Our mission", "- 3 -"), "no_figure"),
     ("a page line over 200 characters", GOOD_PAGE + "\np5r6c1: " + PROSE_LINE, "cell_too_long"),
     ("one page without a figure among pages with one", GOOD_PAGE + "\n" + _page(6, "Our mission"), "no_figure"),
     ("six pages", "\n".join(_page(n, "Revenue €1.5M") for n in range(1, 7)), "too_many_pages"),
@@ -3392,6 +3386,20 @@ def test_the_page_step_refuses_what_rule_16_does_not_allow(name, text, reason):
     result, adapter = _send_page(_structure_db({"Northwind Trading": "Client-01"}), text)
     assert adapter.calls == 0 and getattr(adapter, "counted", 0) == 0, f"{name} reached the provider"
     assert (result.status, result.reason) == ("refused", f"refused: {reason}"), name
+
+
+@pytest.mark.parametrize("text", [
+    _page(2, "Founded in 2019", "Launched in January 2021"), _page(3, "Our mission", "We help teams ship faster", "3"),
+    _page(3, "Our mission", "Slide 3"), _page(3, "Our mission", "3/25"), _page(3, "Our mission", "Page 3 of 25"),
+    _page(2, "Our mission", "We grew to 120 customers across the year in three markets")])
+def test_a_page_with_any_digit_in_its_text_is_not_refused_for_having_no_figure(text):
+    """George, 2026-10-31: a page goes whenever its text holds a digit (a year, a page number, a figure inside a sentence); only a page with none is refused."""
+    assert structure_redact_problem(text) is None
+
+
+def structure_redact_problem(text):
+    from app.structures import redact as masker
+    return masker.page_text_problem(text)
 
 
 def test_the_page_step_reads_no_deck_text_and_the_page_cells_come_through_the_one_builder(monkeypatch):
