@@ -16,6 +16,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
 import growth_engine as ge  # noqa: E402
+import demo_data  # noqa: E402
 import server  # noqa: E402
 from claim_matching_support import SAMPLE, FILES  # noqa: E402
 from test_claim_matching import run_claim  # noqa: E402
@@ -65,7 +66,7 @@ def run_engine(uploads: dict, as_of_month=None) -> dict:
     the engine itself never picks one."""
     norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
     empty = server.pd.DataFrame()
-    if as_of_month is None and (found := as_of.detect(uploads)):
+    if as_of_month is None and (found := demo_data.detect_month(uploads)):
         as_of_month = as_of.month_end(found["month"])
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0}, "billing_terms": {},
               "default_l": 1, "as_of_month": as_of_month}

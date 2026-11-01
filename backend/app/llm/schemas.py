@@ -324,13 +324,6 @@ class StructureReply(BaseModel):
     items: List[StructureItem]
 
 
-class FileTypeReply(BaseModel):
-    """What the model must return for a file's type: one closed word. No extra keys, no free text."""
-
-    model_config = {"extra": "forbid"}
-
-    type: Literal["file_type"]
-    file_type: Literal[FILE_TYPES]
 
 
 # Revenue file recognition (docs/specs/revenue-file-recognition.md section 5): the same prompt as the file type (`file_type`, version 2) asks
@@ -389,47 +382,10 @@ _SHEET_START = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?$")
 SheetPosition = Annotated[int, Field(ge=1, strict=True)]
 
 
-class SheetPeriod(BaseModel):
-    """A period column as the model reads it: its column, grain, first month and tag. Python keeps only what it rebuilds."""
-
-    model_config = {"extra": "forbid"}
-
-    col: SheetPosition
-    grain: Literal[SHEET_GRAINS]
-    start: Optional[str]
-    tag: Literal[SHEET_TAGS]
-
-    @field_validator("start")
-    @classmethod
-    def _start(cls, v):
-        if v is not None and not _SHEET_START.match(v):
-            raise ValueError("start must be YYYY-MM or YYYY-MM-DD")
-        return v
 
 
-class SheetRow(BaseModel):
-    """What one line of the sheet is: its role, the line it hangs from and its meaning. No figure, no text."""
-
-    model_config = {"extra": "forbid"}
-
-    row: SheetPosition
-    role: Literal[SHEET_ROLES]
-    parent_row: Optional[SheetPosition]
-    meaning: Literal[SHEET_MEANINGS]
-    basis: Optional[Literal[SHEET_BASES]] = None     # a reply without it keeps Python's reading from the label (26.15)
 
 
-class SheetStructureReply(BaseModel):
-    """What the model must return for a sheet skeleton. No extra keys. The gateway also checks every row and column against the
-    skeleton it sent (gateway.parse_sheet_reply)."""
-
-    model_config = {"extra": "forbid"}
-
-    type: Literal["sheet_structure"]
-    header_row: SheetPosition
-    label_col: SheetPosition
-    periods: List[SheetPeriod]
-    rows: List[SheetRow]
 
 
 def sheet_output_schema() -> dict:

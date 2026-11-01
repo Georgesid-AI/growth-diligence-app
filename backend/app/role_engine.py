@@ -76,7 +76,8 @@ def build_table(files: List[Dict]) -> List[Dict]:
     """The role table: [{"file", "sheet", "row", "role", "metric", "basis", "actual_plan", "granularity", "segment", "unit", "currency",
     "actual": {period: (value, cell)}, "plan": {...}, "unchecked": bool}] of every row of the files' maps that has a series.
     `files` is [{"file", "file_map" (the effective map with its series), "rejected" (row keys the checks rejected), "cannot" (row keys they
-    could not check)}]. A rejected row is no input."""
+    could not check), "labels" ({"sheet:row": the text of the row's label cell}, read only for the scope of the S&M line)}]. A rejected row is no
+    input. The label never reaches a result: only the closed word of sm_scope does."""
     table: List[Dict] = []
     for f in files:
         rejected, cannot = set(f.get("rejected") or ()), set(f.get("cannot") or ())
@@ -89,11 +90,32 @@ def build_table(files: List[Dict]) -> List[Dict]:
                 if not pairs:
                     continue
                 table.append({"file": f.get("file"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
+                              "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"),
                               "basis": row.get("basis"), "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
                               "segment": (row.get("segment") or "").strip() or None, "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
                               "actual": pairs.get("series", {}), "plan": pairs.get("plan_series", {}),
                               "unchecked": f"row:{smap['sheet']}:{row['row']}" in cannot})
     return table
+
+
+_SM_TOTAL = re.compile(r"sales\s*(?:and|&|/)\s*marketing|\bs\s*&\s*m\b")
+
+_SM_MARKETING = re.compile(r"\bmarketing\b|\badvertising\b")
+
+_SM_SALES = re.compile(r"\bsales\b")
+
+def sm_scope(labels: List[str]) -> str:
+    """What the S&M line covers, from the labels of the lines that were summed (docs/specs/forecast-and-payback.md section 4.3): `sales and marketing`
+    (one line that names both, a Sales line with a Marketing line, or "Sales" alone in a cost section, rule 4 of 26.2), `marketing only`
+    (marketing or advertising), `sales only` (sales expenses or costs), else `unknown`. A marketing-only line is never total S&M."""
+    texts = [str(label).lower().strip() for label in labels]
+    if any(_SM_TOTAL.search(t) or t == "sales" for t in texts) or (any(_SM_SALES.search(t) for t in texts) and any(_SM_MARKETING.search(t) for t in texts)):
+        return "sales and marketing"
+    if texts and all(_SM_MARKETING.search(t) for t in texts):
+        return "marketing only"
+    if texts and all(_SM_SALES.search(t) for t in texts):
+        return "sales only"
+    return "unknown"
 
 
 def _end_month(period: str, fye: int = 12) -> Optional[pd.Period]:
@@ -336,7 +358,8 @@ def _year_fields(table, fye) -> Dict[str, Dict]:
             continue
         for period, (value, cell) in rec["actual"].items():
             if re.fullmatch(r"\d{4}", period):
-                out.setdefault(period, {})[field] = {"value": value, "cells": [cell], "scope": "unknown"}
+                out.setdefault(period, {})[field] = {"value": value, "cells": [cell],
+                                                     "scope": sm_scope([rec["label"]]) if field == "sm_expense" and rec.get("label") else "unknown"}
     return out
 
 
@@ -461,26 +484,50 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
 # ---------------------------------------------------------------------------
 # The whole
 # ---------------------------------------------------------------------------
-def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None) -> Dict:
+def _failed(metric: str, exc: Exception) -> Dict:
+    return _entry(metric, status="error", reason=f"the calculation stopped on an unexpected {type(exc).__name__}; reported as Missing, not estimated")
+
+
+def _guarded(metric: str, fn, on_error, fallback):
+    """One metric's calculation; an unexpected error gives `fallback(exc)` (an error entry: Missing, never estimated), never the whole run (rule 20)."""
+    try:
+        return fn()
+    except Exception as exc:
+        if on_error:
+            on_error(exc)
+        return fallback(exc)
+
+
+def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None) -> Dict:
     """{"role_metrics": block, "arr", "mrr_series", "customers_series", "revenue_series", "yearly"}: the `role_metrics` block of the contract,
     the legacy blocks the map feeds (None where the rows are missing) and the yearly input of compute_yearly_basis."""
     if as_of is None:
         return {"role_metrics": None, "arr": None, "mrr_series": None, "customers_series": None, "revenue_series": None, "yearly": None}
-    metrics: List[Dict] = []
-    arr_entry, arr_block = ending_arr(table, as_of, fye)
-    mrr_entry, mrr_block = mrr_series(table, as_of, fye)
-    cust_entry, cust_block = customers(table, as_of, fye)
-    plan_entry, plan_block = plan_to_date(table, as_of, fye)
-    metrics += [arr_entry, mrr_entry, monthly_churn(table, as_of, fye), cust_entry, *growth(table, as_of, fye), plan_entry]
-    yearly = yearly_input(table, as_of, fye)
+
+    def run(metric, fn, pair=False):
+        return _guarded(metric, fn, on_error, (lambda e: (_failed(metric, e), None)) if pair else (lambda e: _failed(metric, e)))
+
+    arr_entry, arr_block = run("ending_arr", lambda: ending_arr(table, as_of, fye), pair=True)
+    mrr_entry, mrr_block = run("mrr_series", lambda: mrr_series(table, as_of, fye), pair=True)
+    cust_entry, cust_block = run("customers", lambda: customers(table, as_of, fye), pair=True)
+    plan_entry, plan_block = run("plan_to_date", lambda: plan_to_date(table, as_of, fye), pair=True)
+    churn = run("monthly_churn", lambda: monthly_churn(table, as_of, fye))
+    grown = _guarded("growth", lambda: growth(table, as_of, fye), on_error, lambda e: [_failed("growth", e)])
+    metrics: List[Dict] = [arr_entry, mrr_entry, churn, cust_entry, *grown, plan_entry]
+    yearly = _guarded("yearly_revenue", lambda: yearly_input(table, as_of, fye), on_error, lambda e: None)
     metrics.append(_missing("yearly_revenue") if pick(table, "revenue", "yearly") is None else _entry("yearly_revenue", status="computed"))
-    metrics += [share("sm_share", "sales_marketing", table, as_of, fye), share("rnd_share", "rnd", table, as_of, fye),
-                share("ga_share", "ga", table, as_of, fye), share("opex_share", "opex", table, as_of, fye),
-                share("ebitda_margin", "ebitda", table, as_of, fye), stock("bookings", "bookings", "money", table, as_of, fye),
-                stock("cash", "cash", "money", table, as_of, fye), stock("headcount", "headcount", "count", table, as_of, fye)]
-    return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconcile(table, deck or [], as_of, fye)},
-            "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block, "revenue_series": revenue_series(table, as_of, fye),
-            "yearly": yearly}
+    metrics += [run("sm_share", lambda: share("sm_share", "sales_marketing", table, as_of, fye)),
+                run("rnd_share", lambda: share("rnd_share", "rnd", table, as_of, fye)),
+                run("ga_share", lambda: share("ga_share", "ga", table, as_of, fye)),
+                run("opex_share", lambda: share("opex_share", "opex", table, as_of, fye)),
+                run("ebitda_margin", lambda: share("ebitda_margin", "ebitda", table, as_of, fye)),
+                run("bookings", lambda: stock("bookings", "bookings", "money", table, as_of, fye)),
+                run("cash", lambda: stock("cash", "cash", "money", table, as_of, fye)),
+                run("headcount", lambda: stock("headcount", "headcount", "count", table, as_of, fye))]
+    reconciliation = _guarded("reconciliation", lambda: reconcile(table, deck or [], as_of, fye), on_error, lambda e: [])
+    return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation},
+            "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
+            "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}
 
 
 def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Dict]) -> None:

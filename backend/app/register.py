@@ -351,7 +351,7 @@ async def cell_window(db, audit_id: str, file_hash: str, sheet: str, cell: str) 
     """The cited cell and the cells around it (three rows each way, four columns each way) from the stored sheets of the audit's file, for the
     screen's "Click to see the cell". Names are the file's own: this goes to the analyst's browser only, as the dataset does. None when the file
     or the cell is not there."""
-    from . import recognition as rec
+    from . import stored_sheets as rec
     from .structures import reading_input
     pos = checks.parse_ref(cell)
     ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": file_hash}, {"_id": 0, "recognition_sheets": 1})

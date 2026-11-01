@@ -52,7 +52,7 @@ FIXED_SENTENCE = "Narrative could not be generated. The computed metrics below a
 def _config(ccy="EUR", target_arr=1_000_000, target_date="2026-12-31", fx=None, uploads=None):
     """The engine config as the server builds it: the as-of month detected from the files as Map detects it (as_of.detect), never
     by the engine."""
-    found = as_of.detect(uploads or {})
+    found = demo_data.detect_month(uploads or {})
     return {"reporting_currency": ccy, "target_arr": target_arr, "target_date": target_date,
             "fx": fx or {ccy: 1.0}, "billing_terms": {}, "default_l": 1,
             "as_of_month": as_of.month_end(found["month"]) if found else None}
@@ -101,23 +101,28 @@ def _demo_raws() -> dict:
 
 @lru_cache(maxsize=None)
 def _yearly_raw() -> dict:
-    """The sample revenue and CRM files with a yearly P&L read as a statement (chat-upload.md section 26.8): no monthly P&L."""
-    from app import column_rules as cr
-    from app.structures import sheet as sh
+    """The sample revenue and CRM files with a yearly P&L read from the stored map (read-check-review.md section 16): no monthly P&L."""
+    from app import role_engine
     uploads = {}
     for dtype in ("revenue", "crm"):
         df, sheet = server.parse_file((SAMPLE / FILES[dtype]).read_bytes(), FILES[dtype])
         uploads[dtype] = {"file": FILES[dtype], "sheet": sheet, "columns": list(df.columns), "rows": server.df_to_records(df),
                           "mapping": server.suggest_mapping(dtype, list(df.columns))}
     norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
-    name = "yearly_pnl_by_product.csv"
-    s = cr.read_workbook((BACKEND / "tests" / "fixtures" / "mapping" / name).read_bytes(), name)[0]
+    years = ["2021", "2022", "2023"]
+
+    def row(n, role, values):
+        return {"row": n, "role": role, "basis": "yearly", "actual_plan": "actual", "segment": None, "unit": "money",
+                "series": {"periods": years, "values": values, "refs": [f"{c}{n}" for c in "BCD"]}}
+    smap = {"sheet": "P&L", "granularity": "yearly", "rows": [row(4, "revenue", [900_000, 1_300_000, 1_900_000]),
+                                                                row(5, "cost_of_revenue", [270_000, 360_000, 480_000]),
+                                                                row(6, "sales_marketing", [400_000, 550_000, 700_000])]}
+    table = role_engine.build_table([{"file": "yearly_pnl.xlsx", "file_map": {"sheets": [smap]}}])
     cfg = _config(uploads=uploads)
-    fed = sh.feed(sh.build(sh.read(s.grid, s.fmt, 12)), 12, 1000, {"file": name, "sheet": "CSV"}, cfg["as_of_month"])
-    yearly = fed["yearly"]
+    yearly = role_engine.yearly_input(table, pd.Period(cfg["as_of_month"][:7], "M"), 12)
     sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
     return ge.compute_all_raw(norm["revenue"], norm["crm"], pd.DataFrame(), cfg, sources,
-                              files=server.candidate_views(uploads), yearly=yearly, statement=fed["lines"])
+                              files=server.candidate_views(uploads), yearly=yearly)
 
 
 def all_raws() -> dict:
@@ -193,7 +198,6 @@ def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_en
     decided = set(CITED_BLOCKS) | set(CITATION_BESIDE_BLOCK) | set(CITATION_BESIDE_BLOCK.values()) | set(NO_OWN_CITATION)
     assert fields == decided, f"decide whether these blocks cite a source: {sorted(fields ^ decided)}"
     assert stored_form(all_raws()["sample-yearly"])["yearly_basis"]["years"], "fixture: the yearly run holds the block"
-    assert stored_form(all_raws()["sample-yearly"])["pnl_lines"]["plan"], "fixture: the yearly run holds the statement block"
     for run in ("sample", "sample-yearly", "demo0-no-pnl", "demo1-no-crm", "demo1-14-months"):
         stored = stored_form(all_raws()[run])
         for block in CITED_BLOCKS:
@@ -621,9 +625,9 @@ def test_the_contract_version_alone_decides_and_run_audit_counts_the_engine_stag
     from app import run_audit
     audit = api.db["audits"].docs[0]
     assert run_audit.STALE_LABEL == STALE and run_audit.results_stale(audit) is True
-    assert run_audit.engine_stale(audit, []) is True
+    assert run_audit.engine_stale(audit) is True
     audit["results"] = cf.stored(nrr=cf.nrr(1.0641, 100))
-    assert (run_audit.results_stale(audit), run_audit.engine_stale({**audit, "metrics_stale": False}, [])) == (False, False)
+    assert (run_audit.results_stale(audit), run_audit.engine_stale({**audit, "metrics_stale": False})) == (False, False)
     assert run_audit.results_stale({"results": None}) is False, "no results: nothing is stale, the audit is not computed"
 
 
@@ -859,8 +863,6 @@ def test_run_audit_engine_on_a_stale_audit_clears_the_flag_through_to_results(ap
     api.db["audits"].docs[0]["status"] = "mapped"
     api.db["datasets"].docs.append({"audit_id": AUDIT_ID, "dtype": "revenue", "mapped_at": "2026-01-01"})
 
-    async def counts(audit_id, audit, datasets=None):
-        return {"open": 0, "missing_required": 0}, True
 
     async def compute(audit_id):
         fresh = cf.stored(nrr=cf.nrr(1.0641, 100))
@@ -868,7 +870,6 @@ def test_run_audit_engine_on_a_stale_audit_clears_the_flag_through_to_results(ap
         api.recomputed.append(audit_id)
         return fresh
 
-    monkeypatch.setattr(server, "_mapping_counts", counts)
     monkeypatch.setattr(server, "_run_compute", compute)
     assert api.get(f"/api/audits/{AUDIT_ID}/results").status_code == 409
     api.db["audits"].docs[0]["as_of_month"] = "2024-02-29"
@@ -884,14 +885,11 @@ def test_run_audit_engine_runs_with_no_as_of_month_and_says_so(api, monkeypatch)
     api.db["audits"].docs[0].update(status="mapped", as_of_month=None, as_of_by="detected")
     api.db["datasets"].docs.append({"audit_id": AUDIT_ID, "dtype": "revenue", "mapped_at": "2026-01-01"})
 
-    async def counts(audit_id, audit, datasets=None):
-        return {"open": 0, "missing_required": 0}, True
 
     async def compute(audit_id):
         api.recomputed.append(audit_id)
         return cf.stored(nrr=cf.nrr(1.0641, 100))
 
-    monkeypatch.setattr(server, "_mapping_counts", counts)
     monkeypatch.setattr(server, "_run_compute", compute)
     out = api.post(f"/api/audits/{AUDIT_ID}/run/engine").json()
     assert (out["status"], out["message"]) == ("done", run_audit.NO_AS_OF) and api.recomputed == [AUDIT_ID]

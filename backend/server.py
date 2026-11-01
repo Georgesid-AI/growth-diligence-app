@@ -6,14 +6,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import io
 import re
-import asyncio
 import bson
-import copy
 import hashlib
-import json
 import logging
 import uuid
-from collections import OrderedDict
 from pathlib import Path
 from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Literal, Optional
@@ -33,6 +29,7 @@ from app import reviewer
 from app import register
 from app import cards as cards_mod
 from app import checks as checks_mod
+from app import flags
 from app import deck_figures
 from app import role_engine
 from app import formatting as fmt
@@ -49,19 +46,15 @@ from app import decks
 from app.decks import pages as deck_pages
 from app.decks import render as deck_render
 from app import structures
-from app.structures import sheet as sheet_mod
 from app import column_rules as cr
-from app import recognition as rec
-from app import forecast_claims
+from app import stored_sheets as rec
 from app import allowance as allowance_mod
 from app import usage as usage_mod
 from app import tester_view
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
-from app.llm import schemas as schemas_llm
 from app.llm import prompt_store
-from app.llm import redaction as llm_redaction
 from app.logsafety import install_secret_redaction
 
 ROOT_DIR = Path(__file__).parent
@@ -178,15 +171,6 @@ def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list]
     return out
 
 
-def statement_pnl(statement: dict) -> pd.DataFrame:
-    """A statement file's monthly P&L as the engine reads a P&L (chat-upload.md section 26.6): one row per month column, each
-    field the sum of its lines, `_row` the revenue line's sheet row. Empty when the map holds no monthly P&L."""
-    if not statement.get("pnl"):
-        return pd.DataFrame()
-    frame = pd.DataFrame(statement["pnl"])
-    frame.insert(0, "_row", statement.get("revenue_row"))
-    frame["month"] = pd.to_datetime(frame["month"] + "-01")
-    return frame
 
 
 # 03/04/2024, 3.4.24, 03-04-2024 (+ optional time): day and month in either order.
@@ -339,10 +323,6 @@ def _consent_entry(value: bool) -> dict:
     return {"value": bool(value), "at": datetime.now(timezone.utc).isoformat()}
 
 
-class MappingPayload(BaseModel):
-    mapping: Optional[dict] = None          # omitted: the FX rates and billing terms only; the mapping is decided column by column
-    fx: dict = Field(default_factory=dict)
-    billing_terms: dict = Field(default_factory=dict)
 
 
 def sanitize(obj):
@@ -364,6 +344,7 @@ async def audit_public(a: dict) -> dict:
     a["as_of_by"] = _as_of_by(a)
     a.pop("as_of_cue", None)      # the boundary-cue path of PR 199 is gone; the evidence line is `as_of_evidence`
     a["provider_zdr"] = os.environ.get("PROVIDER_ZDR", "").strip().lower() == "true"     # picks the deck sentence of the Upload page text
+    a["old_claims"] = flags.old_claims()      # OLD_CLAIMS: the claim register, five claims, reasons, key gates and labels (off by default)
     a["results_stale"] = run_audit.results_stale(a)
     if a["results_stale"]:
         a["results"] = None       # figures of an older engine contract never reach the browser (George, 2026-10-20)
@@ -586,7 +567,6 @@ async def _remap_periods(audit_id: str, fiscal_year_end: int) -> None:
     """A new fiscal year-end re-runs period mapping: every stored claim's date range moves, its stated
     period and target date stay (deck-parser.md section 2)."""
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
-    await _reread_forecast(audit_id, found, fiscal_year_end)
     for c in deck_claims.remap_periods(found, fiscal_year_end):
         changes = {k: c.get(k) for k in ("period_start", "period_end", "by_period", "sources") if k in c}
         await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": c["id"]}, {"$set": changes})
@@ -595,18 +575,6 @@ async def _remap_periods(audit_id: str, fiscal_year_end: int) -> None:
     await structures.reverify_audit(db, audit_id, fiscal_year_end)
 
 
-async def _reread_forecast(audit_id: str, candidates: list, fiscal_year_end: int) -> None:
-    """A forecast table's months are rolled up by the year-end (chat-upload.md section 20.2): its saved lines that the analyst has not
-    edited are read again from the stored file, under the new year-end, in place (the candidates are changed for the caller to store)."""
-    for c in candidates:
-        if c.get("origin") != forecast_claims.ORIGIN or c.get("status") != "approved" or not c.get("dtype"):
-            continue
-        ds, found = await _forecast_found(audit_id, c["dtype"], fiscal_year_end)
-        if not found or not (ds.get("wide") or {}).get("monthly") or ds.get("file_hash") != c.get("file_hash"):
-            continue
-        made = forecast_claims.candidates(found, {c.get("sheet_row")}, ds, fiscal_year_end)
-        if made:
-            c.update(by_period=made[0]["by_period"], sources=made[0]["sources"])
 
 
 class DeleteConfirm(BaseModel):
@@ -708,147 +676,30 @@ async def usage_totals():
 # ---------------------------------------------------------------------------
 ALLOWED_EXTENSIONS = ("xlsx", "csv")
 XLS_REFUSED = "Save as .xlsx or .csv and upload again."       # an old .xls workbook (2026-10-08)
-MAPPING_AI_SECONDS = 20          # the model's budget for one column mapping (section 4.2)
-SHEET_AI_SECONDS = 60            # ... and for one sheet skeleton: up to 400 lines labelled (section 26.4)
 NOTE_REFUSED = "Leave out file names, figures and cell values: this note is kept with the usage counts."
 DTYPE_ORDER = ("revenue", "crm", "pnl")
-KPI_NOT_A_STATEMENT = "A KPI sheet needs its lines down the rows and its months across the columns."
-STORED_ORDER = DTYPE_ORDER + ("kpi",)        # a KPI sheet (section 26.14) is never offered by the model or the unknown-type picker
 
 
-async def _versions(audit_id: str, dtype: str) -> list:
-    """The audit's saved mapping versions of one file type, oldest first (earlier versions are kept)."""
-    found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find({"audit_id": audit_id, "dtype": dtype, "kind": {"$exists": False}},
-                                                                  {"_id": 0}).to_list(100000)
-    return sorted(found, key=lambda v: v.get("version") or 0)
 
 
-def _saved_columns(version: dict) -> list:
-    """The columns of a saved version. One saved before versions existed holds only {field: column}."""
-    return version.get("columns") or [{"column": c, "field": f} for f, c in (version.get("mapping") or {}).items() if c]
 
 
-def _fingerprint(states: list) -> list:
-    return sorted((s["column"], s.get("field"), s.get("money_kind")) for s in states)
 
 
-async def _write_version(audit_id: str, dtype: str, ds: dict, states: list) -> Optional[int]:
-    """Write a mapping version unless the latest one for this file already says the same thing."""
-    versions = await _versions(audit_id, dtype)
-    same = [v for v in versions if v.get("file_hash") == ds.get("file_hash")]
-    if same and _fingerprint(_saved_columns(same[-1])) == _fingerprint(states):
-        return same[-1].get("version")
-    number = (versions[-1].get("version") or 0) + 1 if versions else 1
-    mapping = cr.mapping_of(dtype, states)
-    await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
-        "audit_id": audit_id, "dtype": dtype, "file_hash": ds.get("file_hash"),
-        "header_key": structures.header_key(dtype, ds.get("columns") or []), "version": number,
-        "mapping": mapping, "saved_at": usage_mod.now(),
-        "columns": [{k: s.get(k) for k in ("column", "field", "source", "confidence", "decision", "reason", "money_kind")} for s in states]})
-    return number
 
 
-def _source_map(states: list) -> dict:
-    """{field: "rules" | "ai" | "stored"} for the columns that are mapped (the older shape of the screen's data)."""
-    names = {"rules": "rules", "ai": "ai", "saved": "stored"}
-    return {s["field"]: names[s["source"]] for s in states
-            if s["state"] in cr.MAPPED and s.get("field") and s.get("source") in names}
 
 
-def _legacy_states(ds: dict) -> list:
-    """A dataset stored before the chat upload (or seeded) has a mapping and no column states: each mapped column
-    counts as confirmed by the analyst."""
-    held = {c: f for f, c in (ds.get("mapping") or {}).items() if c}
-    return [cr.new_state(c, held.get(c), "decision" if held.get(c) else None, "confirmed" if held.get(c) else "unused")
-            for c in ds.get("columns") or []]
 
 
-def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", forecast: Optional[dict] = None,
-                  fiscal_year_end: int = 12, recognition: Optional[dict] = None) -> dict:
-    """What the chat shows for one stored file: its bubble data and its mapping table. No rows (the preview
-    is the first 8). `forecast`: the claims a forecast table reads as (chat-upload.md section 20), or None. A statement file
-    (section 26) shows its line table in place of the mapping table."""
-    dtype = ds["dtype"]
-    states = ds.get("columns_state") or _legacy_states(ds)
-    mapping = ds.get("mapping") or cr.mapping_of(dtype, states)
-    rows = []
-    for i, s in enumerate(states):
-        rows.append({**s, "position": i + 1, "pending": s["state"] in cr.PENDING or cr.needs_money(s),
-                     "money_ask": cr.asks_money(s)})
-    view = {
-        "status": status, "dtype": dtype, "file": ds.get("file"), "size_bytes": ds.get("size_bytes"),
-        "ext": usage_mod.extension_of(ds.get("file") or ""), "row_count": ds.get("row_count"),
-        "header_row": ds.get("header_row"), "months": ds.get("months"), "columns": rows,
-        "pending": cr.pending_count(states), "missing_required": cr.missing_required(dtype, states),
-        "version": version, "ai_reading": ds.get("ai_reading"), "uploaded_at": ds.get("uploaded_at"),
-        "fields": {"required": list(FIELD_DEFS[dtype]["required"]), "optional": list(FIELD_DEFS[dtype]["optional"])},
-        "mapping": mapping, "suggested_mapping": mapping, "mapping_source": ds.get("mapping_source") or _source_map(states),
-        "fx": ds.get("fx") or {}, "billing_terms": ds.get("billing_terms") or {}, "preview": ds.get("preview") or [],
-        "saved": bool(ds.get("mapped_at")), "sheet": ds.get("sheet"), "type_source": ds.get("type_source"),
-        "unit_note": ds.get("unit_note"), "looks": ds.get("looks"), "miss": _miss(dtype, states, mapping, ds.get("looks")),
-        "forecast_claims": forecast, "read_as_claims": None, "pnl_grain": "monthly" if dtype == "pnl" else None,
-        "sheet_map": None, "recognition": recognition, "recognition_only": bool(ds.get("recognition_only")),
-        "mapping_dropped": bool(ds.get("mapping_dropped")),      # the column mapping was dropped for the report type (decision of 20 Oct)
-    }
-    if dtype == "revenue" and "currency" in view["missing_required"] and not ds.get("recognition_only"):
-        # No currency column. Several currencies in the file block compute and the status names them; otherwise the analyst answers the
-        # currency question (S31k) in place of "Required field not mapped: currency", whatever else is missing and whether or not a
-        # recognition read the file: no currency message without a way to answer it.
-        seen = (recognition["currency"] if recognition and recognition.get("recognised") else {})
-        codes = seen.get("codes") if seen.get("mixed") else ds.get("currency_found") or []
-        if len(codes) > 1:
-            view["currency_mixed"] = sorted(codes)
-        else:
-            missing = [f for f in view["missing_required"] if f != "currency"]
-            view.update(missing_required=missing, currency_pending=True)
-            if view["miss"]:
-                view["miss"] = {**view["miss"], "missing": [f for f in view["miss"]["missing"] if f != "currency"]}
-    if ds.get("recognition_only"):        # a file read by recognition only has no column mapping (revenue-file-recognition.md section 8)
-        waiting = rec.choices_waiting(recognition) if recognition else 0
-        view.update(columns=[], pending=waiting, missing_required=[], miss=None, mapping={}, suggested_mapping={}, fields={"required": [], "optional": []},
-                    saved=bool(recognition and recognition["recognised"] and not recognition["needs_click"]))
-    if ds.get("recognition_only") and ((recognition or {}).get("currency") or {}).get("mixed"):
-        view["currency_mixed"] = sorted(recognition["currency"]["codes"])        # blocks like any mixed file; no choice clears it
-    if ds.get("sheet_map"):
-        read = sheet_mod.view(ds["sheet_map"], fiscal_year_end, ds.get("unit_scale") or 1)
-        view.update(columns=[], pending=read["pending"], missing_required=[], miss=None, pnl_grain=read["grain"],
-                    sheet_map={**read, "counts": ds["sheet_map"].get("counts")})
-    return view
 
 
-async def _forecast_found(audit_id: str, dtype: str, fiscal_year_end: int) -> tuple:
-    """(stored dataset with its rows, the claims it reads as) for a miss whose periods run across the columns (chat-upload.md
-    section 20), read on request from the stored rows: nothing is stored before the analyst confirms. (dataset, None) otherwise."""
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0})
-    if ds and ds.get("sheet_map"):          # a statement: its plan lines over the columns not tagged actual (section 26.6)
-        return ds, sheet_mod.claims(ds["sheet_map"], ds, fiscal_year_end)
-    if not ds or (ds.get("looks") or {}).get("shape") not in forecast_claims.SHAPES:
-        return ds, None
-    states = ds.get("columns_state") or _legacy_states(ds)
-    if not _miss(dtype, states, ds.get("mapping") or cr.mapping_of(dtype, states), ds.get("looks")):
-        return ds, None
-    return ds, forecast_claims.read(ds, fiscal_year_end)
 
 
-async def _saved_forecast(audit_id: str, file_hash: Optional[str]) -> list:
-    """The forecast-table claims stored from these bytes (one candidate per line)."""
-    return await db[decks.CANDIDATES_COLLECTION].find(
-        {"audit_id": audit_id, "origin": forecast_claims.ORIGIN, "file_hash": file_hash}, {"_id": 0, "by_period": 1}).to_list(10000)
 
 
-async def _claims_files(audit_id: str) -> set:
-    """The file hashes whose forecast-table claims are saved (chat-upload.md section 20). Such a file is read as claims and no longer
-    counts toward Calculate: compute, Run audit's mapping stage, the review counts and the revenue banner leave it out."""
-    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "origin": forecast_claims.ORIGIN},
-                                                       {"_id": 0, "file_hash": 1}).to_list(10000)
-    return {c["file_hash"] for c in found if c.get("file_hash")}
 
 
-async def _counted(audit_id: str, datasets: list) -> list:
-    """The stored files that count toward Calculate: every one but a file read as claims (section 20). A statement file whose
-    claims are saved still counts: its actual columns are engine input (section 26.6)."""
-    read = await _claims_files(audit_id)
-    return [d for d in datasets if d.get("file_hash") not in read or d.get("sheet_map")]
 
 
 def _as_of_by(audit: Optional[dict]) -> str:
@@ -865,8 +716,7 @@ async def _refresh_as_of(audit_id: str) -> None:
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         return
-    docs = await db.datasets.find({"audit_id": audit_id, "dtype": {"$in": ["revenue", "pnl"]}}).to_list(4)
-    found = as_of_mod.detect({d["dtype"]: d for d in docs}, _fiscal_year_end(a), await sheet_reader.reads_for(db, audit_id))
+    found = as_of_mod.detect(await sheet_reader.reads_for(db, audit_id))
     month = as_of_mod.month_end(found["month"]) if found else None
     proposal = {"month": month, "file": found["file"], "evidence": found["evidence"]} if found else None
     if _as_of_by(a) == as_of_mod.ANALYST:
@@ -881,263 +731,43 @@ async def _refresh_as_of(audit_id: str) -> None:
     await db.audits.update_one({"id": audit_id}, {"$set": {**fields, **stale}})
 
 
-async def _effective_as_of(audit_id: str, audit: Optional[dict]) -> Optional[str]:
-    """The audit's one as-of month, as stored (detected on Map or typed by the analyst); None before any file is mapped. No other
-    source: an audit stored before the field existed gets its month at its next Map or Run audit (_refresh_as_of)."""
-    return (audit or {}).get("as_of_month") or None
 
 
-_RECOGNITION_CACHE: "OrderedDict[str, dict]" = OrderedDict()
-RECOGNITION_CACHE_SIZE = 32
 
 
-async def _recognition_of(audit_id: str, audit: Optional[dict], ds: dict) -> Optional[dict]:
-    """The recognition block of a stored file: the sheets it was read from, read again with the model's kept proposal, the analyst's
-    decisions and the audit as it stands now (a changed as-of month re-checks a decided boundary, section 6.2). Python is deterministic,
-    so the last results are kept by everything they depend on and the sheets are not read again for the same inputs (review L6)."""
-    as_of = await _effective_as_of(audit_id, audit)
-    currency, fye = (audit or {}).get("reporting_currency"), _fiscal_year_end(audit)
-    key = json.dumps([audit_id, ds.get("dtype"), ds.get("file_hash"), as_of, currency, fye, ds.get("recognition_decisions"),
-                      ds.get("recognition_proposal"), bool(ds.get("recognition_facts"))], sort_keys=True, default=str)
-    if key in _RECOGNITION_CACHE:
-        _RECOGNITION_CACHE.move_to_end(key)
-        return copy.deepcopy(_RECOGNITION_CACHE[key])
-    if ds.get("recognition_facts"):
-        result = rec.recognise_facts(ds["recognition_facts"], as_of, currency, ds.get("recognition_decisions"))
-    else:
-        sheets = rec.unpack_sheets(ds.get("recognition_sheets"))
-        if not sheets:
-            return None
-        result = rec.recognise(sheets, as_of, ds.get("recognition_proposal"), currency, ds.get("recognition_decisions"), fye)
-    _RECOGNITION_CACHE[key] = copy.deepcopy(result)
-    while len(_RECOGNITION_CACHE) > RECOGNITION_CACHE_SIZE:
-        _RECOGNITION_CACHE.popitem(last=False)
-    return result
 
 
-async def _type_choice_open(audit_id: str, audit: Optional[dict], ds: dict) -> bool:
-    """A mapped revenue file whose recognition offers "Monthly revenue report" beside "Customer revenue" (metric labels under a
-    customer-style header, decision 4 of 2026-10-19): its label rows are never summed as customers until the analyst chooses."""
-    found = await _recognition_of(audit_id, audit, ds)
-    return bool(found and found["recognised"] and found.get("type_state") == "click" and not found.get("file_type")
-                and "monthly_revenue_report" in (found.get("type_candidates") or []))
 
 
-async def _is_revenue_file(audit_id: str, audit: Optional[dict], ds: Optional[dict]) -> bool:
-    """A stored revenue file counts for the banner and Run audit when it keeps a column mapping or its recognition gives a monthly revenue
-    series (owner decision 1 on PR 135)."""
-    if not ds:
-        return False
-    if not ds.get("recognition_only"):
-        return True
-    return rec.has_monthly_series(await _recognition_of(audit_id, audit, ds))
 
 
-async def _view(audit_id: str, ds: dict, version: Optional[int] = None, status: str = "ok") -> dict:
-    """_dataset_view with the forecast claims of section 20: the list to confirm, and what was saved from these bytes. A file whose
-    claims are saved is read as claims: it waits for nothing (no pending column, no required field), so it no longer holds Calculate."""
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1, "as_of_month": 1, "reporting_currency": 1})
-    fiscal_year_end = _fiscal_year_end(audit)
-    recognition = await _recognition_of(audit_id, audit, ds)
-    if (ds.get("looks") or {}).get("shape") not in forecast_claims.SHAPES and not ds.get("sheet_map"):
-        return _dataset_view(ds, version, status, None, fiscal_year_end, recognition)
-    _, found = await _forecast_found(audit_id, ds["dtype"], fiscal_year_end)
-    saved = await _saved_forecast(audit_id, ds.get("file_hash"))
-    claims = sum(len(c.get("by_period") or []) for c in saved)
-    if found and found.get("count"):
-        found = {**found, "saved_lines": len(saved), "saved": claims}
-    view = _dataset_view(ds, version, status, found or None, fiscal_year_end, recognition)
-    if saved:
-        # A statement file still waits for its own lines (section 26.6); any other file read as claims waits for nothing.
-        view.update(read_as_claims={"lines": len(saved), "claims": claims},
-                    **({} if ds.get("sheet_map") else {"pending": 0, "missing_required": []}))
-    return view
 
 
-def _miss(dtype: str, states: list, mapping: dict, looks: Optional[dict]) -> Optional[dict]:
-    """The file cannot supply the type's required fields (a summary or forecast table, or at most half of them mapped): the
-    screen shows one message in place of the mapping rows. Closed words and counts only (chat-upload.md section 19)."""
-    if not cr.is_miss(dtype, mapping, looks):
-        return None
-    return {"missing": cr.missing_required(dtype, states), "looks": looks or {"shape": "table", "rows": 0, "columns": len(states)}}
 
 
-def _months_for(dtype: str, states: list, columns: list, rows: list) -> Optional[dict]:
-    """The months of the date column, once that column is decided (S5: not before)."""
-    field = {"revenue": "invoice_date", "crm": "close_date", "pnl": "month"}.get(dtype)
-    if field is None:
-        return None
-    state = next((s for s in states if s["field"] == field and s["state"] in ("auto", "confirmed", "corrected")), None)
-    return cr.months_of([r.get(state["column"]) for r in rows]) if state else None
 
 
-async def _ask_model(audit: dict, dtype: str, sheet: "cr.Sheet", rows: list, states: list, proposals: list):
-    """Step 2 (section 4.2, 2026-10-17): with consent, every column goes to the model in one call, redacted, with the
-    rules' proposal and confidence as a hint, and nothing waits for it for longer than MAPPING_AI_SECONDS. On a failure
-    the rules' outcome stands and the columns they left open need a decision. Returns (states, ai_reading)."""
-    if audit.get("structure_reading_consent") is not True:
-        return states, {"status": "no_consent", "reason": "AI-assisted reading is off for this audit"}
-    hints = {p.column: (p.field, p.confidence) for p in proposals if p.field}
-    text = structures.column_mapping_text(
-        sheet.columns, rows, audit.get("company_name"), await llm_redaction.get_map(db, audit["id"]),
-        tuple(cr.customer_columns(sheet, proposals)), (), hints)
-    try:
-        read = await asyncio.wait_for(llm_gateway.read_structure(db, audit["id"], text, "column_mapping"),
-                                      MAPPING_AI_SECONDS)
-    except asyncio.TimeoutError:
-        return cr.apply_model_failure(states, cr.undecided(states)), {"status": "timeout", "reason": "AI reading unavailable"}
-    if read.status != "read":
-        return cr.apply_model_failure(states, cr.undecided(states)), {"status": read.status, "reason": read.reason}
-    await llm_gateway.record_verification(db, audit["id"], read.key, ["suggestion"] * len(read.items))
-    proposed = structures.proposed_mapping(read.items, sheet.columns, list(FIELD_DEFS[dtype]["required"]) +
-                                           list(FIELD_DEFS[dtype]["optional"]))
-    return cr.apply_model(dtype, sheet, proposals, proposed), {"status": "read", "reason": read.reason}
 
 
-async def _saved_sheet_map(audit_id: str, digest: str) -> Optional[dict]:
-    """The latest saved line map of these bytes (chat-upload.md section 26.7), or None."""
-    found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find(
-        {"audit_id": audit_id, "kind": "sheet_map", "file_hash": digest}, {"_id": 0}).to_list(1000)
-    return max(found, key=lambda v: v.get("version") or 0) if found else None
 
 
-async def _write_sheet_version(audit_id: str, dtype: str, ds: dict) -> int:
-    """Save a statement file's line map unless the latest version of its bytes already says the same: per line its row, role,
-    meaning, basis, parent, source and decision, and the header row and label column. No text."""
-    sheet_map = ds["sheet_map"]
-    lines = sheet_mod.saved_lines(sheet_map)
-    latest = await _saved_sheet_map(audit_id, ds.get("file_hash"))
-    key = lambda found: [(x["row"], x["role"], x["meaning"], x.get("basis"), x["parent_row"]) for x in found]  # noqa: E731
-    if latest and key(latest["lines"]) == key(lines) and latest.get("header_row") == sheet_map["header_row"]:
-        return latest["version"]
-    found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find(
-        {"audit_id": audit_id, "kind": "sheet_map"}, {"_id": 0, "version": 1}).to_list(10000)
-    number = max([v.get("version") or 0 for v in found] or [0]) + 1
-    await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
-        "audit_id": audit_id, "kind": "sheet_map", "sheet_dtype": dtype, "file_hash": ds.get("file_hash"), "version": number,
-        "header_row": sheet_map["header_row"], "label_col": sheet_map["label_col"], "lines": lines,
-        "ai_read": bool(sheet_map.get("ai_read")), "saved_at": usage_mod.now()})
-    return number
 
 
-async def _read_statement(a: dict, sheet: "cr.Sheet", digest: str, kpi: bool = False) -> Optional[dict]:
-    """A P&L the rules cannot map by columns, read as a statement (chat-upload.md section 26): Python's reading, then the saved
-    map of the same bytes, else, with consent, one sheet_structure call. None when the rules map every required field at 80 or
-    more (26.1) or the sheet is no statement. A KPI sheet (`kpi`, 26.14) has no column fields, so the rules never cover it. The
-    skeleton is built in memory; it is never stored or logged."""
-    if sheet.grid is None or (not kpi and sheet_mod.rules_cover(cr.analyse("pnl", sheet)[0])):
-        return None
-    fiscal_year_end = _fiscal_year_end(a)
-    reading = sheet_mod.read(sheet.grid, sheet.fmt, fiscal_year_end)
-    if reading is None:
-        return None
-    scale, note = cr.read_units(reading["titles"])
-    units = {"unit_scale": scale, "unit_note": note, "title_currency": cr.title_currency(t for _, _, t in reading["titles"])}
-    saved = await _saved_sheet_map(a["id"], digest)
-    if saved:                 # the same bytes again: the saved map, no model call, no click
-        if (saved.get("header_row"), saved.get("label_col")) != (reading["header_row"], reading["label_col"]):
-            reading = sheet_mod.read(sheet.grid, sheet.fmt, fiscal_year_end, saved.get("header_row"), saved.get("label_col")) \
-                or reading
-        lines = [{**x, "source": "saved"} for x in saved["lines"]]
-        return {"map": {**sheet_mod.build(reading, None, lines), "ai_read": bool(saved.get("ai_read")), "counts": None},
-                "ai": "stored", **units}
-    if a.get("structure_reading_consent") is not True:
-        return {"map": {**sheet_mod.build(reading), "counts": None}, "ai": "no_consent", **units}
-    mapping = await structures.learn_company_names(db, a["id"], [c for c in reading["cells"] if len(c["text"]) <= sheet_mod.LONG_CELL],
-                                                   a.get("company_name"), await llm_redaction.get_map(db, a["id"]))
-    text, counts = sheet_mod.skeleton(reading, a.get("company_name"), mapping, structures.redact.file_type_withheld(a))
-    try:
-        read = await asyncio.wait_for(llm_gateway.read_structure(db, a["id"], text, "sheet_structure"), SHEET_AI_SECONDS)
-    except asyncio.TimeoutError:
-        return {"map": {**sheet_mod.build(reading), "counts": counts}, "ai": "timeout", **units}
-    if read.status != "read" or not read.sheet:
-        return {"map": {**sheet_mod.build(reading), "counts": counts}, "ai": read.status, **units}
-    await llm_gateway.record_verification(db, a["id"], read.key, ["suggestion"] * len(read.sheet.get("rows") or []))
-    again = sheet_mod.merged(sheet.grid, sheet.fmt, fiscal_year_end, reading, read.sheet)
-    return {"map": {**sheet_mod.build(again, read.sheet), "counts": counts}, "ai": "read", **units}
 
 
-async def _ask_recognition(audit: dict, sheets: list, digest: str, fiscal_year_end: int):
-    """The one model call per new file (revenue-file-recognition.md section 5.5), with the audit's consent: it proposes the file's
-    type, the revenue row, the last actual column, the currency and the rows that are not revenue. The answer is kept by the file's
-    hash and the prompt version, without the label echo, so the same bytes make no second call. Returns (proposal or None, status):
-    a failure, a refusal, a timeout, no prompt or no consent leave the rules' outcome standing (section 6.5)."""
-    if audit.get("structure_reading_consent") is not True:
-        return None, "no_consent"
-    try:
-        prompt = await prompt_store.load(db, llm_gateway.FILE_TYPE_PROMPT)
-    except prompt_store.PromptMissing:
-        return None, "not_read"
-    tag = prompt_store.cache_tag(prompt)
-    kept = await db[structures.COLUMN_MAPPINGS_COLLECTION].find_one(
-        {"audit_id": audit["id"], "kind": "file_recognition", "file_hash": digest, "prompt_tag": tag}, {"_id": 0})
-    if kept:
-        return kept["reply"], "stored"
-    mapping, withheld = await llm_redaction.get_map(db, audit["id"]), structures.redact.file_type_withheld(audit)
-    text = rec.model_text(sheets, audit.get("company_name"), mapping, withheld, digest, fiscal_year_end)
-    try:
-        read = await asyncio.wait_for(llm_gateway.read_structure(db, audit["id"], text, "file_recognition", use_cache=False),
-                                      MAPPING_AI_SECONDS)
-    except asyncio.TimeoutError:
-        return None, "timeout"
-    proposal = rec.proposal_from(read.recognition, sheets, audit.get("company_name"), mapping, withheld, fiscal_year_end) \
-        if read.status == "read" and read.recognition else None
-    if proposal is None:
-        return None, read.status if read.status != "read" else "not_read"
-    await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
-        "audit_id": audit["id"], "kind": "file_recognition", "file_hash": digest, "prompt_tag": tag, "reply": proposal,
-        "saved_at": usage_mod.now()})
-    return proposal, "read"
 
 
-async def _recognise_file(a: dict, sheets: list, digest: str, call) -> dict:
-    """Python's recognition of every sheet of a file (sections 2, 3), then the model's proposal checked by Python (section 6) when
-    `call` is True, or "recognised" and Python recognised the file. The model decides nothing: the result is Python's."""
-    fiscal_year_end = _fiscal_year_end(a)
-    as_of = await _effective_as_of(a["id"], a)
-    rules = rec.recognise(sheets, as_of, None, a.get("reporting_currency"), None, fiscal_year_end)
-    asks = call is True or (call == "recognised" and rules["recognised"])
-    if asks and rules["recognised"]:
-        # A file whose recognised sheets alone are over the limit stops here, before the model is called and anything is kept (review L4)
-        _check_dataset_size(_sheets_to_keep(sheets, rules, _keeps_rows({"result": rules}), fiscal_year_end))
-    proposal, status = (await _ask_recognition(a, sheets, digest, fiscal_year_end)) if asks else (None, "not_asked")
-    if status not in ("not_asked", "no_consent", "stored"):
-        await _usage_update(a["id"], lambda u: u["steps"].setdefault("recognition", {}).__setitem__(
-            status, u["steps"]["recognition"].get(status, 0) + 1))
-    result = rec.recognise(sheets, as_of, proposal, a.get("reporting_currency"), None, fiscal_year_end) if proposal else rules
-    return {"result": result, "proposal": proposal, "status": status, "raw": sheets}
 
 
-def _sheets_to_keep(sheets: list, result: dict, keep_rows: bool, fiscal_year_end: int = 12) -> dict:
-    """The sheets a dataset keeps to read the file again (owner decision 3 on PR 135): the recognised sheets only. A records layout
-    (one row per invoice) that keeps its rows keeps only a few facts; customers by period keep the one sheet recognition read."""
-    if keep_rows and result.get("series_basis") == "records":
-        sheet = next((x for x in sheets if x.sheet == result["sheet"]), None)
-        info = rec.analyse(sheet, fiscal_year_end) if sheet is not None else None
-        if info is not None and info["layout"] == "records":
-            return {"recognition_sheets": [], "recognition_facts": rec.records_facts(info)}
-    names = rec.kept_names(result, keep_rows)
-    return {"recognition_sheets": rec.pack_sheets([x for x in sheets if x.sheet in names])}
 
 
-def _recognition_fields(recognition: dict, keep_rows: bool = False, fiscal_year_end: int = 12) -> dict:
-    """What a dataset keeps to read the file again (revenue-file-recognition.md section 8): the recognised sheets, the model's kept
-    proposal without its label echo and the analyst's decisions, which start empty. A file that keeps its rows (invoices, customers by
-    period) keeps no sheet beyond the one recognition read (owner decision 3 on PR 135)."""
-    kept = _sheets_to_keep(recognition["raw"], recognition["result"], keep_rows, fiscal_year_end)
-    names = rec.kept_names(recognition["result"], keep_rows)
-    return {**kept, "recognition_proposal": rec.renumber_proposal(recognition["proposal"], recognition["raw"], names),
-            "recognition_decisions": {}, "recognition_ai": recognition["status"]}
 
 
-def _keeps_rows(recognition: dict) -> bool:
-    """Whether the dataset of this file keeps the rows of its sheet: invoices and customers by period do (column mapping)."""
-    return recognition["result"].get("file_type") in ("invoice_transactions", "customer_revenue")
 
 
-async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], replace: bool, background: BackgroundTasks):
-    if dtype is not None and dtype not in FIELD_DEFS:
-        raise HTTPException(400, "Unknown dataset type")
+async def _ingest(audit_id: str, upload: UploadFile, background: BackgroundTasks):
+    """A spreadsheet in: stored as it is (its sheets, kept to read the file again) and read by the sheet reader after the response
+    (read-check-review.md section 3). No type is asked, no column is mapped and nothing waits for an answer: the map is the reading."""
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
@@ -1152,57 +782,19 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
     except cr.SheetError:
         raise HTTPException(400, "This file could not be read as a sheet")
     digest = hashlib.sha256(content).hexdigest()
-    detected, _, _ = cr.detect_workbook(sheets)
-    chosen, source, type_status = dtype or detected, "you" if dtype else "rules", None
-    recognition = None
-    if chosen != "crm" and dtype in (None, "revenue", "pnl"):
-        # Every file the rules do not type as CRM is recognised (revenue-file-recognition.md section 8). A file the rules cannot type
-        # asks the model first (section 5.6); a file they type is stored first and the model is asked once after it (section 5.5).
-        recognition = await _recognise_file(a, sheets, digest, call=True if (dtype is None and detected is None) else False)
-        if chosen is None:
-            word = (recognition["proposal"] or {}).get("file_type")
-            type_status = recognition["status"]
-            if word in ("crm", "pnl"):
-                chosen, source = word, "ai"
-            elif _model_typed_a_records_file(recognition, word):
-                chosen, source = "revenue", "ai"
-            elif rec.has_monthly_series(recognition["result"]) or recognition["result"]["file_type"] == "financial_statements":
-                chosen = "revenue"      # a file with no monthly series (a snapshot, a yearly report) gets the type picker; a statement is the P&L
-    if chosen is None:
-        found = recognition["result"] if recognition else {}
-        return {"status": "unknown_type", "file": filename, "size_bytes": len(content), "row_count": len(sheets[0].frame),
-                "ext": ext, "types": list(DTYPE_ORDER), "sheets": len(sheets),
-                "recognition": {k: found.get(k) for k in ("recognised", "missing", "message")}}
-    extra = None
-    if recognition and chosen in ("revenue", "pnl") and recognition["result"]["recognised"]:
-        result = recognition["result"]
-        if dtype is None and chosen == "pnl" and result["file_type"] == "monthly_revenue_report":
-            chosen = "revenue"                     # a KPI sheet with a revenue, invoiced or MRR/ARR row is a revenue report (decision 3)
-        elif dtype is None and chosen == "revenue" and result["file_type"] == "financial_statements":
-            chosen = "pnl"                         # a statement-shaped P&L stays the audit's P&L and carries the recognition (section 8)
-        if dtype is None and chosen == "revenue" and result["file_type"] in rec.NO_MAPPING_TYPES and rec.has_monthly_series(result):
-            stored = await _store_recognised(a, audit_id, filename, len(content), digest, replace, recognition, source, background,
-                                             type_status)
-            await _queue_workbook_read(a, audit_id, sheets, digest, filename, chosen, background)
-            return stored
-        extra = _recognition_fields(recognition, _keeps_rows(recognition), _fiscal_year_end(a))
-    view = await _load(a, audit_id, chosen, cr.best_sheet(sheets, chosen), filename, len(content), digest, replace,
-                       background, source, detected == chosen, type_status, extra=extra)
-    if extra and dtype is None and detected is not None and recognition["result"]["recognised"]:
-        # The rules typed the file and its mapping is done: the one recognition call of the new file comes after it.
-        ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
-        if ds and ds.get("file_hash") == digest and ds.get("recognition_ai") == "not_asked":
-            proposal, status = await _ask_recognition(a, sheets, digest, _fiscal_year_end(a))
-            if status not in ("no_consent", "stored"):
-                await _usage_update(audit_id, lambda u: u["steps"].setdefault("recognition", {}).__setitem__(
-                    status, u["steps"]["recognition"].get(status, 0) + 1))
-            names = [x["name"] for x in ds.get("recognition_sheets") or []] or [(ds.get("recognition_facts") or {}).get("sheet")]
-            await db.datasets.update_one({"audit_id": audit_id, "dtype": chosen, "file_hash": digest}, {"$set": {
-                "recognition_proposal": rec.renumber_proposal(proposal, sheets, names), "recognition_ai": status}})
-            ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
-            view = await _view(audit_id, ds, view.get("version"), view.get("status", "ok"))
-    await _queue_workbook_read(a, audit_id, sheets, digest, filename, chosen, background)
-    return view
+    existing = await db.datasets.find_one({"audit_id": audit_id, "file_hash": digest}, {"_id": 0, "recognition_sheets": 0})
+    if existing:
+        return {**_file_view(existing), "status": "same_file"}
+    doc = {"audit_id": audit_id, "dtype": FILE_DTYPE, "file": filename, "file_hash": digest, "size_bytes": len(content), "ext": ext,
+           "sheets": len(sheets), "row_count": sum(len(s.frame) for s in sheets), "uploaded_at": usage_mod.now(),
+           "recognition_sheets": rec.pack_sheets(sheets)}
+    _check_dataset_size(doc)               # a file over the limit is refused with the message, never a raw error
+    await db.datasets.insert_one(doc)
+    await _usage_update(audit_id, lambda u: usage_mod.record_upload(u, FILE_DTYPE))
+    await allowance_mod.record_for_audit(db, audit_id, files=1)
+    await _queue_workbook_read(a, audit_id, sheets, digest, filename, background)
+    logger.info("upload: run_id=%s sheets=%d", audit_id, len(sheets))
+    return {**_file_view(doc), "status": "ok"}
 
 
 async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filename: str) -> None:
@@ -1218,6 +810,7 @@ async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filena
         await _usage_update(audit_id, lambda u: u["steps"].setdefault("sheet_reading", {}).__setitem__(
             status, u["steps"]["sheet_reading"].get(status, 0) + 1))
         await _refresh_as_of(audit_id)
+        await _mark_stale_and_maybe_recompute(audit_id)
         logger.info("sheet reading: run_id=%s status=%s month=%s", audit_id, status, doc.get("month") or "-")
     except Exception as exc:
         logger.error("sheet reading failed: run_id=%s error=%s", audit_id, type(exc).__name__)
@@ -1225,10 +818,10 @@ async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filena
         await db.audits.update_one({"id": audit_id}, {"$inc": {"sheet_reads_pending": -1}})
 
 
-async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str, filename: str, chosen: Optional[str],
+async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str, filename: str,
                                background: Optional[BackgroundTasks]) -> None:
-    """Queue the sheet reader for a file just stored (not a CRM export: no period columns), with the audit's consent."""
-    if chosen == "crm" or a.get("structure_reading_consent") is not True:
+    """Queue the sheet reader for a file just stored, with the audit's consent."""
+    if a.get("structure_reading_consent") is not True:
         return
     await db.audits.update_one({"id": audit_id}, {"$inc": {"sheet_reads_pending": 1}})
     if background is None:
@@ -1238,258 +831,44 @@ async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str
 
 
 async def _queue_stored_reads(audit_id: str, background: BackgroundTasks) -> None:
-    """Consent ticked after the files were uploaded: every stored file that kept its sheets is read now. A reading already stored for the
-    file makes no call."""
+    """Consent ticked after the files were uploaded: every stored file is read now. A reading already stored for the file makes no call."""
     a = await db.audits.find_one({"id": audit_id})
-    for ds in await db.datasets.find({"audit_id": audit_id, "dtype": {"$in": ["revenue", "pnl"]}}).to_list(4):
+    for ds in await db.datasets.find({"audit_id": audit_id}).to_list(50):
         sheets = rec.unpack_sheets(ds.get("recognition_sheets") or [])
         if sheets and ds.get("file_hash") and a:
-            await _queue_workbook_read(a, audit_id, sheets, ds["file_hash"], ds.get("file") or "", ds["dtype"], background)
+            await _queue_workbook_read(a, audit_id, sheets, ds["file_hash"], ds.get("file") or "", background)
 
 
-def _model_typed_a_records_file(recognition: dict, word: Optional[str]) -> bool:
-    """An invoice list the rules cannot type is the revenue file when the model's type, checked by Python, is the type Python read and the
-    list covers two months or more. Without consent or after a failed call there is no model type: the analyst picks (re-check, N1)."""
-    result = recognition["result"]
-    return bool(word and word == result.get("file_type") and result.get("recognised") and result.get("series_basis") == "records"
-                and result.get("periods", 0) >= 2)
+FILE_DTYPE = "file"       # every stored spreadsheet is one file: its type is the reader's map, not a choice
 
 
-async def _store_recognised(a: dict, audit_id: str, filename: str, size: int, digest: str, replace: bool, recognition: dict,
-                            type_source: str, background: Optional[BackgroundTasks], type_status: Optional[str]):
-    """A recognised file with no customer rows (a monthly report, a summary, a statement, an ARR snapshot) is the audit's revenue
-    file with no column mapping: it holds no required field and waits only for the clicks of its recognition (section 8)."""
-    existing = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
-    if existing and existing.get("file_hash") == digest:
-        return await _view(audit_id, existing, None, "same_file")
-    if existing and not replace:
-        raise HTTPException(409, {"code": "type_loaded", "dtype": "revenue", "file": existing.get("file")})
-    result = recognition["result"]
-    doc = {"audit_id": audit_id, "dtype": "revenue", "file": filename, "sheet": result["sheet"], "columns": [], "headers": [],
-           "header_row": result["header_row"], "rows": [], "row_numbers": [], "row_count": 0, "mapping": {},
-           "fx": (existing or {}).get("fx") or {}, "billing_terms": {}, "preview": [], "mapping_source": {},
-           "ai_reading": {"status": recognition["status"], "reason": None}, "columns_state": [], "months": None,
-           "file_hash": digest, "size_bytes": size, "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source,
-           "looks": {"shape": "table", "rows": 0, "columns": 0}, "unit_scale": 1, "unit_note": None, "wide": None, "raw_headers": None,
-           "first_col": 1, "title_currency": None, "recognition_only": True,
-           **_recognition_fields(recognition, False, _fiscal_year_end(a))}
-    _check_dataset_size(doc)
-    await db.datasets.replace_one({"audit_id": audit_id, "dtype": "revenue"}, doc, upsert=True)
-    await _usage_update(audit_id, lambda u: usage_mod.record_upload(u, "revenue"))
-    await allowance_mod.record_for_audit(db, audit_id, files=1)
-    await _settle_recognition(audit_id, "revenue", background)
-    await _mark_stale_and_maybe_recompute(audit_id)
-    logger.info("upload: run_id=%s type=revenue source=%s recognition=%s file_type=%s ai=%s", audit_id, type_source,
-                "recognised", result["file_type"] or "-", type_status or "-")
-    return await _view(audit_id, await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0}), None)
+def _file_view(ds: dict) -> dict:
+    """What the upload page shows for one stored file: its name and size. What was read from it is the reading's (ReadingScreen)."""
+    return {"dtype": FILE_DTYPE, "file": ds.get("file"), "file_hash": ds.get("file_hash"), "size_bytes": ds.get("size_bytes"),
+            "ext": ds.get("ext") or usage_mod.extension_of(ds.get("file") or ""), "row_count": ds.get("row_count"),
+            "sheets": ds.get("sheets"), "uploaded_at": ds.get("uploaded_at")}
 
 
-async def _settle_recognition(audit_id: str, dtype: str, background: Optional[BackgroundTasks]) -> None:
-    """A file read by recognition only counts as mapped when no choice waits for the analyst (the banner S16d reads it); the decks
-    that waited for the revenue file are read then, as for a mapping saved."""
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    if not ds or not ds.get("recognition_only"):
-        return
-    await _refresh_as_of(audit_id)          # the file's own series may set the as-of month its boundary is read from
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
-    result = await _recognition_of(audit_id, audit, ds)
-    done = bool(result and result["recognised"] and not result["needs_click"])
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"mapped_at": usage_mod.now() if done else None}})
-    if done and dtype == "revenue" and background is not None:
-        background.add_task(structures.process_waiting_decks_safely, db, audit_id)
 
 
-async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename: str, size: int, digest: str, replace: bool,
-                background: Optional[BackgroundTasks], type_source: str, detected: bool, type_status: Optional[str] = None,
-                drop: Optional[str] = None, extra: Optional[dict] = None):
-    """A sheet stored as the audit's file of one type: the saved mapping of its bytes or its headers, else the rules, then
-    the model for the columns the rules could not decide (unless the sheet is a summary table, which no column mapping can
-    read), then the analyst. `drop` is the type this file was stored as before, when the analyst changed its type."""
-    statement = None
-    if chosen == "pnl" and type_source != "you":      # a P&L read as a statement whose lines are mostly KPIs is a KPI sheet (26.14)
-        if await db.datasets.find_one({"audit_id": audit_id, "dtype": "kpi", "file_hash": digest}, {"_id": 1}):
-            chosen = "kpi"
-        elif not await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl", "file_hash": digest}, {"_id": 1}):
-            statement = await _read_statement(a, sheet, digest)
-            if statement is not None and sheet_mod.is_kpi_sheet(statement["map"]["lines"]):
-                chosen = "kpi"
-    existing = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
-    versions = await _versions(audit_id, chosen)
-    if existing and existing.get("file_hash") == digest and drop is None and existing.get("sheet_map"):
-        saved = await _saved_sheet_map(audit_id, digest)
-        return await _view(audit_id, existing, saved["version"] if saved else None, "same_file")
-    if existing and existing.get("file_hash") == digest and drop is None:
-        same = [v for v in versions if v.get("file_hash") == digest]
-        if same:        # the latest saved version is applied again: no rules, no model, no clicks
-            states = cr.states_from_saved(chosen, sheet, _saved_columns(same[-1]), scale=False)
-            existing = {**existing, "columns_state": states, "mapping": cr.mapping_of(chosen, states),
-                        "mapping_source": _source_map(states)}
-            if existing.get("constants"):         # the currency every row took stays, whatever the saved mapping says of the columns
-                existing.update(_with_currency_column(existing, next(iter(existing["constants"].values()))))
-            await db.datasets.update_one({"audit_id": audit_id, "dtype": chosen}, {"$set": {
-                "columns_state": existing["columns_state"], "mapping": existing["mapping"], "mapping_source": existing["mapping_source"]}})
-        return await _view(audit_id, existing, same[-1]["version"] if same else None, "same_file")
-    if existing and not replace:
-        raise HTTPException(409, {"code": "type_loaded", "dtype": chosen, "file": existing.get("file")})
-    rows = df_to_records(sheet.frame)
-    key = structures.header_key(chosen, sheet.columns)
-    same = [v for v in versions if v.get("file_hash") == digest]
-    headers = [v for v in versions if v.get("header_key") == key]
-    looks = cr.describe(sheet)
-    ai_reading = {"status": "rules", "reason": None}
-    if statement is None and chosen in ("pnl", "kpi"):
-        statement = await _read_statement(a, sheet, digest, kpi=chosen == "kpi")
-    if chosen == "kpi" and statement is None:
-        raise HTTPException(400, KPI_NOT_A_STATEMENT)
-    # A saved mapping that is itself a miss (at most half of the required fields mapped, as when every column was left
-    # out as "Not used") is no mapping to reuse: the rules and the model run again for this file.
-    reusable = [v for v in (same or headers)
-                if not cr.is_miss(chosen, {c.get("field"): c["column"] for c in _saved_columns(v) if c.get("field")}, looks)]
-    if statement is not None:            # a statement: its line map replaces the column mapping (section 26)
-        states, ai_reading = [], {"status": statement["ai"], "reason": None}
-        if statement["ai"] not in ("no_consent", "stored"):
-            await _usage_update(audit_id, lambda u: u["steps"]["mapping_ai"].__setitem__(
-                statement["ai"], u["steps"]["mapping_ai"].get(statement["ai"], 0) + 1))
-    elif reusable and (same or headers):
-        states = cr.states_from_saved(chosen, sheet, _saved_columns(reusable[-1]), scale=not any(v in same for v in reusable))
-        ai_reading = {"status": "stored", "reason": None}
-    else:
-        proposals, _ = cr.analyse(chosen, sheet)
-        states = cr.states_from_rules(proposals)
-        # With consent every upload asks the model (section 4.2). Without it the rules alone decide; a file with a column
-        # they leave open still records the "no_consent" status.
-        asks = a.get("structure_reading_consent") is True or cr.undecided(states)
-        if asks and looks["shape"] != "summary":
-            states, ai_reading = await _ask_model(a, chosen, sheet, rows, states, proposals)
-            await _usage_update(audit_id, lambda u: u["steps"]["mapping_ai"].__setitem__(
-                ai_reading["status"], u["steps"]["mapping_ai"].get(ai_reading["status"], 0) + 1))
-    mapping = cr.mapping_of(chosen, states)
-    shown = sorted(rec.currency_scan(sheet)) if statement is None else []
-    doc_currency = {}
-    if chosen == "revenue" and len(shown) == 1 and not mapping.get("currency"):
-        # The file shows one currency (title, header, sign or code) and has no currency column: every row takes it, and the required
-        # field is never reported missing (owner decision on the currency, re-check of PR 135).
-        doc_currency = _with_currency_column({"columns_state": states, "columns": sheet.columns}, shown[0])
-        states, mapping = doc_currency["columns_state"], doc_currency["mapping"]
-    doc = {"audit_id": audit_id, "dtype": chosen, "file": filename, "sheet": sheet.sheet, "columns": sheet.columns,
-           "headers": sheet.headers, "header_row": sheet.header_row, "rows": rows, "row_numbers": sheet.row_numbers,
-           "row_count": len(rows), "mapping": mapping, "fx": (existing or {}).get("fx") or {},
-           "billing_terms": {}, "preview": rows[:8],
-           "mapping_source": _source_map(states), "ai_reading": ai_reading, "columns_state": states,
-           "months": _months_for(chosen, states, sheet.columns, rows), "file_hash": digest, "size_bytes": size,
-           "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source, "looks": looks,
-           "unit_scale": sheet.unit_scale, "unit_note": sheet.unit_note, "wide": sheet.wide, "raw_headers": sheet.raw_headers,
-           "first_col": sheet.first_col, "title_currency": sheet.currency, "currency_found": shown}
-    doc.update(doc_currency)
-    doc.update(extra or {})
-    if statement is not None:
-        sheet_map = statement["map"]
-        doc.update(sheet_map=sheet_map, mapping={}, header_row=sheet_map["header_row"], row_count=len(sheet_map["lines"]),
-                   months=sheet_mod.months_found(sheet_map), unit_scale=statement["unit_scale"], unit_note=statement["unit_note"],
-                   title_currency=statement["title_currency"] or sheet.currency)
-    _check_dataset_size(doc)               # every upload: a document over the limit is refused with the message, never a raw error (review M2)
-    await db.datasets.replace_one({"audit_id": audit_id, "dtype": chosen}, doc, upsert=True)
-    if drop and drop != chosen:
-        await db.datasets.delete_one({"audit_id": audit_id, "dtype": drop})
-
-    def count(u):
-        usage_mod.record_upload(u, chosen)
-        for s in states:
-            kind = {"rules": "rules", "saved": "saved", "ai": "ai"}.get(s.get("source"))
-            if kind and s["state"] in cr.MAPPED:
-                usage_mod.record_columns(u, kind)
-    await _usage_update(audit_id, count)
-    await allowance_mod.record_for_audit(db, audit_id, files=1)
-    version = await _commit_mapping(audit_id, chosen, background)
-    await _mark_stale_and_maybe_recompute(audit_id)
-    logger.info("upload: run_id=%s type=%s detected=%s source=%s pending=%d ai=%s type_ai=%s sheet=%s", audit_id, chosen, detected,
-                type_source, cr.pending_count(states) + sheet_mod.pending_count(doc.get("sheet_map")), ai_reading["status"],
-                type_status or "-", "statement" if statement is not None else "-")
-    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
-    return await _view(audit_id, stored, version)
 
 
-async def _commit_mapping(audit_id: str, dtype: str, background: Optional[BackgroundTasks]) -> Optional[int]:
-    """When the file has nothing pending the mapping saves: a version is written, the file is marked mapped, its
-    customers join the pseudonym map and decks that waited for the revenue file are read. Returns the version."""
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
-    if not ds:
-        return None
-    if ds.get("sheet_map"):              # a statement file saves its line map (section 26.7)
-        if sheet_mod.pending_count(ds["sheet_map"]):
-            return None
-        version = await _write_sheet_version(audit_id, dtype, ds)
-        await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"mapped_at": usage_mod.now()}})
-        if dtype in ("revenue", "pnl") and background is not None:
-            background.add_task(structures.process_waiting_decks_safely, db, audit_id)
-        return version
-    states = ds.get("columns_state")
-    if states is None or cr.pending_count(states):
-        return None
-    version = await _write_version(audit_id, dtype, ds, states)
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype},
-                                 {"$set": {"mapped_at": usage_mod.now(), "mapping": cr.mapping_of(dtype, states)}})
-    await _add_customers(audit_id, {**ds, "mapping": cr.mapping_of(dtype, states)})
-    if dtype in ("revenue", "pnl") and background is not None:
-        background.add_task(structures.process_waiting_decks_safely, db, audit_id)
-    return version
+
+
+
+
+
+
 
 
 @api.post("/audits/{audit_id}/datasets/upload")
-async def upload_chat_file(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...),
-                           dtype: Optional[str] = None, replace: bool = False):
-    """One file of the chat: its type is detected unless `dtype` is given. Unknown: nothing is stored. A type
-    already loaded with other bytes: 409 unless `replace` (docs/specs/chat-upload.md section 3)."""
-    return await _ingest(audit_id, file, dtype, replace, background)
+async def upload_chat_file(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...)):
+    """One spreadsheet: stored and read by the sheet reader (read-check-review.md section 3). No type, no mapping, no answer to wait for."""
+    return await _ingest(audit_id, file, background)
 
 
-class RecognitionDecision(BaseModel):
-    """One decision about the recognition of a file (revenue-file-recognition.md section 6.6): a part to confirm, or a choice among
-    the lists the server offers. No typed text: a sheet name, a currency and a type are checked against the file's own lists."""
-    model_config = {"extra": "forbid"}
-    action: Literal["confirm", "change"]
-    part: Literal["revenue_row", "file_type", "currency", "money_kind", "sheet", "series_source"]
-    row: Optional[int] = None
-    column: Optional[int] = None
-    file_type: Optional[str] = None
-    currency: Optional[str] = None
-    money_kind: Optional[str] = None
-    sheet: Optional[str] = None
-    series_source: Optional[str] = None
 
 
-def _recognition_decision(current: dict, body: RecognitionDecision, decisions: dict) -> dict:
-    """The analyst's decisions after this one, or a 400. The server re-checks every choice against the lists of the current
-    recognition: a row must be a candidate, a type one of the six. The last actual column is no choice: the audit's as-of month sets it."""
-    row = current.get("revenue_row") or current.get("revenue_column")
-    key = "column" if current.get("revenue_column") else "row"
-    out = dict(decisions)
-    bad = HTTPException(400, "That choice is not one of the options offered")
-    if body.action == "confirm":
-        if body.part == "revenue_row" and row and row.get(key) is not None:
-            out["revenue_row"] = row[key]
-        elif body.part == "file_type" and current.get("file_type"):
-            out["file_type"] = current["file_type"]
-        elif body.part == "currency" and (current.get("currency") or {}).get("code"):
-            out["currency"] = current["currency"]["code"]
-        else:
-            raise bad
-        return out
-    if body.part == "revenue_row" and row and body.row in [c.get(key) for c in row["candidates"]]:
-        out["revenue_row"] = body.row
-    elif body.part == "file_type" and body.file_type in rec.RECOGNITION_TYPES:
-        out["file_type"] = body.file_type
-    elif body.part == "currency" and body.currency in rec.ISO_CURRENCIES and not (current.get("currency") or {}).get("mixed"):
-        out["currency"] = body.currency
-    elif body.part == "money_kind" and body.money_kind in cr.MONEY_KINDS and (current.get("money_kind") or {}).get("asked"):
-        out["money_kind"] = body.money_kind
-    elif body.part == "series_source" and (current.get("series_source") or {}) and body.series_source in ("metrics_block", "dated_list"):
-        out["series_source"] = body.series_source
-    elif body.part == "sheet" and body.sheet in [current.get("sheet")] + [o["sheet"] for o in current.get("other_sheets") or []]:
-        out = {"sheet": body.sheet}
-    else:
-        raise bad
-    return out
 
 
 # A dataset is one MongoDB document (16 MB of BSON); the stored sheets of a recognised file are part of it. Over the limit the upload stops
@@ -1509,118 +888,20 @@ def _check_dataset_size(doc: dict) -> None:
         raise HTTPException(413, DATASET_TOO_LARGE)
 
 
-CONFIRMED_CURRENCY = "Currency (confirmed)"
 
 
-def _with_currency_column(ds: dict, code: str) -> dict:
-    """The fields of a dataset once it takes `code` for every row: a constant column mapped as the currency field."""
-    states = [s for s in (ds.get("columns_state") or []) if s["column"] != CONFIRMED_CURRENCY]
-    states.append(cr.new_state(CONFIRMED_CURRENCY, "currency", "decision", "confirmed"))
-    columns = [c for c in (ds.get("columns") or []) if c != CONFIRMED_CURRENCY] + [CONFIRMED_CURRENCY]
-    return {"constants": {CONFIRMED_CURRENCY: code}, "columns": columns, "columns_state": states,
-            "mapping": cr.mapping_of("revenue", states), "mapping_source": _source_map(states)}
 
 
-async def _confirm_currency_column(audit_id: str, ds: dict, code: str, background: Optional[BackgroundTasks]) -> None:
-    """A revenue file with a column mapping and no currency column takes the currency the analyst confirmed for every row: a constant
-    column, mapped as the currency field, so the required field is met by the analyst's answer and not by a guess."""
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": "revenue"}, {"$set": _with_currency_column(ds, code)})
-    await _commit_mapping(audit_id, "revenue", background)
 
 
-@api.post("/audits/{audit_id}/datasets/{dtype}/recognition")
-async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecision, background: BackgroundTasks):
-    """Correct or change one part of a file's recognition (revenue-file-recognition.md section 6.6). A revenue file and a P&L carry
-    their own; decisions are saved with the dataset and a replaced file clears them."""
-    if dtype not in ("revenue", "pnl"):
-        raise HTTPException(400, "Unknown dataset type")
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    if audit and ds and not (ds.get("recognition_sheets") or ds.get("recognition_facts")):
-        return await _answer_currency_without_recognition(audit_id, dtype, ds, body, background)
-    if not audit or not ds:
-        raise HTTPException(404, "Dataset not found")
-    current = await _recognition_of(audit_id, audit, ds)
-    decisions = _recognition_decision(current, body, ds.get("recognition_decisions") or {})
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
-        "recognition_decisions": decisions, "recognition_decided_at": usage_mod.now()}})
-    if dtype == "revenue" and not ds.get("recognition_only") and body.part == "file_type" \
-            and decisions.get("file_type") in rec.NO_MAPPING_TYPES:
-        # Decision 4 of 2026-10-19 (issue #136): a mapped file the analyst types as a report with no customer rows drops its column
-        # mapping and is read by its recognition only, so its label rows are never summed as customers.
-        await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
-            "recognition_only": True, "mapping_dropped": True, "mapping": {}, "columns_state": [], "mapping_source": {}, "mapped_at": None}})
-        ds = {**ds, "recognition_only": True}
-    if body.part == "currency" and dtype == "revenue" and not ds.get("recognition_only") and not (ds.get("mapping") or {}).get("currency"):
-        await _confirm_currency_column(audit_id, ds, decisions["currency"], background)
-    await _settle_recognition(audit_id, dtype, background)
-    background.add_task(structures.process_waiting_decks_safely, db, audit_id)     # a confirmed P&L is the revenue file too (the gate re-checks)
-    await _mark_stale_and_maybe_recompute(audit_id)
-    logger.info("recognition: run_id=%s dtype=%s action=%s part=%s", audit_id, dtype, body.action, body.part)
-    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    return sanitize(await _view(audit_id, stored, None))
 
 
-async def _answer_currency_without_recognition(audit_id: str, dtype: str, ds: dict, body: RecognitionDecision,
-                                               background: BackgroundTasks):
-    """A revenue file with a column mapping that no recognition read (a customers-by-month sheet with no revenue word, a file the analyst
-    typed) is asked its currency all the same: no message without a way to answer it. Mixed currencies have no single answer."""
-    if (dtype != "revenue" or ds.get("recognition_only") or body.part != "currency" or body.action != "change"
-            or (ds.get("mapping") or {}).get("currency")):
-        raise HTTPException(404, "Dataset not found")
-    if body.currency not in rec.ISO_CURRENCIES or len(ds.get("currency_found") or []) > 1:
-        raise HTTPException(400, "That choice is not one of the options offered")
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
-        "recognition_decisions": {"currency": body.currency}, "recognition_decided_at": usage_mod.now()}})
-    await _confirm_currency_column(audit_id, ds, body.currency, background)
-    await _mark_stale_and_maybe_recompute(audit_id)
-    logger.info("recognition: run_id=%s dtype=%s action=%s part=%s", audit_id, dtype, body.action, body.part)
-    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    return sanitize(await _view(audit_id, stored, None))
 
 
-class RetypeBody(BaseModel):
-    to: str
-    replace: bool = False
 
 
-@api.post("/audits/{audit_id}/datasets/{dtype}/type")
-async def change_dataset_type(audit_id: str, dtype: str, body: RetypeBody, background: BackgroundTasks):
-    """The analyst changes the type a stored file was read as (chat-upload.md section 19). The stored sheet is read again as the
-    new type: the rules, then the model for the columns they cannot decide. The file is not uploaded again, and no
-    model is asked what the file is. A file already stored under the new type needs `replace`."""
-    if dtype not in FIELD_DEFS or body.to not in FIELD_DEFS:
-        raise HTTPException(400, "Unknown dataset type")
-    a = await db.audits.find_one({"id": audit_id})
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
-    if not a or not ds:
-        raise HTTPException(404, "Dataset not found")
-    if body.to == dtype:
-        return await _view(audit_id, {k: v for k, v in ds.items() if k not in ("_id", "rows")}, None)
-    if ds.get("sheet_map") and {dtype, body.to} == {"pnl", "kpi"}:       # a statement keeps its line map under the other name (26.14)
-        other = await db.datasets.find_one({"audit_id": audit_id, "dtype": body.to}, {"_id": 0, "rows": 0})
-        if other and not body.replace:
-            raise HTTPException(409, {"code": "type_loaded", "dtype": body.to, "file": other.get("file")})
-        await db.datasets.delete_one({"audit_id": audit_id, "dtype": body.to})
-        await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"dtype": body.to, "type_source": "you"}})
-        version = await _commit_mapping(audit_id, body.to, background)
-        await _mark_stale_and_maybe_recompute(audit_id)
-        stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": body.to}, {"_id": 0, "rows": 0})
-        return await _view(audit_id, stored, version)
-    columns = [c for c in ds.get("columns") or [] if c not in (ds.get("constants") or {})]       # the sheet's own columns, not a currency added
-    frame = pd.DataFrame([[r.get(c) for c in columns] for r in ds.get("rows") or []], columns=columns, dtype=object)
-    sheet = cr.Sheet(ds.get("sheet") or "", ds.get("header_row") or 1, columns, ds.get("headers") or columns, frame,
-                     ds.get("row_numbers") or [], [], ds.get("unit_scale") or 1, ds.get("unit_note"), ds.get("wide"),
-                     ds.get("raw_headers"), ds.get("first_col") or 1, ds.get("title_currency"))
-    return await _load(a, audit_id, body.to, sheet, ds.get("file") or "", ds.get("size_bytes") or 0, ds.get("file_hash") or "",
-                       body.replace, background, "you", False, drop=dtype)
 
 
-@api.post("/audits/{audit_id}/datasets/{dtype}/upload")
-async def upload_dataset(audit_id: str, dtype: str, background: BackgroundTasks, file: UploadFile = File(...)):
-    """The typed upload, for the demo seed and the tests: the same path, a loaded file of the type is replaced."""
-    view = await _ingest(audit_id, file, dtype, True, background)
-    return view
 
 
 async def _stored_reading(audit_id: str, file_hash: str) -> tuple:
@@ -1730,271 +1011,40 @@ async def review_readings(audit_id: str, background: BackgroundTasks, force: boo
 
 @api.get("/audits/{audit_id}/datasets")
 async def list_datasets(audit_id: str):
-    """One view per stored file, for rebuilding the chat on reload."""
+    """One view per stored file, in upload order, for rebuilding the upload list on reload."""
     if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
         raise HTTPException(404, "Audit not found")
-    found = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10)
-    found.sort(key=lambda d: STORED_ORDER.index(d["dtype"]) if d["dtype"] in STORED_ORDER else 9)
-    views = []
-    for d in found:
-        same = [v for v in await _versions(audit_id, d["dtype"]) if v.get("file_hash") == d.get("file_hash")]
-        views.append(await _view(audit_id, d, same[-1]["version"] if same else None))
-    return sanitize({"datasets": views})
+    found = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0, "recognition_sheets": 0}).to_list(50)
+    found.sort(key=lambda d: d.get("uploaded_at") or "")
+    return sanitize({"datasets": [_file_view(d) for d in found]})
 
 
-@api.get("/fields")
-async def get_fields():
-    return {dt: {"required": list(v["required"]), "optional": list(v["optional"])} for dt, v in FIELD_DEFS.items() if dt != "kpi"}
 
 
-@api.get("/audits/{audit_id}/datasets/revenue/customers")
-async def revenue_customers(audit_id: str, customer_col: Optional[str] = None):
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"})
-    if not ds:
-        raise HTTPException(404, "Revenue dataset not uploaded")
-    col = customer_col or ds["mapping"].get("customer_id")
-    custs = set()
-    if col:
-        for row in ds["rows"]:
-            v = row.get(col)
-            if v is not None and str(v).strip():
-                custs.add(str(v).strip())
-    has_service = bool(ds["mapping"].get("service_start")) and bool(ds["mapping"].get("service_end"))
-    return {"customers": sorted(custs), "has_service_dates": has_service, "billing_terms": ds.get("billing_terms", {})}
 
 
-class Decision(BaseModel):
-    """One analyst decision on one column (section 4.3). `note` rides only with the reason "other"."""
-    model_config = {"extra": "forbid"}
-    column: str
-    action: Literal["confirm", "correct"]
-    field: Optional[str] = None
-    reason: Optional[str] = None
-    note: Optional[str] = Field(default=None, max_length=2000)
-    money_kind: Optional[Literal["revenue", "volume"]] = None       # the answer to "revenue or volume?" (chat-upload.md section 15)
 
 
-async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
-    """The notes that may be kept, cleaned; HTTP 400 with S21 for the first that may not (nothing is saved)."""
-    cleaned = [usage_mod.clean_note(n) for n in notes]
-    cleaned = [n for n in cleaned if n]
-    if not cleaned:
-        return []
-    files = await db.datasets.find({"audit_id": audit_id}, {"_id": 0}).to_list(10)
-    deck_files = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "file": 1}).to_list(1000)
-    headers, cells = [], []
-    for d in files:
-        headers += [str(h) for h in d.get("headers") or []] + [str(c) for c in d.get("columns") or []]
-        headers += [c["text"] for c in structures.column_mapping_input(d.get("columns") or [], d.get("rows") or [], (), 0)[0]]
-        cells += [v for r in d.get("rows") or [] for v in r.values() if isinstance(v, str)]
-        for sheet in rec.unpack_sheets(d.get("recognition_sheets")):          # a file read by recognition only keeps no rows (review M5)
-            shown = {str(h) for h in sheet.headers}
-            headers += sorted(shown)
-            cells += [v for r in sheet.grid or [] for v in r if isinstance(v, str) and v not in shown]
-    try:
-        for n in cleaned:
-            usage_mod.check_note(n, headers=headers, file_names=[d.get("file") for d in files] + [d.get("file") for d in deck_files],
-                                 cell_texts=cells, names=[audit.get("company_name")])
-    except usage_mod.NoteRefused:
-        raise HTTPException(400, NOTE_REFUSED)
-    return cleaned
 
 
-@api.post("/audits/{audit_id}/datasets/{dtype}/decisions")
-async def decide_columns(audit_id: str, dtype: str, decisions: List[Decision], background: BackgroundTasks):
-    """Apply the analyst's decisions to one file's mapping table. The server works out what is still pending and
-    saves a mapping version when nothing is, and again on every later change."""
-    audit = await db.audits.find_one({"id": audit_id})
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
-    if not audit or not ds:
-        raise HTTPException(404, "Dataset not uploaded")
-    raw = [d.model_dump() for d in decisions]
-    for d in raw:
-        if d["action"] == "correct" and d.get("reason") not in cr.REASONS:
-            raise HTTPException(400, "Choose one of the listed reasons")
-    kept_notes = await _check_notes(audit_id, audit, [d.get("note") for d in raw
-                                                      if d["action"] == "correct" and d.get("reason") == "other"])
-    return await _apply_decisions(audit_id, dtype, ds, raw, kept_notes, background)
 
 
-async def _apply_decisions(audit_id: str, dtype: str, ds: dict, raw: list, kept_notes: list, background):
-    before = ds.get("columns_state") or _legacy_states(ds)
-    try:
-        states = cr.apply_decisions(dtype, before, raw)
-    except cr.DecisionError as exc:
-        status = 409 if exc.code == "field_held" else 400
-        raise HTTPException(status, {"code": exc.code, "column": exc.column})
-    mapping = cr.mapping_of(dtype, states)
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
-        "columns_state": states, "mapping": mapping, "mapping_source": _source_map(states),
-        "months": _months_for(dtype, states, ds.get("columns") or [], ds.get("rows") or [])}})
-    changed = [s for s, b in zip(states, before) if (s["state"], s["field"]) != (b["state"], b["field"]) or s["decision"] != b["decision"]]
-
-    def count(u):
-        for s in changed:
-            if s["decision"] in ("confirm", "correct"):
-                usage_mod.record_columns(u, "confirmed" if s["decision"] == "confirm" else "corrected")
-            if s["decision"] == "correct" and s.get("reason") in cr.REASONS:
-                usage_mod.record_reason(u, s["reason"])
-        for n in kept_notes:
-            usage_mod.keep_note(u, n)
-    await _usage_update(audit_id, count)
-    version = await _commit_mapping(audit_id, dtype, background)
-    await _mark_stale_and_maybe_recompute(audit_id)
-    logger.info("decisions: run_id=%s type=%s columns=%d pending=%d", audit_id, dtype, len(changed), cr.pending_count(states))
-    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    return sanitize(await _view(audit_id, stored, version))
 
 
-class LineDecision(BaseModel):
-    """One line of a statement file decided by the analyst (chat-upload.md section 26.7): confirmed as it is, or changed to a role
-    or a meaning of the closed lists. No text."""
-    model_config = {"extra": "forbid"}
-    row: int
-    action: Literal["confirm", "change"]
-    role: Optional[str] = None
-    meaning: Optional[str] = None
-    basis: Optional[str] = None
 
 
-@api.post("/audits/{audit_id}/datasets/{dtype}/lines")
-async def decide_lines(audit_id: str, dtype: str, decisions: List[LineDecision], background: BackgroundTasks):
-    """Apply the analyst's decisions to a statement file's line table. The map saves when nothing waits, and on every later
-    change; a computed audit is brought up to date."""
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    if not ds or not ds.get("sheet_map"):
-        raise HTTPException(404, "No sheet lines to decide")
-    sheet_map = ds["sheet_map"]
-    by_row = {line["row"]: line for line in sheet_map["lines"]}
-    for d in decisions:
-        if d.row not in by_row:
-            raise HTTPException(400, "Not a line of this sheet")
-        if (d.role is not None and d.role not in schemas_llm.SHEET_ROLES) or \
-                (d.meaning is not None and d.meaning not in schemas_llm.SHEET_MEANINGS) or \
-                (d.basis is not None and d.basis not in schemas_llm.SHEET_BASES):
-            raise HTTPException(400, "Choose one of the listed roles, meanings and bases")
-    for d in decisions:
-        line = by_row[d.row]
-        if d.action == "change":
-            line.update({k: v for k, v in (("role", d.role), ("meaning", d.meaning), ("basis", d.basis)) if v is not None})
-        line.update(source="you", decision=d.action)
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"sheet_map": sheet_map}})
-    version = await _commit_mapping(audit_id, dtype, background)
-    await _mark_stale_and_maybe_recompute(audit_id)
-    logger.info("sheet lines: run_id=%s type=%s lines=%d pending=%d", audit_id, dtype, len(decisions),
-                sheet_mod.pending_count(sheet_map))
-    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    return sanitize(await _view(audit_id, stored, version))
 
 
-class ForecastConfirm(BaseModel):
-    """The ticked lines of a forecast table, by sheet row (chat-upload.md section 20.4): the browser sends no value or label."""
-    model_config = {"extra": "forbid"}
-    rows: List[int] = Field(max_length=forecast_claims.MAX_CLAIMS)
 
 
-@api.post("/audits/{audit_id}/datasets/{dtype}/forecast-claims")
-async def confirm_forecast_claims(audit_id: str, dtype: str, payload: ForecastConfirm):
-    """Save the ticked lines of a forecast table as claims (chat-upload.md section 20): read again from the stored file, one candidate
-    per line in the table-row shape, approved, origin "forecast_file". Unticked lines are dropped. Rules only: no model call."""
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "fiscal_year_end": 1})
-    if not audit or dtype not in FIELD_DEFS:
-        raise HTTPException(404, "Dataset not uploaded")
-    fiscal_year_end = _fiscal_year_end(audit)
-    ds, found = await _forecast_found(audit_id, dtype, fiscal_year_end)
-    if not ds:
-        raise HTTPException(404, "Dataset not uploaded")
-    if not found:
-        raise HTTPException(400, "This file is not read as claims")
-    lines = {line["row"] for line in found["lines"]}
-    if not set(payload.rows) <= lines:
-        raise _rejected("rows", "choose lines of the list")
-    if await _saved_forecast(audit_id, ds.get("file_hash")):
-        raise HTTPException(409, "The claims of this file are already saved")
-    existing = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "order": 1}).to_list(10000)
-    order = max((c.get("order", 0) for c in existing), default=-1) + 1
-    made = forecast_claims.candidates(found, set(payload.rows), ds, fiscal_year_end)
-    for i, c in enumerate(made):
-        await db[decks.CANDIDATES_COLLECTION].insert_one({**c, "audit_id": audit_id, "deck_id": None, "file": ds.get("file"),
-                                                          "id": str(uuid.uuid4()), "order": order + i, "status": "approved"})
-    saved = sum(len(c["by_period"]) for c in made)
-    logger.info("forecast claims: run_id=%s lines=%d claims=%d", audit_id, len(made), saved)
-    if made:                            # the file no longer counts toward Calculate: results computed without it are brought up to date
-        await _mark_stale_and_maybe_recompute(audit_id)
-    return {"saved": saved, "lines": len(made)}
 
 
-def _decisions_from_mapping(states: list, mapping: dict) -> list:
-    """The older whole-mapping save as decisions: what the mapping keeps is confirmed or corrected, a mapped or
-    pending column it leaves out is not used. Not-used first, so a field changes hands without a clash."""
-    want = {c: f for f, c in mapping.items() if c}
-    drop, keep = [], []
-    for s in states:
-        field = want.get(s["column"])
-        if field is None and (s["state"] in cr.MAPPED or s["state"] == "needs"):
-            drop.append({"column": s["column"], "action": "confirm" if s["state"] == "needs" else "correct",
-                         "field": None, "reason": "not_needed"})
-        elif field is not None and s["field"] == field and s["state"] in cr.PENDING:
-            keep.append({"column": s["column"], "action": "confirm", "field": field})
-        elif field is not None and s["field"] != field:
-            keep.append({"column": s["column"], "action": "confirm" if s["state"] == "needs" else "correct",
-                         "field": field, "reason": "other_column_right"})
-    return drop + keep
 
 
-@api.put("/audits/{audit_id}/datasets/{dtype}/mapping")
-async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload, background: BackgroundTasks):
-    """Save the FX rates and billing terms, and (the older whole-mapping save) the mapping as decisions."""
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
-    if not ds:
-        raise HTTPException(404, "Dataset not uploaded")
-    saved = {"billing_terms": payload.billing_terms}
-    if "fx" in payload.model_fields_set:       # the rates live on the audit now (PUT /fx); an older client may still send them
-        saved["fx"] = payload.fx
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": saved})
-    if payload.mapping is None:
-        await _mark_stale_and_maybe_recompute(audit_id)
-        return {"ok": True}
-    if ds.get("columns_state") is None:       # stored before the chat upload: the mapping is the analyst's, as before
-        await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
-            "mapping": payload.mapping, "mapped_at": usage_mod.now(), "mapping_source": {}}})
-        await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
-            "audit_id": audit_id, "dtype": dtype, "file_hash": ds.get("file_hash"),
-            "header_key": structures.header_key(dtype, ds.get("columns") or []),
-            "version": len(await _versions(audit_id, dtype)) + 1, "mapping": payload.mapping, "saved_at": usage_mod.now(),
-            "columns": [{"column": c, "field": f, "source": "decision", "confidence": None, "decision": "confirm", "reason": None}
-                        for f, c in payload.mapping.items() if c]})
-        await _add_customers(audit_id, {**ds, "mapping": payload.mapping})
-        await _mark_stale_and_maybe_recompute(audit_id)
-        if dtype in ("revenue", "pnl"):
-            background.add_task(structures.process_waiting_decks_safely, db, audit_id)
-        return {"ok": True}
-    decisions = _decisions_from_mapping(ds["columns_state"], payload.mapping)
-    await _apply_decisions(audit_id, dtype, ds, decisions, [], background)
-    return {"ok": True}
 
 
-def customer_column(dataset: dict) -> Optional[str]:
-    """The column whose cells are customer names: the revenue file's mapped customer column; for the
-    CRM file, which has no customer field of its own, the column the FIELD_DEFS customer aliases find."""
-    if dataset.get("dtype") == "revenue":
-        return (dataset.get("mapping") or {}).get("customer_id")
-    return suggest_mapping("revenue", dataset.get("columns") or []).get("customer_id")
 
 
-async def _add_customers(audit_id: str, dataset: dict) -> None:
-    """Every customer name of a mapped revenue or CRM file joins the audit's pseudonym mapping, shared
-    by the narrative and structure paths (llm-structure-reading.md section 3)."""
-    if dataset.get("dtype") not in ("revenue", "crm"):
-        return
-    col = customer_column(dataset)
-    if not col:
-        return
-    rows = dataset.get("rows")
-    if rows is None:
-        full = await db.datasets.find_one({"audit_id": audit_id, "dtype": dataset["dtype"]}, {"rows": 1})
-        rows = (full or {}).get("rows") or []
-    await llm_redaction.add_customers(db, audit_id, (r.get(col) for r in rows))
 
 
 # ---------------------------------------------------------------------------
@@ -2693,19 +1743,6 @@ async def _with_entries(audit_id: str, audit: dict, found: list) -> list:
     return _apply_plan(found, await _entry_plan(audit_id, audit, found))
 
 
-async def _mapping_counts(audit_id: str, audit: dict, datasets: list) -> tuple:
-    """(the mapping counts of Run audit, whether a revenue file is there). A file read by recognition only has no column to map: it
-    waits for the choices of its recognition. A P&L confirmed with two or more periods is the revenue file (section 8)."""
-    waiting = {}
-    for d in datasets:
-        if d.get("recognition_only"):
-            result = await _recognition_of(audit_id, audit, d)
-            waiting[d["dtype"]] = rec.choices_waiting(result) if result else 0
-    pnl = next((d for d in datasets if d["dtype"] == "pnl"), None)
-    revenue = next((d for d in datasets if d["dtype"] == "revenue"), None)
-    has_revenue = await _is_revenue_file(audit_id, audit, revenue) or bool(
-        pnl and rec.pnl_confirmed(await _recognition_of(audit_id, audit, pnl)))
-    return run_audit.mapping_counts(datasets, waiting), has_revenue
 
 
 @api.post("/audits/{audit_id}/run/{stage}")
@@ -2719,29 +1756,23 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
-    datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
-    counts, has_revenue = await _mapping_counts(audit_id, audit, datasets)
-    mapped = bool(datasets) and has_revenue and not counts["open"] and not counts["missing_required"]
+    files = await db.datasets.count_documents({"audit_id": audit_id})
     result = None
     try:
         if stage == "mapping":
-            if not datasets:
-                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.NO_FILES, **counts)
-            elif not has_revenue:
-                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.NO_REVENUE, **counts)
-            elif not mapped:
-                result = run_audit.stage_result(stage, run_audit.NEEDS_REVIEW, None, **counts)
+            if not files:
+                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.NO_FILES, files=0)
+            elif int(audit.get("sheet_reads_pending") or 0) > 0:
+                result = run_audit.stage_result(stage, run_audit.RUNNING, run_audit.FILES_READING, files=files)
             else:
-                result = run_audit.stage_result(stage, run_audit.DONE, None, **counts)
+                result = run_audit.stage_result(stage, run_audit.DONE, None, files=files)
         elif stage == "engine":
-            if not mapped:
-                result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_MAPPING)
-            else:
-                # No month confirmed and none typed: the audit runs everything that does not depend on it (read-check-review.md section 6).
-                await _run_compute(audit_id)
-                if await llm_gateway.reviewer_startup_problem(db) is None:        # no reviewer prompt: Run audit goes on without the reviewer stage
-                    background.add_task(_review_safely, audit_id)        # one review per audit and input; a review already made is kept
-                result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF)
+            # Nothing waits for a confirmation: the map is the reading. No month confirmed and none typed: the audit runs everything that
+            # does not depend on it (read-check-review.md section 6).
+            await _run_compute(audit_id)
+            if await llm_gateway.reviewer_startup_problem(db) is None:        # no reviewer prompt: Run audit goes on without the reviewer stage
+                background.add_task(_review_safely, audit_id)        # the reviewer runs again whenever its last status is not "read"
+            result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF)
         else:
             if not audit.get("results"):
                 result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_ENGINE)
@@ -2780,7 +1811,6 @@ async def review_summary(audit_id: str):
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
-    datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
     found = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000))
     found = await _with_entries(audit_id, audit, found)
     auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") == "approved"]
@@ -2788,12 +1818,11 @@ async def review_summary(audit_id: str):
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
     open_turnover = await _open_turnover_ids(audit_id, audit, found) if pending else set()
     return sanitize({
-        "mappings": (await _mapping_counts(audit_id, audit, datasets))[0],
         "claims": {"auto_accepted": len(auto), "auto_accepted_ids": auto, "open": len(pending),
                    "turnover_open": len(open_turnover & {c["id"] for c in pending})},
         "computed": bool(audit.get("results")),
         "results_stale": run_audit.results_stale(audit),
-        "engine_stale": run_audit.engine_stale(audit, datasets),
+        "engine_stale": run_audit.engine_stale(audit),
         "blockers": await _blocker_list(audit_id, audit)})
 
 
@@ -2807,7 +1836,7 @@ def merged_fx(audit: dict, file_fx: Optional[dict]) -> dict:
 
 
 async def _fx(audit_id: str, audit: dict) -> dict:
-    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"fx": 1}) or {}
+    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"fx": 1}) or {}      # rates saved with a file of an older audit
     return merged_fx(audit, revenue.get("fx"))
 
 
@@ -2910,14 +1939,6 @@ def _relations(audit: dict, rows: list) -> dict:
     return claim_groups.relate(rows, audit.get("group_choices"), _fiscal_year_end(audit))
 
 
-def _csv_cell(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return str(value).lower()
-    if isinstance(value, dict):
-        return f"{value.get('file')} · {value.get('sheet')} · {value.get('rows')}"
-    return str(value)
 
 
 def _marked(audit: dict, rows: list) -> list:
@@ -3230,28 +2251,12 @@ async def audit_blockers(audit_id: str):
     return sanitize({"blockers": await _blocker_list(audit_id, audit)})
 
 
-async def _is_mapped(audit_id: str, audit: dict, ds: dict) -> bool:
-    """A file's mapping is saved; a file read by recognition only is mapped when none of its choices waits (section 8)."""
-    if ds.get("recognition_only"):
-        result = await _recognition_of(audit_id, audit, ds)
-        return bool(result and result["recognised"] and not result["needs_click"])
-    return bool(ds.get("mapped_at"))
 
 
 async def _revenue_satisfied(database, audit_id: str) -> Optional[bool]:
-    """The deck-reading gate's check, the blocker banner's own (`_blocker_list`): the audit has its revenue file when a revenue file (not
-    one read as claims, with a monthly series) is mapped by `_is_mapped` (a column mapping, a statement's line map or a recognition with
-    no choice left), or, with none, a P&L confirmed with two or more periods. None: another database, or no audit."""
-    if database is not db:
-        return None
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
-    if not audit:
-        return None
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
-    if ds and ds.get("file_hash") not in await _claims_files(audit_id) and await _is_revenue_file(audit_id, audit, ds):
-        return await _is_mapped(audit_id, audit, ds)
-    pnl = await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl"}, {"_id": 0, "rows": 0})
-    return bool(pnl and rec.pnl_confirmed(await _recognition_of(audit_id, audit, pnl)))
+    """The deck-reading gate: a deck never waits for a file to be mapped, because there is no mapping to wait for (read-check-review.md
+    section 12). None: another database."""
+    return True if database is db else None
 
 
 structures.revenue_satisfied = _revenue_satisfied
@@ -3264,20 +2269,9 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
     if audit.get("results_stale"):      # a replacement, not a fourth blocker: one line and no blockers while results are stale
         return [{"kind": "results_stale", "text": run_audit.STALE_LABEL}]
     out = []
-    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
-    if revenue and revenue.get("file_hash") in await _claims_files(audit_id):
-        revenue = None                  # read as claims (chat-upload.md section 20): no revenue file counts
-    if revenue and not await _is_revenue_file(audit_id, audit, revenue):
-        revenue = None                  # a file with no monthly series is no revenue file (decision 1 on PR 135)
-    if not revenue:
-        pnl = await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl"}, {"_id": 0, "rows": 0})
-        # A P&L confirmed with two or more periods is the revenue file (revenue-file-recognition.md section 8, decision 3)
-        if not (pnl and rec.pnl_confirmed(await _recognition_of(audit_id, audit, pnl))):
-            out.append({"kind": "revenue_file_missing", "text": "Revenue file missing: upload and map it to compute metrics."})
-    elif not await _is_mapped(audit_id, audit, revenue):
-        # The file is there; its mapping waits for the analyst. Still the same hard blocker, worded as what is left to do.
-        out.append({"kind": "revenue_file_missing", "text": "Revenue file uploaded – confirm the mapping to compute metrics."})
-    if audit.get("results"):
+    if not [c for c in await readings_mod.checks_for(db, audit_id) if c.get("status") == "read"]:
+        out.append({"kind": "revenue_file_missing", "text": "No file has been read yet: upload a file and run the audit."})
+    if audit.get("results") and flags.old_claims():          # OLD_CLAIMS off: a contradicted claim is not a blocker (PR 4)
         _, rows = await _claim_rows(audit_id, audit)
         selected = set(verdict_mod.banner_ids(rows, (audit.get("ic_inputs") or {}).get("top5")))
         # a Contradicted part of a selected group is a Top-5 claim contradicted: a verified annual total does not hide it (claim-groups.md section 4)
@@ -3429,7 +2423,8 @@ async def export_memo(audit_id: str):
     if not audit:
         raise HTTPException(404, "Audit not found")
     ctx = await _ic_context(audit_id, audit)
-    rows, results = ctx["rows"], ctx["results"]
+    claims = flags.old_claims()
+    rows, results = (ctx["rows"] if claims else []), ctx["results"]       # OLD_CLAIMS off: the report holds no claim (PR 4)
     refusal = None
     text = ""
     try:
@@ -3445,13 +2440,15 @@ async def export_memo(audit_id: str):
         datasets = await db.datasets.find({"audit_id": audit_id}, {"dtype": 1, "file": 1, "sheet": 1, "_id": 0}).to_list(10)
         deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"file": 1, "_id": 0}).to_list(100)
         meta = {**audit, "results": results}
-        ver = verdict_mod.verdict(rows, results, ctx["ic"].get("top5"), ctx["open_questions"], ctx["conflicts"])
+        ver = verdict_mod.verdict(rows, results, ctx["ic"].get("top5"), ctx["open_questions"], ctx["conflicts"]) if claims else \
+            {"status": "ok", "outcome": None, "five": [], "top5": {"changed": False, "in_force": []}, "reasons": []}
         try:
             tables = ic_memo.workbook_tables(build_export_workbook(meta, results))
         except (contract.ContractError, fmt.UnitError):
             tables = []                                   # the memo itself refuses on the contract before it reads a figure
         text = ic_memo.build_memo(
-            audit=audit, results=results, rows=rows, ver=ver, key=verdict_mod.key_gates(rows, ver["top5"]["in_force"]),
+            claims=claims, audit=audit, results=results, rows=rows, ver=ver,
+            key=verdict_mod.key_gates(rows, ver["top5"]["in_force"]) if claims else {"gates": [], "note": None},
             gaps=ctx["gaps"], ic={**ctx["ic"], "open_questions": ctx["open_questions"]},
             blockers=await _blocker_list(audit_id, audit), narratives=narratives,
             files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
@@ -3476,12 +2473,10 @@ async def export_memo(audit_id: str):
 STALE_ON_CHANGE_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month", "fiscal_year_end"}
 
 
-async def _role_inputs(audit_id: str, audit: dict) -> Optional[dict]:
+async def _role_inputs(audit_id: str, audit: dict) -> dict:
     """The engine's inputs from the stored map (docs/design/read-check-review.md section 16): the role table of the audit's readings, with each
-    row's stored series and the overrides in force, and the deck figures that did not fail their page check. None when no file has been read."""
+    row's stored series and the overrides in force, and the deck figures that did not fail their page check. Empty when no file has been read."""
     done = [c for c in await readings_mod.checks_for(db, audit_id) if c.get("status") == "read"]
-    if not done:
-        return None
     files = []
     for check in sorted(done, key=lambda c: c.get("file") or ""):
         reading = await db[readings_mod.READINGS].find_one({"key": check.get("reading_key")}, {"_id": 0})
@@ -3489,7 +2484,8 @@ async def _role_inputs(audit_id: str, audit: dict) -> Optional[dict]:
             continue
         file_map = readings_mod.effective(reading["file_map"], await readings_mod.overrides_for(db, audit_id, reading["key"]))
         items = [i for i in check.get("items") or [] if str(i.get("key", "")).startswith("row:")]
-        files.append({"file": check.get("file"), "file_map": file_map,
+        labels = {f"{sh['sheet']}:{ln['row']}": ln.get("label") for sh in check.get("lines") or [] for ln in sh.get("lines") or []}
+        files.append({"file": check.get("file"), "file_map": file_map, "labels": labels,
                       "rejected": [i["key"] for i in items if i["outcome"] == checks_mod.REJECTED],
                       "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT]})
     deck = [{**f, "file": d["file"], "page": f["source"]["page"]} for d in await deck_figures.checked(db, audit_id) for f in d["figures"]
@@ -3502,117 +2498,21 @@ async def _run_compute(audit_id: str) -> dict:
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
-    roles = await _role_inputs(audit_id, a)
-    if roles is not None:
-        return await _compute_on_the_map(audit_id, a, roles)
-    read = await _claims_files(audit_id)        # a file read as claims is not an engine input (chat-upload.md section 20)
-    ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)
-          if d.get("file_hash") not in read or d.get("sheet_map")}       # a statement file stays an input (section 26.6)
-    recognised_ds, recognised, from_pnl = None, None, False
-    if "revenue" in ds and not await _is_revenue_file(audit_id, a, ds["revenue"]):
-        del ds["revenue"]                      # a file with no monthly series is no revenue file (decision 1 on PR 135)
-    if "revenue" in ds and ds["revenue"].get("recognition_only"):
-        recognised_ds = ds["revenue"]
-    elif "revenue" not in ds and ds.get("pnl") and ds["pnl"].get("recognition_sheets"):
-        recognised_ds, from_pnl = ds["pnl"], True          # a P&L confirmed with two or more periods is the revenue file (section 8)
-    if recognised_ds is not None:
-        recognised = await _recognition_of(audit_id, a, recognised_ds)
-        if from_pnl and not rec.pnl_confirmed(recognised):
-            recognised_ds = recognised = None
-    if "revenue" not in ds and recognised is None:
-        raise HTTPException(409, "Revenue lines are required before compute")
-    for d in ds.values():          # a file read by the chat upload waits for the analyst (chat-upload.md section 4.3)
-        if d.get("recognition_only"):
-            if not recognised or recognised["needs_click"]:
-                raise HTTPException(409, "Choices wait for your decision before compute")
-            continue
-        if d["dtype"] == "revenue" and (d.get("recognition_sheets") or d.get("recognition_facts")) \
-                and await _type_choice_open(audit_id, a, d):
-            raise HTTPException(409, "Choices wait for your decision before compute")
-        if d.get("sheet_map"):
-            if sheet_mod.pending_count(d["sheet_map"]):
-                raise HTTPException(409, "Lines wait for your decision before compute")
-            continue
-        states = d.get("columns_state")
-        if states is not None and cr.pending_count(states):
-            raise HTTPException(409, "Columns wait for your decision before compute")
-        if states is not None and cr.missing_required(d["dtype"], states):
-            raise HTTPException(409, "A required field is not mapped")
-
-    def read(dtype):
-        d = ds[dtype]
-        return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1, d.get("constants"))
-    revenue_ds = ds.get("revenue") or {}
-    rev = pd.DataFrame() if revenue_ds.get("recognition_only") or "revenue" not in ds else read("revenue")
-    crm = read("crm") if "crm" in ds else pd.DataFrame()
-    statement = sheet_mod.feed(ds["pnl"]["sheet_map"], _fiscal_year_end(a), ds["pnl"].get("unit_scale") or 1,
-                               {"file": ds["pnl"]["file"], "sheet": ds["pnl"]["sheet"]}, a.get("as_of_month")) \
-        if ds.get("pnl", {}).get("sheet_map") else None
-    if statement:                  # a statement: its monthly P&L, never a split of a year or a quarter (section 26.6)
-        pnl = statement_pnl(statement)
-    else:
-        pnl = read("pnl") if "pnl" in ds else pd.DataFrame()
-
-    fx = merged_fx(a, revenue_ds.get("fx"))
-    config = {
-        "reporting_currency": a["reporting_currency"], "target_arr": a["target_arr"],
-        "target_date": a["target_date"], "fx": fx,
-        "billing_terms": revenue_ds.get("billing_terms", {}), "default_l": 1,
-        "as_of_month": a.get("as_of_month"),
-    }
-    if recognised is not None:     # the series of a recognised file with no customer rows, read to its confirmed boundary
-        best = next((x for x in rec.unpack_sheets(recognised_ds["recognition_sheets"]) if x.sheet == recognised["sheet"]), None)
-        config["recognition"] = rec.engine_feed(recognised, recognised_ds["file"], recognised["sheet"],
-                                                best.unit_scale if best else 1, from_pnl)
-    if statement and statement["rows"]:
-        config["pnl_rows"] = statement["rows"]          # the sheet rows of the P&L lines: the P&L citations name them
-    sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
-    failures = []
-
-    def on_error(exc):
-        failures.append(type(exc).__name__)
-        _log_metric_error(exc, audit_id)
-    try:
-        views = candidate_views({t: d for t, d in ds.items() if not d.get("sheet_map")})
-        results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=views, on_error=on_error,
-                                          yearly=(statement or {}).get("yearly"), statement=(statement or {}).get("lines")))
-    except Exception as exc:
-        failed = failures + [type(exc).__name__]        # bound before the lambda: `exc` is unbound once the block ends
-        await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failed))
-        raise
-    await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failures))
-    await db.audits.update_one(
-        {"id": audit_id},
-        {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
-                  "metrics_stale": False, "setup_stale": False}},
-    )
-    await _enter_matched_claims(audit_id, await db.audits.find_one({"id": audit_id}))
-    return results
+    return await _compute_on_the_map(audit_id, a, await _role_inputs(audit_id, a))
 
 
 async def _compute_on_the_map(audit_id: str, a: dict, roles: dict) -> dict:
-    """Run the engine with its inputs from the stored map. Customer-level revenue lines and CRM deals still come from their own files, when
-    the audit holds them with a mapping; the metrics that need them say so when it does not. Nothing here waits for an answer."""
-    held = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)
-            if d["dtype"] in ("revenue", "crm") and d.get("mapping") and not d.get("recognition_only") and not d.get("sheet_map")}
-
-    def read(dtype):
-        d = held[dtype]
-        return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1, d.get("constants"))
-    rev = read("revenue") if "revenue" in held else pd.DataFrame()
-    crm = read("crm") if "crm" in held else pd.DataFrame()
-    fx = merged_fx(a, (held.get("revenue") or {}).get("fx"))
-    config = {"reporting_currency": a["reporting_currency"], "target_arr": a["target_arr"], "target_date": a["target_date"], "fx": fx,
-              "billing_terms": (held.get("revenue") or {}).get("billing_terms", {}), "default_l": 1, "as_of_month": a.get("as_of_month"),
-              "roles": roles}
-    sources = {t: {"file": held[t]["file"], "sheet": held[t]["sheet"]} for t in held}
+    """Run the engine with its inputs from the stored map (read-check-review.md section 16). The metrics that need customer-level revenue
+    lines or CRM deals say so. Nothing here waits for an answer."""
+    config = {"reporting_currency": a["reporting_currency"], "target_arr": a["target_arr"], "target_date": a["target_date"],
+              "fx": merged_fx(a, None), "billing_terms": {}, "default_l": 1, "as_of_month": a.get("as_of_month"), "roles": roles}
     failures = []
 
     def on_error(exc):
         failures.append(type(exc).__name__)
         _log_metric_error(exc, audit_id)
     try:
-        results = sanitize(ge.compute_all(rev, crm, pd.DataFrame(), config, sources, files=candidate_views(held), on_error=on_error))
+        results = sanitize(ge.compute_all(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), config, {}, on_error=on_error))
     except Exception as exc:
         failed = failures + [type(exc).__name__]
         await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failed))
@@ -4249,13 +3149,12 @@ async def seed_demo():
                  "mapped_at": datetime.now(timezone.utc).isoformat()},
                 upsert=True,
             )
-            await _add_customers(audit_id, {"dtype": dtype, "columns": list(df.columns), "rows": recs, "mapping": mapping})
             norm[dtype] = normalize(recs, dtype, mapping)
             uploads[dtype] = {"file": meta[dtype]["file"], "sheet": meta[dtype]["sheet"], "columns": list(df.columns),
                               "rows": recs, "mapping": mapping}
         fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
         fx[spec["reporting_currency"].upper()] = 1.0
-        found = as_of_mod.detect(uploads, spec["fiscal_year_end"])          # detected as on Map, stored once on the audit
+        found = demo_data.detect_month(uploads)          # detected as on Map, stored once on the audit
         as_of_month = as_of_mod.month_end(found["month"]) if found else None
         config = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
                   "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1,
@@ -4277,10 +3176,6 @@ async def seed_demo():
         })
     logger.info("Seeded demo audits")
 
-
-@app.on_event("startup")
-async def mark_stale_label_corrections():
-    await structures.mark_label_corrections_stale(db)      # hotfix of PR 182: label corrections to the page title are read again
 
 
 @app.on_event("startup")

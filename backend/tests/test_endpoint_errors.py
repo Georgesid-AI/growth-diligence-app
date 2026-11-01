@@ -143,7 +143,7 @@ def test_installing_twice_is_harmless():
 
 # --- the redaction layer must not break records other formatters rely on ---------------------
 
-def _access_record(path="/api/fields"):
+def _access_record(path="/api/"):
     return logging.getLogger("uvicorn.access").makeRecord(
         "uvicorn.access", logging.INFO, "f", 1, '%s - "%s %s HTTP/%s" %d',
         ("1.2.3.4:5", "GET", path, "1.1", 200), None)
@@ -156,8 +156,8 @@ def _access_formatter():
 
 def test_an_access_log_record_keeps_its_arguments_and_formats_with_uvicorns_formatter():
     record = _access_record()
-    assert record.args == ("1.2.3.4:5", "GET", "/api/fields", "1.1", 200)
-    assert _access_formatter().format(record) == '1.2.3.4:5 - "GET /api/fields HTTP/1.1" 200 OK'
+    assert record.args == ("1.2.3.4:5", "GET", "/api/", "1.1", 200)
+    assert _access_formatter().format(record) == '1.2.3.4:5 - "GET /api/ HTTP/1.1" 200 OK'
 
 
 def test_a_secret_in_an_access_path_is_masked_and_the_record_still_formats(monkeypatch):
@@ -193,9 +193,9 @@ def test_a_normal_request_produces_no_logging_error(client, monkeypatch):
     old_level = access.level
     access.setLevel(logging.INFO)
     try:
-        assert client.get("/api/fields").status_code == 200
+        assert client.get("/api/").status_code == 200
         # what uvicorn does after every response
-        access.info('%s - "%s %s HTTP/%s" %d', "testclient:1", "GET", "/api/fields", "1.1", 200)
+        access.info('%s - "%s %s HTTP/%s" %d', "testclient:1", "GET", "/api/", "1.1", 200)
     finally:
         access.removeHandler(handler)
         access.setLevel(old_level)

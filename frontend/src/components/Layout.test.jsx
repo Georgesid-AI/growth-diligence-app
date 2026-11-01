@@ -18,7 +18,7 @@ jest.mock("react-router-dom", () => ({
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const BLOCKERS = [
-  { kind: "revenue_file_missing", text: "Revenue file missing: upload and map it to compute metrics." },
+  { kind: "revenue_file_missing", text: "No file has been read yet: upload a file and run the audit." },
   { kind: "claim_contradicted", text: "Top-5 claim contradicted: revenue 100 EUR vs 80 EUR observed (board.pptx, slide 4)." },
   { kind: "revenue_reconciliation", text: "Revenue file and P&L differ by 10% over 2024-01–2024-12 (13,200 EUR vs 12,000 EUR).", link: "/audit/a1/diagnostics" },
 ];
@@ -62,7 +62,7 @@ test("only the revenue file missing: no banner until Calculate is pressed, then 
   expect(q("blocker-banner")).toBeNull();
   setCalculatePressed("a1");
   await act(async () => { window.dispatchEvent(new Event(BLOCKERS_CHANGED)); });
-  expect(q("blocker-revenue_file_missing").textContent).toContain("Revenue file missing: upload and map it to compute metrics.");
+  expect(q("blocker-revenue_file_missing").textContent).toContain("No file has been read yet: upload a file and run the audit.");
   expect(q("blocker-revenue-note").textContent).toBe(REVENUE_REQUIRED_NOTE);
 });
 

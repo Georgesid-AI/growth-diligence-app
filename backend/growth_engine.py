@@ -1869,7 +1869,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     # as-of month is deferred revenue and must not appear in current figures.
     as_of = _resolve_as_of(config.get("as_of_month"))
     roles = config.get("roles")            # the stored map's role table (app/role_engine.py): the engine's inputs when it is given
-    mapped = role_engine.compute(roles["table"], as_of, roles.get("fye", 12), roles.get("deck")) if roles is not None else None
+    mapped = role_engine.compute(roles["table"], as_of, roles.get("fye", 12), roles.get("deck"), on_error) if roles is not None else None
     if mapped and yearly is None:
         yearly = mapped["yearly"]
     if not mrr.empty and as_of is not None:

@@ -205,28 +205,10 @@ def api(monkeypatch):
     return TestClient(server.app, raise_server_exceptions=False), db
 
 
-def test_mapping_the_revenue_and_crm_files_adds_their_customer_names(api):
-    client, db = api
-    revenue = "Client,Invoice Date,Amount,Currency\nNorthwind Trading,2025-01-31,100,EUR\nAcme,2025-02-28,200,EUR\n"
-    client.post("/api/audits/audit-1/datasets/revenue/upload", files={"file": ("rev.csv", revenue)})
-    mapping = {"customer_id": "Client", "invoice_date": "Invoice Date", "amount": "Amount", "currency": "Currency"}
-    assert client.put("/api/audits/audit-1/datasets/revenue/mapping", json={"mapping": mapping}).status_code == 200
-    crm = "Deal ID,Account,Created,Close Date,Stage,Amount\nD1,Zeta Retail,2025-01-01,2025-02-01,won,10\n"
-    client.post("/api/audits/audit-1/datasets/crm/upload", files={"file": ("crm.csv", crm)})
-    assert client.put("/api/audits/audit-1/datasets/crm/mapping",
-                      json={"mapping": {"deal_id": "Deal ID"}}).status_code == 200
-    stored = db["audits"].docs[0]["token_map"]
-    assert set(stored) == {"Acme", "Northwind Trading", "Zeta Retail"}, "the CRM customer column is found by alias"
-    assert sorted(stored.values()) == ["Client-01", "Client-02", "Client-03"]
-
-
 def test_the_token_map_is_never_returned_by_the_api(api):
+    """The map lives on the audit record only (rule 16): learned while a payload is masked, never in an API response."""
     client, db = api
-    revenue = "Client,Invoice Date,Amount,Currency\nNorthwind Trading,2025-01-31,100,EUR\n"
-    client.post("/api/audits/audit-1/datasets/revenue/upload", files={"file": ("rev.csv", revenue)})
-    mapping = {"customer_id": "Client", "invoice_date": "Invoice Date", "amount": "Amount", "currency": "Currency"}
-    assert client.put("/api/audits/audit-1/datasets/revenue/mapping", json={"mapping": mapping}).status_code == 200
-    assert db["audits"].docs[0]["token_map"] == {"Northwind Trading": "Client-01"}
+    db["audits"].docs[0]["token_map"] = {"Northwind Trading": "Client-01"}
     for url in ("/api/audits/audit-1", "/api/audits"):
         body = client.get(url).text
-        assert "token_map" not in body and "Client-01" not in body, url
+        assert "token_map" not in body and "Client-01" not in body and "Northwind" not in body, url

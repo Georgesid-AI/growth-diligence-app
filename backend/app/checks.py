@@ -22,7 +22,7 @@ from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 from .structures import redact
-from .structures import sheet as sheet_mod
+from . import periods as sheet_mod
 
 CONFIRMED, REJECTED, CANNOT = "confirmed", "rejected", "cannot_check"
 OUTCOMES = (CONFIRMED, REJECTED, CANNOT)
@@ -677,11 +677,6 @@ def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
     return {"items": items, "counts": counts, "months": months}
 
 
-# ---------------------------------------------------------------------------
-# The second reading of a rejected item (section 5): merged by the item's key, checked again, classified
-# ---------------------------------------------------------------------------
-def _key_of_row(sheet: str, row: Dict) -> str:
-    return f"row:{sheet}:{row['row']}"
 
 
 def _figure_key(index: int, figure: Dict) -> str:

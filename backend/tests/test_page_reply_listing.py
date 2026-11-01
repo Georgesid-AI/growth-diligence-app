@@ -15,7 +15,7 @@ pytest.importorskip("pdfplumber")
 
 import test_llm_gateway as t  # noqa: E402
 from pdf_support import pdf_page  # noqa: E402
-from test_chat_upload import AUDIT, SAMPLE  # noqa: E402
+from upload_support import AUDIT, SAMPLE  # noqa: E402
 
 from app import decks  # noqa: E402
 from app.llm import gateway  # noqa: E402

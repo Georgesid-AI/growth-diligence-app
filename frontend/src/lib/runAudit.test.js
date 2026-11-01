@@ -28,17 +28,8 @@ test("one press: the data files, the three stages in order, the decks before the
   const out = await runAudit({ api, auditId: "a1", pick });
   expect(out).toEqual({ stopped: null, status: "done" });
   expect(calls).toEqual(["upload:revenue.csv", "stage:mapping", "stage:engine", "deck:board.pptx", "stage:claims"]);
-  expect(api.uploadChatFile.mock.calls[0][2]).toEqual({ replace: true });
+  expect(api.uploadChatFile.mock.calls[0]).toHaveLength(2);           // the file and nothing else: no type, no replace
   expect(pick).toEqual({ data: [], decks: [] });
-});
-
-test("it stops at the stage that needs the analyst and says which", async () => {
-  const { api, calls } = mk({ mapping: () => ({ stage: "mapping", status: "needs_review", open: 1, auto: 16 }) });
-  const seen = [];
-  const out = await runAudit({ api, auditId: "a1", pick: splitFiles([file("revenue.csv")]), onUpdate: (k, r) => seen.push([k, r.status]) });
-  expect(out).toEqual({ stopped: "mapping", status: "needs_review" });
-  expect(calls).toEqual(["upload:revenue.csv", "stage:mapping"]);
-  expect(seen).toEqual([["mapping", "running"], ["mapping", "needs_review"]]);
 });
 
 test("a failed stage shows the server's plain-English message and Retry stage carries on from it, sending only the files left", async () => {
@@ -62,13 +53,6 @@ test("a file that cannot be sent fails the stage with a message and stays in the
   expect(out).toEqual({ stopped: "mapping", status: "failed" });
   expect(seen.at(-1).message).toBe("Only .xlsx and .csv files are supported");
   expect(pick.data).toHaveLength(1);
-});
-
-test("a file of no known type is not guessed: the stage fails and says where to choose", async () => {
-  const { api } = mk({ upload: () => ({ status: "unknown_type" }) });
-  const seen = [];
-  await runAudit({ api, auditId: "a1", pick: splitFiles([file("misc.csv")]), onUpdate: (k, r) => seen.push(r) });
-  expect(seen.at(-1).message).toContain("Could not tell what misc.csv holds");
 });
 
 test("decks still being read are waited for, then the stage is asked again", async () => {
@@ -105,10 +89,10 @@ describe("stagesFromState", () => {
   test("mapped files, results and read decks: every stage is done", () => {
     expect(status({ views: [view()], summary: { computed: true }, deckData: { decks: [{ deck_id: "d" }], candidates: [{ status: "approved" }] } })).toEqual(["done", "done", "done"]);
   });
-  test("a pending column or a missing required field needs review; so does a pending claim", () => {
-    expect(status({ views: [view({ pending: 1 })] })[0]).toBe("needs_review");
-    expect(status({ views: [view({ missing_required: ["month"] })] })[0]).toBe("needs_review");
-    expect(status({ deckData: { decks: [{ deck_id: "d" }], candidates: [{ status: "pending" }] } })[2]).toBe("needs_review");
+  test("nothing needs review: a file with answers open, or a pending claim, leaves its stage done (read-check-review.md section 12)", () => {
+    expect(status({ views: [view({ pending: 1 })] })[0]).toBe("done");
+    expect(status({ views: [view({ missing_required: ["month"] })] })[0]).toBe("done");
+    expect(status({ deckData: { decks: [{ deck_id: "d" }], candidates: [{ status: "pending" }] } })[2]).toBe("done");
   });
   test("a deck with no claim in it is done: it was read", () => {
     expect(status({ deckData: { decks: [{ deck_id: "d" }], candidates: [] } })[2]).toBe("done");

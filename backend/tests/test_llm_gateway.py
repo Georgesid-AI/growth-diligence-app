@@ -892,7 +892,7 @@ def test_usage_endpoint_totals():
     assert usage.call_cap == guards.MAX_CALLS_PER_RUN
 
 
-def test_usage_by_step_splits_the_narrative_steps_deck_reading_and_column_mapping_and_adds_up_to_the_totals():
+def test_usage_by_step_splits_the_narrative_steps_and_deck_reading_and_adds_up_to_the_totals():
     """docs/specs/verdict-and-memo.md section 8: each narrative step by name, `structures` split by deck_id, steps = totals."""
     async def run():
         db = make_db()
@@ -905,9 +905,8 @@ def test_usage_by_step_splits_the_narrative_steps_deck_reading_and_column_mappin
         return await gateway.usage_for_run(db, RUN_ID)
 
     usage = asyncio.run(run())
-    assert set(usage.by_step) == {"growth_engine", "deck_structure", "column_mapping"}
-    assert (usage.by_step["deck_structure"].calls, usage.by_step["deck_structure"].cache_hits) == (1, 1)
-    assert (usage.by_step["column_mapping"].calls, usage.by_step["column_mapping"].input_tokens) == (2, 450)
+    assert set(usage.by_step) == {"growth_engine", "deck_structure"}
+    assert (usage.by_step["deck_structure"].calls, usage.by_step["deck_structure"].cache_hits) == (3, 1), "a structure call with no deck is a deck structure now"
     assert (usage.by_step["growth_engine"].calls, usage.by_step["growth_engine"].cache_hits) == (1, 1)
     steps = usage.by_step.values()
     assert sum(u.calls for u in steps) == usage.calls + usage.structure_calls

@@ -195,7 +195,7 @@ def _plain(reading: Optional[Dict]) -> Optional[Dict]:
 # The re-read of one file's flagged items
 # ---------------------------------------------------------------------------
 async def _dataset_sheets(db, audit_id: str, file_hash: str):
-    from . import recognition as rec
+    from . import stored_sheets as rec
     ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": file_hash}, {"_id": 0, "recognition_sheets": 1})
     return rec.unpack_sheets((ds or {}).get("recognition_sheets") or []) if ds else []
 

@@ -22,7 +22,6 @@ import { Conclusion, VerdictDetail, ReportDownload } from "@/components/Verdict"
 import AssumptionsStrip from "@/components/AssumptionsStrip";
 import FiveClaims from "@/components/FiveClaims";
 import NeedsAttention from "@/components/NeedsAttention";
-import { legacyView } from "@/lib/legacyView";
 import IntegrityCoverage from "@/components/IntegrityCoverage";
 import YearlyBasis from "@/components/YearlyBasis";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
@@ -50,6 +49,7 @@ export default function Dashboard() {
   const { id } = useParams();
   const nav = useNavigate();
   const [audit, setAudit] = useState(null);
+  const oldClaims = audit?.old_claims === true;        // OLD_CLAIMS on at the server (backend/app/flags.py); off by default
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [narrative, setNarrative] = useState(null);
@@ -141,7 +141,7 @@ export default function Dashboard() {
   if (error === "not_computed") {
     return (
       <Layout audit={audit}>
-        {legacyView() && <NeedsAttention auditId={id} computed={false} onChanged={answered} />}
+        {oldClaims && <NeedsAttention auditId={id} computed={false} onChanged={answered} />}
         <div className="border border-dashed border-[#E5E7EB] rounded-xl py-24 text-center">
           <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-4" />
           <p className="text-slate-700 mb-4">This audit hasn't been computed yet.</p>
@@ -270,10 +270,11 @@ export default function Dashboard() {
       <AssumptionsStrip audit={por} results={r} onChange={() => nav(`/audit/${id}/mapping`)} />
 
       {/* The conclusion with its contradiction lines, the five selected claims, the questions, the report (docs/design/simplified-flow.md) */}
-      {/* PR 3: the five-claims conclusion, the questions and the claims list stay in the code and leave the default screen (?view=legacy). */}
-      {legacyView() && <Conclusion auditId={id} verdict={verdict} onChanged={refreshVerdict} />}
-      {legacyView() && <FiveClaims auditId={id} verdict={verdict} ccy={ccy} tick={verdictTick + registerKey} />}
-      {legacyView() && <NeedsAttention auditId={id} onChanged={answered} />}
+      {/* PR 4: the five-claims conclusion, the questions, the claim register, the reasons, the key gates and the claim labels stay in the code
+          and are shown only when the server says OLD_CLAIMS is on (the audit's `old_claims`). */}
+      {oldClaims && <Conclusion auditId={id} verdict={verdict} onChanged={refreshVerdict} />}
+      {oldClaims && <FiveClaims auditId={id} verdict={verdict} ccy={ccy} tick={verdictTick + registerKey} />}
+      {oldClaims && <NeedsAttention auditId={id} onChanged={answered} />}
       <ReportDownload auditId={id} note={verdict?.ic_inputs?.note} noteMax={verdict?.note_max} />
 
       {/* Everything else, collapsed. A native details element keeps its content in the page, so nothing below is unmounted. */}
@@ -346,11 +347,11 @@ export default function Dashboard() {
       </div>
 
       {/* Claim register: the deck claims in the register, tested against the computed metrics (docs/specs/claim-matching.md section 8) */}
-      {legacyView() && <ClaimRegister key={registerKey} auditId={id} results={r} onChanged={refreshVerdict} />}
+      {oldClaims && <ClaimRegister key={registerKey} auditId={id} results={r} onChanged={refreshVerdict} />}
 
       {/* Data gaps and the verdict (docs/specs/verdict-and-memo.md sections 4 and 6.4) */}
       <DataGaps auditId={id} verdict={verdict} onChanged={refreshVerdict} />
-      <VerdictDetail auditId={id} verdict={verdict} onChanged={() => { refreshVerdict(); setRegisterKey((k) => k + 1); }} ccy={ccy} tick={verdictTick + registerKey} />
+      {oldClaims && <VerdictDetail auditId={id} verdict={verdict} onChanged={() => { refreshVerdict(); setRegisterKey((k) => k + 1); }} ccy={ccy} tick={verdictTick + registerKey} />}
 
       {/* Narrative — status tells the reader which figures were verified */}
       <Narrative state={generating ? { loading: true } : narrative} />

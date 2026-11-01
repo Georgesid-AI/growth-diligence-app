@@ -13,7 +13,6 @@ numeric or date column and a profile (distinct count, typical length, shape patt
 column. Only with the audit's consent. Never raw files, full pages, prose slides or a text cell
 value from a spreadsheet.
 """
-import hashlib
 import re
 import statistics
 from collections import Counter
@@ -91,10 +90,6 @@ def _header_like(row: List) -> bool:
     return True
 
 
-def header_key(dtype: str, columns: List[str]) -> str:
-    """The header set a stored mapping correction is kept under: the type and its column names."""
-    names = sorted(_header_text(c).lower() for c in columns)
-    return hashlib.sha256(("\x00".join([dtype] + names)).encode("utf-8")).hexdigest()
 
 
 MAPPING_SAMPLE_ROWS = 20          # a column mapping is read from the first 20 data rows (chat-upload.md section 4.2)
@@ -142,15 +137,6 @@ async def learn_company_names(db, audit_id: str, cells: List[Dict], company_name
     return await llm_redaction.add_customers(db, audit_id, names) if names else mapping
 
 
-def column_mapping_text(columns: List[str], rows: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
-                        customer_columns: Tuple[str, ...] = (), withheld: Tuple[str, ...] = (),
-                        hints: Optional[Dict[str, Tuple[str, int]]] = None) -> str:
-    """The redacted column-mapping text the model reads, every column of the sheet (`withheld`: values to replace, see
-    redact.file_type_withheld; `hints`: {column: (field, confidence)}, the rules' proposal per column, sent as a hint)."""
-    headers, samples, profiles = column_mapping_input(columns, rows, customer_columns)
-    headers, _ = redact.redact_structure(headers, company_name, mapping, withheld)
-    by_position = {c: (hints or {})[name] for c, name in enumerate(columns, 1) if name in (hints or {})}
-    return redact.column_text(headers, samples, profiles, by_position)
 
 
 FILE_TYPE_CELL_MAX = 200           # a longer title is prose: it is cut (the gateway refuses a cell over 200 characters)
@@ -186,19 +172,6 @@ def file_type_text(sheets: List[Dict], company_name: Optional[str], mapping: Dic
     return redact.file_type_text(out)
 
 
-def proposed_mapping(items: List[Dict], columns: List[str], fields: List[str]) -> Dict[str, str]:
-    """{field: column} from a column-mapping reply: each item names a field and cites the header cell
-    of a column. Fields of another file type, unknown cells and a column proposed twice are left out."""
-    out, used = {}, set()
-    for item in items:
-        m = re.fullmatch(r"r\d+c(\d+)", item.get("value_cell") or "")
-        if not m or item.get("metric") not in fields or item["metric"] in out:
-            continue
-        col = int(m.group(1))
-        if 1 <= col <= len(columns) and columns[col - 1] not in used:
-            out[item["metric"]] = columns[col - 1]
-            used.add(columns[col - 1])
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -377,13 +350,6 @@ async def process_deck_safely(db, audit_id: str, deck_id: str) -> str:
             return NOT_READ
 
 
-async def process_waiting_decks_safely(db, audit_id: str) -> List[str]:
-    """process_waiting_decks as a background task, with the same failure handling."""
-    try:
-        return await process_waiting_decks(db, audit_id)
-    except Exception as exc:
-        logger.error("structure reading failed: run_id=%s error=%s", audit_id, type(exc).__name__)
-        return []
 
 
 async def _deck_status(db, audit_id: str, deck_id: str, status: str, message: Optional[str] = None) -> str:
@@ -402,22 +368,6 @@ RESTARTED = "restarted"         # the deck's ai_message after such a restart; th
 STALE = "stale"          # a page read whose stored rows an earlier check wrote wrongly: Run audit reads it again (the cache serves the reply)
 
 
-async def mark_label_corrections_stale(db) -> int:
-    """Hotfix of PR 182 (2026-10-26): the label correction used to pick the page title (r1c1) as the label. Every deck page whose
-    Diagnostics hold a label correction is marked for a new read: its page_reads entry turns "stale" and the page joins `retry_pages`,
-    so the next Run audit reads it again and the checks replace its rows nobody touched (pending rows; a cached reply costs no call).
-    Idempotent. Returns the number of pages marked."""
-    marked = 0
-    for deck in await db[TEXT_COLLECTION].find({"diagnostics": {"$elemMatch": {"kind": "corrected", "field": "label"}}},
-                                               {"_id": 0, "audit_id": 1, "deck_id": 1, "diagnostics": 1, "page_reads": 1, "retry_pages": 1}).to_list(100000):
-        pages = {d["page"] for d in deck["diagnostics"] if d.get("kind") == "corrected" and d.get("field") == "label"}
-        reads = [{**r, "status": STALE} if r.get("status") == READ and pages & set(r.get("pages") or ()) else r for r in deck.get("page_reads") or []]
-        retry = sorted(set(deck.get("retry_pages") or ()) | pages)
-        if reads != (deck.get("page_reads") or []) or retry != (deck.get("retry_pages") or []):
-            await db[TEXT_COLLECTION].update_one({"audit_id": deck["audit_id"], "deck_id": deck["deck_id"]},
-                                                 {"$set": {"page_reads": reads, "retry_pages": retry}})
-            marked += len(pages)
-    return marked
 
 
 async def queue_stale_reading(db, audit_id: str, now: Optional[datetime] = None) -> List[str]:
@@ -501,28 +451,6 @@ async def queue_unread_pages(db, audit_id: str) -> List[str]:
     return [d["deck_id"] for d in found]
 
 
-async def process_waiting_decks(db, audit_id: str, adapter=None, sleep=None) -> List[str]:
-    """Read every deck that waited for the revenue file, once it is mapped. Returns the ids of the decks this call read. A deck is claimed
-    before it is read: its status turns from "waiting" to "reading" in one conditional update, so a second trigger (the settle step, a Map
-    save, the upload's own task) finds it taken and leaves it alone. A read that fails returns the deck to "waiting"."""
-    waiting = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": WAITING},
-                                             {"_id": 0, "deck_id": 1}).to_list(1000)
-    claimed = []
-    for d in waiting:
-        taken = await db[TEXT_COLLECTION].update_one(
-            {"audit_id": audit_id, "deck_id": d["deck_id"], "ai_status": WAITING},
-            {"$set": {"ai_status": "reading", "ai_message": None, "reading_since": datetime.now(timezone.utc).isoformat()},
-             "$unset": {"read_progress": ""}})
-        if not taken.modified_count:
-            continue
-        claimed.append(d["deck_id"])
-        try:
-            await process_deck(db, audit_id, d["deck_id"], adapter=adapter, sleep=sleep)
-        except Exception:
-            await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": d["deck_id"], "ai_status": "reading"},
-                                                 {"$set": {"ai_status": WAITING, "ai_message": WAITING_TEXT}})
-            raise
-    return claimed
 
 
 def _where(structure: Dict) -> Dict:

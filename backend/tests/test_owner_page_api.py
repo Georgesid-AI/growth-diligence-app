@@ -119,7 +119,7 @@ def test_the_owner_token_alone_opens_the_admin_routes_and_an_unset_owner_hash_op
 
 
 def test_the_health_check_and_the_field_list_stay_open(owner):
-    assert owner.get("/api/").status_code == 200 and owner.get("/api/fields").status_code == 200
+    assert owner.get("/api/").status_code == 200
 
 
 def test_no_log_line_holds_a_token_or_prompt_text(owner, caplog):

@@ -1,5 +1,6 @@
-// PR 3 (docs/design/read-check-review.md section 11): the questions ("Needs your attention"), the claims list and the five-claims conclusion stay in the
-// code and leave the default screen. This file runs WITHOUT ?view=legacy; the files that test them set it.
+// PR 3 and 4 (docs/design/read-check-review.md sections 11 and 12): the questions ("Needs your attention"), the claims list, the five-claims conclusion, the
+// reasons, the key gates and the claim labels stay in the code and leave the default screen. They show only when the audit says old_claims (OLD_CLAIMS
+// on at the server); the files that test them set it.
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -19,14 +20,14 @@ jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{childr
 jest.mock("@/components/NeedsAttention", () => () => <div data-testid="needs-attention" />);
 jest.mock("@/components/FiveClaims", () => () => <div data-testid="verdict-five" />);
 jest.mock("@/components/ClaimRegister", () => () => <div data-testid="claim-register" />);
-jest.mock("@/components/Verdict", () => ({ Conclusion: () => <div data-testid="verdict" />, VerdictDetail: () => null, ReportDownload: () => null }));
+jest.mock("@/components/Verdict", () => ({ Conclusion: () => <div data-testid="verdict" />, VerdictDetail: () => <div data-testid="verdict-detail" />, ReportDownload: () => null }));
 jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{children}</div> }));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-test("the default Audit page has no conclusion of five claims, no Needs your attention and no claims list", async () => {
+async function render(audit) {
   api.getBlockers.mockResolvedValue([]);
   api.getAudit.mockResolvedValue({ ...sample.audit, target_arr: 1000000, target_date: "2026-12-31", as_of_month: null, reporting_currency: "EUR",
-    datasets: { revenue: { months: { first: "2023-01", last: "2024-02" } } } });
+    datasets: { revenue: { months: { first: "2023-01", last: "2024-02" } } }, ...audit });
   api.getResults.mockResolvedValue(sample);
   api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "x" });
   api.getDisclosure.mockResolvedValue(null);
@@ -42,8 +43,19 @@ test("the default Audit page has no conclusion of five claims, no Needs your att
   await act(async () => { await Promise.resolve(); });
   await act(async () => { await Promise.resolve(); });
   const has = (id) => host.querySelector(`[data-testid="${id}"]`);
+  return { has, done: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
+}
+const OLD = ["verdict", "verdict-five", "needs-attention", "claim-register", "verdict-detail"];
+
+test("the default Audit page has no conclusion of five claims, no Needs your attention, no claims list, no reasons, no key gates and no claim labels", async () => {
+  const { has, done } = await render({});
   expect(has("assumptions-strip")).not.toBeNull();
-  for (const id of ["verdict", "verdict-five", "needs-attention", "claim-register"]) expect(has(id)).toBeNull();
-  await act(async () => { root.unmount(); });
-  host.remove();
+  for (const id of OLD) expect(has(id)).toBeNull();
+  await done();
+});
+
+test("with OLD_CLAIMS on (the audit says old_claims) the old claim parts are back", async () => {
+  const { has, done } = await render({ old_claims: true });
+  for (const id of OLD) expect(has(id)).not.toBeNull();
+  await done();
 });

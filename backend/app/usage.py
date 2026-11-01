@@ -9,7 +9,7 @@ import statistics
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
 
-from .structures import redact
+
 
 SCREENS = ("mapping", "dashboard", "diagnostics")
 NOTE_MAX = 60
@@ -64,12 +64,8 @@ def record_rejected(usage: Dict, ext: str) -> None:
     _bump(usage["files"]["rejected"], ext if _EXTENSION.match(ext or "") else "other")
 
 
-def record_columns(usage: Dict, kind: str, n: int = 1) -> None:
-    _bump(usage["columns"], kind, n)
 
 
-def record_reason(usage: Dict, code: str) -> None:
-    _bump(usage["columns"]["reasons"], code)
 
 
 def record_compute(usage: Dict, failures: Iterable[str]) -> None:
@@ -78,57 +74,14 @@ def record_compute(usage: Dict, failures: Iterable[str]) -> None:
         _bump(usage["steps"]["compute"]["failures"], name)
 
 
-def keep_note(usage: Dict, note: str) -> None:
-    """A kept "Other" note, on its own: no column, file or field beside it. At most 50, the oldest dropped."""
-    usage["other_notes"] = (usage["other_notes"] + [{"note": note, "at": now()}])[-NOTES_KEPT:]
 
 
-class NoteRefused(Exception):
-    """The note holds something it may not (S21). `code` is a closed word."""
-
-    def __init__(self, code: str):
-        super().__init__(code)
-        self.code = code
 
 
-def clean_note(note: Optional[str]) -> str:
-    return _CONTROL.sub("", note or "").strip()
 
 
-def check_note(note: str, *, headers: Iterable[str], file_names: Iterable[str], cell_texts: Iterable[str],
-               names: Iterable[str]) -> None:
-    """Raise NoteRefused unless the note is at most 60 characters and, after its headers are set aside, holds no
-    digit, file name, cell text or company name. A digit is refused anywhere,
-    also inside a header ("Revenue 2024" cannot be quoted). Headers are set aside whole, in any case, before the
-    other checks, so a header that contains a cell word still passes."""
-    if len(note) > NOTE_MAX:
-        return _refuse("too_long")
-    if any(ch.isdigit() for ch in note):
-        return _refuse("digit")
-    rest = note
-    for h in sorted({h.strip() for h in headers if h and h.strip()}, key=len, reverse=True):
-        rest = re.sub(re.escape(h), " ", rest, flags=re.IGNORECASE)
-    low = rest.lower()
-    for name in file_names:
-        stem = (name or "").rsplit(".", 1)[0] if "." in (name or "") else (name or "")
-        if name and (name.lower() in low or redact.has_word(rest, name) or (stem and redact.has_word(rest, stem))):
-            return _refuse("file_name")
-    for name in names:
-        if name and str(name).strip() and redact.has_word(rest, str(name).strip()):
-            return _refuse("name")
-    seen = set()
-    for text in cell_texts:
-        for candidate in (text, *re.findall(r"[^\W\d_]+", text)):
-            c = candidate.strip()
-            if len(c) < MIN_CELL_WORD or c in seen:
-                continue
-            seen.add(c)
-            if c.lower() in low and redact.has_word(rest, c):
-                return _refuse("cell_text")
 
 
-def _refuse(code: str):
-    raise NoteRefused(code)
 
 
 # ---------------------------------------------------------------------------

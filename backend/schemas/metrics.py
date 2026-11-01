@@ -810,11 +810,11 @@ class RoleSource(Block):
 
 
 class RoleMetric(Block):
-    """One metric of section 16. `status` computed carries its value; needs_row carries the reason ("needs a revenue row") and the roles it needs.
+    """One metric of section 16. `status` computed carries its value; needs_row carries the reason ("needs a revenue row") and the roles it needs; error carries the closed sentence of a calculation that stopped (rule 20).
     `value` is held as the file states it: money in the file's currency, a rate as a fraction, months, a count."""
     metric: Literal[ROLE_METRICS]
     name: str
-    status: Literal["computed", "needs_row"]
+    status: Literal["computed", "needs_row", "error"]
     reason: Optional[str] = None
     needs: List[str]
     period: Optional[str] = None

@@ -532,9 +532,6 @@ def read_workbook(content: bytes, filename: str) -> List[Sheet]:
     return sheets
 
 
-def read_sheet(content: bytes, filename: str) -> Sheet:
-    """The first sheet of a file (see read_workbook)."""
-    return read_workbook(content, filename)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -682,90 +679,16 @@ def customer_columns(sheet: Sheet, proposals: List[Proposal]) -> List[str]:
     return list(dict.fromkeys(out))
 
 
-# ---------------------------------------------------------------------------
-# Type detection (section 3; amended 2026-10-16)
-# ---------------------------------------------------------------------------
-# Rules first, by the headers (and, in a wide table, the line labels): a type is detected when its share is the unique
-# highest and at least DETECTION_MIN_SHARE. Revenue needs all three of customer, date and amount, each header
-# at 80 or more: an "MRR" or "ARR" header alone never makes a revenue file. A CRM file needs four of the five
-# signature columns (deal, created, closed or won, stage or status, owner). A P&L is the share of its fields the
-# headers match, or cost lines (cost of sales, payroll, EBITDA ...) among its headers or line labels. Headers and line
-# labels are read as the mapping reads them, punctuation as one space ("deal_id" is "deal id"; 2026-10-17).
-REVENUE_KEY = ("customer_id", "invoice_date", "amount")
-_CRM_SIGNATURE = {
-    "deal": re.compile(r"(?i)\b(?:deal|opportunit\w*)\b"),
-    "created": re.compile(r"(?i)\b(?:created?|opened?)\b"),
-    "closed": re.compile(r"(?i)\b(?:close[ds]?|won)\b"),
-    "stage": re.compile(r"(?i)\b(?:stage|status|outcome)\b"),
-    "owner": re.compile(r"(?i)\b(?:owner|sales\s?rep|rep)\b"),
-}
-_COST_LINES = [re.compile(p) for p in (
-    r"(?i)\bcost of (?:sales|goods|revenue)\b|\bcogs\b", r"(?i)\bpayroll\b|\bsalar(?:y|ies)\b|\bpersonnel\b|\bstaff costs?\b",
-    r"(?i)\bebitda\b", r"(?i)\bopex\b|\boperating (?:expenses|costs|profit|income|result)\b",
-    r"(?i)\bgross (?:profit|margin)\b", r"(?i)\bsales (?:&|and) marketing\b|\bs&m\b",
-    r"(?i)\bgeneral (?:&|and) administrative\b|\bg&a\b", r"(?i)\br&d\b|\bresearch and development\b",
-    r"(?i)\bdepreciation\b|\bamorti[sz]ation\b", r"(?i)\bnet (?:income|profit|loss)\b")]
 
 
-def _line_labels(sheet: Sheet) -> List[str]:
-    """The text a P&L's cost lines can stand in: the headers, and in a wide table the labels of the lines."""
-    labels = list(sheet.headers)
-    if sheet.wide:
-        labels += [str(v) for v in sheet.frame[sheet.columns[0]].tolist() if isinstance(v, str)]
-    return labels
 
 
-def type_shares(sheet: Sheet) -> Dict[str, float]:
-    """{type: share 0..1} by the rules above."""
-    shares = {}
-    key_hits = {f: max([field_score("revenue", f, t) for t in sheet.headers] or [0]) >= 80 for f in REVENUE_KEY}
-    shares["revenue"] = sum(key_hits.values()) / len(REVENUE_KEY)
-    heads = [_norm(t) for t in sheet.headers]
-    groups = sum(1 for rx in _CRM_SIGNATURE.values() if any(rx.search(t) for t in heads))
-    shares["crm"] = groups / len(_CRM_SIGNATURE)
-    defs = FIELD_DEFS["pnl"]
-    mapping = suggest_mapping("pnl", sheet.columns, sheet.headers)
-    by_fields = sum(1 for f in defs["required"] if mapping.get(f)) / len(defs["required"])
-    labels = [_norm(t) for t in _line_labels(sheet)]
-    lines = len({i for i, rx in enumerate(_COST_LINES) if any(rx.search(t) for t in labels)})
-    shares["pnl"] = max(by_fields, 1.0 if lines >= 3 else 0.8 if lines == 2 else 0.0)
-    return shares
 
 
-def detect_type(sheet: Sheet) -> Tuple[Optional[str], Dict[str, float]]:
-    """(type, share per type). The type with the unique highest share wins when that share is at least 80%;
-    otherwise None (the model is asked once, or the analyst chooses)."""
-    shares = type_shares(sheet)
-    best = max(shares.values())
-    winners = [t for t, s in shares.items() if s == best]
-    return (winners[0] if len(winners) == 1 and best >= DETECTION_MIN_SHARE else None), shares
 
 
-def detect_workbook(sheets: List[Sheet]) -> Tuple[Optional[str], Optional[Sheet], Dict[str, float]]:
-    """(type, sheet, shares) over every sheet of a file: the sheet whose detected type has the highest share
-    (the earlier sheet on a tie, then the one with more rows). (None, None, shares of the first sheet) when no
-    sheet is detected."""
-    found = []
-    for i, sheet in enumerate(sheets):
-        dtype, shares = detect_type(sheet)
-        if dtype:
-            found.append((-shares[dtype], i, dtype, sheet, shares))
-    if not found:
-        return None, None, type_shares(sheets[0])
-    _, _, dtype, sheet, shares = min(found, key=lambda f: (f[0], f[1]))
-    return dtype, sheet, shares
 
 
-def best_sheet(sheets: List[Sheet], dtype: str) -> Sheet:
-    """The sheet that best fits a role: the most required fields its headers match at 80 or more, then the
-    higher type share, then the one with more rows, then the earlier sheet."""
-    required = FIELD_DEFS[dtype]["required"]
-
-    def fit(item):
-        i, sheet = item
-        hits = sum(1 for f in required if max([field_score(dtype, f, t) for t in sheet.headers] or [0]) >= MAPPING_THRESHOLD)
-        return (-hits, -type_shares(sheet).get(dtype, 0), -len(sheet.frame), i)
-    return min(enumerate(sheets), key=fit)[1]
 
 
 def describe(sheet: Sheet) -> Dict:
@@ -778,23 +701,8 @@ def describe(sheet: Sheet) -> Dict:
     return {"shape": shape, "rows": len(sheet.frame), "columns": len(sheet.columns)}
 
 
-def is_miss(dtype: str, mapping: Dict[str, Optional[str]], looks: Optional[Dict]) -> bool:
-    """True when the file cannot supply the type's required fields: a summary or forecast table, or no more than
-    half of the required fields mapped (counting proposals that still wait for a click)."""
-    required = FIELD_DEFS[dtype]["required"]
-    if looks and looks.get("shape") == "summary":
-        return True
-    return sum(1 for f in required if mapping.get(f)) * 2 <= len(required)
 
 
-def months_found(dtype: str, sheet: Sheet, mapping: Dict[str, str]) -> Optional[Dict]:
-    """The distinct months of the date column (invoice date for revenue, close date for CRM, month for the P&L):
-    {"count", "first", "last"} as YYYY-MM, or None before that column is mapped or when none reads."""
-    field = {"revenue": "invoice_date", "crm": "close_date", "pnl": "month"}[dtype]
-    col = mapping.get(field)
-    if not col or col not in sheet.frame.columns:
-        return None
-    return months_of(sheet.frame[col].tolist())
 
 
 def months_of(values: list) -> Optional[Dict]:
@@ -831,50 +739,18 @@ def months_of(values: list) -> Optional[Dict]:
 # The fixed list of reasons for a correction (S11). Anything else is refused.
 REASONS = ("header_misleading", "other_column_right", "values_do_not_fit", "wrong_kind_of_date", "not_needed", "other")
 PENDING = ("unsure", "ai", "needs")           # states that wait for a click
-MAPPED = ("auto", "unsure", "ai", "confirmed", "corrected")
-# Amount columns named turnover, volume, GMV or TPV: revenue or value of transactions processed? (chat-upload.md section 15)
-MONEY_FIELDS = ("amount", "revenue")
-MONEY_KINDS = ("revenue", "volume")
-_MONEY_HEADER = re.compile(r"(?i)turnover|volume|gmv|tpv")
 
 
-def asks_money(state: Dict) -> bool:
-    """A mapped amount column whose header says turnover, volume, GMV or TPV: the analyst is asked once what the money is."""
-    return state.get("state") in MAPPED and state.get("field") in MONEY_FIELDS and bool(_MONEY_HEADER.search(str(state.get("column"))))
 
 
-def needs_money(state: Dict) -> bool:
-    return asks_money(state) and state.get("money_kind") not in MONEY_KINDS
 
 
-def _is_volume(state: Dict) -> bool:
-    return state.get("money_kind") == "volume"
 
 
-class DecisionError(Exception):
-    """A decision that cannot be applied; `code` is a closed word, `column` the column it names (if any)."""
-
-    def __init__(self, code: str, column: Optional[str] = None):
-        super().__init__(code)
-        self.code, self.column = code, column
 
 
-def new_state(column: str, field: Optional[str], source: Optional[str], state: str, confidence: Optional[int] = None,
-              fit_note: Optional[str] = None) -> Dict:
-    return {"column": column, "field": field, "source": source, "state": state, "confidence": confidence,
-            "fit_note": fit_note, "decision": None, "reason": None, "money_kind": None}
 
 
-def states_from_rules(proposals: List[Proposal]) -> List[Dict]:
-    out = []
-    for p in proposals:
-        if p.state in ("auto", "unsure"):
-            out.append(new_state(p.column, p.field, "rules", p.state, p.confidence, p.note))
-        elif p.state == "undecided":
-            out.append(new_state(p.column, None, "needs", "needs"))
-        else:
-            out.append(new_state(p.column, None, None, "unused"))
-    return out
 
 
 def undecided(states: List[Dict]) -> List[str]:
@@ -882,118 +758,15 @@ def undecided(states: List[Dict]) -> List[str]:
     return [s["column"] for s in states if s["state"] in ("unsure", "needs")]
 
 
-def apply_model(dtype: str, sheet: Sheet, proposals: List[Proposal], proposed: Dict[str, str]) -> List[Dict]:
-    """The model's proposals ({field: column}) for a sheet whose every column was sent (section 4.2, 2026-10-17).
-    A rule confidence of 100, untied, wins. Otherwise the model's proposal takes its confidence from the rules'
-    formula (header score x value fit) on the model's field: it needs no click when the rules proposed the same field,
-    untied, above MAPPING_THRESHOLD (exactly 80 waits, section 21), and waits for one otherwise. A column only the rules map waits for a click
-    with their proposal (it needs a decision when the model gave that field to another column); a column neither maps
-    is not used."""
-    scores = rule_scores(dtype, sheet)
-    won = {p.column: p.field for p in proposals if p.state == "auto" and p.confidence == 100}
-    by_col = {c: f for f, c in proposed.items() if c not in won and f not in won.values()}
-    out = []
-    for p in proposals:
-        f = by_col.get(p.column)
-        if p.column in won:
-            out.append(new_state(p.column, p.field, "rules", "auto", p.confidence, p.note))
-        elif f:
-            fit, ok, total = value_fit(field_kind(dtype, f), sheet.frame[p.column].tolist())
-            conf, note = round(scores[(f, p.column)] * fit), fit_note(field_kind(dtype, f), ok, total)
-            agreed = f == p.field and not p.tie and conf > MAPPING_THRESHOLD
-            out.append(new_state(p.column, f, "rules", "auto", conf, note) if agreed else
-                       new_state(p.column, f, "ai", "ai", conf, note))
-        elif p.field and p.field not in by_col.values():
-            out.append(new_state(p.column, p.field, "rules", "unsure", p.confidence, p.note))
-        elif p.field:
-            out.append(new_state(p.column, None, "needs", "needs"))
-        else:
-            out.append(new_state(p.column, None, None, "unused"))
-    return out
 
 
-def apply_model_failure(states: List[Dict], open_columns: List[str]) -> List[Dict]:
-    """The model could not be read: the rules' outcome stands, and every column they left open needs the analyst's
-    decision."""
-    return [new_state(s["column"], None, "needs", "needs") if s["column"] in open_columns else s for s in states]
 
 
-def states_from_saved(dtype: str, sheet: Sheet, saved: List[Dict], scale: bool) -> List[Dict]:
-    """A saved mapping applied to a sheet. The same bytes: every mapped column is accepted. The same headers on
-    other data (`scale`): each mapped column counts as confidence 100 scaled by its value fit on the new data."""
-    by_col = {c["column"]: c for c in saved}
-    out = []
-    for col in sheet.columns:
-        entry = by_col.get(col) or {}
-        field = entry.get("field")
-        if not field or field not in _all_fields(dtype):
-            out.append(new_state(col, None, None, "unused"))
-            continue
-        conf, note = 100, None
-        if scale:
-            kind = field_kind(dtype, field)
-            fit, ok, total = value_fit(kind, sheet.frame[col].tolist())
-            conf, note = round(100 * fit), fit_note(kind, ok, total)
-        out.append({**new_state(col, field, "saved", "auto" if conf >= MAPPING_THRESHOLD else "unsure", conf, note),
-                    "money_kind": entry.get("money_kind") if entry.get("money_kind") in MONEY_KINDS else None})
-    return out
 
 
-def mapping_of(dtype: str, states: List[Dict]) -> Dict[str, Optional[str]]:
-    """{field: column} of every mapped column, pending proposals included (they are shown, not yet confirmed)."""
-    mapping = {f: None for f in _all_fields(dtype)}
-    for s in states:
-        if s["state"] in MAPPED and s["field"] and not _is_volume(s):       # only revenue columns feed the engine
-            mapping[s["field"]] = s["column"]
-    return mapping
 
 
-def pending_count(states: List[Dict]) -> int:
-    return sum(1 for s in states if s["state"] in PENDING or needs_money(s))
 
 
-def missing_required(dtype: str, states: List[Dict]) -> List[str]:
-    mapping = mapping_of(dtype, states)
-    return [f for f in FIELD_DEFS[dtype]["required"] if not mapping.get(f)]
 
 
-def apply_decisions(dtype: str, states: List[Dict], decisions: List[Dict]) -> List[Dict]:
-    """The analyst's decisions, one by one. Confirm accepts the proposal (a row that needs a decision takes the
-    field chosen, or "Not used"). Correct takes a field or "Not used" and a reason from the fixed list. A field
-    another column holds is refused and names that column. Raises DecisionError."""
-    fields = _all_fields(dtype)
-    states = [dict(s) for s in states]
-    for d in decisions:
-        state = next((s for s in states if s["column"] == d.get("column")), None)
-        if state is None:
-            raise DecisionError("unknown_column")
-        if d.get("money_kind") is not None:                     # the answer to the money question (section 15)
-            if d["money_kind"] not in MONEY_KINDS or not asks_money(state):
-                raise DecisionError("bad_money_kind", state["column"])
-            state["money_kind"] = d["money_kind"]
-            continue
-        action, field = d.get("action"), (d.get("field") or None)
-        if action not in ("confirm", "correct"):
-            raise DecisionError("bad_action", state["column"])
-        if field is not None and field not in fields:
-            raise DecisionError("unknown_field", state["column"])
-        if action == "correct" and d.get("reason") not in REASONS:
-            raise DecisionError("bad_reason", state["column"])
-        if action == "confirm":
-            if state["state"] in ("auto", "confirmed", "corrected", "unused") and field is None:
-                continue                                       # nothing to accept
-            if state["state"] != "needs":
-                field = state["field"]
-        if field:
-            holder = next((s for s in states if s["field"] == field and s["column"] != state["column"]
-                           and s["state"] in MAPPED and not _is_volume(s)), None)
-            if holder:
-                raise DecisionError("field_held", holder["column"])
-        was_needs = state["state"] == "needs"
-        state["field"] = field
-        state["state"] = ("confirmed" if action == "confirm" else "corrected") if field else "unused"
-        state["decision"] = action
-        state["reason"] = d.get("reason") if action == "correct" else None
-        if was_needs:
-            state["source"] = "decision"
-    return states

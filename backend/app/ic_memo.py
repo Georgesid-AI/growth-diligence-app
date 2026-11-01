@@ -89,6 +89,10 @@ _DATE = re.compile(r"\d{4}-\d{2}(?:-\d{2})?(?![\d])|\d{4}-Q[1-4]|\bQ[1-4]\b|\[\^
 _NUMBER = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
 
 
+CLAIM_TERMS = ("VaS", "Acquisition channels")      # glossary terms of the claim register: left out of the report with OLD_CLAIMS off
+DEAL_TERMS_HEADING = "Deal terms"      # the key gates are claim gates: with OLD_CLAIMS off the section holds the deal terms line only
+
+
 def _decimal(token: str) -> Decimal:
     return Decimal(token.replace(",", "")).copy_abs()
 
@@ -426,8 +430,11 @@ def source_cell(r: dict) -> str:
 
 
 def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, files, decks, tables, today, integrity,
-           thesis: Dict[str, str], rated: dict, unresolved: List[str], drafted: Iterable[str] = ()) -> Tuple[str, str]:
-    """(sections 1-6 with the title, the whole text) for one view of the thesis."""
+           thesis: Dict[str, str], rated: dict, unresolved: List[str], drafted: Iterable[str] = (), claims: bool = True) -> Tuple[str, str]:
+    """(sections 1-6 with the title, the whole text) for one view of the thesis. `claims` False (OLD_CLAIMS off, PR 4): the report holds no
+    claim register, no five-claims conclusion, no reasons, no key gates, no claim labels and no claim questions."""
+    if not claims:
+        rows = []
     notes = Notes()
     ccy = results.get("reporting_currency")
     by_id = {r["claim_id"]: r for r in rows}
@@ -444,16 +451,18 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     # 1. Summary
     # claim-review-conclusion.md section 4: the heading, the conclusion, the scope sentence, the other contradictions and the computed
     # reasons and unresolved questions; the analyst's note after them, verbatim, when there is one (simplified-flow.md).
-    others = ver.get("other_contradictions") or []
-    out += [f"## {HEADINGS[0]}", vd.HEADING, f"Verdict: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.SCOPE_SENTENCE,
-            *([f"{vd.SELECTION_CHANGED}."] if ver["top5"]["changed"] else []), ""]
-    out += ["Other contradictions:"]
-    out += [f"- {o['metric']}: {o['gap']}{notes.register([o['rank']])}" for o in others] or [vd.NO_OTHER_CONTRADICTIONS]
-    conflicts = ver.get("conflicts") or []
-    if conflicts:      # claim-groups.md section 5: an unresolved conflict between annual figures stays in the conclusion until it is resolved
-        out += ["Unresolved conflicts:"] + [f"- {c['text']}{notes.register()}" for c in conflicts]
-    out += ["", ANALYST_JUDGMENT, "Reasons:"]
-    out += [f"- {r}{notes.register(top_ranks)}" for r in ver["reasons"]]
+    out += [f"## {HEADINGS[0]}"]
+    if claims:
+        others = ver.get("other_contradictions") or []
+        out += [vd.HEADING, f"Verdict: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.SCOPE_SENTENCE,
+                *([f"{vd.SELECTION_CHANGED}."] if ver["top5"]["changed"] else []), ""]
+        out += ["Other contradictions:"]
+        out += [f"- {o['metric']}: {o['gap']}{notes.register([o['rank']])}" for o in others] or [vd.NO_OTHER_CONTRADICTIONS]
+        conflicts = ver.get("conflicts") or []
+        if conflicts:      # claim-groups.md section 5: an unresolved conflict between annual figures stays in the conclusion until it is resolved
+            out += ["Unresolved conflicts:"] + [f"- {c['text']}{notes.register()}" for c in conflicts]
+        out += ["", ANALYST_JUDGMENT, "Reasons:"]
+        out += [f"- {r}{notes.register(top_ranks)}" for r in ver["reasons"]]
     out += ["Unresolved questions:"]
     shown = unresolved[:vd.UNRESOLVED_SHOWN]
     out += [f"- {q}{notes.add('open questions and data gaps, Appendix B')}" for q in shown] or ["- None."]
@@ -466,7 +475,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     out += [""]
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
-            "Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"]
+            *(["Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"] if claims else [])]
     if vd.has_forecast(rows):      # forecast-and-payback.md section 3.7: one sentence whenever a forecast appears, on no row
         out += [vd.FORECAST_NOTE]
     grouped = cg.counts(rows)
@@ -508,8 +517,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     smooth = next((r for r in integrity.get("results") or () if r["check"] == integrity_mod.SMOOTHNESS), None)
     if smooth:
         coverage += f" Smoothness: {smooth['result']} ({integrity_mod.SMOOTHNESS_LABEL})."
-    reliability = f"{coverage} {recon}; {anomalies}; {verified} of {len(rows)} claims Verified{notes.register()}."
-    reliability_evidence = f"Data integrity conclusion: {integrity['conclusion']}; revenue_reconciliation, anomalies, claim register"
+    claimed = f"; {verified} of {len(rows)} claims Verified{notes.register()}" if claims else ""
+    reliability = f"{coverage} {recon}; {anomalies}{claimed}."
+    reliability_evidence = f"Data integrity conclusion: {integrity['conclusion']}; revenue_reconciliation, anomalies" + (", claim register" if claims else "")
     if narrative:
         growth = f"{narrative['headline']}{notes.add('growth-engine narrative, AI call log')}"
     else:
@@ -528,17 +538,19 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     out += [f"## {HEADINGS[2]}", _table(["Area", "Rating", "Headline", "Key evidence"], score), ""]
 
     # 4. Key gates and deal terms
-    out += [f"## {HEADINGS[3]}"]
-    if key["note"]:
+    out += [f"## {HEADINGS[3] if claims else DEAL_TERMS_HEADING}"]
+    if claims and key["note"]:
         out += [key["note"]]
     out += [f"- {vd.gate_text(g)}{notes.add('claim register, #%d; %s' % (g['rank'], 'set by the analyst' if g.get('gate_status') == cm.GATE_SET else 'gate written from the claim'))}"
-            for g in key["gates"]]
+            for g in (key["gates"] if claims else [])]
     out += [vd.W13_DEAL_TERMS, ""]
 
     # 5. Worth flagging
     out += [f"## {HEADINGS[4]}"]
     flagged, listed = [], []
     for b in blockers:
+        if b.get("kind") == "claim_contradicted" and not claims:
+            continue
         if b.get("kind") == "claim_contradicted" and b.get("claim_id") in by_id:
             flagged.append(f"{b['text']}{notes.register([by_id[b['claim_id']]['rank']])}")
             listed.append(b["claim_id"])
@@ -588,7 +600,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
             vd.gate_text(r) or "—",
             "key" if r["claim_id"] in {g["claim_id"] for g in key["gates"]} else "", "top 5" if r["claim_id"] in {f["claim_id"] for f in ver["five"]} else ""]
            for r in rows]
-    app += [_table([*vd.FOUR_COLUMNS, "Ref", "Approval", "Basis", "Case", "Relationship", "VaS", "Overlaps with", "Gate", "Key gate", "Top 5"], reg), ""]
+    app += ([_table([*vd.FOUR_COLUMNS, "Ref", "Approval", "Basis", "Case", "Relationship", "VaS", "Overlaps with", "Gate", "Key gate", "Top 5"], reg), ""]
+            if claims else ["Not part of this report.", ""])
 
     review = ic.get("first_quarterly_review")
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]
@@ -639,7 +652,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         app += [block["text"], ""]
     app = [_glossed([line])[0] if line.startswith("- ") or line == W16_VALUE_AT_RISK else line for line in app]
     # The glossary the "(see glossary)" pointers name: the terms of the screen and the export, as they define them.
-    app += ["Glossary", *(f"- {term}: {definition}" for term, definition in fmt.GLOSSARY.items()), ""]
+    app += ["Glossary", *(f"- {term}: {definition}" for term, definition in fmt.GLOSSARY.items() if claims or term not in CLAIM_TERMS), ""]
     app += ["Footnotes", notes.definitions()]
     return head, head + "\n" + "\n".join(app) + "\n"
 
@@ -698,7 +711,7 @@ def _tables_differ(recognition: dict, results: dict) -> str:
 
 def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: dict, gaps: List[dict], ic: dict,
                blockers: List[dict], narratives: List, files: List[dict], decks: List[dict], tables: List[dict],
-               today: str, integrity: Optional[dict] = None) -> str:
+               today: str, integrity: Optional[dict] = None, claims: bool = True) -> str:
     """The IC memo as Markdown, or `MemoRefused` (section 7.1). Built on request from the functions of the register and the verdict;
     nothing is stored. `integrity`: the Data integrity assessment (integrity-coverage.md); None reads it from the results and the
     decks with no deck candidates."""
@@ -706,21 +719,21 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
         contract.validate_for_export(results)
     except contract.ContractError as exc:
         raise MemoRefused("contract", W19_CONTRACT.format(fields=exc.log_text)) from exc
-    if ver["status"] in ("no_verdict",):
+    if claims and ver["status"] in ("no_verdict",):
         raise MemoRefused("no_verdict", WORDING_NOT_IN_W["no_verdict"].format(message=ver["message"].removeprefix("No conclusion: ")))
     if integrity is None:
         integrity = integrity_mod.assess(results, deck_count=len(decks), candidates=[],
                                          fiscal_year_end=int((audit or {}).get("fiscal_year_end") or 12))
     rated = vd.ratings(results, integrity, fmt.fmt_pct, fmt.fmt_months)
     # The deal thesis is a draft from computed text unless the analyst wrote a part (simplified-flow.md decision 6).
-    draft = vd.default_thesis(audit, ver, key, lambda v: fmt.fmt_currency(v, results.get("reporting_currency")))
+    draft = vd.default_thesis(audit, ver if claims else {}, key if claims else {}, lambda v: fmt.fmt_currency(v, results.get("reporting_currency")))
     written = {k: v for k, v in (ic.get("thesis") or {}).items() if k in vd.THESIS_PARTS and v}
     thesis = {k: written.get(k) or draft[k] for k in vd.THESIS_PARTS}
     drafted = [k for k in vd.THESIS_PARTS if k not in written]
     unresolved = vd.unresolved_questions(gaps, int(ic.get("open_questions") or 0), integrity, results)
     common = dict(audit=audit, results=results, rows=rows, ver=ver, key=key, gaps=gaps, ic=ic, blockers=blockers,
                   narratives=narratives, files=files, decks=decks, tables=tables, today=today, integrity=integrity,
-                  rated=rated, unresolved=unresolved, drafted=drafted)
+                  rated=rated, unresolved=unresolved, drafted=drafted, claims=claims)
     # A number in a sentence the analyst wrote must be in the results, the register or the cost log: checked sentence by sentence.
     strict = allowed_numbers(audit, results, rows, gaps, ic, files, decks, thesis=True)
     bad = [t for part in written for t in unmatched(written[part], strict)]

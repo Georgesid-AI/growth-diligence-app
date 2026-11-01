@@ -224,3 +224,14 @@ def test_the_engine_output_passes_the_contract_and_carries_the_version():
 def test_without_an_as_of_month_nothing_on_the_map_is_computed():
     r = run(monthly_report(), as_of=None)
     assert "role_metrics" not in r or r["role_metrics"] is None
+
+
+def test_the_scope_of_the_s_and_m_row_is_read_from_its_label_and_only_the_closed_word_is_kept():
+    files = yearly_pnl()
+    files[0]["labels"] = {"P&L:6": "Marketing expenses"}
+    year = run(files)["yearly_basis"]["years"][-1]
+    assert year["sm_scope"] == "marketing only"
+    assert "Marketing" not in str(year), "the label itself is not in the result"
+    files[0]["labels"] = {"P&L:6": "Sales and marketing"}
+    assert run(files)["yearly_basis"]["years"][-1]["sm_scope"] == "sales and marketing"
+    assert run(yearly_pnl())["yearly_basis"]["years"][-1]["sm_scope"] == "unknown"

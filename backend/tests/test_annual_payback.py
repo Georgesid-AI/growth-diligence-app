@@ -122,12 +122,12 @@ def test_the_monthly_timing_request_is_named_apart_in_the_blocks_missing_list():
     (["Commercial costs"], "unknown"), ([], "unknown"),
 ])
 def test_the_scope_of_an_s_and_m_line_is_read_from_its_labels(labels, scope):
-    from app.structures import sheet as sh
+    from app import role_engine as sh
     assert sh.sm_scope(labels) == scope
 
 
 def test_a_bare_sales_line_in_a_cost_section_is_total_s_and_m_as_the_statement_rules_read_it():
-    from app.structures import sheet as sh
+    from app import role_engine as sh
     assert sh.sm_scope(["Sales"]) == "sales and marketing", "chat-upload.md section 26 rule 4: Sales alone in a cost section is S&M"
 
 

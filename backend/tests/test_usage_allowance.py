@@ -13,7 +13,6 @@ import page_images  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from app import allowance, access  # noqa: E402
 from app.llm import gateway, guards  # noqa: E402
-from test_chat_upload import by_column, mapping_reply, upload  # noqa: E402
 import test_owner_page_api as owner_page  # noqa: E402
 from test_owner_page_api import bearer, token_of  # noqa: E402
 
@@ -125,7 +124,7 @@ def test_a_page_read_is_outside_the_daily_cap_and_inside_the_monthly_allowance(m
     db["audits"].docs[0]["structure_reading_consent"] = True
     db["llm_calls"].docs.append({"run_id": "elsewhere", "cache_hit": False, "estimated_cost_usd": 1.0,
                                  "timestamp": datetime.now(timezone.utc).isoformat()})
-    assert gateway.SPEND_CAP_EXEMPT == {"column_mapping", gateway.PAGE_CLAIMS}
+    assert gateway.SPEND_CAP_EXEMPT == {gateway.PAGE_CLAIMS}
     adapter = t.FakeAdapter(replies=[PAGE_REPLY])
     read = asyncio.run(gateway.read_structure(db, t.RUN_ID, PAGE_TEXT, gateway.PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep,
                                               images=[page_images.png(1)]))
@@ -143,25 +142,8 @@ def test_a_page_read_is_outside_the_daily_cap_and_inside_the_monthly_allowance(m
     assert read.status == "not_read" and adapter.calls == 0 and blocked["llm_calls"].docs[-1]["status"] == "monthly_allowance_reached"
 
 
-def test_at_100_percent_an_upload_still_works_the_rules_map_alone_and_open_columns_wait_for_a_click(api):
-    own(api.db, **spent(10))
-    api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])
-    body = upload(api, FILE).json()
-    assert api.state["adapter"].calls == 0, "no model call"
-    assert body["ai_reading"]["status"] == "not_read"
-    assert by_column(body)["Adj"]["pending"] and not by_column(body)["Adj"]["field"], "the model's proposal never arrives"
-    assert all(c["source"] != "ai" for c in body["columns"] if c.get("source"))
-    assert api.db[access.COLLECTION].docs[0]["ledger"]["all"]["files"] == 1, "the file is counted"
-    assert upload(api, "mystery.csv", b"Alpha,Beta\n1,2\n").json()["status"] == "unknown_type", "the analyst picks the type"
-    assert api.state["adapter"].calls == 0 and api.db["llm_calls"].docs[-1]["status"] == "monthly_allowance_reached"
 
 
-def test_an_upload_below_100_percent_counts_the_file_the_mapping_call_and_the_recognition_call(api):
-    own(api.db)
-    api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])
-    upload(api, FILE)
-    total = ledger(api.db)["all"]
-    assert total["files"] == 1 and total["calls"] == 2 and total["cost_usd"] > 0, "the mapping call and the recognition call count toward the allowance"
 
 
 # --- the routes -------------------------------------------------------------------------------------------------------

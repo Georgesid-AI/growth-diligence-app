@@ -19,8 +19,8 @@ import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from app import readings, usage as usage_mod  # noqa: E402
 from app.llm import gateway  # noqa: E402
-from test_chat_upload import AUDIT, AUDIT_DOC, upload  # noqa: E402
-from test_revenue_recognition import FIXTURES, MONTHLY  # noqa: E402
+from upload_support import AUDIT, AUDIT_DOC, upload  # noqa: E402
+from upload_support import FIXTURES, MONTHLY  # noqa: E402
 
 MODEL = "claude-sonnet-5-5"
 COMPANY = "Northwind Test Co"
@@ -73,7 +73,6 @@ def flow(monkeypatch):
     monkeypatch.setattr(server, "db", db)
     monkeypatch.setenv("SHEET_READER_MODEL", MODEL)
     monkeypatch.delenv("READER_V1", raising=False)
-    server._RECOGNITION_CACHE.clear()
     state = {"adapter": Router(good_map())}
     monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: state["adapter"])
     client = TestClient(server.app, raise_server_exceptions=False)
@@ -214,10 +213,6 @@ def test_the_upload_goes_on_whatever_the_reader_cannot_do(flow, monkeypatch, set
     assert flow.db["datasets"].docs, "the file is stored as before"
 
 
-def test_a_crm_export_is_not_read(flow):
-    crm = b"Deal ID,Stage,Close date,Amount\n1,Won,2025-01-10,100\n2,Lost,2025-02-11,50\n3,Won,2025-03-12,70\n"
-    upload(flow, "crm.csv", crm, dtype="crm")
-    assert flow.state["adapter"].sheet_calls == 0 and not flow.db[readings.READINGS].docs
 
 
 def test_delete_audit_removes_the_reading_the_checks_and_the_overrides_with_the_last_audit(flow):
@@ -243,3 +238,35 @@ def test_compute_reads_the_stored_map_and_series_by_role_and_needs_no_confirmati
     assert by_name["ending_arr"]["reason"] == "needs an arr row or an mrr row"
     assert results["contract_version"] == 16
     assert flow.get(f"/api/audits/{AUDIT}/results").status_code == 200
+
+
+# --- rules 14 and 17 on the upload (tests/test_gateway_data_boundary.py names the rule): what the reader's upload stores and logs ---------------
+
+def _all_documents(db):
+    return {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
+
+
+def test_no_collection_holds_the_text_the_sheet_reader_was_sent_and_the_calls_hold_counts_only(flow):
+    upload(flow, MONTHLY, monthly())
+    texts = [p["text"] for p in flow.state["adapter"].sheet_payloads]
+    assert texts, "the model was asked"
+    stored = _all_documents(flow.db)
+    for text in texts:
+        for line in text.split("\n")[1:]:
+            assert line not in stored.get("llm_calls", ""), line
+    assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd", "image_tokens",
+                          "image_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp", "content_hash", "deck_id", "http_status",
+                          "error_type", "structure_type"} for c in flow.db["llm_calls"].docs)
+
+
+def test_the_log_lines_of_an_upload_a_compute_and_a_delete_hold_no_file_name_cell_value_or_company_name(flow, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    upload(flow, MONTHLY, monthly())
+    flow.post(f"/api/audits/{AUDIT}/compute")
+    flow.get(f"/api/audits/{AUDIT}/blockers")
+    flow.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": COMPANY})
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    assert "upload: run_id=" in log and "sheet reading: run_id=" in log, "the lines were written"
+    for secret in (MONTHLY, COMPANY, "10625", "Recognised revenue"):
+        assert secret not in log, f"{secret!r} reached a log line"

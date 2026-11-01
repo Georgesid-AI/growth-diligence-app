@@ -68,9 +68,7 @@ from schemas.metrics import safe_problems
 from .. import allowance, disclosure, formatting, readings
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
-from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, PAGE_CLAIMS, SHEET_READING, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileRecognitionReply,
-                      FileTypeReply, LabellingReply, Narrative, NarrativeResponse, PageClaimsReply, SheetStructureReply, StructureRead, StructureReply,
-                      UsageResponse, narrative_output_schema)
+from .schemas import (PAGE_CLAIMS, SHEET_READING, STRUCTURE_TYPES, DeckUsage, LabellingReply, Narrative, NarrativeResponse, PageClaimsReply, StructureRead, UsageResponse, narrative_output_schema)
 
 logger = logging.getLogger("growth.llm")
 
@@ -1549,14 +1547,8 @@ SHEET_READING_LOCK_ROUNDS = 5
 SHEET_PROMPT_MISSING_TEXT = "the sheet_reading prompt is not in the prompt store"
 SHEET_READING_NOT_STORED = "the stored reading is not there to be read again"
 SHEET_READING_NOT_MATCHED = "reading did not match the map schema"
-# The spreadsheet mapping path of PR 1 and before (file_type, file_recognition, sheet_structure and the column mapping) stays behind a flag
-# for PR 2 only (read-check-review.md section 13): READER_V1=off turns its model calls off, anything else leaves them on. Its three calls
-# are unchanged and still do not learn names.
-OLD_SHEET_CALLS = frozenset({FILE_TYPE, FILE_RECOGNITION, SHEET_STRUCTURE, "column_mapping"})
-STRUCTURE_PROMPT = "structure_reading"
+STRUCTURE_PROMPT = "structure_reading"        # the deck structures of the rules read (DECK_PIPELINE=rules, Add from deck)
 PAGE_CLAIMS_PROMPT = "deck_reading"       # the page reader's prompt in the store (docs/specs/prompt-store.md); the repo holds a stub
-FILE_TYPE_PROMPT = "file_type"
-SHEET_STRUCTURE_PROMPT = "sheet_structure"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
 PIPELINES = ("rules", "ai")                 # the DECK_PIPELINE switch
 DEFAULT_PIPELINE = "ai"                     # since 2026-10-22 (docs/design/ai-reads-rules-check.md, built): the model reads every page
@@ -1577,10 +1569,6 @@ def page_reader_problem() -> Optional[str]:
     logger.error("page reader model %s not permitted", name[:80])
     return PAGE_READER_BLOCKED
 
-
-def reader_v1_enabled() -> bool:
-    """READER_V1: "off" turns the old spreadsheet mapping calls off; any other value, or none, leaves them on (the default)."""
-    return os.environ.get("READER_V1", "").strip().lower() != "off"
 
 
 def sheet_reader_model() -> str:
@@ -1670,7 +1658,7 @@ def log_refusal(step: str, run_id: str, refusal: "guards.GuardRefusal") -> None:
                    "-" if refusal.cap is None else refusal.cap)
 # The calls outside the daily spend cap: a column mapping (chat-upload.md 4.2) and a page read (ai-reads-rules-check.md). Both still
 # count in the tester's monthly allowance and in the day's spend every other call is checked against.
-SPEND_CAP_EXEMPT = frozenset({"column_mapping", PAGE_CLAIMS})
+SPEND_CAP_EXEMPT = frozenset({PAGE_CLAIMS})
 # A file name in the text means it was built from the wrong thing: refused.
 _FILE_NAME = re.compile(r"(?i)\b[\w\-. ]{1,80}\.(?:pptx?|pdf|docx?|xlsx?|xlsm|xls|csv)\b")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -1754,55 +1742,12 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         if again != text:
             return "redaction_changed"
         return "personal_data" if structure_redact.personal_items(text) else None
-    if structure_type == SHEET_STRUCTURE:
-        # Every text cell of one sheet, never a figure, at most 400 rows with text, the withhold rule and the redaction run again.
-        problem = structure_redact.sheet_text_problem(text)
-        if problem:
-            return problem
-        cells = structure_redact.parse_sheet_text(text)["cells"]
-        if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
-            return "cell_too_long"
-        redacted, _ = structure_redact.redact_structure(cells, company, mapping, structure_redact.file_type_withheld(context))
-        return "redaction_changed" if redacted != cells else None
-    if structure_type == FILE_RECOGNITION:
-        # The file-type text with the row labels of a metric-labelled sheet, "Row n" for every other sheet, redaction run again (5.4).
-        problem = structure_redact.recognition_text_problem(text)
-        if problem:
-            return problem
-        withheld = structure_redact.file_type_withheld(context)
-        for sheet in structure_redact.parse_recognition_text(text):
-            cells = structure_redact.recognition_cells(sheet)
-            if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
-                return "cell_too_long"
-            redacted, _ = structure_redact.redact_structure(cells, company, mapping, withheld)
-            if redacted != cells:
-                return "redaction_changed"
-        return None
-    if structure_type == FILE_TYPE:
-        problem = structure_redact.file_type_text_problem(text)
-        if problem:
-            return problem
-        withheld = structure_redact.file_type_withheld(context)
-        for sheet in structure_redact.parse_file_type_text(text):
-            cells = structure_redact.file_type_cells(sheet)
-            if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
-                return "cell_too_long"
-            redacted, _ = structure_redact.redact_structure(cells, company, mapping, withheld)
-            if redacted != cells:
-                return "redaction_changed"
-        return None
-    if structure_type == "column_mapping":
-        problem = structure_redact.column_text_problem(text)
-        if problem:
-            return problem
-        cells = structure_redact.parse_column_text(text)["headers"]
-    else:
-        cell_text, listed = structure_redact.split_items(text)
-        cells = structure_redact.parse_structure_text(cell_text)
-        if not cells:
-            return "not_cells"
-        if listed is not None and not structure_redact.items_in_format(listed, cells, structure_type == "roadmap"):
-            return "bad_item_line"
+    cell_text, listed = structure_redact.split_items(text)
+    cells = structure_redact.parse_structure_text(cell_text)
+    if not cells:
+        return "not_cells"
+    if listed is not None and not structure_redact.items_in_format(listed, cells, structure_type == "roadmap"):
+        return "bad_item_line"
     if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
         return "cell_too_long"
     redacted, _ = structure_redact.redact_structure(cells, company, mapping, deck=True)
@@ -1867,10 +1812,7 @@ def _cited_cells(text: str, structure_type: str) -> set:
     if structure_type == PAGE_CLAIMS:
         return {structure_redact.page_cell_id(page, c) for page, cells in (structure_redact.parse_page_text(text) or {}).items()
                 for c in cells}
-    if structure_type == "column_mapping":
-        cells = (structure_redact.parse_column_text(text) or {}).get("headers") or []
-    else:
-        cells = structure_redact.parse_structure_text(structure_redact.split_items(text)[0]) or []
+    cells = structure_redact.parse_structure_text(structure_redact.split_items(text)[0]) or []
     return {structure_redact.cell_id(c) for c in cells}
 
 
@@ -1901,44 +1843,13 @@ def _schema_check(exc: Exception) -> str:
 
 
 def parse_structure_reply(reply: str, structure_type: str, text: str):
-    """The validated reply for the type Python sent, or raise GatewayError("parse_failed"): a labelling reply for
-    a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping, the file-type word for a file."""
+    """The validated reply for the type Python sent, or raise GatewayError("parse_failed"): the file map of a sheet reading, the page
+    claims of a page batch, a labelling reply for a deck structure (parse_labelling_reply)."""
     if structure_type == SHEET_READING:
         return parse_file_map_reply(reply, text)
-    if structure_type == SHEET_STRUCTURE:
-        return parse_sheet_reply(reply, text)
     if structure_type == PAGE_CLAIMS:
         return parse_page_reply(reply, text)
-    if structure_type == FILE_RECOGNITION:
-        try:
-            return FileRecognitionReply.model_validate(json.loads((reply or "").strip()))
-        except Exception as exc:
-            raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}",
-                               check=_schema_check(exc))
-    if structure_type == FILE_TYPE:
-        try:
-            return FileTypeReply.model_validate(json.loads((reply or "").strip()))
-        except Exception as exc:
-            raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}",
-                               check=_schema_check(exc))
-    if structure_type != "column_mapping":
-        return parse_labelling_reply(reply, structure_type, text)
-    try:
-        data = json.loads((reply or "").strip())
-        parsed = StructureReply.model_validate(data)
-    except Exception as exc:
-        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}",
-                           check=_schema_check(exc))
-    if parsed.type != "column_mapping":
-        raise GatewayError("parse_failed", "type changed between a deck structure and a column mapping", check="other")
-    if any(item.metric not in MAPPING_FIELDS for item in parsed.items):
-        raise GatewayError("parse_failed", "a metric that does not belong to this kind of structure",
-                           check="metric_list")
-    known = _cited_cells(text, structure_type)
-    for item in parsed.items:
-        if item.value_cell not in known or any(c not in known for c in item.period_cells):
-            raise GatewayError("parse_failed", "reply cites a cell that is not in the structure", check="other")
-    return parsed
+    return parse_labelling_reply(reply, structure_type, text)
 
 
 def _schema_fields(exc: Exception) -> List[str]:
@@ -1993,27 +1904,6 @@ def parse_page_reply(reply: str, text: str) -> PageClaimsReply:
             kept.append(claim)
     return PageClaimsReply(type=top.type, claims=kept)
 
-
-def parse_sheet_reply(reply: str, text: str) -> SheetStructureReply:
-    """Validate a sheet skeleton's reply (chat-upload.md section 26.4), or raise GatewayError("parse_failed"): the schema (extra
-    fields forbidden), then every row, parent and column one the skeleton holds, no row twice and no row its own parent."""
-    try:
-        parsed = SheetStructureReply.model_validate(json.loads((reply or "").strip()))
-    except Exception as exc:
-        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc))
-    sent = structure_redact.parse_sheet_text(text) or {"cells": [], "rows": {}, "withheld": {}}
-    rows = set(sent["rows"]) | {c["row"] for c in sent["cells"]}
-    cols = {c["col"] for c in sent["cells"]} | set(sent["withheld"]) | \
-        {c for r in sent["rows"].values() for c in r["num"] + r["blank"]}
-    named = [r.row for r in parsed.rows]
-    if len(set(named)) != len(named):
-        raise GatewayError("parse_failed", "a row is named twice", check="item_count")
-    if parsed.header_row not in rows or parsed.label_col not in cols or any(p.col not in cols for p in parsed.periods):
-        raise GatewayError("parse_failed", "reply names a row or column that is not in the skeleton", check="other")
-    if any(r.row not in rows or (r.parent_row is not None and (r.parent_row not in rows or r.parent_row == r.row))
-           for r in parsed.rows):
-        raise GatewayError("parse_failed", "reply names a row or parent that is not in the skeleton", check="other")
-    return parsed
 
 
 def parse_labelling_reply(reply: str, structure_type: str, text: str) -> LabellingReply:
@@ -2148,14 +2038,8 @@ def _structure_result(status, structure_type, reason=None, **fields) -> Structur
 
 def _reading(output: dict) -> dict:
     """The fields of a stored or new reply: a deck structure's labels and pairs, a column mapping's items."""
-    if output.get("type") == FILE_RECOGNITION:
-        return {"recognition": output}
     if "map_version" in output:
         return {"file_map": output}
-    if "file_type" in output:
-        return {"file_type": output["file_type"]}
-    if "header_row" in output:
-        return {"sheet": output}
     if "claims" in output:
         return {"claims": output["claims"]}
     if "labels" in output:
@@ -2213,10 +2097,8 @@ async def read_structure(
     """
     import asyncio
     sleep = sleep or asyncio.sleep
-    if structure_type not in STRUCTURE_TYPES and structure_type not in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION, PAGE_CLAIMS, SHEET_READING):
+    if structure_type not in STRUCTURE_TYPES and structure_type not in (PAGE_CLAIMS, SHEET_READING):
         return _structure_result("not_read", structure_type, f"unknown structure type {structure_type!r}")
-    if structure_type in OLD_SHEET_CALLS and not reader_v1_enabled():
-        return _structure_result("not_read", structure_type, NOT_READ)
     context = await load_structure_context(db, audit_id)
     if context.get("structure_reading_consent") is not True:
         return _structure_result("no_consent", structure_type, "AI-assisted reading is off for this audit")
@@ -2274,8 +2156,7 @@ async def read_structure(
             if not _sheet_reader_model_ok(model):
                 return _structure_result("blocked", structure_type, "the reading record's model is not permitted")
         else:
-            prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
-                                                  PAGE_CLAIMS: PAGE_CLAIMS_PROMPT, SHEET_READING: SHEET_READING_PROMPT}.get(structure_type, STRUCTURE_PROMPT),
+            prompt = await prompt_store.load(db, {PAGE_CLAIMS: PAGE_CLAIMS_PROMPT, SHEET_READING: SHEET_READING_PROMPT}.get(structure_type, STRUCTURE_PROMPT),
                                              version=(reread_of or {}).get("prompt_version") if structure_type == SHEET_READING else None)
     except prompt_store.PromptMissing:
         if structure_type == PAGE_CLAIMS:
@@ -2327,10 +2208,7 @@ async def read_structure(
     user_payload = cache.canonical_json({"type": structure_type, "text": text, **({"recheck": recheck} if recheck else {}), **ask})
     image_tokens = 0
     adapter = adapter or (AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS) if structure_type == SHEET_READING else AnthropicAdapter())
-    sheet = structure_type == SHEET_STRUCTURE
-    input_cap, max_tokens = (SHEET_INPUT_CAP, SHEET_MAX_TOKENS) if sheet else (STRUCTURE_INPUT_CAP, STRUCTURE_MAX_TOKENS)
-    if structure_type == FILE_RECOGNITION:
-        input_cap, max_tokens = RECOGNITION_INPUT_CAP, RECOGNITION_MAX_TOKENS
+    input_cap, max_tokens = STRUCTURE_INPUT_CAP, STRUCTURE_MAX_TOKENS
     if structure_type == PAGE_CLAIMS:
         input_cap, max_tokens = PAGE_INPUT_CAP, PAGE_MAX_TOKENS
     if structure_type == SHEET_READING:
@@ -2461,8 +2339,6 @@ async def read_structure(
         if structure_type == PAGE_CLAIMS:
             output = redaction.restore_deep(output, mapping)         # display un-masks on the server: the tokens go back to the names
         stored = output
-        if structure_type == FILE_RECOGNITION and output.get("revenue_row"):
-            stored = {**output, "revenue_row": {"row": output["revenue_row"]["row"]}}        # the label echo is never kept (5.5)
         if structure_type == SHEET_READING:
             # Written once beside the file's hash (section 9), names restored: the token map goes with the audit, a reading may outlive it.
             if not recheck:
@@ -2729,7 +2605,7 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
         name = r.get("step")
         if name == STRUCTURE_STEP:
             kind = r.get("structure_type")
-            name = "deck_structure" if r.get("deck_id") else kind if kind in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION, SHEET_READING) else "column_mapping"
+            name = "deck_structure" if r.get("deck_id") else kind if kind == SHEET_READING else "deck_structure"
         step = by_step.setdefault(name, DeckUsage())
         step.calls += 0 if r.get("cache_hit") else 1
         step.cache_hits += 1 if r.get("cache_hit") else 0

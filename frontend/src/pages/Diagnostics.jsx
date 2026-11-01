@@ -3,9 +3,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Loader2, ShieldAlert, CheckCircle2, ArrowRight } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { Provenance } from "@/components/Provenance";
-import { getAudit, getDecks, getResults, reportUsage } from "@/lib/api";
+import { getAudit, getResults, reportUsage } from "@/lib/api";
 import { S22_RECONCILIATION, S22_SAME_SOURCE } from "@/lib/chatUpload";
-import { DIAGNOSTICS_DECK_HEADING, STALE_LABEL, diagnosticLines } from "@/lib/deckClaims";
+import { STALE_LABEL } from "@/lib/deckClaims";
 import { fmtCount, fmtCurrency, fmtPct } from "@/lib/format";
 import { ANOMALIES_NOT_COMPUTED } from "@/lib/gapLists";
 import { seeGlossary } from "@/lib/glossary";
@@ -15,11 +15,9 @@ export default function Diagnostics() {
   const nav = useNavigate();
   const [audit, setAudit] = useState(null);
   const [data, setData] = useState(null);
-  const [deckLines, setDeckLines] = useState([]);
 
   useEffect(() => {
     reportUsage(id, { screen: "diagnostics" });
-    Promise.resolve().then(() => getDecks(id)).then((d) => setDeckLines(diagnosticLines(d?.decks))).catch(() => {});
     getAudit(id).then(setAudit).catch(() => {});
     getResults(id).then(setData).catch((e) => setData(e.response?.data?.detail?.code === "results_stale" ? "stale" : false));
   }, [id]);
@@ -44,15 +42,6 @@ export default function Diagnostics() {
       </div>
 
       <ReconciliationTable rec={r.revenue_reconciliation} currency={r.reporting_currency} />
-
-      {deckLines.length > 0 && (
-        <section data-testid="diagnostics-deck-reading" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6">
-          <h3 className="font-heading font-semibold text-slate-900 text-sm mb-3">{DIAGNOSTICS_DECK_HEADING}</h3>
-          <ul className="space-y-1 text-xs font-mono text-slate-700">
-            {deckLines.map((line, i) => <li key={i} data-testid="diagnostics-deck-line">{line}</li>)}
-          </ul>
-        </section>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7 bg-white border border-[#E5E7EB] rounded-lg p-5">

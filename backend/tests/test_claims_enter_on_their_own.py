@@ -17,7 +17,7 @@ pytest.importorskip("motor")
 
 from test_claim_matching import RUNS, results_for, settings  # noqa: E402
 from test_ic_memo import inputs  # noqa: E402
-from test_run_audit import AUDIT, confirm_open_columns, stage, upload_files  # noqa: E402
+from test_run_audit import AUDIT, stage, upload_files  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
 from app import decks, run_audit  # noqa: E402
@@ -50,7 +50,6 @@ def deck(client, *candidates):
 
 def prepared(client, *candidates):
     upload_files(client)
-    confirm_open_columns(client)
     deck(client, *candidates)
     stage(client, "engine")
 
@@ -136,7 +135,6 @@ def test_the_register_and_the_deck_list_show_an_entered_claim_with_no_stored_cha
 
 def test_no_deck_means_no_claims_stage_counts(run_api):
     upload_files(run_api)
-    confirm_open_columns(run_api)
     stage(run_api, "engine")
     res = stage(run_api, "claims")
     assert res["status"] == "done" and (res["entered"], res["open"]) == (0, 0)

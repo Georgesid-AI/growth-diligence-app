@@ -1,7 +1,7 @@
 /**
  * Run audit, on the Upload & Mapping page: the three stages the analyst starts with one button, in order. The files go through the endpoints that already
  * exist; each stage then answers through POST /audits/{id}/run/{stage}. The runner stops at the first stage that is not done:
- * needs_review sends the analyst to the questions on the Audit page, failed shows a plain-English message and a Retry stage button.
+ * failed shows a plain-English message and a Retry stage button. Nothing waits for a confirmation (read-check-review.md section 12).
  */
 export const STAGES = [
   { key: "mapping", label: "File mapping" },
@@ -9,7 +9,7 @@ export const STAGES = [
   { key: "claims", label: "Claim extraction from decks" },
 ];
 export const STAGE_STATUS_TEXT = {
-  idle: "Not started", running: "Running…", done: "Done", needs_review: "Needs your review", waiting: "Waiting", failed: "Failed",
+  idle: "Not started", running: "Running…", done: "Done", waiting: "Waiting", failed: "Failed",
 };
 export const DATA_EXTENSIONS = ["xlsx", "csv"];
 export const RUN_LABEL = "Run audit";
@@ -30,22 +30,15 @@ export function splitFiles(files) {
 export const idleStages = () => Object.fromEntries(STAGES.map((s) => [s.key, { status: "idle", message: null }]));
 
 /**
- * The stages as the audit stands now, for a page that is opened or reloaded: done once the work exists, needs_review while
- * something waits for the analyst, idle only when nothing was done. `views` are the stored datasets, `summary` the review
- * summary (its `computed` is whether results exist, its `engine_stale` whether a mapping was confirmed or corrected after
- * the last calculation: the engine is then not done), `deckData` the decks and their candidates.
+ * The stages as the audit stands now, for a page that is opened or reloaded: done once the work exists, idle only when nothing was done.
+ * `views` are the stored files, `summary` the review summary (its `computed` is whether results exist, its `engine_stale` whether the
+ * results are older than the engine or a set-up input: the engine is then not done), `deckData` the decks and their candidates.
  */
 export function stagesFromState({ views = [], summary = null, deckData = { decks: [], candidates: [] } } = {}) {
   const stages = idleStages();
-  if (views.length) {
-    const open = views.some((v) => v.pending > 0 || (v.missing_required || []).length > 0);
-    stages.mapping = { status: open ? "needs_review" : "done", message: null };
-  }
+  if (views.length) stages.mapping = { status: "done", message: null };
   if (summary?.computed && !summary.engine_stale) stages.engine = { status: "done", message: null };
-  if ((deckData.decks || []).length || (deckData.candidates || []).length) {
-    const waiting = (deckData.candidates || []).some((c) => c.status === "pending");
-    stages.claims = { status: waiting ? "needs_review" : "done", message: null };
-  }
+  if ((deckData.decks || []).length || (deckData.candidates || []).length) stages.claims = { status: "done", message: null };
   return stages;
 }
 
@@ -63,18 +56,14 @@ const detailOf = (e, fallback) => {
   return typeof detail === "string" ? detail : fallback;
 };
 
-/** Send the spreadsheets of the pick (a file of a loaded type replaces it: the analyst attached it on purpose). */
+/** Send the spreadsheets of the pick: each is stored and read; nothing is asked about its type. */
 async function uploadData(api, auditId, pick) {
   while (pick.data.length) {
     const file = pick.data[0];
-    let res;
     try {
-      res = await api.uploadChatFile(auditId, file, { replace: true });
+      await api.uploadChatFile(auditId, file);
     } catch (e) {
       return { status: "failed", message: detailOf(e, `${file.name} could not be read. Retry this stage.`) };
-    }
-    if (res.status === "unknown_type") {
-      return { status: "failed", message: `Could not tell what ${file.name} holds. Press Map to choose its type, then run the audit again.` };
     }
     pick.data.shift();
   }
@@ -126,12 +115,12 @@ export async function runAudit({ api, auditId, pick = { data: [], decks: [] }, f
 }
 
 /**
- * Whether the audit can run at all: it needs a mapped file (George, 2026-10-27; since 2026-10-28 Target ARR and Target date are parked and
+ * Whether the audit can run at all: it needs a file (George, 2026-10-27; since 2026-10-28 Target ARR and Target date are parked and
  * never block). One line saying what is missing, or null. `views` are the audit's stored datasets.
  */
 export function missingForRun({ audit, views = [] }) {
   const missing = [
-    !views.length && "a mapped file",
+    !views.length && "a file",
   ].filter(Boolean);
   return missing.length ? `The audit cannot run yet. Missing: ${missing.join(", ")}.` : null;
 }
@@ -153,7 +142,7 @@ export async function runFromList({ api, audit, wait, onStart = () => {} }) {
   onStart();                                          // the run begins: the caller marks it (the "revenue file missing" blocker shows from here)
   const from = firstStageNotDone(stagesFromState({ views, summary, deckData }));
   const out = await runAudit({ api, auditId: audit.id, from, wait, onUpdate: (key, result) => { messages[key] = result.message; } });
-  if (out.status === "done" || out.status === "needs_review") return { to: auditPath(audit.id, "dashboard") };
+  if (out.status === "done") return { to: auditPath(audit.id, "dashboard") };
   const stage = STAGES.find((s) => s.key === out.stopped);
   return { to: auditPath(audit.id, "mapping"), line: messages[out.stopped] || `${stage.label}: ${STAGE_STATUS_TEXT[out.status].toLowerCase()}.` };
 }

@@ -138,7 +138,7 @@ def test_the_store_holds_hashes_only_and_a_token_is_never_stored_or_listed(acces
 
 def test_health_and_the_field_list_are_open(access):
     client = access["client"]
-    assert client.get("/api/").status_code == 200 and client.get("/api/fields").status_code == 200
+    assert client.get("/api/").status_code == 200
 
 
 def _seed_usage(access):

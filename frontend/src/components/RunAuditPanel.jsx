@@ -59,7 +59,7 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
     if (!alive.current) return;
     setRunning(false);
     onRan?.([...pick.current.data, ...pick.current.decks]);
-    if (out.status === "done" || out.status === "needs_review") nav(`/audit/${auditId}/dashboard`);
+    if (out.status === "done") nav(`/audit/${auditId}/dashboard`);
   }, [auditId, running, update, nav, pick, onRan, onRunning, readState]);
 
   const runButton = (testId) => (
@@ -105,6 +105,5 @@ function StageIcon({ status }) {
   if (status === "running") return <Loader2 className="h-4 w-4 mt-0.5 animate-spin text-sky-700" />;
   if (status === "done") return <Check className="h-4 w-4 mt-0.5 text-emerald-700" />;
   if (status === "failed") return <AlertTriangle className="h-4 w-4 mt-0.5 text-rose-700" />;
-  if (status === "needs_review") return <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-700" />;
   return <Circle className="h-4 w-4 mt-0.5 text-slate-400" />;
 }

@@ -26,9 +26,9 @@ jest.mock("react-router-dom", () => ({
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
 jest.mock("@/components/AuditSetup", () => ({ __esModule: true, ConsentBlock: () => null, AssumptionsSetup: () => <div data-testid="audit-setup" />, ParkedBlocks: () => null }));
 jest.mock("@/components/DeckPanel", () => () => <div data-testid="deck-panel" />);
+jest.mock("@/components/ReadingScreen", () => ({ __esModule: true, default: () => <div data-testid="reading-screen" />, ReadingTop: ({ host }) => <div data-testid="reading-top">{host}</div> }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-window.history.pushState({}, "", "/?view=legacy");      // PR 3: the earlier screen, which this file tests, is behind ?view=legacy (lib/legacyView.js)
 const AUDIT = { id: "a1", company_name: "TestCo", reporting_currency: "EUR", target_arr: 1000000, as_of_month: null, structure_reading_consent: true };
 const VIEW = (dtype, over = {}) => ({
   status: "ok", dtype, file: `${dtype}.csv`, size_bytes: 10, ext: "csv", row_count: 3, months: null, pending: 0, missing_required: [], version: 1,
@@ -77,8 +77,8 @@ test("Run audit and its stages sit under the assumptions strip, below the Board 
   expect(follows("chat-drop-zone", "deck-panel")).toBe(true);
   expect(follows("deck-panel", "chat-messages")).toBe(true);
   expect(follows("upload-chat", "fx-settings")).toBe(true);
+  expect(follows("run-audit-panel", "fx-settings")).toBe(true);        // the set-up lives under More settings, below Run audit
   expect(follows("fx-settings", "audit-setup")).toBe(true);
-  expect(follows("audit-setup", "run-audit-panel")).toBe(true);
   expect(q("chat-map")).not.toBeNull();
   expect(q("chat-calculate")).toBeNull();
   expect(q("compute-button")).toBeNull();
@@ -107,12 +107,12 @@ test("one press sends the attached spreadsheets, runs the three stages in order 
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
-test("a stage that needs the analyst sends them to the Audit page", async () => {
-  api.runStage.mockResolvedValue({ stage: "mapping", status: "needs_review", open: 1 });
+test("no stage waits for the analyst: a run that is done opens the Audit page", async () => {
+  api.runStage.mockResolvedValue({ stage: "mapping", status: "done" });
   await mount();
   await attach("revenue.csv");
   await press("run-audit");
-  expect(api.runStage).toHaveBeenCalledTimes(1);
+  expect(api.runStage).toHaveBeenCalledTimes(3);
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
@@ -149,11 +149,11 @@ test("a file the run sent is no longer attached: the box reads the stored files 
 });
 
 test("under React.StrictMode the stage updates still land (alive ref is re-armed on the second mount)", async () => {
-  api.runStage.mockResolvedValue({ stage: "mapping", status: "needs_review", open: 1 });
+  api.runStage.mockResolvedValue({ stage: "mapping", status: "done" });
   await mount(true);
   await attach("revenue.csv");
   await press("run-audit");
-  expect(q("stage-mapping").getAttribute("data-status")).toBe("needs_review");
+  expect(q("stage-mapping").getAttribute("data-status")).toBe("done");
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
@@ -175,12 +175,12 @@ test("a finished audit shows each stage done on load, never Not started", async 
   expect(q("stage-claims-status").textContent).toBe("Done");
 });
 
-test("columns or claims still waiting for the analyst show as needing review; the stage not reached stays not started", async () => {
+test("columns or claims still open show nothing as needing review: the stage not reached stays not started", async () => {
   api.getDatasets.mockResolvedValue([VIEW("revenue", { pending: 2 })]);
   api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", status: "pending" }] });
   await mount();
-  expect(stageOf()).toEqual(["needs_review", "idle", "needs_review"]);
-  expect(q("stage-mapping-status").textContent).toBe("Needs your review");
+  expect(stageOf()).toEqual(["done", "idle", "done"]);
+  expect(document.body.textContent).not.toContain("Needs your review");
 });
 
 test("a deck is not attached in the box (the deck panel takes it) and a file removed before the run is not sent", async () => {
@@ -197,7 +197,7 @@ test("a deck is not attached in the box (the deck panel takes it) and a file rem
 
 test("while a run is in progress Map waits, and Run audit waits while a file is being read", async () => {
   let release;
-  api.runStage.mockImplementation(() => new Promise((resolve) => { release = () => resolve({ stage: "mapping", status: "needs_review" }); }));
+  api.runStage.mockImplementation(() => new Promise((resolve) => { release = () => { api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" })); resolve({ stage: "mapping", status: "done" }); }; }));
   await mount();
   await attach("revenue.csv");
   await act(async () => { q("run-audit").click(); });
@@ -205,7 +205,7 @@ test("while a run is in progress Map waits, and Run audit waits while a file is 
   expect(q("run-audit").disabled).toBe(true);
   expect(q("chat-map").disabled).toBe(true);
   await act(async () => { release(); });
-  await act(async () => { await Promise.resolve(); });
+  for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 

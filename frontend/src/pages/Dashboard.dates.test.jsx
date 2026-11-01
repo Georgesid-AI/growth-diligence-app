@@ -21,7 +21,6 @@ jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{childr
 jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{children}</div> }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-window.history.pushState({}, "", "/?view=legacy");      // PR 3: the earlier screen, which this file tests, is behind ?view=legacy (lib/legacyView.js)
 
 const BLOCKS = ["arr", "mrr_series", "revenue_series", "customers_series", "nrr", "gross_churn", "acv_path", "cohort_retention",
   "sales_cycle", "win_rate", "founder_win_rate", "cac_payback", "segment_paths"];
@@ -38,7 +37,7 @@ function regressionResults() {
 }
 
 async function mountDashboard(data) {
-  api.getAudit.mockResolvedValue(data.audit);
+  api.getAudit.mockResolvedValue({ ...data.audit, old_claims: true });
   api.getResults.mockResolvedValue(data);
   api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "x" });
   api.getDisclosure.mockResolvedValue(null);

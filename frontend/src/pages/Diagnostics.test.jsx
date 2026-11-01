@@ -128,25 +128,8 @@ test("stale results read Stale – re-run audit, not Not computed yet; no result
   expect(document.body.textContent).toContain("Not computed yet.");
 });
 
-test("the deck reading lines list what a check corrected, with both values, a kept period the page reads otherwise, and the claims that never entered the register", async () => {
+test("the page holds no deck reading section: the label correction and its diagnostics are gone (read-check-review.md section 12)", async () => {
   await mount(REC);
-  const lines = [...document.body.querySelectorAll('[data-testid="diagnostics-deck-line"]')].map((n) => n.textContent);
-  expect(lines).toEqual([
-    "plan.pdf · page 4: corrected period, 2023 → 2022 (year under bar differs)",
-    "plan.pdf · page 5: derived figure, not a claim · revenue 200000",
-    "plan.pdf · page 7: launch date without product name · product · 2025-Q3",
-    "plan.pdf · page 9: sources disagree on period, 2023 kept; the page reads 2024",
-  ]);
-});
-
-test("no deck diagnostics, no deck reading section", async () => {
-  await mount(REC);
-  await act(async () => { root.unmount(); });
-  host.remove();
-  api.getDecks.mockResolvedValue({ decks: [{ deck_id: "d1", file: "plan.pdf" }], candidates: [] });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => { root.render(<Diagnostics />); });
   expect(q("diagnostics-deck-reading")).toBeNull();
+  expect(document.body.querySelectorAll('[data-testid="diagnostics-deck-line"]').length).toBe(0);
 });
