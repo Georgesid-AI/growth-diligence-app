@@ -581,6 +581,18 @@ def test_a_rounded_agreement_does_not_count_toward_the_reliability_rating():
     assert integrity._role_reconciliation(results) is None
 
 
+def test_a_rounded_year_counts_as_agreeing_in_the_summary_line_but_not_in_the_rating():
+    from app import integrity
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000_000, 1_234_000], ["2024", "2025"], basis="yearly")], granularity="yearly")])]
+    deck = [{**deck_fig(4, 1_200_000.0, "Total revenue FY2025"), "precision": 100_000}, {**deck_fig(5, 1_000_000.0, "Total revenue FY2024", period="2024"), "precision": 0}]
+    results = run(pnl, deck=deck)
+    statuses = {r["period"]: r["status"] for r in results["role_metrics"]["reconciliation"]}
+    assert statuses["2025"] == "agrees_rounded"
+    got = integrity._role_reconciliation(results)
+    assert got is not None, "the exact 2024 year keeps the rating alive"
+    assert got["finding"] == "2 of 2 years agree across the sources" and got["result"] == integrity.GREEN
+
+
 def test_an_s_and_m_split_with_actuals_in_an_earlier_year_is_not_called_plan_only_just_as_r_and_d_is_not():
     for role, name in (("rnd", "rnd_share"), ("sales_marketing", "sm_share")):
         rows = [row(6, role, [100, 120], ["2024", "2026"], basis="yearly"), row(7, role, [150], ["2025"], basis="yearly", actual_plan="plan", plan=True)]

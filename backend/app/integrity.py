@@ -62,15 +62,17 @@ def revenue_years(results: dict) -> List[dict]:
 
 
 def _role_reconciliation(results: dict) -> Optional[dict]:
-    # A year that agrees only after rounding (a deck figure printed to the nearest thousand) is a row of the table, never a count of the rating.
-    years = [y for y in revenue_years(results) if y["status"] != "agrees_rounded"]
+    # A year that agrees only after rounding (a deck figure printed to the nearest thousand) counts as agreeing in the line "N of M years agree",
+    # never in the rating: the result and the coverage read the other years only.
+    all_years = revenue_years(results)
+    years = [y for y in all_years if y["status"] != "agrees_rounded"]
     if not years:
         return None
     differing = [y for y in years if y["status"] == "differs"]
     worst = max(differing, key=lambda y: abs(y["gap_pct"] or 0), default=None)
     result = GREEN if not differing else RED if any((y["gap_pct"] or 0) > ROLE_BLOCKER_PCT for y in differing) else AMBER
-    finding = (f"{len(years) - len(differing)} of {len(years)} years agree across the sources" if not differing else
-               f"{len(differing)} of {len(years)} years differ across the sources; largest {fmt.fmt_pct(abs(worst['gap_pct'] or 0))} in {worst['period']}")
+    finding = (f"{len(all_years) - len(differing)} of {len(all_years)} years agree across the sources" if not differing else
+               f"{len(differing)} of {len(all_years)} years differ across the sources; largest {fmt.fmt_pct(abs(worst['gap_pct'] or 0))} in {worst['period']}")
     where = "; ".join(dict.fromkeys(s["where"] for y in years for s in y["sources"]))
     return {"result": result, "finding": finding, "source": where}
 
