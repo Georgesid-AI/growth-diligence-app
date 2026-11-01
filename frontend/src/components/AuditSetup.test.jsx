@@ -33,7 +33,7 @@ afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(
 describe("the consent block", () => {
   const ZDR_ON = "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.";
   const ZDR_OFF = "Deck pages are sent to Anthropic's API for reading and are not used for training.";
-  const block2 = (zdr) => "The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and every figure it reports is checked by code against its cell. "
+  const block2 = (zdr) => "The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and figures are checked by code against their cells. "
     + "Files are read automatically. Nothing waits for your confirmation. "
     + "The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. "
     + `${zdr ? ZDR_ON : ZDR_OFF} Uploaded files are stored for this audit and deleted with it.`;

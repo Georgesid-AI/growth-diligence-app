@@ -11,7 +11,7 @@ export const ZDR_SENTENCE_OFF = "Deck pages are sent to Anthropic's API for read
 // S2 (PR 4, read-check-review.md section 12): the files are read, not mapped; no sentence about mapping or confirming rows.
 export const READ_AUTOMATICALLY_LINE = "Files are read automatically. Nothing waits for your confirmation.";
 export const s2Explainer = (zdr) =>
-  "The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and every figure it reports is checked by code against its cell. "
+  "The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and figures are checked by code against their cells. "
   + `${READ_AUTOMATICALLY_LINE} `
   + "The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. "
   + `${zdr ? ZDR_SENTENCE_ON : ZDR_SENTENCE_OFF} `
