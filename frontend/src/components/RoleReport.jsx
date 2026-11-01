@@ -62,7 +62,7 @@ export function RoleCards({ rm, ccy }) {
         value={last ? signedPct(last.growth) : "n/c"} qualifier={last ? `(${last.period} on the year before)` : undefined}
         sub={years.length > 1 ? years.slice(0, -1).map((y) => `${y.period} ${signedPct(y.growth)}`).join(" · ") : undefined}
         note={last ? undefined : first(rm, "growth")?.reason || "needs a revenue row with two full years"}
-        caption="Revenue of the year against the year before" />
+        caption={last?.deck_note ? `Revenue of the year against the year before (${last.deck_note})` : "Revenue of the year against the year before"} />
     </>
   );
 }
@@ -164,7 +164,14 @@ export function ReconciliationTable({ rm, ccy }) {
                 </td>
                 <td className="py-2 px-3 font-mono" data-testid="reconciliation-gap">{y.status === "not_compared" ? "—" : fmtCurrency(y.gap, ccy)}</td>
                 <td className="py-2 px-3 font-mono">{y.gap_pct == null ? "—" : fmtPct(y.gap_pct)}</td>
-                <td className="py-2 px-3">{y.status === "agrees" ? "Agrees" : y.status === "differs" ? "Differs" : y.reason}</td>
+                <td className="py-2 px-3" data-testid="reconciliation-result">
+                  {y.status === "agrees_rounded" ? (
+                    <>
+                      <span className="text-emerald-700" data-testid="reconciliation-green">Agrees (rounded)</span>
+                      {y.note && <div className="text-[10px] text-slate-500" data-testid="reconciliation-note">{y.note}</div>}
+                    </>
+                  ) : y.status === "agrees" ? "Agrees" : y.status === "differs" ? "Differs" : y.reason}
+                </td>
               </tr>
             ))}
           </tbody>

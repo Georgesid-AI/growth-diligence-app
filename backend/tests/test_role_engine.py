@@ -359,7 +359,7 @@ def test_growth_by_year_from_a_monthly_row_and_a_yearly_row_with_the_cells():
     full = [file_of("f", [sheet("R", [row(4, "revenue", [100] * 12 + [150] * 12, [f"{2024 + i // 12}-{i % 12 + 1:02d}" for i in range(24)])])])]
     y = run(full, as_of="2025-12")["role_metrics"]["growth_by_year"]
     assert len(y) == 1 and y[0]["period"] == "2025" and y[0]["value"] == 1_800 and y[0]["prior"] == 1_200
-    assert y[0]["growth"] == pytest.approx(0.5) and len(y[0]["source"]["cells"]) == 4
+    assert y[0]["growth"] == pytest.approx(0.5) and y[0]["source"]["cells"] == ["B4:M4", "N4:Y4"]
     yearly = run(pnl_with(costs_sign=1))["role_metrics"]["growth_by_year"]
     assert [(x["period"], round(x["growth"], 3)) for x in yearly] == [("2024", 0.5), ("2025", 0.6)]
 
@@ -539,7 +539,7 @@ def test_growth_by_year_takes_a_year_from_the_monthly_row_first_and_cites_the_ra
     y = run([monthly, pnl], as_of="2026-06")["role_metrics"]["growth_by_year"]
     assert y[0]["value"] == 1_200 and y[0]["prior"] == 1_000
     assert y[0]["source"]["sheet"] == "Report" and y[0]["source"]["row"] == 9
-    assert y[0]["source"]["cells"] == ["P&L!B4", "B9", "M9"], "the prior year's cell with its sheet, then the twelve months' first and last cell"
+    assert y[0]["source"]["cells"] == ["P&L!B4", "B9:M9"], "the prior year's cell with its sheet, then the twelve months as one range"
 
 
 def test_growth_by_year_uses_a_deck_figure_only_for_a_year_no_spreadsheet_gives_and_says_so():

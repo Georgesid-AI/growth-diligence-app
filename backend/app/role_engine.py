@@ -581,7 +581,7 @@ def growth_by_year(table, as_of, fye, deck: Optional[List[Dict]] = None) -> List
             by_year.setdefault(_fiscal_year(month, fye), []).append((month, value, cell))
         for year, pts in by_year.items():
             if len(pts) == 12:
-                years[str(year)] = {"value": sum(v for _, v, _ in pts), "cells": [pts[0][2], pts[-1][2]], "rec": rec}
+                years[str(year)] = {"value": sum(v for _, v, _ in pts), "cells": [f"{pts[0][2]}:{pts[-1][2]}"], "rec": rec}
     yearly = pick(table, "revenue", "yearly")
     if yearly is not None:
         for period, (value, cell) in yearly["actual"].items():
