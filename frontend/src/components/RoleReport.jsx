@@ -98,6 +98,7 @@ export function YearlyPayback({ rm, yearly, ccy }) {
   const years = yearly?.years || [];
   const margin = first(rm, "gross_margin");
   const reason = first(rm, "yearly_cac_payback");
+  const share = first(rm, "sm_share");
   return (
     <div data-testid="cac-yearly">
       <p className="text-xs text-slate-600 mb-2" data-testid="cac-needs-monthly">{NEEDS_MONTHLY_PNL}</p>
@@ -126,7 +127,7 @@ export function YearlyPayback({ rm, yearly, ccy }) {
           </table>
         </div>
       )}
-      {[margin, reason].filter((m) => m?.detail).map((m) => <p key={m.metric} className="text-[11px] text-slate-500 mt-1" data-testid={`role-detail-${m.metric}`}>{m.name}: {m.detail}</p>)}
+      {[margin, share, reason].filter((m) => m?.detail).map((m) => <p key={m.metric} className="text-[11px] text-slate-500 mt-1" data-testid={`role-detail-${m.metric}`}>{m.name}: {m.detail}</p>)}
     </div>
   );
 }

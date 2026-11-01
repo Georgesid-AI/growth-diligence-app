@@ -144,3 +144,17 @@ test("one reason per missing metric, the same text at the top and in Data gaps",
     expect(gap).toContain(top);
   } finally { await done(); }
 });
+
+test("a row whose costs are printed as negatives carries the note, and a margin note from the sheet's own row shows", async () => {
+  const rm = { ...RM, metrics: [
+    metric("gross_margin", "Gross margin", { unit: "rate", value: 0.75, basis: "yearly", detail: "costs shown as negative; the sheet's own gross margin row states 62% against 75% computed (difference 13%)" }),
+    metric("sm_share", "S&M share of revenue", { unit: "rate", value: 0.375, basis: "yearly", detail: "costs shown as negative" }),
+    metric("yearly_cac_payback", "CAC payback (yearly)", { unit: "months", value: 14, basis: "yearly", detail: "costs shown as negative" })] };
+  const { host, done } = await mount(results({ role_metrics: rm }));
+  try {
+    expect(text(host, "role-detail-sm_share")).toBe("S&M share of revenue: costs shown as negative");
+    expect(text(host, "role-detail-gross_margin")).toContain("costs shown as negative");
+    expect(text(host, "role-detail-gross_margin")).toContain("62% against 75% computed");
+    expect(text(host, "role-detail-yearly_cac_payback")).toContain("costs shown as negative");
+  } finally { await done(); }
+});

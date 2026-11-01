@@ -17,6 +17,8 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from . import formatting as fmt
+
 ROLES = ("revenue", "bookings", "arr", "mrr", "churn_rate", "customers", "forecast", "cost_of_revenue", "sales_marketing", "rnd", "ga", "opex",
          "ebitda", "cash", "headcount")
 # Metric name -> the roles it needs (section 16). A tuple of alternatives is "one of".
@@ -92,7 +94,7 @@ def build_table(files: List[Dict]) -> List[Dict]:
                 table.append({"file": f.get("file"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
                               "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"),
                               "basis": row.get("basis"), "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
-                              "segment": (row.get("segment") or "").strip() or None, "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
+                              "segment": (row.get("segment") or "").strip() or None, "parent": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
                               "actual": pairs.get("series", {}), "plan": pairs.get("plan_series", {}),
                               "unchecked": f"row:{smap['sheet']}:{row['row']}" in cannot})
     return table
@@ -154,6 +156,63 @@ def pick(table: List[Dict], role: str, granularity: Optional[str] = None, key: s
 
 def _source(rec: Dict, cells: List[str], rule: str) -> Dict:
     return {"file": rec["file"], "sheet": rec["sheet"], "row": rec["row"], "cells": cells, "rule": rule}
+
+
+COST_ROLES = ("cost_of_revenue", "sales_marketing", "rnd", "ga", "opex")
+NEGATIVE_COSTS = "costs shown as negative"
+SM_PLAN_ONLY = "S&M split only in plan years; actual years carry OPEX total only"
+
+
+def _total(rec: Optional[Dict]) -> float:
+    return sum(v for v, _ in (rec["actual"].values() if rec else ()))
+
+
+def costs_negative(table: List[Dict], role: str) -> bool:
+    """True when the cost rows of the role carry the opposite sign to revenue (a P&L that prints costs as negatives). Compared on the sums of
+    the rows' actual cells; without a revenue row a negative cost sum is read against a positive revenue."""
+    cost = sum(_total(r) for r in table if r["role"] == role and r["segment"] is None)
+    rev = _total(pick(table, "revenue", "yearly") or pick(table, "revenue"))
+    return cost < 0 if not rev else (cost < 0) != (rev < 0) and cost != 0
+
+
+def cost_row(table: List[Dict], role: str, granularity: Optional[str] = None) -> Optional[Dict]:
+    """The row a cost role is read from: S&M is the sum of all its total rows, every other cost role the longest total row; in absolute values
+    when the role carries the opposite sign to revenue (`negated`)."""
+    return sum_role(table, role, granularity, many=(role == "sales_marketing"))
+
+
+def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, many: bool = True) -> Optional[Dict]:
+    """One synthetic row for a role that the sheet spreads over several rows (sales and marketing as two lines): the total rows (no segment, no
+    parent row of the same role) of one sheet and granularity, added period by period; each summed cell cites every row's cell ("B6+B7").
+    One row is returned as it is. A cost role is returned in absolute values when it carries the opposite sign to revenue."""
+    rows = [r for r in table if r["role"] == role and r["actual"] and r["segment"] is None
+            and (granularity is None or r["granularity"] == granularity)]
+    if not rows:
+        return None
+    numbers = {(r["file"], r["sheet"], r["row"]) for r in rows}
+    rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers]
+    best = max(((r["file"], r["sheet"]) for r in rows), key=lambda k: sum(len(r["actual"]) for r in rows if (r["file"], r["sheet"]) == k))
+    rows = [r for r in rows if (r["file"], r["sheet"]) == best]
+    if not many:
+        rows = [max(rows, key=lambda r: len(r["actual"]))]
+    negate = role in COST_ROLES and costs_negative(table, role)
+    if len(rows) == 1 and not negate:
+        return rows[0]
+    actual: Dict[str, Tuple[float, str]] = {}
+    for period in sorted({p for r in rows for p in r["actual"]}):
+        have = [r["actual"][period] for r in rows if period in r["actual"]]
+        value = sum(v for v, _ in have)
+        actual[period] = (abs(value) if negate else value, "+".join(c for _, c in have))
+    return {**rows[0], "actual": actual, "label": None, "labels": [r.get("label") for r in rows if r.get("label")], "negated": negate,
+            "row": rows[0]["row"], "rows": [r["row"] for r in rows]}
+
+
+def sm_reason(table: List[Dict], period: Optional[str] = None) -> Optional[str]:
+    """The reason for S&M rows that exist and hold no actual value (in the period, when given): the split sits in plan years only."""
+    rows = [r for r in table if r["role"] == "sales_marketing" and r["segment"] is None and (r["actual"] or r["plan"])]
+    if not rows or any(period in r["actual"] if period else r["actual"] for r in rows):
+        return None
+    return SM_PLAN_ONLY
 
 
 def _entry(metric: str, **fields) -> Dict:
@@ -361,13 +420,14 @@ def _year_fields(table, fye) -> Dict[str, Dict]:
     """{year period: {role field: {"value", "cells"}}} of the yearly rows of revenue, cost_of_revenue and sales_marketing (actual cells only)."""
     out: Dict[str, Dict] = {}
     for role, field in (("revenue", "revenue"), ("cost_of_revenue", "cost_of_revenue"), ("sales_marketing", "sm_expense")):
-        rec = pick(table, role, "yearly")
+        rec = cost_row(table, role, "yearly") if role != "revenue" else pick(table, role, "yearly")
         if rec is None:
             continue
+        labels = rec.get("labels") or ([rec["label"]] if rec.get("label") else [])
         for period, (value, cell) in rec["actual"].items():
             if re.fullmatch(r"\d{4}", period):
-                out.setdefault(period, {})[field] = {"value": value, "cells": [cell],
-                                                     "scope": sm_scope([rec["label"]]) if field == "sm_expense" and rec.get("label") else "unknown"}
+                out.setdefault(period, {})[field] = {"value": value, "cells": cell.split("+"),
+                                                     "scope": sm_scope(labels) if field == "sm_expense" and labels else "unknown"}
     return out
 
 
@@ -406,10 +466,12 @@ def stock(metric: str, role: str, unit: str, table, as_of, fye) -> Dict:
 
 def share(metric: str, role: str, table, as_of, fye) -> Dict:
     """A cost line (or EBITDA) over revenue, in the latest period both rows hold with the same granularity."""
-    cost = pick(table, role, "yearly") or pick(table, role, "monthly")
+    cost = (cost_row(table, role, "yearly") or cost_row(table, role, "monthly")) if role in COST_ROLES else (pick(table, role, "yearly") or pick(table, role, "monthly"))
     rev = pick(table, "revenue", cost["granularity"]) if cost else pick(table, "revenue")
     missing = [r for r, found in (("revenue", rev), (role, cost)) if found is None]
     if missing:
+        if role == "sales_marketing" and rev is not None and sm_reason(table):
+            return _missing(metric, sm_reason(table), [role])
         return _missing(metric, needs_text(missing), missing)
     if rev["basis"] != cost["basis"] and CUMULATIVE in (rev["basis"], cost["basis"]):
         return _missing(metric, f"the {role} row and the revenue row do not accumulate the same way")
@@ -425,7 +487,8 @@ def share(metric: str, role: str, table, as_of, fye) -> Dict:
     value = cv[0] / rv[0]
     label = YEARLY_LABEL if cost["granularity"] == "yearly" else None
     return _entry(metric, period=next(p for p in cost["actual"] if _end_month(p, fye) == m), basis=cost["granularity"], unit="rate", value=value,
-                  label=label, source=_source(cost, [cv[1], rv[1]], f"{NAMES[metric]} = the {role} row ÷ the revenue row in the same period"))
+                  label=label, detail=NEGATIVE_COSTS if cost.get("negated") else None,
+                  source=_source(cost, [*cv[1].split("+"), rv[1]], f"{NAMES[metric]} = the {role} row ÷ the revenue row in the same period"))
 
 
 def _fiscal_year(month: pd.Period, fye: int) -> int:
@@ -603,24 +666,57 @@ def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Di
         for metric in ("yearly_revenue", "gross_margin", "yearly_cac_payback"):
             put(metric, _missing(metric))
         return
-    put("yearly_revenue", _entry("yearly_revenue", period=last["period"], basis="yearly", unit="money", value=last["revenue"], label=YEARLY_LABEL,
+    period = last["period"]
+    negated = {r: costs_negative(table, r) for r in COST_ROLES}
+    note = lambda *roles: NEGATIVE_COSTS if any(negated[r] for r in roles) else None          # noqa: E731
+    put("yearly_revenue", _entry("yearly_revenue", period=period, basis="yearly", unit="money", value=last["revenue"], label=YEARLY_LABEL,
                                  source=src("Yearly revenue = the revenue row of the fiscal year")))
-    if last["gross_margin_pct"] is None:
-        put("gross_margin", _missing("gross_margin", "needs a cost_of_revenue row" if pick(table, "cost_of_revenue", "yearly") is None else None,
-                                     ["cost_of_revenue"] if pick(table, "cost_of_revenue", "yearly") is None else None))
+    gm = last["gross_margin_pct"]
+    if gm is not None and gm > 1:       # a margin above 100 % is a sign or a mapping error, never a result
+        put("gross_margin", _missing("gross_margin", "gross margin above 100%: check the sign of the cost_of_revenue row"))
+    elif gm is None:
+        no_cogs = cost_row(table, "cost_of_revenue", "yearly") is None
+        put("gross_margin", _missing("gross_margin", "needs a cost_of_revenue row" if no_cogs else None, ["cost_of_revenue"] if no_cogs else None))
     else:
-        put("gross_margin", _entry("gross_margin", period=last["period"], basis="yearly", unit="rate", value=last["gross_margin_pct"], label=YEARLY_LABEL,
+        put("gross_margin", _entry("gross_margin", period=period, basis="yearly", unit="rate", value=gm, label=YEARLY_LABEL,
+                                   detail="; ".join(x for x in (note("cost_of_revenue"), _margin_note(table, period, last["revenue"], gm)) if x) or None,
                                    source=src("Gross margin = (revenue − cost of revenue) ÷ revenue")))
     if last["cac_payback_months"] is None:
-        put("yearly_cac_payback", _missing("yearly_cac_payback", last["cac_payback_reason"] or None))
+        reason = last["cac_payback_reason"] or None
+        if reason == "needs a sales_marketing row":
+            reason = sm_reason(table, period) or reason
+        put("yearly_cac_payback", _missing("yearly_cac_payback", reason))
     else:
-        put("yearly_cac_payback", _entry("yearly_cac_payback", period=last["period"], basis="yearly", unit="months", value=last["cac_payback_months"],
+        put("yearly_cac_payback", _entry("yearly_cac_payback", period=period, basis="yearly", unit="months", value=last["cac_payback_months"],
                                          label=last.get("cac_payback_label") or "yearly, revenue-based",
+                                         detail=note("cost_of_revenue", "sales_marketing"),
                                          source=src("CAC payback = 12 × S&M ÷ (new revenue × gross margin), yearly")))
     sm = last.get("sm_pct_revenue")
     if sm is not None and "sm_share" in by_name and role_metrics["metrics"][by_name["sm_share"]]["status"] != "computed":
-        put("sm_share", _entry("sm_share", period=last["period"], basis="yearly", unit="rate", value=sm, label=YEARLY_LABEL,
+        put("sm_share", _entry("sm_share", period=period, basis="yearly", unit="rate", value=sm, label=YEARLY_LABEL, detail=note("sales_marketing"),
                                source=src("S&M share = S&M ÷ revenue")))
+    elif sm is None and "sm_share" in by_name and role_metrics["metrics"][by_name["sm_share"]]["status"] != "computed":
+        reason = sm_reason(table, period)
+        if reason:
+            put("sm_share", _missing("sm_share", reason, ["sales_marketing"]))
+
+
+def _margin_note(table: List[Dict], period: str, revenue: float, computed: float) -> Optional[str]:
+    """When the sheet has its own gross margin row (metric gross_margin: a rate, or money over revenue), its value against the computed margin,
+    if they differ by more than half a point. None when there is no such row or they agree."""
+    for rec in table:
+        if rec["metric"] != "gross_margin" or rec["segment"] is not None or period not in rec["actual"]:
+            continue
+        value = rec["actual"][period][0]
+        stated = value if (rec["unit"] == "rate" or rec["basis"] == "rate") else (value / revenue if revenue else None)
+        if stated is None:
+            continue
+        if stated > 1.5:            # a percentage written as 62 for 62 %
+            stated /= 100
+        if abs(stated - computed) > 0.005:
+            return (f"the sheet's own gross margin row states {fmt.fmt_pct(stated)} against {fmt.fmt_pct(computed)} computed "
+                    f"(difference {fmt.fmt_pct(abs(stated - computed))})")
+    return None
 
 
 def missing_reasons(role_metrics: Optional[Dict]) -> List[Dict]:
