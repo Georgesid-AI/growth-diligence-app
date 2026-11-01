@@ -1165,6 +1165,7 @@ async def generate_narrative(
                 input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                 cache_hit=False, status=refusal.reason,
             )
+            log_refusal(step, run_id, refusal)
             return _unavailable(run_id, step, str(refusal), metrics)
 
         adapter = adapter or AnthropicAdapter()
@@ -1658,7 +1659,15 @@ PROMPT_MISSING_TEXT = "AI reading not run – deck_reading prompt missing in pro
 TOO_LARGE = "Too large for AI reading"
 # The reason a cap refusal's "structure not read" line gives, per guard code (llm_calls keeps the code).
 CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap",
-               "monthly_allowance_reached": "allowance"}
+               "reviewer_token_cap_reached": "reviewer_token_cap", "monthly_allowance_reached": "allowance",
+               "call_cap_exceeded": "call_cap"}
+
+
+def log_refusal(step: str, run_id: str, refusal: "guards.GuardRefusal") -> None:
+    """One backend log line for every cap refusal on any AI call: closed words and numbers only."""
+    logger.warning("ai call refused: step=%s run_id=%s reason=%s used=%s cap=%s", step, run_id,
+                   CAP_REASONS.get(refusal.reason, "cap"), "-" if refusal.used is None else refusal.used,
+                   "-" if refusal.cap is None else refusal.cap)
 # The calls outside the daily spend cap: a column mapping (chat-upload.md 4.2) and a page read (ai-reads-rules-check.md). Both still
 # count in the tester's monthly allowance and in the day's spend every other call is checked against.
 SPEND_CAP_EXEMPT = frozenset({"column_mapping", PAGE_CLAIMS})
@@ -2390,6 +2399,7 @@ async def read_structure(
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=model, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id, structure_type=structure_type)
+            log_refusal(structure_type or STRUCTURE_STEP, audit_id, refusal)
             cap = CAP_REASONS.get(refusal.reason, "cap")          # a closed word, never the guard's message
             logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=- type=-", audit_id,
                            STRUCTURE_STEP, digest, cap)
@@ -2497,6 +2507,7 @@ REVIEWER_MAX_TOKENS = 4_000      # the findings' reply
 REVIEWER_TIMEOUT_SECONDS = 180.0
 REVIEWER_TOO_LARGE = "The files are too large to review in one call (the limit is {limit} tokens). Nothing was reviewed."
 REVIEW_STRUCTURE_TYPE = "reviewer"
+REVIEWER_PROMPT_MISSING = "prompt_missing"       # the llm_calls status of a review that found no `reviewer` prompt in the store
 
 
 class ReviewRead(NamedTuple):
@@ -2550,6 +2561,8 @@ async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, slee
     try:
         prompt = await prompt_store.load(db, REVIEWER_PROMPT)
     except prompt_store.PromptMissing:
+        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version="-", model=model, input_tokens=0, output_tokens=0,
+                       estimated_cost_usd=0.0, cache_hit=False, status=REVIEWER_PROMPT_MISSING, structure_type=REVIEW_STRUCTURE_TYPE)
         return ReviewRead("not_read", reason=NOT_READ)
     if price_model(model) not in MODEL_PRICING_USD:
         return ReviewRead("not_read", reason=NOT_READ)
@@ -2596,10 +2609,11 @@ async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, slee
         try:
             await guards.check_allowance(db, audit_id)
             await guards.check_spend_cap(db)
-            await guards.check_structure_token_cap(db, audit_id, counted, REVIEWER_MAX_TOKENS)
+            await guards.check_reviewer_token_cap(db, audit_id, counted, REVIEWER_MAX_TOKENS)
         except guards.GuardRefusal as refusal:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
                            estimated_cost_usd=0.0, cache_hit=False, status=refusal.reason, content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE)
+            log_refusal(REVIEW_STRUCTURE_TYPE, audit_id, refusal)
             return ReviewRead("not_read", reason=NOT_READ, **base)
         billed_in = billed_out = attempts = 0
         prior, payload = None, user_payload

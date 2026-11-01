@@ -439,3 +439,75 @@ def test_a_period_that_came_from_the_page_heading_stays_null_and_the_heading_goe
     assert printed["period"] is None and printed["label"] == "ARR", "a printed label stays the label"
     own = deck_figures.figure_of(candidate(447223, label_from="ARR"), d)
     assert own["period"] == "Dec 2024" and own["label"] == "ARR", "a period of the figure's own line or column is kept"
+
+
+# ---------------------------------------------------------------------------
+# The reviewer's own token allowance, the "ai call refused" line, the status line
+# ---------------------------------------------------------------------------
+def _spent_by_reading(flow, tokens=400_000):
+    flow.db["llm_calls"].docs.append({"run_id": audit_of(flow)["id"], "step": "structures", "structure_type": "sheet_reading", "cache_hit": False,
+                                      "input_tokens": tokens, "output_tokens": 0, "status": "ok"})
+
+
+def _refusals(caplog):
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("ai call refused: ")]
+
+
+def test_the_reviewer_is_not_refused_because_reading_used_the_reading_cap(flow):
+    router = start(flow, map_with("bookings"), review={"findings": []})
+    _spent_by_reading(flow)
+    assert review(flow, force=True)["status"] == "read" and router.review_calls == 1
+
+
+def test_the_reviewer_has_its_own_cap_and_a_refusal_writes_one_log_line_and_the_register_says_why(flow, monkeypatch, caplog):
+    import logging
+    from app import register
+    router = start(flow, map_with("bookings"), review={"findings": []})
+    monkeypatch.setenv("REVIEWER_TOKEN_CAP", "5000")
+    caplog.set_level(logging.INFO)
+    done = review(flow, force=True)
+    assert done["status"] == "not_read" and router.review_calls == 0
+    run_id = audit_of(flow)["id"]
+    (line,) = _refusals(caplog)
+    assert line == f"ai call refused: step=reviewer run_id={run_id} reason=reviewer_token_cap used=0 cap=5000"
+    summary = asyncio.run(register.build(flow.db, run_id))["review"]
+    assert summary["not_completed"] == "review not completed: token allowance reached"
+
+
+def test_the_reviewer_cap_defaults_to_80000_and_counts_only_reviewer_tokens(flow, monkeypatch):
+    from app.llm import guards
+    monkeypatch.delenv("REVIEWER_TOKEN_CAP", raising=False)
+    assert guards.reviewer_token_cap() == 80_000
+    monkeypatch.setenv("REVIEWER_TOKEN_CAP", "junk")
+    assert guards.reviewer_token_cap() == 80_000
+    run_id = "r1"
+    flow.db["llm_calls"].docs += [{"run_id": run_id, "step": "structures", "structure_type": "sheet_reading", "cache_hit": False, "input_tokens": 70_000, "output_tokens": 1},
+                                  {"run_id": run_id, "step": "structures", "structure_type": "reviewer", "cache_hit": False, "input_tokens": 10, "output_tokens": 5}]
+    assert asyncio.run(guards.reviewer_tokens_used(flow.db, run_id)) == 15
+    assert asyncio.run(guards.structure_tokens_used(flow.db, run_id)) == 70_001
+
+
+def test_a_sheet_read_refused_by_the_reading_cap_writes_the_same_line(flow, monkeypatch, caplog):
+    import logging
+    from app.llm import guards
+    monkeypatch.setattr(guards, "STRUCTURE_TOKEN_CAP", 1000)
+    caplog.set_level(logging.INFO)
+    start(flow, map_with("bookings"))
+    run_id = audit_of(flow)["id"]
+    lines = _refusals(caplog)
+    assert f"ai call refused: step=sheet_reading run_id={run_id} reason=token_cap used=0 cap=1000" in lines      # (the file recognition beside it is refused too)
+
+
+def test_the_status_line_names_a_missing_prompt_and_a_provider_error(flow):
+    from app import register
+    run_id = audit_of(flow)["id"]
+    start(flow, map_with("bookings"), review="not json at all")
+    flow.db["llm_calls"].docs[:] = []
+    flow.db["prompts"].docs[:] = [d for d in flow.db["prompts"].docs if d["name"] != "reviewer"]
+    review(flow, force=True)
+    def not_completed_line():
+        return asyncio.run(register.build(flow.db, run_id))["review"]["not_completed"]
+    assert not_completed_line() == "review not completed: prompt reviewer not in the store"
+    flow.db["llm_calls"].docs[:] = [{"run_id": run_id, "step": "structures", "structure_type": "reviewer", "status": "provider_error"}]
+    assert not_completed_line() == "review not completed: provider error"
+    assert "Not read by AI" not in not_completed_line()

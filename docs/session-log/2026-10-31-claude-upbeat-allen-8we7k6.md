@@ -1,0 +1,6 @@
+- 2026-10-31, branch claude/upbeat-allen-8we7k6.
+- Deleted: nothing; the reviewer's use of the shared reading cap and the bare "Not read by AI" status line are gone.
+- Decided: reviewer cap counts llm_calls rows by structure_type "reviewer" and file reading skips them, so no new collection; the allowance refusal line carries used=- cap=- because the existing boundary test forbids logging a tester's amounts; a missing reviewer prompt now writes an llm_calls row (status prompt_missing) so the register can read the reason from it; spend-cap and allowance refusals also read "token allowance reached" on the status line (only three phrases were specified).
+- Slow or unclear: the full backend suite takes about 2.5 minutes and the harness backgrounds a default-timeout run; use a 10-minute timeout.
+- Root cause: the reviewer shared structure_tokens_used with file reading, and the reason strings were one constant (NOT_READ). Rule: a new AI step gets its own cap and its own refusal log line in the same PR, extended in test_gateway_data_boundary.py.
+- Process change to propose: one helper (gateway.log_refusal) is the only place a cap refusal is logged; review any new guard against it.
