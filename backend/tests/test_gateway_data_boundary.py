@@ -1294,7 +1294,7 @@ def test_an_allowance_refusal_logs_the_closed_word_and_no_amount_label_or_id(cap
     for needle in ("tester-9", "Label Nine", "10.0", "USD", "$"):
         assert needle not in "".join(r.getMessage() for r in caplog.records), f"{needle!r} was logged"
     refused = [r.getMessage() for r in caplog.records if r.getMessage().startswith("ai call refused:")]
-    assert refused and all(l.endswith("reason=allowance used=- cap=-") for l in refused), "the 'ai call refused' line carries no allowance amount"
+    assert refused and all(line.endswith("reason=allowance used=- cap=-") for line in refused), "the 'ai call refused' line carries no allowance amount"
 
 
 def test_the_owner_audit_cost_rows_hold_a_closed_key_set_and_the_tester_filter_covers_every_cost_key(caplog):

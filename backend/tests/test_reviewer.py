@@ -505,8 +505,9 @@ def test_the_status_line_names_a_missing_prompt_and_a_provider_error(flow):
     flow.db["llm_calls"].docs[:] = []
     flow.db["prompts"].docs[:] = [d for d in flow.db["prompts"].docs if d["name"] != "reviewer"]
     review(flow, force=True)
-    line = lambda: asyncio.run(register.build(flow.db, run_id))["review"]["not_completed"]
-    assert line() == "review not completed: prompt reviewer not in the store"
+    def not_completed_line():
+        return asyncio.run(register.build(flow.db, run_id))["review"]["not_completed"]
+    assert not_completed_line() == "review not completed: prompt reviewer not in the store"
     flow.db["llm_calls"].docs[:] = [{"run_id": run_id, "step": "structures", "structure_type": "reviewer", "status": "provider_error"}]
-    assert line() == "review not completed: provider error"
-    assert "Not read by AI" not in line()
+    assert not_completed_line() == "review not completed: provider error"
+    assert "Not read by AI" not in not_completed_line()
