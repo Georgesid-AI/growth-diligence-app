@@ -122,7 +122,7 @@ export function sheetSummary(s) {
       { text: `${fmtCount(s.cannot_check)} cannot check` },
       { text: "actual to ", bold: lastActualText(s.last_actual, s.granularity) },
     ],
-    maskingLine(s),
+    [...maskingLine(s), { text: plural(s.row_labels_coded ?? 0, "row label coded", "row labels coded") }],
   ];
 }
 

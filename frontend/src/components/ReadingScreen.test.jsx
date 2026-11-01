@@ -117,7 +117,7 @@ describe("the strip and the file blocks", () => {
     expect(sheet.querySelector("h2").textContent).toBe("revenue.xlsx 60 KB");
     expect([...sheet.querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
       "48 month columns · 41 rows mapped · 37 figures confirmed · 1 rejected · 1 cannot check · actual to May 2022",
-      "0 personal items removed · 0 company names coded"]);
+      "0 personal items removed · 0 company names coded · 0 row labels coded"]);
     expect(sheet.querySelector('[data-testid="file-summary"] b').textContent).toBe("37");
     expect(sheet.querySelector(".anchors .k").textContent).toBe("Last actual");
     expect(sheet.querySelector(".anchors").textContent).not.toContain("As-of month");
