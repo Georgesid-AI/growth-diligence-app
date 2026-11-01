@@ -108,9 +108,8 @@ def test_a_gross_margin_that_is_not_positive_gives_no_proxy():
     assert y["cac_payback_net_new_arr_reason"] == "gross margin not positive"
 
 
-def test_the_monthly_timing_request_is_named_apart_in_the_blocks_missing_list():
-    missing = block()["missing"]
-    assert [m["metric"] for m in missing if m["metric"].startswith("CAC payback")] == ["CAC payback (monthly timing)"]
+def test_the_block_carries_no_missing_list_of_its_own():
+    assert "missing" not in block(), "one reason per missing metric lives in role_metrics (PR 4c)"
 
 
 # --- 3. the numerator's scope --------------------------------------------------------------------------------------------------------

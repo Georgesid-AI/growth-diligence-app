@@ -874,6 +874,12 @@ def test_the_role_metrics_block_never_reaches_a_narrative_payload():
     from schemas.metrics import RoleMetrics
     assert "growth_by_year" in RoleMetrics.model_fields
     assert "growth_by_year" not in {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
+    # PR 4c: the "also read on page N" figures of the reconciliation (a page and a value, never the figure's label from the deck) and the plan-only
+    # reasons sit in the same block; the label a deck figure carries is read to pick the yearly total and is not stored.
+    from schemas.metrics import RoleReconciliation, ReconciliationSourceItem
+    assert "also_read" in RoleReconciliation.model_fields
+    assert set(ReconciliationSourceItem.model_fields) == {"kind", "file", "where", "value"}, "no label, no deck text"
+    assert "also_read" not in {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
 
 
 # docs/design/pnl-lines.md: the statement's findings carry the file's own line labels and its plan cells. The block is server-only, pure Python, and

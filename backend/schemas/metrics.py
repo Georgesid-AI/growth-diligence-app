@@ -620,7 +620,7 @@ class YearlyBasis(Block):
     years: List[YearlyYear]
     track_record: List[YearlyTrack]
     reported_vs_file: List[YearlyReported]
-    missing: List[YearlyMissing]
+    missing: List[YearlyMissing] = []       # PR 4c: no longer written (one reason per missing metric, in role_metrics); results stored before still carry it
     source: Citation
 
 
@@ -855,6 +855,7 @@ class RoleReconciliation(Block):
     gap: Optional[float] = Field(default=None, allow_inf_nan=False)
     gap_pct: Optional[float] = Field(default=None, allow_inf_nan=False)
     sources: List[ReconciliationSourceItem]
+    also_read: List[ReconciliationSourceItem] = []      # PR 4c: other figures of the same year in a deck file, listed and never compared
 
 
 class GrowthYear(Block):

@@ -160,7 +160,9 @@ def _source(rec: Dict, cells: List[str], rule: str) -> Dict:
 
 COST_ROLES = ("cost_of_revenue", "sales_marketing", "rnd", "ga", "opex")
 NEGATIVE_COSTS = "costs shown as negative"
-SM_PLAN_ONLY = "S&M split only in plan years; actual years carry OPEX total only"
+PLAN_ONLY_NAMES = {"sales_marketing": "S&M", "rnd": "R&D", "ga": "G&A"}
+PLAN_ONLY = "{name} split only in plan years; actual years carry OPEX total only"
+SM_PLAN_ONLY = PLAN_ONLY.format(name="S&M")
 
 
 def _total(rec: Optional[Dict]) -> float:
@@ -207,12 +209,17 @@ def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, ma
             "row": rows[0]["row"], "rows": [r["row"] for r in rows]}
 
 
-def sm_reason(table: List[Dict], period: Optional[str] = None) -> Optional[str]:
-    """The reason for S&M rows that exist and hold no actual value (in the period, when given): the split sits in plan years only."""
-    rows = [r for r in table if r["role"] == "sales_marketing" and r["segment"] is None and (r["actual"] or r["plan"])]
+def plan_only_reason(table: List[Dict], role: str = "sales_marketing", period: Optional[str] = None) -> Optional[str]:
+    """The reason for rows of a cost split (S&M, R&D, G&A) that exist and hold no actual value (in the period, when given): the split sits in plan
+    years only. None when no such row exists, or one holds an actual value."""
+    rows = [r for r in table if r["role"] == role and r["segment"] is None and (r["actual"] or r["plan"])]
     if not rows or any(period in r["actual"] if period else r["actual"] for r in rows):
         return None
-    return SM_PLAN_ONLY
+    return PLAN_ONLY.format(name=PLAN_ONLY_NAMES[role])
+
+
+def sm_reason(table: List[Dict], period: Optional[str] = None) -> Optional[str]:
+    return plan_only_reason(table, "sales_marketing", period)
 
 
 def _entry(metric: str, **fields) -> Dict:
@@ -361,6 +368,41 @@ def growth(table, as_of, fye) -> List[Dict]:
     return [_missing("growth", "needs a revenue row")]
 
 
+def _fiscal_start(month: pd.Period, fye: int) -> pd.Period:
+    """The first month of the fiscal year the month falls in."""
+    return pd.Period(f"{_fiscal_year(month, fye)}-{fye:02d}", "M") - 11
+
+
+def _mixed_plan_to_date(rec: Dict, as_of: pd.Period, fye: int) -> Tuple[Dict, Optional[Dict]]:
+    """Plan to date from the plan part of a mixed revenue row, when no forecast row exists: the row's actual cells accumulated over the fiscal year
+    to the as-of month against its plan cells over the same months. Both ranges are cited. The plan columns of a mixed row usually start after the
+    actual/plan boundary: then no plan to the as-of month exists, and the reason says so."""
+    plan_pts = {m: (v, c) for m, v, c in _months(rec, "plan", None, fye)}
+    act_pts = {m: (v, c) for m, v, c in _months(rec, "actual", as_of, fye)}
+    if not act_pts:
+        return _missing("plan_to_date", "the revenue row holds no value at or before the as-of month"), None
+    start = _fiscal_start(as_of, fye)
+    in_year = [m for m in plan_pts if start <= m <= as_of]
+    if as_of not in plan_pts or not in_year:
+        return _missing("plan_to_date", "the plan columns of the revenue row start after the actual/plan boundary; "
+                                        "there is no plan to the as-of month to compare with"), None
+    span = list(pd.period_range(min(in_year), as_of, freq="M"))
+    gone = [m for m in span if m not in act_pts or m not in plan_pts]
+    if gone:
+        side = "actual" if gone[0] not in act_pts else "plan"
+        return _missing("plan_to_date", f"the revenue row holds no {side} value for {gone[0]}; plan to date cannot be compared"), None
+    actual_value, plan_value = sum(act_pts[m][0] for m in span), sum(plan_pts[m][0] for m in span)
+    cells = [act_pts[m][1] for m in span] + [plan_pts[m][1] for m in span]
+    variance = actual_value - plan_value
+    note = f"actual accumulated from {span[0]} against the plan columns of the same row to the same month"
+    rule = "Plan to date = the row's actual over the fiscal year to the as-of month − the plan part of the same row over the same months"
+    block = {"period": str(as_of), "basis": CUMULATIVE, "actual": actual_value, "plan": plan_value, "variance": variance,
+             "variance_pct": variance / abs(plan_value) if plan_value else None, "note": note,
+             "source": {"file": rec["file"], "sheet": rec["sheet"], "row": rec["row"], "cells": cells, "rule": rule}}
+    return _entry("plan_to_date", period=str(as_of), basis=CUMULATIVE, unit="money", value=variance, label=note,
+                  source=_source(rec, cells, rule)), block
+
+
 def plan_to_date(table, as_of, fye) -> Tuple[Dict, Optional[Dict]]:
     """Actual to the as-of month against the plan row to the same month. A plan row that is monthly is compared month with month; one that is
     cumulative is compared with the actual accumulated over the same span; a full-year plan is never compared with actual-to-date."""
@@ -370,6 +412,8 @@ def plan_to_date(table, as_of, fye) -> Tuple[Dict, Optional[Dict]]:
     plans = [r for r in table if r["role"] == "forecast" and (r["metric"] in (None, "revenue"))]
     plan = (pick(plans, "forecast", "monthly", key="plan") or pick(plans, "forecast", "monthly") or pick(plans, "forecast", key="plan")
             or pick(plans, "forecast"))
+    if actual is not None and plan is None and actual["plan"] and actual["basis"] not in (CUMULATIVE, "last_12_months"):
+        return _mixed_plan_to_date(actual, as_of, fye)
     if actual is None or plan is None:
         roles = [r for r, found in (("revenue", actual), ("forecast", plan)) if found is None]
         return _missing("plan_to_date", needs_text(roles), roles), None
@@ -470,8 +514,8 @@ def share(metric: str, role: str, table, as_of, fye) -> Dict:
     rev = pick(table, "revenue", cost["granularity"]) if cost else pick(table, "revenue")
     missing = [r for r, found in (("revenue", rev), (role, cost)) if found is None]
     if missing:
-        if role == "sales_marketing" and rev is not None and sm_reason(table):
-            return _missing(metric, sm_reason(table), [role])
+        if role in PLAN_ONLY_NAMES and rev is not None and plan_only_reason(table, role):
+            return _missing(metric, plan_only_reason(table, role), [role])
         return _missing(metric, needs_text(missing), missing)
     if rev["basis"] != cost["basis"] and CUMULATIVE in (rev["basis"], cost["basis"]):
         return _missing(metric, f"the {role} row and the revenue row do not accumulate the same way")
@@ -535,6 +579,48 @@ def _period_basis(period: str, basis: Optional[str], granularity: Optional[str])
     return "yearly" if re.fullmatch(r"\d{4}", period) else "quarterly" if "-Q" in period else "monthly" if re.fullmatch(r"\d{4}-\d{2}", period) else (basis or granularity or "")
 
 
+_YEARLY_TOTAL = re.compile(r"\b(total|annual|yearly|full[- ]year|net)\b.{0,20}\b(revenues?|sales|turnover)\b"
+                           r"|\b(revenues?|sales|turnover)\b.{0,12}\b(total|for the year|full[- ]year)\b|^\s*(fy\s*)?\d{0,4}\s*(revenues?|turnover)\s*(fy\s*\d{0,4})?\s*$",
+                           re.IGNORECASE)
+
+
+def _is_yearly_total(label: Optional[str]) -> bool:
+    """True when a revenue figure's label names the yearly revenue total ("Total revenue FY2025", "Annual revenue", "Revenue FY2025")."""
+    return bool(label) and bool(_YEARLY_TOTAL.search(str(label)))
+
+
+def _one_deck_figure_per_year(deck: List[Dict], as_of: pd.Period, fye: int) -> Tuple[List[Dict], Dict]:
+    """(the deck figures that are compared, {(metric, period): [the others, as sources]}). Revenue is one figure per deck file and year: the one
+    whose label is the yearly revenue total; any other revenue figure of that year is listed as "also read on page N", never as a difference.
+    When a file states several revenue figures for a year and none is labelled as the total, none is compared and all are listed. Other
+    metrics, plan figures and figures with no value or period are as they were."""
+    usable = []
+    for fig in deck:
+        role, period = DECK_METRICS.get(fig.get("metric") or ""), fig.get("period")
+        if not role or not period or fig.get("actual_plan") == "plan" or fig.get("value") is None:
+            continue
+        end = _end_month(period, fye)
+        if end is None or end > as_of:
+            continue
+        usable.append(fig)
+    chosen, also = [], {}
+    groups: Dict[Tuple, List[Dict]] = {}
+    for fig in usable:
+        if fig["metric"] == "revenue" and re.fullmatch(r"\d{4}", fig["period"]):
+            groups.setdefault((fig.get("file"), fig["period"]), []).append(fig)
+        else:
+            chosen.append(fig)
+    for (file, period), figs in groups.items():
+        totals = [f for f in figs if _is_yearly_total(f.get("label"))]
+        pick_ = totals[0] if totals else (figs[0] if len(figs) == 1 else None)
+        if pick_ is not None:
+            chosen.append(pick_)
+        for f in figs:
+            if f is not pick_:
+                also.setdefault(("revenue", period), []).append({"kind": "deck", "file": file, "where": f"page {f['page']}", "value": f["value"]})
+    return chosen, also
+
+
 def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, currency: Optional[str] = None) -> List[Dict]:
     """[{"metric", "period", "basis", "status", "gap", "gap_pct", "sources": [{"kind", "file", "where", "value"}]}] for every metric and period
     that two or more sources state: a sheet row (as the file states it, or the sum of its months for a year), a deck figure. Sources on another
@@ -560,14 +646,9 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
                 if len(pts) == 12:
                     add("revenue", str(year), "file", rec["file"], f"{rec['sheet']}!{pts[0][2]}:{pts[-1][2]}", sum(v for _, v, _ in pts), "yearly",
                         rec["currency"])
-    for fig in deck:
-        role = DECK_METRICS.get(fig.get("metric") or "")
-        period = fig.get("period")
-        if not role or not period or fig.get("actual_plan") == "plan" or fig.get("value") is None:
-            continue
-        end = _end_month(period, fye)
-        if end is None or end > as_of:
-            continue
+    chosen, also = _one_deck_figure_per_year(deck, as_of, fye)
+    for fig in chosen:
+        role, period = DECK_METRICS[fig["metric"]], fig["period"]
         basis = "yearly" if re.fullmatch(r"\d{4}", period) else "monthly" if re.fullmatch(r"\d{4}-\d{2}", period) else "quarterly"
         add(role, period, "deck", fig.get("file"), f"page {fig['page']}", fig["value"], basis, fig.get("currency"))
     out = []
@@ -579,7 +660,8 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
         ccys = {i["currency"] for i in items if i["currency"]}
         values = [i["value"] for i in items]
         entry = {"metric": metric, "period": period, "basis": items[0]["basis"], "gap": None, "gap_pct": None,
-                 "sources": [{k: i[k] for k in ("kind", "file", "where", "value")} for i in items]}
+                 "sources": [{k: i[k] for k in ("kind", "file", "where", "value")} for i in items],
+                 "also_read": also.get((metric, period), [])}
         if len(ccys) > 1:
             entry["status"] = "not_compared"
             entry["reason"] = "the sources state different currencies"
@@ -667,6 +749,12 @@ def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Di
             put(metric, _missing(metric))
         return
     period = last["period"]
+    sm_plan_only = sm_reason(table, period)
+    if sm_plan_only:        # the yearly table says what the metric says: the split sits in plan years, no row is missing
+        for y in years:
+            for key in ("cac_payback_reason", "cac_payback_net_new_arr_reason"):
+                if y.get(key) == "needs a sales_marketing row":
+                    y[key] = sm_plan_only
     negated = {r: costs_negative(table, r) for r in COST_ROLES}
     note = lambda *roles: NEGATIVE_COSTS if any(negated[r] for r in roles) else None          # noqa: E731
     put("yearly_revenue", _entry("yearly_revenue", period=period, basis="yearly", unit="money", value=last["revenue"], label=YEARLY_LABEL,
