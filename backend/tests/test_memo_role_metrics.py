@@ -8,7 +8,7 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
-from test_role_engine import file_of, monthly_report, row, run, sheet, yearly_pnl  # noqa: E402
+from test_role_engine import monthly_report, row, run, yearly_pnl  # noqa: E402
 
 from app import ic_memo as im  # noqa: E402
 from app import integrity as integrity_mod  # noqa: E402
@@ -88,7 +88,7 @@ def test_data_requests_are_one_line_per_file():
     results = run(monthly_report())
     text = build(results)
     requests = text.split("Requests")[1].split("## Appendix C")[0].split("\n\n")[0]
-    file_lines = [l for l in requests.splitlines() if l.startswith("- A file with")]
+    file_lines = [line for line in requests.splitlines() if line.startswith("- A file with")]
     assert len(file_lines) == 1, requests
     assert "sales_marketing" in file_lines[0] and "cash" in file_lines[0]
 
