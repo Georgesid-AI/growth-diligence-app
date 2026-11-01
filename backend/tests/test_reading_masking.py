@@ -134,13 +134,15 @@ def test_a_customers_row_label_followed_by_figures_does_not_make_the_labels_belo
     assert masked == text and mapping == {}
 
 
-def test_a_customer_header_with_year_headers_beside_it_still_heads_a_column_of_names():
-    """Years are not amounts: "Customer | 2023 | 2024" heads the names below it, which must leave as tokens."""
-    text = text_of((1, 1, "Customer"), (1, 2, "2023"), (1, 3, "2024"), (2, 1, "Zenith Retail Ltd"), (2, 2, "100"), (2, 3, "120"))
+def test_a_customer_header_with_year_headers_beside_it_codes_only_known_names():
+    """PR 4d: "Customer | 2023 | 2024" is a metric-by-period sheet; its label column is coded only for names the audit already holds."""
+    text = text_of((1, 1, "Customer"), (1, 2, "2023"), (1, 3, "2024"), (1, 4, "2025"), (2, 1, "Zenith Retail Ltd"), (2, 2, "100"), (2, 3, "120"))
     (masked, _), mapping = mask(text)
-    assert "A2: Client-01" in masked and mapping == {"Zenith Retail Ltd": "Client-01"}
+    assert "A2: Zenith Retail Ltd" in masked and mapping == {}
+    known, counts = redact.mask_reading(text, COMPANY, {"Zenith Retail Ltd": "Client-01"})
+    assert "A2: Client-01" in known and counts["row_labels"] == 1
     dated = text_of((1, 1, "Customer name"), (1, 2, "2024-01-31"), (2, 1, "Birch Labs Ltd"), (2, 2, "5"))
-    assert "Birch" not in mask(dated)[0][0]
+    assert "Birch" not in mask(dated)[0][0], "one date column is no period row: a customer column is learned"
 
 
 def test_a_merged_cell_carries_its_span_after_its_text_and_the_span_survives_masking():
@@ -152,3 +154,63 @@ def test_a_merged_cell_carries_its_span_after_its_text_and_the_span_survives_mas
     (masked, _), _ = mask(text)
     assert "B3: Q1 2024 (B3:D3)" in masked and redact.parse_reading_text(masked)[0]["cells"][0]["col_span"] == 3
     assert redact.parse_reading_text("sheet 1: S\nB3: x (B3:A3)") is None, "a span that runs backwards is not a reading text"
+
+
+# PR 4d: a row label of a metric-by-period sheet is no company name. Synthetic copies of labels from a real file's shape, not the file.
+PERIOD_LABELS = ["FORECAST: RECOGNISED REVENUE (current year)", "TOTAL CLIENTS ACHIEVED (lifetime)", "LIFETIME SALES", "EBITDA (current year)", "EUR/CZK"]
+
+
+def period_sheet(*labels, header=(1, 1, "Customers")):
+    cells = [header, (1, 2, "Jan-24"), (1, 3, "Feb-24"), (1, 4, "Mar-24")]
+    for r, label in enumerate(labels, 2):
+        cells += [(r, 1, label), (r, 2, "100.5"), (r, 3, "110.5"), (r, 4, "120.5")]
+    return text_of(*cells)
+
+
+def test_row_labels_of_a_metric_by_period_sheet_are_never_learned_or_coded_by_shape():
+    text = period_sheet(*PERIOD_LABELS)
+    assert redact.reading_company_names(text, COMPANY, {}) == []
+    (masked, counts), mapping = mask(text)
+    assert masked == text and mapping == {} and counts["row_labels"] == 0 and counts["company"] == 0
+    for label in PERIOD_LABELS:
+        assert f": {label}\n" in masked + "\n"
+
+
+def test_a_section_heading_in_the_label_column_does_not_make_the_labels_below_it_names():
+    text = text_of((1, 1, "Metric"), (1, 2, "2023"), (1, 3, "2024"), (1, 4, "2025"), (2, 1, "Clients"), (3, 1, "LIFETIME SALES"), (3, 2, "5"))
+    assert redact.reading_company_names(text, COMPANY, {}) == []
+
+
+def test_a_label_that_equals_a_known_customer_name_is_still_coded_and_counted_as_a_row_label():
+    text = period_sheet("Zenith Retail Ltd", *PERIOD_LABELS)
+    masked, counts = redact.mask_reading(text, COMPANY, {"Zenith Retail Ltd": "Client-01"})
+    assert "A2: Client-01" in masked and "Zenith" not in masked and "A3: FORECAST: RECOGNISED REVENUE (current year)" in masked
+    assert counts["row_labels"] == 1 and counts["company"] == 0, "row labels are counted apart from company names"
+
+
+def test_a_header_row_cell_is_coded_only_when_it_is_a_known_name():
+    text = text_of((1, 1, "Metric"), (1, 2, "Jan-24"), (1, 3, "Feb-24"), (1, 4, "Mar-24"), (1, 5, "Zenith Retail Ltd"), (2, 1, "Revenue"), (2, 2, "1"))
+    assert redact.reading_company_names(text, COMPANY, {}) == []
+    masked, counts = redact.mask_reading(text, COMPANY, {"Zenith Retail Ltd": "Client-01"})
+    assert "E1: Client-01" in masked and counts["row_labels"] == 1
+
+
+def test_a_ledger_customer_column_is_still_learned_and_counted_as_company_names():
+    text = text_of((1, 1, "Invoice date"), (1, 2, "Customer"), (1, 3, "Amount"), (2, 1, "2024-01-31"), (2, 2, "Zenith Retail Ltd"), (2, 3, "5"),
+                   (3, 1, "2024-02-29"), (3, 2, "Birch Labs Ltd"), (3, 3, "6"))
+    (masked, counts), mapping = mask(text)
+    assert set(mapping) == {"Zenith Retail Ltd", "Birch Labs Ltd"} and counts["company"] == 2 and counts["row_labels"] == 0
+
+
+def test_a_name_learned_on_a_ledger_sheet_codes_the_same_label_on_a_period_sheet_of_the_file():
+    ledger = {"name": "Ledger", "cells": [{"row": 1, "col": 1, "text": "Customer"}, {"row": 2, "col": 1, "text": "Zenith Retail Ltd"}]}
+    periods = {"name": "Months", "cells": [{"row": 1, "col": c, "text": f"Jan-2{c}"} for c in (2, 3, 4)] + [{"row": 2, "col": 1, "text": "Zenith Retail Ltd"}]}
+    text = redact.reading_text([ledger, periods])
+    (masked, counts), mapping = mask(text)
+    assert masked.count("Client-01") == 2 and counts["company"] == 1 and counts["row_labels"] == 1
+
+
+def test_personal_data_in_a_row_label_is_still_removed():
+    text = period_sheet("Call +44 20 7946 0958", "pat@example.test")
+    (masked, counts), _ = mask(text)
+    assert "7946" not in masked and "example.test" not in masked and counts["phone"] == 1 and counts["email"] == 1

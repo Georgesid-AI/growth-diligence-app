@@ -159,7 +159,8 @@ def deck_rows(deck: Dict) -> Dict[str, List[Dict]]:
 
 def privacy_counts(masked: Dict) -> Dict[str, int]:
     return {"personal_removed": sum(int((masked or {}).get(k) or 0) for k in PERSONAL_KEYS),
-            "company_coded": int((masked or {}).get("company") or 0)}
+            "company_coded": int((masked or {}).get("company") or 0),
+            "row_labels_coded": int((masked or {}).get("row_labels") or 0)}
 
 
 CHANGE_REVENUE = "Change: revenue row"

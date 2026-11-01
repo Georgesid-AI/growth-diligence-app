@@ -3958,3 +3958,20 @@ def test_the_reading_records_prompt_text_is_in_no_api_response_no_map_export_and
     assert not holds(logs), "the prompt text is in a log line"
 
 
+
+
+def test_row_labels_coded_is_a_count_only_and_a_metric_label_on_a_period_sheet_reaches_the_model_readable():
+    """PR 4d: the count `row_labels` holds a number, never a name; metric labels of a metric-by-period sheet go out as written, and a label that
+    equals a name the map holds goes out as its token."""
+    from app.register import privacy_counts
+    labels = ["FORECAST: RECOGNISED REVENUE (current year)", "LIFETIME SALES", "EUR/CZK", "Zenith Retail Ltd"]
+    cells = [(1, c, h) for c, h in enumerate(("Customers", "Jan-24", "Feb-24", "Mar-24"), 1)]
+    for r, label in enumerate(labels, 2):
+        cells += [(r, 1, label), (r, 2, "1")]
+    text = structure_redact.reading_text([{"name": "S", "cells": [{"row": r, "col": c, "text": t} for r, c, t in cells]}])
+    assert structure_redact.reading_company_names(text, "Target Co", {"Zenith Retail Ltd": "Client-01"}) == []
+    masked, counts = structure_redact.mask_reading(text, "Target Co", {"Zenith Retail Ltd": "Client-01"})
+    sent = masked.splitlines()
+    assert all(f"A{r}: {label}" in sent for r, label in enumerate(labels[:3], 2)) and "A5: Client-01" in sent and "Zenith" not in masked
+    assert counts["row_labels"] == 1 and all(isinstance(v, int) for v in counts.values())
+    assert privacy_counts(counts)["row_labels_coded"] == 1

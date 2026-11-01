@@ -331,6 +331,7 @@ def _vocabulary() -> frozenset:
 
 METRIC_VOCABULARY = _vocabulary()
 _WORDS = re.compile(r"[^\W\d_]+")
+_TOKEN = re.compile(re.escape(TOKEN_PREFIX) + r"\d+")
 
 
 def metric_label(text: str) -> bool:
@@ -472,12 +473,15 @@ def _company_cell(cell: Dict, cells: List[Dict], headers: List[Dict], company_na
             and not _protected(text, company_name) and cell not in headers and any(h["row"] < cell["row"] and _overlaps(h, cell) for h in headers))
 
 
-def new_company_names(cells: List[Dict], company_name: Optional[str], amounts_to: Optional[Dict[int, int]] = None) -> List[str]:
+def new_company_names(cells: List[Dict], company_name: Optional[str], amounts_to: Optional[Dict[int, int]] = None,
+                      exclude: frozenset = frozenset()) -> List[str]:
     """The company names a map does not hold yet: the text of every cell under a company-name header after the map's names are
     swapped (the caller runs pseudonymise_cells first), whitespace folded, in order and once each. The caller adds them to the
-    audit's token map; the next masking turns them into their tokens."""
+    audit's token map; the next masking turns them into their tokens. `exclude` ({(row, col)}): cells that are never learned (the row labels
+    and header rows of a metric-by-period sheet, PR 4d)."""
     headers = _company_headers(cells, amounts_to)
-    names = (" ".join(c["text"].split()) for c in cells if headers and _company_cell(c, cells, headers, company_name))
+    names = (" ".join(c["text"].split()) for c in cells
+             if headers and (c["row"], c["col"]) not in exclude and _company_cell(c, cells, headers, company_name))
     return list(dict.fromkeys(names))
 
 
@@ -992,13 +996,40 @@ def _text_cells(cells: List[Dict]) -> List[Dict]:
     return [c for c in cells if not reading_figure(c["text"])]
 
 
+# A period header: a year ("2024", "FY2024", "2024A"), a quarter ("Q1 2024"), a month ("Jan-24", "January 2024") or a date ("2024-01-31").
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*"
+_PERIOD_HEADER = re.compile(rf"(?i)^\s*(?:(?:FY\s?)?(?:19|20)\d{{2}}(?:\.0)?(?:\s?[ABEF])?|FY\s?\d{{2}}|Q[1-4][\s'-]*(?:FY)?(?:\d{{2}}|(?:19|20)\d{{2}})|"
+                            rf"[1-4]Q[\s'-]*(?:\d{{2}}|(?:19|20)\d{{2}})|{_MONTH}[\s.\-/']*(?:\d{{2}}|(?:19|20)\d{{2}})|"
+                            rf"(?:19|20)\d{{2}}[\s.\-/]\d{{1,2}}(?:[\s.\-/]\d{{1,2}})?|\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{2,4}})\s*$")
+PERIOD_ROW_MIN = 3                      # a row with this many period headers is the period row of a metric-by-period sheet
+
+
+def label_positions(cells: List[Dict]) -> frozenset:
+    """{(row, col)} of the cells that are the row labels or the header rows of a metric-by-period sheet; empty for any other sheet (PR 4d).
+    A metric-by-period sheet has a row with PERIOD_ROW_MIN or more period headers (a year, a quarter, a month, a date). Its header rows are the
+    rows down to the last such row within two rows of the first; its label columns are the columns left of the first period column. A text cell
+    there is a metric name, a unit or a section heading: it is coded only when the audit's map already holds it, never learned, whatever its
+    capitalisation, length or shape. Ledgers (one customer per row, dates in a column) have no such row."""
+    by_row: Dict[int, List[int]] = {}
+    for c in cells:
+        if _PERIOD_HEADER.match(c["text"]):
+            by_row.setdefault(c["row"], []).append(c["col"])
+    period_rows = sorted(r for r, cols in by_row.items() if len(set(cols)) >= PERIOD_ROW_MIN)
+    if not period_rows:
+        return frozenset()
+    first = period_rows[0]
+    header_last = max(r for r in period_rows if r <= first + 2)
+    first_col = min(by_row[first])
+    return frozenset((c["row"], c["col"]) for c in cells if c["row"] <= header_last or c["col"] < first_col)
+
+
 def reading_company_names(text: str, company_name: Optional[str], mapping: Dict[str, str]) -> List[str]:
     """The company names a reading text holds under a company-name header that `mapping` does not hold yet (new_company_names, sheet by
     sheet; a metric label is never one). The gateway adds them to the audit's map before it masks the text."""
     names: List[str] = []
     for sheet in parse_reading_text(text) or []:
         swapped, _ = pseudonymise_cells(_text_cells(sheet["cells"]), mapping, company_name)
-        names += new_company_names(swapped, company_name, _amounts_to(sheet["cells"]))
+        names += new_company_names(swapped, company_name, _amounts_to(sheet["cells"]), label_positions(sheet["cells"]))
     return list(dict.fromkeys(names))
 
 
@@ -1022,14 +1053,21 @@ def mask_reading(text: str, company_name: Optional[str], mapping: Dict[str, str]
     if sheets is None:
         return text, {}
     token = next((t for real, t in mapping.items() if company_name and norm(real) == norm(company_name)), None)
-    counts: Dict[str, int] = {"lines": 0, "company": 0}
+    counts: Dict[str, int] = {"lines": 0, "company": 0, "row_labels": 0}
     out = []
     for sheet in sheets:
         name_cell = [{"row": 1, "col": 1, "text": sheet["name"]}]
         named, found = redact_structure(name_cell, company_name, mapping, people=False)
         sheet_name = named[0]["text"]
         cells = sheet["cells"]
-        masked, found_cells = redact_structure(_text_cells(cells), company_name, mapping, people=True)
+        text_cells = _text_cells(cells)
+        masked, found_cells = redact_structure(text_cells, company_name, mapping, people=True)
+        # Names the map holds that were coded in a row label or a header row of a metric-by-period sheet are counted apart (PR 4d).
+        labels = label_positions(cells)
+        row_labels = sum(max(0, len(_TOKEN.findall(m["text"])) - len(_TOKEN.findall(o["text"])))
+                         for o, m in zip(text_cells, masked) if (o["row"], o["col"]) in labels)
+        found_cells["customer"] = max(0, found_cells.get("customer", 0) - row_labels)
+        counts["row_labels"] += row_labels
         for key, n in {**found_cells, "person": found_cells.get("person", 0) + found.get("person", 0)}.items():
             counts[key] = counts.get(key, 0) + n
         if token:
