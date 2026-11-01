@@ -50,10 +50,33 @@ def _cite(source: Optional[dict]) -> str:
     return " · ".join(str(source[k]) for k in ("file", "sheet", "rows") if (source or {}).get(k))
 
 
+ROLE_BLOCKER_PCT = 0.02            # the same 2% as the P&L reconciliation's blocker (docs/specs/integrity-coverage.md)
+
+
+def revenue_years(results: dict) -> List[dict]:
+    """The yearly revenue reconciliation of the map (role_metrics.reconciliation): every year that two or more sources state, a file, a P&L, a deck,
+    compared. Entries on another currency are left out."""
+    return [r for r in (results.get("role_metrics") or {}).get("reconciliation") or ()
+            if r["metric"] == "revenue" and r["basis"] == "yearly" and r["status"] != "not_compared"]
+
+
+def _role_reconciliation(results: dict) -> Optional[dict]:
+    years = revenue_years(results)
+    if not years:
+        return None
+    differing = [y for y in years if y["status"] == "differs"]
+    worst = max(differing, key=lambda y: abs(y["gap_pct"] or 0), default=None)
+    result = GREEN if not differing else RED if any((y["gap_pct"] or 0) > ROLE_BLOCKER_PCT for y in differing) else AMBER
+    finding = (f"{len(years) - len(differing)} of {len(years)} years agree across the sources" if not differing else
+               f"{len(differing)} of {len(years)} years differ across the sources; largest {fmt.fmt_pct(abs(worst['gap_pct'] or 0))} in {worst['period']}")
+    where = "; ".join(dict.fromkeys(s["where"] for y in years for s in y["sources"]))
+    return {"result": result, "finding": finding, "source": where}
+
+
 def _reconciliation(results: dict) -> Optional[dict]:
     rec = results.get("revenue_reconciliation") or {}
     if not rec.get("available"):
-        return None
+        return _role_reconciliation(results)
     tolerance = rec.get("tolerance_pct") or 0
     months_beyond = [m for m in rec.get("by_month") or () if m.get("gap_pct") is not None and abs(m["gap_pct"]) > tolerance]
     result = RED if rec.get("blocker") else AMBER if months_beyond else GREEN

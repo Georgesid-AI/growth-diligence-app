@@ -428,9 +428,50 @@ def share(metric: str, role: str, table, as_of, fye) -> Dict:
                   label=label, source=_source(cost, [cv[1], rv[1]], f"{NAMES[metric]} = the {role} row ÷ the revenue row in the same period"))
 
 
+def _fiscal_year(month: pd.Period, fye: int) -> int:
+    return month.year if fye == 12 or month.month <= fye else month.year + 1
+
+
+def growth_by_year(table, as_of, fye) -> List[Dict]:
+    """[{"period", "value", "prior", "growth", "source"}] per fiscal year of the revenue row with a year before it: the yearly row's own cells, or
+    the sum of the twelve months of a monthly flow row (a year with fewer months is not a year). Actual only, to the as-of month."""
+    yearly: Dict[str, Tuple[float, List[str]]] = {}
+    rec = pick(table, "revenue", "yearly")
+    if rec is not None:
+        for period, (value, cell) in rec["actual"].items():
+            end = _end_month(period, fye)
+            if re.fullmatch(r"\d{4}", period) and end is not None and end <= as_of:
+                yearly[period] = (value, [cell])
+    rec = pick(table, "revenue", "monthly")
+    if rec is not None and rec["basis"] not in (CUMULATIVE, "last_12_months"):
+        by_year: Dict[int, List] = {}
+        for month, value, cell in _months(rec, "actual", as_of, fye):
+            by_year.setdefault(_fiscal_year(month, fye), []).append((month, value, cell))
+        for year, pts in by_year.items():
+            if len(pts) == 12 and str(year) not in yearly:
+                yearly[str(year)] = (sum(v for _, v, _ in pts), [pts[0][2], pts[-1][2]])
+    out = []
+    for period in sorted(yearly):
+        prev = yearly.get(str(int(period) - 1))
+        if prev is None or not prev[0]:
+            continue
+        value, cells = yearly[period]
+        src = rec if rec is not None else pick(table, "revenue")
+        out.append({"period": period, "value": value, "prior": prev[0], "growth": value / prev[0] - 1,
+                    "source": _source(src, prev[1] + cells, "Growth by year = revenue of the fiscal year ÷ revenue of the year before − 1")})
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Reconciliation: the same metric in the same period from two or more sources
 # ---------------------------------------------------------------------------
+def _period_basis(period: str, basis: Optional[str], granularity: Optional[str]) -> str:
+    """The basis a figure is compared on: the shape of its period (a year, a quarter, a month), unless the row accumulates or is a rate."""
+    if basis in (CUMULATIVE, "last_12_months", "rate"):
+        return basis
+    return "yearly" if re.fullmatch(r"\d{4}", period) else "quarterly" if "-Q" in period else "monthly" if re.fullmatch(r"\d{4}-\d{2}", period) else (basis or granularity or "")
+
+
 def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, currency: Optional[str] = None) -> List[Dict]:
     """[{"metric", "period", "basis", "status", "gap", "gap_pct", "sources": [{"kind", "file", "where", "value"}]}] for every metric and period
     that two or more sources state: a sheet row (as the file states it, or the sum of its months for a year), a deck figure. Sources on another
@@ -445,7 +486,8 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
         for period, (value, cell) in rec["actual"].items():
             end = _end_month(period, fye)
             if end is not None and end <= as_of:
-                add(rec["role"], period, "file", rec["file"], f"{rec['sheet']}!{cell}", value, rec["basis"] or rec["granularity"], rec["currency"])
+                add(rec["role"], period, "file", rec["file"], f"{rec['sheet']}!{cell}", value, _period_basis(period, rec["basis"], rec["granularity"]),
+                    rec["currency"])
         if rec["role"] == "revenue" and rec["granularity"] == "monthly" and rec["basis"] not in (CUMULATIVE, "last_12_months"):
             by_year: Dict[int, List] = {}
             for month, value, cell in _months(rec, "actual", as_of, fye):
@@ -533,7 +575,9 @@ def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: 
                 run("cash", lambda: stock("cash", "cash", "money", table, as_of, fye)),
                 run("headcount", lambda: stock("headcount", "headcount", "count", table, as_of, fye))]
     reconciliation = _guarded("reconciliation", lambda: reconcile(table, deck or [], as_of, fye), on_error, lambda e: [])
-    return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation},
+    by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye), on_error, lambda e: [])
+    return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
+                             "growth_by_year": by_year},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}
 
@@ -577,3 +621,16 @@ def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Di
     if sm is not None and "sm_share" in by_name and role_metrics["metrics"][by_name["sm_share"]]["status"] != "computed":
         put("sm_share", _entry("sm_share", period=last["period"], basis="yearly", unit="rate", value=sm, label=YEARLY_LABEL,
                                source=src("S&M share = S&M ÷ revenue")))
+
+
+def missing_reasons(role_metrics: Optional[Dict]) -> List[Dict]:
+    """[{"metric": name, "reason", "needs": [roles]}]: one line per metric the map could not give, with the one reason its entry carries. The
+    report page lists them at the top and the Data gaps table lists the same lines, so the text is the same in both. Ending ARR is the legacy
+    "ARR / MRR" gap and not repeated."""
+    out, seen = [], set()
+    for m in (role_metrics or {}).get("metrics") or ():
+        if m["status"] == "computed" or m["metric"] in ("ending_arr", "reconciliation") or m["metric"] in seen:
+            continue
+        seen.add(m["metric"])
+        out.append({"metric": m["name"], "reason": m["reason"], "needs": m["needs"]})
+    return out

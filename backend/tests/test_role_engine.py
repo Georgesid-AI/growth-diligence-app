@@ -266,3 +266,53 @@ def test_a_plan_row_on_another_sheet_is_cited_with_its_sheet():
     files = [file_of("f", [sheet("Actuals", [row(4, "revenue", [100 + 5 * i for i in range(18)], MONTHS)]), sheet("Budget", [plan])])]
     p = run(files)["role_metrics"]["plan_to_date"]
     assert p["source"]["sheet"] == "Actuals" and p["source"]["cells"] == ["S4", "Budget!S3"]
+
+
+# ---------------------------------------------------------------------------
+# PR 4b: growth by year, the yearly revenue reconciliation, one reason per missing metric
+# ---------------------------------------------------------------------------
+YEARS = ["2023", "2024", "2025"]
+
+
+def test_growth_by_year_from_a_monthly_row_and_a_yearly_row_with_the_cells():
+    r = run(monthly_report())
+    years = r["role_metrics"]["growth_by_year"]
+    assert [y["period"] for y in years] == [] or all(y["source"]["cells"] for y in years)
+    full = [file_of("f", [sheet("R", [row(4, "revenue", [100] * 12 + [150] * 12, [f"{2024 + i // 12}-{i % 12 + 1:02d}" for i in range(24)])])])]
+    y = run(full, as_of="2025-12")["role_metrics"]["growth_by_year"]
+    assert len(y) == 1 and y[0]["period"] == "2025" and y[0]["value"] == 1_800 and y[0]["prior"] == 1_200
+    assert y[0]["growth"] == pytest.approx(0.5) and len(y[0]["source"]["cells"]) == 4
+    yearly = run(yearly_pnl())["role_metrics"]["growth_by_year"]
+    assert [(x["period"], round(x["growth"], 3)) for x in yearly] == [("2024", 0.5), ("2025", 0.6)]
+
+
+def test_the_reconciliation_compares_a_year_of_monthly_revenue_with_a_yearly_row_even_when_the_row_says_monthly():
+    monthly = [file_of("report", [sheet("Report", [row(4, "revenue", [100] * 12, [f"2025-{m:02d}" for m in range(1, 13)])])])]
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_150], ["2025"], basis="monthly")], granularity="yearly")])]
+    rec = [x for x in run(monthly + pnl)["role_metrics"]["reconciliation"] if x["period"] == "2025"]
+    assert len(rec) == 1 and rec[0]["status"] == "differs" and rec[0]["gap"] == 50
+
+
+def test_the_missing_metrics_have_one_reason_each_and_the_data_gaps_table_carries_the_same_text():
+    from app import verdict
+    r = run(yearly_pnl(with_sm=False))
+    reasons = {m["metric"]: m["reason"] for m in r["role_metrics"]["metrics"] if m["status"] != "computed"}
+    top = {x["metric"]: x["reason"] for x in re_.missing_reasons(r["role_metrics"])}
+    assert top == {re_.NAMES[k]: v for k, v in reasons.items() if k != "ending_arr"}, "one line, one reason, per missing metric"
+    gaps = {g["item"]: g for g in verdict.data_gaps(r, [], [])}
+    assert top and set(top) <= set(gaps)
+    for name, reason in top.items():
+        assert reason in gaps[name]["why"], (name, reason, gaps[name]["why"])
+    assert top["S&M share of revenue"] == "needs a sales_marketing row"
+
+
+def test_the_integrity_block_reads_the_yearly_revenue_reconciliation_of_the_map():
+    from app import integrity
+    monthly = [file_of("report", [sheet("Report", [row(4, "revenue", [100] * 12, [f"2025-{m:02d}" for m in range(1, 13)])])])]
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_300], ["2025"], basis="yearly")], granularity="yearly")])]
+    deck = [{"metric": "revenue", "period": "2025", "value": 1_200.0, "currency": "EUR", "actual_plan": "actual", "file": "deck", "page": 7}]
+    bad = integrity.assess(run(monthly + pnl, deck=deck), 1, [])
+    row_ = next(x for x in bad["results"] if x["check"] == "Revenue reconciliation")
+    assert row_["result"] == "Red" and "1 of 1 years differ" in row_["finding"] and "page 7" in row_["source"]
+    good = integrity.assess(run(monthly + [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_200], ["2025"], basis="yearly")], granularity="yearly")])]), 0, [])
+    assert next(x for x in good["results"] if x["check"] == "Revenue reconciliation")["result"] == "Green"
