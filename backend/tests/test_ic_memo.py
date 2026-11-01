@@ -309,7 +309,8 @@ def test_without_a_narrative_the_memo_carries_every_figure_with_its_footnote_and
     head = head_of(text)
     growth = next(line for line in head.split("\n") if line.startswith("| Growth engine |"))
     assert re.search(r"ARR 202,125 EUR \(2024-02\)\[\^\d+\], NRR 113% \(2024-02\)\[\^\d+\], gross revenue churn 0% \(2024-02\)\[\^\d+\]", growth)
-    assert im.S17 in growth and im.S17 in head.split("## Worth flagging")[1]
+    assert im.S17 not in head, "PR 4c: the line moved to a footnote"
+    assert re.search(r"\.\[\^\d+\]", growth) and f": {im.S17}" in text.split("Footnotes")[-1]
     assert "The growth engine is steady." not in text
 
 

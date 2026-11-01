@@ -326,9 +326,10 @@ def _table(header: List[str], rows: List[List[str]]) -> str:
 
 # --- the memo -------------------------------------------------------------------------------------------------------------------
 
-def evidence_categories(files: List[dict], decks: List[dict]) -> List[dict]:
-    """Section 7.2: a category is covered when a stored file of its type exists (the app ingests four types)."""
-    present = {f["dtype"] for f in files}
+def evidence_categories(files: List[dict], decks: List[dict], pnl_read: bool = False) -> List[dict]:
+    """Section 7.2: a category is covered when a stored file of its type exists (the app ingests four types); the P&L category is also covered
+    when a P&L was read from a file's map (`pnl_read`, PR 4c)."""
+    present = {f["dtype"] for f in files} | ({"pnl"} if pnl_read else set())
     out = []
     for name, kind, note in CATEGORIES:
         covered = bool(decks) if kind == "decks" else kind in present if kind else False
@@ -429,6 +430,136 @@ def source_cell(r: dict) -> str:
     return " · ".join(p for p in (figure, page) if p) or "—"
 
 
+# --- the role metrics (docs/design/read-check-review.md section 16; PR 4c) ------------------------------------------------------------
+
+P_AND_L_ROLE_METRICS = ("gross_margin", "sm_share", "rnd_share", "ga_share", "opex_share", "ebitda_margin", "yearly_cac_payback")
+SUMMARY_METRICS = ("ending_arr", "customers", "monthly_churn", "growth")
+PLAN_ONLY_PREFIXES = ("S&M split only", "R&D split only", "G&A split only")
+
+
+def _role_text(unit: Optional[str], value, ccy: Optional[str]) -> str:
+    """A role metric's value as the screen writes it: money in the reporting currency, a rate as a percent, a count, months."""
+    if value is None:
+        return "—"
+    if unit == "rate":
+        return fmt.fmt_pct(value)
+    if unit == "count":
+        return fmt.fmt_count(value)
+    if unit == "months":
+        return fmt.fmt_months(value)
+    return fmt.fmt_currency(value, ccy)
+
+
+def _cells_text(source: Optional[dict]) -> str:
+    """"Report!S8, S9": the cells a role figure was read from, with the sheet."""
+    s = source or {}
+    cells = ", ".join(str(c) for c in s.get("cells") or ())
+    return " · ".join(p for p in (s.get("file"), f"{s['sheet']}!{cells}" if s.get("sheet") and cells else cells) if p) or "—"
+
+
+def _role_source(entry: dict) -> dict:
+    s = entry.get("source") or {}
+    return {"file": s.get("file"), "sheet": s.get("sheet"), "rows": ", ".join(str(c) for c in s.get("cells") or ()), "rule": s.get("rule")}
+
+
+def p_and_l_read(results: dict) -> bool:
+    """True when a P&L was read: the yearly-basis block exists, a margin, cost share or payback was computed, or a cost split exists in plan years only."""
+    if results.get("yearly_basis"):
+        return True
+    metrics = (results.get("role_metrics") or {}).get("metrics") or ()
+    return any((m["metric"] in P_AND_L_ROLE_METRICS and m["status"] == "computed")
+               or str(m.get("reason") or "").startswith(PLAN_ONLY_PREFIXES) for m in metrics)
+
+
+def role_summary(results: dict, ccy: Optional[str], notes: "Notes") -> List[str]:
+    """The Summary's opening lines (OLD_CLAIMS off): ARR, customers, monthly churn and growth with the as-of month, each with the cells it was
+    read from; a metric the files cannot give is left to the unresolved questions."""
+    rm = results.get("role_metrics")
+    if not rm:
+        return []
+    lines = []
+    ordered = [m for name in SUMMARY_METRICS for m in rm["metrics"] if m["metric"] == name]        # ARR, customers, churn, growth: in that order
+    for metric in ordered:
+        if metric["status"] != "computed":
+            continue
+        name = metric["label"].capitalize() if metric["metric"] == "growth" and metric.get("label") else metric["name"]
+        lines.append(f"- {name}: {_role_text(metric['unit'], metric['value'], ccy)} ({metric['period']})"
+                     f"{notes.source(metric['name'], metric['metric'], _role_source(metric))}")
+    by_year = rm.get("growth_by_year") or []
+    if by_year:
+        last = by_year[-1]
+        lines.append(f"- Growth by year: {last['period']} {fmt.fmt_pct(last['growth'])} on the year before"
+                     f"{notes.source('Growth by year', 'growth_by_year', _role_source({'source': last['source']}))}")
+    return [f"As of {rm['as_of_month']}:", *lines] if lines else []
+
+
+def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str], List[List[str]]]]:
+    """The role metrics as Appendix C tables, each cell with the cells it was read from: [(title, header, rows)]."""
+    rm = results.get("role_metrics")
+    if not rm:
+        return []
+    out = []
+    metrics = [m for m in rm["metrics"] if m["status"] == "computed" and m["metric"] not in ("reconciliation", "yearly_revenue")]
+    if metrics:
+        out.append(("Metrics read from the files", ["Metric", "Period", "Value", "Cells"],
+                    [[m["name"] + (f" ({m['label']})" if m.get("label") else ""), m.get("period") or "—", _role_text(m["unit"], m["value"], ccy),
+                      _cells_text(m.get("source"))] for m in metrics]))
+    if rm.get("growth_by_year"):
+        out.append(("Growth by year", ["Year", "Revenue", "Year before", "Growth", "Cells"],
+                    [[y["period"], fmt.fmt_currency(y["value"], ccy), fmt.fmt_currency(y["prior"], ccy), fmt.fmt_pct(y["growth"]), _cells_text(y["source"])]
+                     for y in rm["growth_by_year"]]))
+    plan = rm.get("plan_to_date")
+    if plan:
+        out.append(("Plan to date", ["Period", "Actual", "Plan", "Gap", "Gap %", "Cells"],
+                    [[plan["period"], fmt.fmt_currency(plan["actual"], ccy), fmt.fmt_currency(plan["plan"], ccy), fmt.fmt_currency(plan["variance"], ccy),
+                      fmt.fmt_pct(plan.get("variance_pct")), _cells_text(plan["source"])]]))
+    years = (results.get("yearly_basis") or {}).get("years") or []
+    if years:
+        out.append(("Yearly P&L", ["Year", "Revenue", "Gross margin", "S&M % of revenue", "CAC payback (yearly)", "Source"],
+                    [[y["period"], fmt.fmt_currency(y["revenue"], ccy), fmt.fmt_pct(y.get("gross_margin_pct")), fmt.fmt_pct(y.get("sm_pct_revenue")),
+                      fmt.fmt_months(y["cac_payback_months"]) if y.get("cac_payback_months") is not None else (y.get("cac_payback_reason") or "—"),
+                      _cite_text(y.get("source"))] for y in years]))
+    recon = [r for r in rm.get("reconciliation") or () if r["metric"] == "revenue" and r["basis"] == "yearly"]
+    if recon:
+        out.append(("Revenue reconciliation", ["Year", "Sources", "Difference", "Difference %", "Result", "Also read"],
+                    [[r["period"], "; ".join(f"{s['file']} {s['where']} {fmt.fmt_currency(s['value'], ccy)}" for s in r["sources"]),
+                      "—" if r["status"] == "not_compared" else fmt.fmt_currency(r["gap"], ccy), fmt.fmt_pct(r["gap_pct"]) if r.get("gap_pct") is not None else "—",
+                      {"agrees": "Agrees", "differs": "Differs"}.get(r["status"], r.get("reason") or "—"),
+                      "; ".join(f"{s['file']} {s['where']} {fmt.fmt_currency(s['value'], ccy)}" for s in r.get("also_read") or ()) or "—"] for r in recon]))
+    return out
+
+
+def _cite_text(source: Optional[dict]) -> str:
+    s = source or {}
+    return " · ".join(str(s[k]) for k in ("file", "sheet", "rows") if s.get(k)) or "—"
+
+
+def allow_role_figures(allowed: "Allowed", results: dict) -> None:
+    """The figures of `role_metrics` (the metrics, growth by year, plan to date, the reconciliation), each by its unit."""
+    rm = results.get("role_metrics")
+    if not rm:
+        return
+    kinds = {"money": fmt.CURRENCY, "rate": fmt.PCT, "count": fmt.COUNT, "months": fmt.MONTHS}
+    for m in rm["metrics"]:
+        if m.get("value") is not None:
+            allowed.number(m["value"], kinds.get(m.get("unit"), fmt.CURRENCY))
+    for y in rm.get("growth_by_year") or ():
+        allowed.number(y["value"], fmt.CURRENCY).number(y["prior"], fmt.CURRENCY).number(y["growth"], fmt.PCT)
+    plan = rm.get("plan_to_date")
+    if plan:
+        for k in ("actual", "plan", "variance"):
+            allowed.number(plan[k], fmt.CURRENCY)
+        if plan.get("variance_pct") is not None:
+            allowed.number(plan["variance_pct"], fmt.PCT)
+    for r in rm.get("reconciliation") or ():
+        for s in [*r["sources"], *(r.get("also_read") or ())]:
+            allowed.number(s["value"], fmt.CURRENCY)
+        if r.get("gap") is not None:
+            allowed.number(r["gap"], fmt.CURRENCY)
+        if r.get("gap_pct") is not None:
+            allowed.number(r["gap_pct"], fmt.PCT)
+
+
 def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, files, decks, tables, today, integrity,
            thesis: Dict[str, str], rated: dict, unresolved: List[str], drafted: Iterable[str] = (), claims: bool = True) -> Tuple[str, str]:
     """(sections 1-6 with the title, the whole text) for one view of the thesis. `claims` False (OLD_CLAIMS off, PR 4): the report holds no
@@ -441,7 +572,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     five = [by_id[f["claim_id"]] for f in ver["five"]]
     top_ranks = [r["rank"] for r in five]
     counts = cm.label_counts(rows)
-    categories = evidence_categories(files, decks)
+    categories = evidence_categories(files, decks, p_and_l_read(results))
     covered = sum(1 for c in categories if c["covered"])
     narrative = _growth_narrative(narratives)
     # The date is the requested analysis date; the evidence end is the data's, never the as-of setting (dates-and-periods.md)
@@ -463,6 +594,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
             out += ["Unresolved conflicts:"] + [f"- {c['text']}{notes.register()}" for c in conflicts]
         out += ["", ANALYST_JUDGMENT, "Reasons:"]
         out += [f"- {r}{notes.register(top_ranks)}" for r in ver["reasons"]]
+    if not claims:          # the Summary opens with the figures of the files, then the unresolved questions (PR 4c)
+        out += role_summary(results, ccy, notes)
     out += ["Unresolved questions:"]
     shown = unresolved[:vd.UNRESOLVED_SHOWN]
     out += [f"- {q}{notes.add('open questions and data gaps, Appendix B')}" for q in shown] or ["- None."]
@@ -485,15 +618,16 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     checks = cm.definition_counts(rows)
     if checks["yes"] or checks["no"]:            # claim-matching.md section 4.1: an open one blocks the verdict, so none is left here
         out += [f"Definition checks: {checks['yes']} answered Yes, {checks['no']} answered No.{notes.register()}"]
-    out += [f"Latest valid source period: {fmt.source_period_text(results.get('source_period'))}.", W16_VALUE_AT_RISK, ""]
+    out += [f"Latest valid source period: {fmt.source_period_text(results.get('source_period'))}.", *([W16_VALUE_AT_RISK] if claims else []), ""]
 
-    # 2. Deal thesis
+    # 2. Deal thesis (a claim section: left out with OLD_CLAIMS off)
     drafted = set(drafted)
-    out += [f"## {HEADINGS[1]}", *([THESIS_DRAFT.format(date=today)] if drafted else []),
-            *([ANALYST_TEXT.format(date=today)] if len(drafted) < len(vd.THESIS_PARTS) else [])]
-    out += [f"{THESIS_LABELS[k]}: {thesis.get(k, '')}{notes.add('draft from computed text') if k in drafted else notes.analyst()}"
-            for k in vd.THESIS_PARTS]
-    out += [""]
+    if claims:
+        out += [f"## {HEADINGS[1]}", *([THESIS_DRAFT.format(date=today)] if drafted else []),
+                *([ANALYST_TEXT.format(date=today)] if len(drafted) < len(vd.THESIS_PARTS) else [])]
+        out += [f"{THESIS_LABELS[k]}: {thesis.get(k, '')}{notes.add('draft from computed text') if k in drafted else notes.analyst()}"
+                for k in vd.THESIS_PARTS]
+        out += [""]
 
     # 3. Scorecard
     rec = results.get("revenue_reconciliation") or {}
@@ -529,7 +663,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         growth = (f"ARR {fmt.fmt_currency(arr.get('value'), ccy)}{at('arr')}{notes.source('Monthly MRR by Segment', 'arr.value', arr.get('source'))}, "
                   f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{at('nrr')}{notes.source('NRR', 'nrr.overall_pct', nrr.get('source'))}, "
                   f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}{at('gross_churn')}"
-                  f"{notes.source('Gross revenue churn', 'gross_churn.overall_pct', churn.get('source'))}. {S17}")
+                  f"{notes.source('Gross revenue churn', 'gross_churn.overall_pct', churn.get('source'))}.{notes.add(S17)}")
     rel, grow = rated["data_reliability"], rated["growth_engine"]
     rule = lambda r: f" {r['rule']}{' (' + vd.BENCHMARK + ')' if r['benchmark'] else ''}."            # noqa: E731
     score = [["Data reliability", rel["rating"] or vd.NOT_RATED, reliability + rule(rel), reliability_evidence],
@@ -568,8 +702,6 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     flagged += [f"{vd.flag_text(r)}{notes.register([r['rank']])}" for r in vd.flagged_rows(rows, listed)]
     if narrative:
         flagged += [f"{item}{notes.add('growth-engine narrative, AI call log')}" for item in narrative.get("worth_flagging") or ()]
-    elif not narrative:
-        flagged.append(S17)
     out += [f"- {f}" for f in flagged] + [""]
 
     # 6. Data gaps and requests
@@ -588,7 +720,6 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
 
     # Appendices
     app: List[str] = []
-    app += [f"## {APPENDICES[0]}"]
     vas = vas_cells(rows, results.get("reporting_currency"))
     reg = [[vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}", evidence_cell(r, results.get("reporting_currency")),
             result_cell(r), source_cell(r), f"#{r['rank']}",
@@ -600,15 +731,16 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
             vd.gate_text(r) or "—",
             "key" if r["claim_id"] in {g["claim_id"] for g in key["gates"]} else "", "top 5" if r["claim_id"] in {f["claim_id"] for f in ver["five"]} else ""]
            for r in rows]
-    app += ([_table([*vd.FOUR_COLUMNS, "Ref", "Approval", "Basis", "Case", "Relationship", "VaS", "Overlaps with", "Gate", "Key gate", "Top 5"], reg), ""]
-            if claims else ["Not part of this report.", ""])
+    if claims:          # Appendix A is the claim register: left out with OLD_CLAIMS off
+        app += [f"## {APPENDICES[0]}"]
+        app += [_table([*vd.FOUR_COLUMNS, "Ref", "Approval", "Basis", "Case", "Relationship", "VaS", "Overlaps with", "Gate", "Key gate", "Top 5"], reg), ""]
 
     review = ic.get("first_quarterly_review")
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]
     app += [_table(["What the company cannot measure", "Why it matters", "Requested", "Target date"],
                    [[g["item"], g["why"], g["requested"] or "", g["target_date"] or "—"] for g in gaps]
                    + [[u["item"], f"Cannot be measured: {u['why']}", "", "—"] for u in unmeasured]) if gaps or unmeasured else "No data gaps.", ""]
-    asks = [f"- {g['requested']}" for g in gaps if g["requested"]]
+    asks = [f"- {a}" for a in _one_line_per_file([g["requested"] for g in gaps if g["requested"]])]
     asks += [f"- {r}" for r in integrity["data_requests"]]        # a Blocked integrity check is a data request (integrity-coverage.md 3)
     asks += [f"- {q}" for q in vd.management_questions(results)]
     asks += [f"- {o['item']}: {o['requested']}" for o in vd.other_requests(results) if o["requested"]]
@@ -621,6 +753,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
                 *[f"- {a}{notes.add('data-inventory narrative, AI call log')}" for a in inventory["next_actions"]], ""]
 
     app += [f"## {APPENDICES[2]}"]
+    for title, header, body in role_tables(results, ccy):
+        app += [title, _table(header, body), ""]
     for t in tables:
         block = SHEET_BLOCKS.get(t["sheet"], ())
         cite = "".join(notes.source(t["sheet"], b, (results.get(b) or {}).get("source")) for b in block if (results.get(b) or {}).get("source"))
@@ -642,8 +776,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
                      else ("; ".join(d["file"] for d in decks) if kind == "decks" else ""), c["note"] or ""]
                     for c, (_, kind, _) in zip(categories, CATEGORIES)]), ""]
     groups = overlap_groups(rows)
-    app += ["Value at risk: de-duplication", W16_VALUE_AT_RISK,
-            "Overlap groups: " + ("; ".join(", ".join(f"#{n}" for n in g) for g in groups) if groups else "none"), ""]
+    if claims:
+        app += ["Value at risk: de-duplication", W16_VALUE_AT_RISK,
+                "Overlap groups: " + ("; ".join(", ".join(f"#{n}" for n in g) for g in groups) if groups else "none"), ""]
     block = disclosure.build_disclosure([{"step": n["step"] if isinstance(n, dict) else n.step,
                                           "model": (n if isinstance(n, dict) else n.model_dump()).get("model"),
                                           "generated_at": (n if isinstance(n, dict) else n.model_dump()).get("generated_at")}
@@ -655,6 +790,24 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     app += ["Glossary", *(f"- {term}: {definition}" for term, definition in fmt.GLOSSARY.items() if claims or term not in CLAIM_TERMS), ""]
     app += ["Footnotes", notes.definitions()]
     return head, head + "\n" + "\n".join(app) + "\n"
+
+
+def _one_line_per_file(requests: List[str]) -> List[str]:
+    """The data requests with one line per file: every "A file with a <role> row" request is one file, asked for once with all its rows; any
+    other request is listed once."""
+    roles, others = [], []
+    for text in requests:
+        text = str(text).rstrip(".")
+        if text.startswith("A file with "):
+            for part in re.split(r", | and ", text.removeprefix("A file with ")):
+                if part not in roles:
+                    roles.append(part)
+        elif text not in others:
+            others.append(text)
+    line = []
+    if roles:
+        line = ["A file with " + (", ".join(roles[:-1]) + " and " + roles[-1] if len(roles) > 1 else roles[0])]
+    return [*line, *others]
 
 
 def summary_counts(counts: Dict[str, int]) -> str:
@@ -686,6 +839,7 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
     for n in range(0, max(len(rows), len(gaps), len(files) + len(decks), 8) + 1):
         allowed.number(n)                                   # counts of rows, gaps, files, categories and gates the memo states
     if not thesis:
+        allow_role_figures(allowed, results)
         # Appendix C's cells are the export's own rows. A cell the stored data does not hold is allowed only when it is the sum or
         # the difference of two other cells of its row that it does hold; a ratio or any other derived figure is refused.
         allowed.derived_cells([row for t in tables or () for row in t["rows"]])
@@ -727,10 +881,10 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
     rated = vd.ratings(results, integrity, fmt.fmt_pct, fmt.fmt_months)
     # The deal thesis is a draft from computed text unless the analyst wrote a part (simplified-flow.md decision 6).
     draft = vd.default_thesis(audit, ver if claims else {}, key if claims else {}, lambda v: fmt.fmt_currency(v, results.get("reporting_currency")))
-    written = {k: v for k, v in (ic.get("thesis") or {}).items() if k in vd.THESIS_PARTS and v}
+    written = {k: v for k, v in (ic.get("thesis") or {}).items() if k in vd.THESIS_PARTS and v} if claims else {}
     thesis = {k: written.get(k) or draft[k] for k in vd.THESIS_PARTS}
-    drafted = [k for k in vd.THESIS_PARTS if k not in written]
-    unresolved = vd.unresolved_questions(gaps, int(ic.get("open_questions") or 0), integrity, results)
+    drafted = [k for k in vd.THESIS_PARTS if k not in written] if claims else []
+    unresolved = vd.unresolved_questions(gaps, int(ic.get("open_questions") or 0) if claims else 0, integrity, results)      # no claim questions with OLD_CLAIMS off
     common = dict(audit=audit, results=results, rows=rows, ver=ver, key=key, gaps=gaps, ic=ic, blockers=blockers,
                   narratives=narratives, files=files, decks=decks, tables=tables, today=today, integrity=integrity,
                   rated=rated, unresolved=unresolved, drafted=drafted, claims=claims)
