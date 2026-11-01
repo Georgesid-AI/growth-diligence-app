@@ -189,7 +189,7 @@ from . import items as structure_items  # noqa: E402
 from . import verify  # noqa: E402
 
 # A deck's AI reading status, as the deck panel shows it.
-WAITING = "waiting"                 # "waiting for revenue file"
+WAITING = "waiting"                 # "waiting for revenue file": written by versions before PR 4 only; Run audit reads such a deck again (queue_waiting)
 READ, NOT_READ, STOPPED, PYTHON_ONLY = "read", "not_read", "stopped", "python_only"
 # Screen line S26 (George, 2026-10-22, chat-upload.md section 28): a deck uploaded with consent off lists no claim under the page read. Stored on the
 # deck as its message by the page pipeline only, so the deck panel never says "no claims were extracted" under DECK_PIPELINE=rules (review of PR 164, L5).
@@ -197,7 +197,6 @@ CONSENT_OFF_LINE = ("Deck not read. AI-assisted reading is off for this audit, s
                     "Tick consent on the Upload page to read it, or use Add claim.")
 PROMPT_MISSING = "prompt_missing"       # the page reader found no deck_reading prompt in the store (review of PR 164, M6)
 BLOCKED = "blocked"                     # the configured page-reader model is not on the allow-list (page-image.md section 2); nothing was sent
-WAITING_TEXT = "waiting for revenue file"
 logger = logging.getLogger("growth.structures")
 _UNITS = {"%", "x", "days", "months", "years"}
 ANALYST_ORIGINS = ("analyst", "deck_analyst")       # Add claim, Add from deck (claim-types-and-correction.md section 5)
@@ -209,12 +208,6 @@ def deck_pipeline() -> str:
     """The DECK_PIPELINE switch, owned by the gateway: "ai" (default) reads the pages (structures.pages), "rules" keeps the former
     path below (read at call time: the gateway imports this package)."""
     return gateway.deck_pipeline()
-
-
-async def revenue_ready(db, audit_id: str) -> bool:
-    """Whether the deck read may start: always. A deck never waits for a file to be mapped or confirmed, because there is no mapping to wait for
-    (docs/design/read-check-review.md section 12, PR 4). The name stays for the callers that ask."""
-    return True
 
 
 CANDIDATE_KEY = ("audit_id", "deck_id", "structure_key", "order", "cell")       # what one candidate is: reading a deck again writes it once
@@ -230,8 +223,7 @@ async def store_candidate(db, row: Dict) -> None:
 async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
     """Read one deck's structures with the model, or queue them; returns the deck's AI status.
 
-    Unticked consent: the Python-only path, no call. Ticked but the revenue file not yet mapped: the
-    deck waits ("waiting for revenue file"), so no customer name goes out unmapped. Otherwise each
+    Unticked consent: the Python-only path, no call. Otherwise each
     structure is redacted, sent through gateway.read_structure, verified against its source cells,
     and every item becomes a row of the approval list labelled Verified or "AI suggestion, not
     verified". A deck already read is not sent again (a re-read is served from the cache).
@@ -249,8 +241,6 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     found = deck.get("structures") or []
     if audit.get("structure_reading_consent") is not True:
         return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY)
-    if not await revenue_ready(db, audit_id):
-        return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
     mapping = await llm_redaction.get_map(db, audit_id)
     year_end = int(audit.get("fiscal_year_end") or 12)
     mode = verify.unmatched_mode()
@@ -410,10 +400,10 @@ async def queue_blocked(db, audit_id: str) -> List[str]:
 
 
 async def queue_waiting(db, audit_id: str) -> List[str]:
-    """Run audit reads again every deck still waiting for the revenue file once the audit has it (George, 2026-10-23, PR 164 follow-up,
-    decision 2c): marks them "reading" and returns their ids, for the caller to read. While the revenue file is missing nothing is queued."""
+    """Run audit reads again every deck a version before PR 4 left "waiting for revenue file": marks them "reading" and returns their ids,
+    for the caller to read. Nothing waits for a file any more (read-check-review.md section 12)."""
     found = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": WAITING}, {"_id": 0, "deck_id": 1}).to_list(1000)
-    if not found or not await revenue_ready(db, audit_id):
+    if not found:
         return []
     for d in found:
         await _deck_status(db, audit_id, d["deck_id"], "reading")

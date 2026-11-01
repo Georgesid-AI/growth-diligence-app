@@ -4,7 +4,7 @@
  * failed shows a plain-English message and a Retry stage button. Nothing waits for a confirmation (read-check-review.md section 12).
  */
 export const STAGES = [
-  { key: "mapping", label: "File mapping" },
+  { key: "mapping", label: "Reading files" },        // the stage key stays "mapping" (the server's route); the label says what happens (PR 4)
   { key: "engine", label: "Engine calculations" },
   { key: "claims", label: "Claim extraction from decks" },
 ];

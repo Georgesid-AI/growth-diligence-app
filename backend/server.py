@@ -1124,14 +1124,15 @@ def _claim_key(c: dict) -> tuple:
 
 
 async def _upload_ai_status(audit_id: str) -> Optional[str]:
-    """The AI read's status a deck starts with, for the upload line: waiting (no revenue file yet), reading (queued) or python_only (consent
-    off); None under the former rules read, which has no page read to report. The read itself runs after the response."""
+    """The AI read's status a deck starts with, for the upload line: reading (queued) or python_only (consent off); None under the former
+    rules read, which has no page read to report. The read itself runs after the response; it never waits for a file (read-check-review.md
+    section 12)."""
     if structures.deck_pipeline() != "ai":
         return None
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "structure_reading_consent": 1})
     if (audit or {}).get("structure_reading_consent") is not True:
         return structures.PYTHON_ONLY
-    return "reading" if await structures.revenue_ready(db, audit_id) else structures.WAITING
+    return "reading"
 
 
 @api.post("/audits/{audit_id}/decks/upload")
@@ -1758,9 +1759,9 @@ async def _with_entries(audit_id: str, audit: dict, found: list) -> list:
 @api.post("/audits/{audit_id}/run/{stage}")
 async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
     """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (every matched claim no
-    check asks about enters the register). It answers 200 with a status: done, needs_review (the analyst must answer a question on the
-    Audit page), waiting (an earlier stage is not done), running (the decks are still being read; ask again) or failed (a
-    plain-English message, no exception text). Existing endpoints do the work; nothing here is new logic for the engine."""
+    check asks about enters the register). It answers 200 with a status: done, waiting (an earlier stage is not done), running (the files or
+    the decks are still being read; ask again) or failed (a plain-English message, no exception text). Nothing waits for a confirmation
+    (read-check-review.md section 12). Existing endpoints do the work; nothing here is new logic for the engine."""
     if stage not in run_audit.STAGES:
         raise HTTPException(404, "Unknown stage")
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
@@ -1793,7 +1794,7 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
                 await _review_if_not_read(audit_id, background)
                 # A deck the page reader could not read for want of the deck_reading prompt is read again, with no new upload, once the
                 # store holds it (George, 2026-10-23, review of PR 164, M6).
-                # A deck still waiting for the revenue file is read again then too, once the audit has it (George, 2026-10-23, decision 2c).
+                # A deck an older version left "waiting for revenue file" is read again too: nothing waits for a file (section 12, PR 4).
                 for deck_id in await structures.queue_prompt_missing(db, audit_id) + await structures.queue_blocked(db, audit_id) + await structures.queue_waiting(db, audit_id):
                     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
                 # A deck with pages a timeout or an error left unread is read again for those pages only (deck page reads, 2026-10-23).
@@ -1802,11 +1803,8 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
                 deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "ai_status": 1}).to_list(100)
                 if not deck_docs:
                     result = run_audit.stage_result(stage, run_audit.DONE, run_audit.NO_DECKS, entered=0, open=0, turnover_open=0)
-                elif any(d.get("ai_status") in ("reading", structures.WAITING) for d in deck_docs):
-                    waiting = any(d.get("ai_status") == structures.WAITING for d in deck_docs)
-                    result = run_audit.stage_result(
-                        stage, run_audit.NEEDS_REVIEW if waiting else run_audit.RUNNING,
-                        structures.WAITING_TEXT if waiting else run_audit.DECKS_READING)
+                elif any(d.get("ai_status") == "reading" for d in deck_docs):
+                    result = run_audit.stage_result(stage, run_audit.RUNNING, run_audit.DECKS_READING)
                 else:
                     missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in deck_docs) else \
                         llm_gateway.PAGE_READER_BLOCKED if any(d.get("ai_status") == structures.BLOCKED for d in deck_docs) else None

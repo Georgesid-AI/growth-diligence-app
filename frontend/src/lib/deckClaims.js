@@ -33,7 +33,7 @@ export const DECK_SCOPE_CANNOT = [
   "Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.",
   "Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.",
 ];
-export const DECK_SCOPE_OUTRO = "If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.";
+export const DECK_SCOPE_OUTRO = "If a number you need sits in a picture, upload the source spreadsheet instead.";
 
 // Shown above the approval list, word for word.
 export const CLAIMS_HEADING = "Claims found in the uploaded documents";

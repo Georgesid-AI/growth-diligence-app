@@ -235,3 +235,34 @@ def test_the_scope_of_the_s_and_m_row_is_read_from_its_label_and_only_the_closed
     files[0]["labels"] = {"P&L:6": "Sales and marketing"}
     assert run(files)["yearly_basis"]["years"][-1]["sm_scope"] == "sales and marketing"
     assert run(yearly_pnl())["yearly_basis"]["years"][-1]["sm_scope"] == "unknown"
+
+
+def test_a_monthly_plan_row_is_the_plan_to_date_even_when_a_yearly_plan_row_has_the_longer_series():
+    """Section 16: plan to date compares actual to the as-of month with the plan row to the same month. A yearly P&L beside the monthly
+    report may carry a longer plan series (FY2026–FY2030); it is a full-year plan and never the row compared."""
+    monthly_plan = row(9, "forecast", [90 + 6 * i for i in range(3)], ["2026-04", "2026-05", "2026-06"], actual_plan="plan", plan=True)
+    yearly_plan = row(9, "forecast", [1_500, 1_900, 2_400, 3_000, 3_600], ["2026", "2027", "2028", "2029", "2030"], actual_plan="plan", plan=True,
+                      basis="yearly")
+    files = monthly_report([monthly_plan]) + [file_of("pnl", [sheet("Plan", [yearly_plan], granularity="yearly")])]
+    p = run(files)["role_metrics"]["plan_to_date"]
+    assert p is not None and p["basis"] == "month" and p["period"] == "2026-06"
+    assert p["actual"] == 185 and p["plan"] == 90 + 6 * 2
+
+
+def test_a_forecast_row_of_a_cost_line_is_never_the_revenue_plan():
+    """The P&L's plan rows carry the metric of their line (forecast of cost of revenue, of S&M): only a revenue plan is compared with revenue."""
+    cost_plan = {**row(9, "forecast", [40 + i for i in range(24)], [f"{2025 + i // 12}-{i % 12 + 1:02d}" for i in range(24)], actual_plan="plan",
+                      plan=True), "metric": "cost_of_revenue"}
+    r = run(monthly_report([cost_plan]))
+    m = metric(r, "plan_to_date")
+    assert r["role_metrics"]["plan_to_date"] is None and m["status"] == "needs_row" and m["reason"] == "needs a forecast row"
+    revenue_plan = {**row(10, "forecast", [100] * 18, MONTHS, actual_plan="plan", plan=True), "metric": "revenue"}
+    p = run(monthly_report([cost_plan, revenue_plan]))["role_metrics"]["plan_to_date"]
+    assert p["plan"] == 100 and p["actual"] == 185
+
+
+def test_a_plan_row_on_another_sheet_is_cited_with_its_sheet():
+    plan = row(3, "forecast", [100] * 18, MONTHS, actual_plan="plan", plan=True)
+    files = [file_of("f", [sheet("Actuals", [row(4, "revenue", [100 + 5 * i for i in range(18)], MONTHS)]), sheet("Budget", [plan])])]
+    p = run(files)["role_metrics"]["plan_to_date"]
+    assert p["source"]["sheet"] == "Actuals" and p["source"]["cells"] == ["S4", "Budget!S3"]

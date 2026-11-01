@@ -270,3 +270,14 @@ def test_the_log_lines_of_an_upload_a_compute_and_a_delete_hold_no_file_name_cel
     assert "upload: run_id=" in log and "sheet reading: run_id=" in log, "the lines were written"
     for secret in (MONTHLY, COMPANY, "10625", "Recognised revenue"):
         assert secret not in log, f"{secret!r} reached a log line"
+
+
+def test_an_old_xls_workbook_and_a_file_that_is_not_a_sheet_are_refused_with_their_messages_and_nothing_is_stored(flow):
+    """The upload keeps the two refusals of the former chat upload (their tests went with the old path in PR 4): an .xls is refused with the
+    save-as message, any other extension with the one-line reason; neither is stored, read or counted as an upload."""
+    r = upload(flow, "old.xls", b"\xd0\xcf\x11\xe0 not a modern workbook")
+    assert r.status_code == 400 and r.json()["detail"] == server.XLS_REFUSED == "Save as .xlsx or .csv and upload again."
+    r = upload(flow, "notes.txt", b"revenue 100")
+    assert r.status_code == 400 and r.json()["detail"] == "Only .xlsx and .csv files are supported"
+    assert flow.db["datasets"].docs == [] and flow.state["adapter"].sheet_calls == 0
+    assert flow.db["audits"].docs[0]["usage"]["files"] == {"uploaded": {}, "rejected": {"xls": 1, "txt": 1}}

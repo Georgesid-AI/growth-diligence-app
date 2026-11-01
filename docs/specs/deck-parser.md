@@ -18,7 +18,7 @@ Message shown to the user on the upload screen:
 We cannot read:
 - Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.
 - Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.
-If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet."
+If a number you need sits in a picture, upload the source spreadsheet instead." (Last line since 2026-11-01, PR 4; before: "…use Add claim and cite the page, or upload the source spreadsheet.")
 
 If a file has no readable text, show: "No readable text found in this file. It may be scanned or made of images. Please upload a text-based version." Do not guess.
 

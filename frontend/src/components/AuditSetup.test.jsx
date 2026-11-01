@@ -33,8 +33,8 @@ afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(
 describe("the consent block", () => {
   const ZDR_ON = "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.";
   const ZDR_OFF = "Deck pages are sent to Anthropic's API for reading and are not used for training.";
-  const block2 = (zdr) => "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. "
-    + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name. "
+  const block2 = (zdr) => "The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and every figure it reports is checked by code against its cell. "
+    + "Files are read automatically. Nothing waits for your confirmation. "
     + "The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. "
     + `${zdr ? ZDR_ON : ZDR_OFF} Uploaded files are stored for this audit and deleted with it.`;
 
@@ -55,6 +55,16 @@ describe("the consent block", () => {
     expect(q("chat-explainer").textContent).toBe(block2(zdr));
   });
 
+  test("no sentence about mapping or confirming rows, whatever the tick; the automatic-reading line is there", async () => {
+    await mount(<ConsentBlock audit={AUDIT} setAudit={jest.fn()} />);
+    expect(q("chat-explainer").textContent).toContain("Files are read automatically. Nothing waits for your confirmation.");
+    const mapping = /mapping|\bmap\b|propose|you confirm|confirm (the|those|each) /i;      // "Nothing waits for your confirmation" is the line itself
+    expect(q("chat-explainer").textContent).not.toMatch(mapping);
+    await act(async () => { root.unmount(); }); host.remove();
+    await mount(<ConsentBlock audit={{ ...AUDIT, structure_reading_consent: false }} setAudit={jest.fn()} />);
+    expect(q("chat-explainer").textContent).not.toMatch(mapping);
+  });
+
   test("a flag that is missing reads as off", async () => {
     await mount(<ConsentBlock audit={AUDIT} setAudit={jest.fn()} />);
     expect(q("chat-explainer").textContent).toBe(block2(false));
@@ -64,7 +74,7 @@ describe("the consent block", () => {
   test("the tick shows the audit's state: unticked, and an audit with no consent field, read as off", async () => {
     await mount(<ConsentBlock audit={{ ...AUDIT, structure_reading_consent: false }} setAudit={jest.fn()} />);
     expect(q("setup-consent-checkbox").checked).toBe(false);
-    expect(q("chat-explainer").textContent).toBe("Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.");
+    expect(q("chat-explainer").textContent).toBe("AI-assisted reading is off for this audit: uploaded spreadsheets and decks are stored but not read. Tick the box above to read them.");
     await act(async () => { root.unmount(); }); host.remove();
     const { structure_reading_consent: _gone, ...old } = AUDIT;
     await mount(<ConsentBlock audit={old} setAudit={jest.fn()} />);

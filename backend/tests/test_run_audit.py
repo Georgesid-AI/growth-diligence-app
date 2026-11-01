@@ -446,3 +446,15 @@ def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_no_gate_edit
     assert len(gated) == 5, "the five's gates are written from the claims: no click"
     assert not [x for x in clicks.log if "gate" in x or "rating" in x or "judgment" in x or "thesis" in x or "top 5" in x]
     assert clicks.n <= MAX_CLICKS_FULL, f"{clicks.n} clicks: {clicks.log}"
+
+
+def test_a_deck_stored_as_waiting_by_an_older_version_is_read_again_and_never_makes_run_audit_wait_for_a_file(run_api):
+    """read-check-review.md section 12 (PR 4): a deck never waits for a file. A deck an older version left at "waiting for revenue file" is
+    queued again by the claims stage and reported as still being read, never as needs_review."""
+    upload_files(run_api)
+    add_deck(run_api)
+    run_api.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] = "waiting"
+    stage(run_api, "engine")
+    res = stage(run_api, "claims")
+    assert (res["status"], res["message"]) == ("running", run_audit.DECKS_READING)
+    assert "waiting for revenue file" not in json.dumps(res)

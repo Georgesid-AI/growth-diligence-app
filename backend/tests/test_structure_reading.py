@@ -1276,7 +1276,7 @@ def test_a_deck_is_read_at_its_upload_with_no_file_in_the_audit_and_never_waits(
     _upload_deck(client)
     deck = _deck(client)["decks"][0]
     assert deck["ai_status"] == "read" and adapter.calls > 0
-    assert asyncio.run(structures.revenue_ready(db, AUDIT)) is True
+    assert not hasattr(structures, "revenue_ready"), "the gate is gone, not a function that answers True"
 
 
 def _map_revenue(client):

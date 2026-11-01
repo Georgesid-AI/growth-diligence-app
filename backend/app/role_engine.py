@@ -306,7 +306,11 @@ def plan_to_date(table, as_of, fye) -> Tuple[Dict, Optional[Dict]]:
     """Actual to the as-of month against the plan row to the same month. A plan row that is monthly is compared month with month; one that is
     cumulative is compared with the actual accumulated over the same span; a full-year plan is never compared with actual-to-date."""
     actual = pick(table, "revenue", "monthly")
-    plan = pick(table, "forecast", key="plan") or pick(table, "forecast")
+    # The plan rows of revenue only (a P&L's forecast rows carry the metric of their line: a cost plan is never the revenue plan); a monthly
+    # plan row before any other, so a yearly plan beside it (FY2026-FY2030, the longer series) never takes its place.
+    plans = [r for r in table if r["role"] == "forecast" and (r["metric"] in (None, "revenue"))]
+    plan = (pick(plans, "forecast", "monthly", key="plan") or pick(plans, "forecast", "monthly") or pick(plans, "forecast", key="plan")
+            or pick(plans, "forecast"))
     if actual is None or plan is None:
         roles = [r for r, found in (("revenue", actual), ("forecast", plan)) if found is None]
         return _missing("plan_to_date", needs_text(roles), roles), None
@@ -314,6 +318,10 @@ def plan_to_date(table, as_of, fye) -> Tuple[Dict, Optional[Dict]]:
     if plan["granularity"] != "monthly" or plan["basis"] in ("yearly", "last_12_months"):
         reason = "the forecast row is a full-year plan; there is no plan to the as-of month to compare with"
         return _missing("plan_to_date", reason), None
+
+    def plan_ref(cell: str) -> str:
+        """The plan cell as cited beside the actual's: with its sheet when the plan row sits on another sheet."""
+        return cell if plan["sheet"] == actual["sheet"] else f"{plan['sheet']}!{cell}"
     plan_pts = {m: (v, c) for m, v, c in _months(plan, plan_key, None, fye)}
     act_pts = {m: (v, c) for m, v, c in _months(actual, "actual", as_of, fye)}
     if not act_pts:
@@ -330,13 +338,13 @@ def plan_to_date(table, as_of, fye) -> Tuple[Dict, Optional[Dict]]:
         if gone:
             return _missing("plan_to_date", f"the revenue row holds no value for {gone[0]}; the cumulative plan cannot be compared"), None
         actual_value = sum(act_pts[m][0] for m in span)
-        cells = [act_pts[m][1] for m in span] + [plan_pts[as_of][1]]
+        cells = [act_pts[m][1] for m in span] + [plan_ref(plan_pts[as_of][1])]
         basis, note = "cumulative_to_date", f"actual accumulated from {span[0]} against the cumulative plan"
     else:
         if as_of not in act_pts:
             return _missing("plan_to_date", "the revenue row holds no value for the as-of month"), None
         actual_value = act_pts[as_of][0]
-        cells = [act_pts[as_of][1], plan_pts[as_of][1]]
+        cells = [act_pts[as_of][1], plan_ref(plan_pts[as_of][1])]
         basis, note = "month", "actual of the as-of month against the plan of the same month"
     plan_value = plan_pts[as_of][0]
     variance = actual_value - plan_value

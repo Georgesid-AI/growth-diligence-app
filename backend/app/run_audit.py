@@ -11,7 +11,7 @@ from app.structures import page_check, verify
 from schemas.metrics import CONTRACT_VERSION
 
 STAGES = ("mapping", "engine", "claims")
-DONE, NEEDS_REVIEW, WAITING, RUNNING, FAILED = "done", "needs_review", "waiting", "running", "failed"
+DONE, WAITING, RUNNING, FAILED = "done", "waiting", "running", "failed"      # never needs_review: nothing waits for a confirmation (PR 4)
 
 # Plain-English messages (no exception text: it can quote an upload).
 NO_FILES = "No file has been uploaded yet. Add the revenue file and run the audit again."

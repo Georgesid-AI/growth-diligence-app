@@ -85,7 +85,8 @@ test("Run audit and its stages sit under the assumptions strip, below the Board 
   expect(document.body.textContent).not.toMatch(/\bCalculate\b/);
   expect(q("upload-chat").textContent).not.toMatch(/Files already uploaded/);
   expect([...q("run-stages").querySelectorAll("li")].map((li) => li.getAttribute("data-testid"))).toEqual(["stage-mapping", "stage-engine", "stage-claims"]);
-  expect(q("stage-mapping").textContent).toContain("File mapping");
+  expect(q("stage-mapping").textContent).toContain("Reading files");
+  expect(q("run-stages").textContent).not.toContain("File mapping");
   expect(q("stage-engine").textContent).toContain("Engine calculations");
   expect(q("stage-claims").textContent).toContain("Claim extraction from decks");
 });

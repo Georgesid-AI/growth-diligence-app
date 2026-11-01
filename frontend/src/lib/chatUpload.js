@@ -8,14 +8,16 @@ import { fmtBytes as formatBytes, fmtCount } from "./format";
 // The deck sentence of S2 (Upload page restructure, George, 2026-10-28): the zero-data-retention wording only when the server says PROVIDER_ZDR is on.
 export const ZDR_SENTENCE_ON = "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.";
 export const ZDR_SENTENCE_OFF = "Deck pages are sent to Anthropic's API for reading and are not used for training.";
+// S2 (PR 4, read-check-review.md section 12): the files are read, not mapped; no sentence about mapping or confirming rows.
+export const READ_AUTOMATICALLY_LINE = "Files are read automatically. Nothing waits for your confirmation.";
 export const s2Explainer = (zdr) =>
-  "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. "
-  + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name. "
+  "The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and every figure it reports is checked by code against its cell. "
+  + `${READ_AUTOMATICALLY_LINE} `
   + "The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. "
   + `${zdr ? ZDR_SENTENCE_ON : ZDR_SENTENCE_OFF} `
   + "Uploaded files are stored for this audit and deleted with it.";
 export const S3_EXPLAINER_NO_CONSENT =
-  "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
+  "AI-assisted reading is off for this audit: uploaded spreadsheets and decks are stored but not read. Tick the box above to read them.";
 export const S4_DROP_ZONE_LEAD =
   "Drop files here or use the paperclip. Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. ";
 export const S4_DROP_ZONE_BOLD = ".xlsx or .csv only";      // the only bold part of the text
