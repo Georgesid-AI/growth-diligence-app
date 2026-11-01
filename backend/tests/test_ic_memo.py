@@ -286,13 +286,13 @@ def test_a_rating_with_a_missing_input_reads_not_rated_and_names_it():
     assert "not rated – data missing: NRR, gross revenue churn not computed (benchmark, not company data)." in growth
 
 
-def test_data_reliability_says_no_pnl_to_reconcile_when_there_is_none():
+def test_data_reliability_no_longer_says_no_pnl_to_reconcile_when_there_is_none():
     kw = inputs()
     results = copy.deepcopy(kw["results"])
     results["revenue_reconciliation"] = {"available": False, "reason": "no P&L", "by_month": []}
     kw["results"] = results
     text = im.build_memo(**kw)
-    assert "no P&L to reconcile" in text
+    assert "no P&L to reconcile" not in text and "Revenue file and P&L differ" not in text
 
 
 def test_the_growth_engine_headline_is_the_narratives_when_it_is_current_and_ok():

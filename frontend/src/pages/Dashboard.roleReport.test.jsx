@@ -135,6 +135,20 @@ test("the revenue reconciliation lists each year with its sources by cell or pag
   } finally { await done(); }
 });
 
+test("a rounded agreement reads Agrees (rounded) in green with its note, and a growth year taken from the deck says so", async () => {
+  const rounded = { ...RM.reconciliation[0], period: "2024", status: "agrees_rounded", gap: 34000, gap_pct: 0.03,
+    note: "deck figure printed to the nearest hundred thousand" };
+  const withDeck = { ...RM.growth_by_year[1], deck_note: "2025 from deck, page 6, unverified" };
+  const { host, done } = await mount(results({ role_metrics: { ...RM, reconciliation: [rounded, ...RM.reconciliation], growth_by_year: [RM.growth_by_year[0], withDeck] } }));
+  try {
+    const row = q(host, "reconciliation-2024");
+    expect(text(row, "reconciliation-green")).toBe("Agrees (rounded)");
+    expect(text(row, "reconciliation-note")).toBe("deck figure printed to the nearest hundred thousand");
+    expect(q(host, "reconciliation-2025").textContent).toContain("Differs");
+    expect(q(host, "metric-card-growth_by_year").textContent).toContain("2025 from deck, page 6, unverified");
+  } finally { await done(); }
+});
+
 test("one reason per missing metric, the same text at the top and in Data gaps", async () => {
   const { host, done } = await mount(results());
   try {

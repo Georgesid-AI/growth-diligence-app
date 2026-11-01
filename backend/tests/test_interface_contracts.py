@@ -1001,3 +1001,17 @@ def test_the_schema_text_sent_for_a_sheet_reading_is_the_file_map_and_nothing_el
     assert row["properties"]["role"]["enum"] == list(MAP_ROLES)
     assert set(row["required"]) <= set(row["properties"]) and row["additionalProperties"] is False
     assert "title" not in str(sent), "compact: pydantic's titles are dropped, the names, types, enums, patterns and descriptions stay"
+
+
+def test_a_role_reconciliation_status_is_one_of_the_four_words():
+    """PR 4e: `agrees_rounded` joins agrees, differs and not_compared (a deck figure printed to a coarser precision); `note` and a growth year's
+    `deck_note` are optional, so results stored before PR 4e stay valid."""
+    from pydantic import ValidationError
+    from schemas.metrics import GrowthYear, RoleReconciliation
+    base = {"metric": "revenue", "period": "2025", "sources": []}
+    for status in ("agrees", "agrees_rounded", "differs", "not_compared"):
+        assert RoleReconciliation.model_validate({**base, "status": status}).status == status
+    with pytest.raises(ValidationError):
+        RoleReconciliation.model_validate({**base, "status": "maybe"})
+    year = {"period": "2025", "value": 1.0, "prior": 1.0, "growth": 0.0, "source": {"row": 4, "cells": ["B4"], "rule": "r"}}
+    assert GrowthYear.model_validate(year).deck_note is None

@@ -249,6 +249,26 @@ SHEET_BLOCKS = {
 }
 
 
+KEY_VALUE_SHEETS = ("Headline", "Path to Plan")
+
+
+def memo_tables(tables: List[dict]) -> List[dict]:
+    """The export's tables as Appendix C prints them. The role tables replace three old blocks, which are left out: the CAC by Quarter sheet that holds
+    only "(P&L not provided)", a Path to Plan sheet with no value, and the Headline rows (and the other key-value sheet's) that have no value."""
+    out = []
+    for t in tables:
+        rows = t["rows"]
+        if t["sheet"] == "CAC by Quarter" and all(len([c for c in r if c]) <= 1 for r in rows[1:]) and any("not provided" in "".join(r) for r in rows[1:]):
+            continue
+        if t["sheet"] in KEY_VALUE_SHEETS:
+            body = [r for r in rows[1:] if any(c.strip() for c in r[1:])]
+            if not body:
+                continue
+            t = {**t, "rows": [rows[0], *body]}
+        out.append(t)
+    return out
+
+
 def render_cell(value, number_format: str = "General") -> str:
     """A workbook cell as the app writes it on screen: by its Excel number format (app/formatting.py)."""
     if value is None:
@@ -450,16 +470,47 @@ def _role_text(unit: Optional[str], value, ccy: Optional[str]) -> str:
     return fmt.fmt_currency(value, ccy)
 
 
+_CELL = re.compile(r"(?:(?P<sheet>[^!+]+)!)?(?P<col>[A-Z]{1,3})(?P<row>\d+)")
+
+
+def _column_number(col: str) -> int:
+    n = 0
+    for ch in col:
+        n = n * 26 + ord(ch) - 64
+    return n
+
+
+def cell_ranges(cells: Iterable) -> List[str]:
+    """The cells of a citation with each run of three or more neighbouring cells of one row written as a range: B19, C19 ... AP19 is "B19:AP19".
+    A summed cell ("B6+B7"), a single cell and a run of two stay as they are."""
+    parsed = []
+    for c in cells:
+        m = _CELL.fullmatch(str(c))
+        parsed.append((str(c), m))
+    out: List[str] = []
+    i = 0
+    while i < len(parsed):
+        text, m = parsed[i]
+        j = i
+        if m:
+            while j + 1 < len(parsed) and parsed[j + 1][1] and (parsed[j + 1][1].group("sheet"), parsed[j + 1][1].group("row")) == (m.group("sheet"), m.group("row")) \
+                    and _column_number(parsed[j + 1][1].group("col")) == _column_number(parsed[j][1].group("col")) + 1:
+                j += 1
+        out += [f"{text}:{parsed[j][1].group('col')}{parsed[j][1].group('row')}"] if j - i >= 2 else [p[0] for p in parsed[i:j + 1]]
+        i = j + 1
+    return out
+
+
 def _cells_text(source: Optional[dict]) -> str:
-    """"Report!S8, S9": the cells a role figure was read from, with the sheet."""
+    """"Report!S8, S9": the cells a role figure was read from, with the sheet; runs of neighbouring cells as ranges ("Report!B19:AP19")."""
     s = source or {}
-    cells = ", ".join(str(c) for c in s.get("cells") or ())
+    cells = ", ".join(cell_ranges(s.get("cells") or ()))
     return " · ".join(p for p in (s.get("file"), f"{s['sheet']}!{cells}" if s.get("sheet") and cells else cells) if p) or "—"
 
 
 def _role_source(entry: dict) -> dict:
     s = entry.get("source") or {}
-    return {"file": s.get("file"), "sheet": s.get("sheet"), "rows": ", ".join(str(c) for c in s.get("cells") or ()), "rule": s.get("rule")}
+    return {"file": s.get("file"), "sheet": s.get("sheet"), "rows": ", ".join(cell_ranges(s.get("cells") or ())), "rule": s.get("rule")}
 
 
 def p_and_l_read(results: dict) -> bool:
@@ -488,9 +539,13 @@ def role_summary(results: dict, ccy: Optional[str], notes: "Notes") -> List[str]
     by_year = rm.get("growth_by_year") or []
     if by_year:
         last = by_year[-1]
-        lines.append(f"- Growth by year: {last['period']} {fmt.fmt_pct(last['growth'])} on the year before"
+        unverified = f" ({last['deck_note']})" if last.get("deck_note") else ""
+        lines.append(f"- Growth by year: {last['period']} {fmt.fmt_pct(last['growth'])} on the year before{unverified}"
                      f"{notes.source('Growth by year', 'growth_by_year', _role_source({'source': last['source']}))}")
     return [f"As of {rm['as_of_month']}:", *lines] if lines else []
+
+
+RECON_WORDS = {"agrees": "Agrees", "agrees_rounded": "Agrees (rounded)", "differs": "Differs"}
 
 
 def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str], List[List[str]]]]:
@@ -506,8 +561,8 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
                       _cells_text(m.get("source"))] for m in metrics]))
     if rm.get("growth_by_year"):
         out.append(("Growth by year", ["Year", "Revenue", "Year before", "Growth", "Cells"],
-                    [[y["period"], fmt.fmt_currency(y["value"], ccy), fmt.fmt_currency(y["prior"], ccy), fmt.fmt_pct(y["growth"]), _cells_text(y["source"])]
-                     for y in rm["growth_by_year"]]))
+                    [[y["period"], fmt.fmt_currency(y["value"], ccy), fmt.fmt_currency(y["prior"], ccy), fmt.fmt_pct(y["growth"]),
+                     _cells_text(y["source"]) + (f" · {y['deck_note']}" if y.get("deck_note") else "")] for y in rm["growth_by_year"]]))
     plan = rm.get("plan_to_date")
     if plan:
         out.append(("Plan to date", ["Period", "Actual", "Plan", "Gap", "Gap %", "Cells"],
@@ -524,7 +579,7 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
         out.append(("Revenue reconciliation", ["Year", "Sources", "Difference", "Difference %", "Result", "Also read"],
                     [[r["period"], "; ".join(f"{s['file']} {s['where']} {fmt.fmt_currency(s['value'], ccy)}" for s in r["sources"]),
                       "—" if r["status"] == "not_compared" else fmt.fmt_currency(r["gap"], ccy), fmt.fmt_pct(r["gap_pct"]) if r.get("gap_pct") is not None else "—",
-                      {"agrees": "Agrees", "differs": "Differs"}.get(r["status"], r.get("reason") or "—"),
+                      RECON_WORDS.get(r["status"], r.get("reason") or "—") + (f" ({r['note']})" if r.get("note") else ""),
                       "; ".join(f"{s['file']} {s['where']} {fmt.fmt_currency(s['value'], ccy)}" for s in r.get("also_read") or ()) or "—"] for r in recon]))
     return out
 
@@ -640,7 +695,10 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         recon = (f"Revenue file and P&L differ by {pct} over {rec.get('first')}–{rec.get('last')}"
                  f"{notes.source('Revenue reconciliation', 'revenue_reconciliation.gap_pct', side, (src.get('pnl') or {}).get('rule'))}")
     else:
-        recon = "no P&L to reconcile"
+        years = integrity_mod.revenue_years(results)
+        counted = integrity_mod._role_reconciliation(results) if years else None
+        recon = f"Revenue reconciliation: {counted['finding']}{notes.source('Revenue reconciliation', 'role_metrics.reconciliation', {'rows': counted['source']})}" \
+            if counted else None
     anomalies = (f"{flags} anomaly flags{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
                  if flags is not None else "anomaly flags not computed")
     # integrity-coverage.md section 4: the conclusion and the coverage head the row; the A2 narrative's verdict is never printed here.
@@ -652,7 +710,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     if smooth:
         coverage += f" Smoothness: {smooth['result']} ({integrity_mod.SMOOTHNESS_LABEL})."
     claimed = f"; {verified} of {len(rows)} claims Verified{notes.register()}" if claims else ""
-    reliability = f"{coverage} {recon}; {anomalies}{claimed}."
+    reliability = f"{coverage} " + "; ".join(x for x in (recon, anomalies + claimed) if x) + "."
     reliability_evidence = f"Data integrity conclusion: {integrity['conclusion']}; revenue_reconciliation, anomalies" + (", claim register" if claims else "")
     if narrative:
         growth = f"{narrative['headline']}{notes.add('growth-engine narrative, AI call log')}"
@@ -755,7 +813,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     app += [f"## {APPENDICES[2]}"]
     for title, header, body in role_tables(results, ccy):
         app += [title, _table(header, body), ""]
-    for t in tables:
+    for t in memo_tables(tables):
         block = SHEET_BLOCKS.get(t["sheet"], ())
         cite = "".join(notes.source(t["sheet"], b, (results.get(b) or {}).get("source")) for b in block if (results.get(b) or {}).get("source"))
         width = max(len(r) for r in t["rows"])

@@ -219,7 +219,9 @@ def plan_only_reason(table: List[Dict], role: str = "sales_marketing", period: O
 
 
 def sm_reason(table: List[Dict], period: Optional[str] = None) -> Optional[str]:
-    return plan_only_reason(table, "sales_marketing", period)
+    """The S&M reason, on the rule of R&D and G&A: the rows exist and none holds an actual value anywhere. `period` is not read: a split with actual
+    values in an earlier year is not a split "only in plan years"."""
+    return plan_only_reason(table, "sales_marketing")
 
 
 def _entry(metric: str, **fields) -> Dict:
@@ -405,58 +407,78 @@ def _mixed_plan_to_date(rec: Dict, as_of: pd.Period, fye: int) -> Tuple[Dict, Op
 
 def plan_to_date(table, as_of, fye) -> Tuple[Dict, Optional[Dict]]:
     """Actual to the as-of month against the plan row to the same month. A plan row that is monthly is compared month with month; one that is
-    cumulative is compared with the actual accumulated over the same span; a full-year plan is never compared with actual-to-date."""
-    actual = pick(table, "revenue", "monthly")
+    cumulative is compared with the actual accumulated over the fiscal year to the as-of month (the file's own cumulative revenue row at the as-of
+    month when one exists, cited), never from the start of the series; a full-year plan is never compared with actual-to-date."""
+    flows = [r for r in table if r["basis"] not in (CUMULATIVE, "last_12_months")]
+    actual = pick(flows, "revenue", "monthly")
+    cum_actual = pick([r for r in table if r["basis"] == CUMULATIVE], "revenue", "monthly")
     # The plan rows of revenue only (a P&L's forecast rows carry the metric of their line: a cost plan is never the revenue plan); a monthly
     # plan row before any other, so a yearly plan beside it (FY2026-FY2030, the longer series) never takes its place.
     plans = [r for r in table if r["role"] == "forecast" and (r["metric"] in (None, "revenue"))]
     plan = (pick(plans, "forecast", "monthly", key="plan") or pick(plans, "forecast", "monthly") or pick(plans, "forecast", key="plan")
             or pick(plans, "forecast"))
-    if actual is not None and plan is None and actual["plan"] and actual["basis"] not in (CUMULATIVE, "last_12_months"):
+    if actual is not None and plan is None and actual["plan"]:
         return _mixed_plan_to_date(actual, as_of, fye)
-    if actual is None or plan is None:
-        roles = [r for r, found in (("revenue", actual), ("forecast", plan)) if found is None]
+    if (actual is None and cum_actual is None) or plan is None:
+        roles = [r for r, found in (("revenue", actual or cum_actual), ("forecast", plan)) if found is None]
         return _missing("plan_to_date", needs_text(roles), roles), None
     plan_key = "plan" if plan["plan"] else "actual"
     if plan["granularity"] != "monthly" or plan["basis"] in ("yearly", "last_12_months"):
         reason = "the forecast row is a full-year plan; there is no plan to the as-of month to compare with"
         return _missing("plan_to_date", reason), None
+    cumulative = plan["basis"] == CUMULATIVE
+    if actual is None and not cumulative:
+        return _missing("plan_to_date", "the revenue row is not monthly; needs a monthly revenue row"), None
+    base = actual or cum_actual
 
     def plan_ref(cell: str) -> str:
         """The plan cell as cited beside the actual's: with its sheet when the plan row sits on another sheet."""
-        return cell if plan["sheet"] == actual["sheet"] else f"{plan['sheet']}!{cell}"
+        return cell if plan["sheet"] == base["sheet"] else f"{plan['sheet']}!{cell}"
     plan_pts = {m: (v, c) for m, v, c in _months(plan, plan_key, None, fye)}
-    act_pts = {m: (v, c) for m, v, c in _months(actual, "actual", as_of, fye)}
-    if not act_pts:
+    act_pts = {m: (v, c) for m, v, c in _months(actual, "actual", as_of, fye)} if actual is not None else {}
+    cum_pts = {m: (v, c) for m, v, c in _months(cum_actual, "actual", as_of, fye)} if cum_actual is not None else {}
+    if not act_pts and not cum_pts:
         return _missing("plan_to_date", "the revenue row holds no value at or before the as-of month"), None
     if as_of not in plan_pts:
         return _missing("plan_to_date", "the forecast row holds no value for the as-of month"), None
-    if actual["basis"] in (CUMULATIVE, "last_12_months"):
-        return _missing("plan_to_date", "the revenue row is not monthly; needs a monthly revenue row"), None
-    cumulative = plan["basis"] == CUMULATIVE
+    plan_value = plan_pts[as_of][0]
+    row_ = base
     if cumulative:
-        start = min(plan_pts)
-        span = list(pd.period_range(start, as_of, freq="M"))
-        gone = [m for m in span if m not in act_pts]
-        if gone:
-            return _missing("plan_to_date", f"the revenue row holds no value for {gone[0]}; the cumulative plan cannot be compared"), None
-        actual_value = sum(act_pts[m][0] for m in span)
-        cells = [act_pts[m][1] for m in span] + [plan_ref(plan_pts[as_of][1])]
-        basis, note = "cumulative_to_date", f"actual accumulated from {span[0]} against the cumulative plan"
+        year_start = _fiscal_start(as_of, fye)
+        if as_of in cum_pts:
+            # the file's own cumulative revenue row at the as-of month, against the plan's own cumulative cell
+            actual_value, row_ = cum_pts[as_of][0], cum_actual
+            cells = [cum_pts[as_of][1], plan_ref(plan_pts[as_of][1])]
+            note = "the file's cumulative revenue at the as-of month against the cumulative plan"
+        else:
+            start = max(year_start, min(plan_pts))
+            span = list(pd.period_range(start, as_of, freq="M"))
+            gone = [m for m in span if m not in act_pts]
+            if gone:
+                return _missing("plan_to_date", f"the revenue row holds no value for {gone[0]}; the cumulative plan cannot be compared"), None
+            actual_value = sum(act_pts[m][0] for m in span)
+            cells = [act_pts[m][1] for m in span] + [plan_ref(plan_pts[as_of][1])]
+            note = f"actual accumulated from {span[0]} against the cumulative plan"
+        before, first = plan_pts.get(year_start - 1), plan_pts.get(year_start)
+        if before is not None and first is not None and first[0] >= before[0] > 0:
+            # a cumulative plan that does not reset at the fiscal year start: the year to date is the difference of its two cumulative cells
+            plan_value -= before[0]
+            cells.append(plan_ref(before[1]))
+            note += " (plan year to date: the cumulative plan less its value at the end of the year before)"
+        basis = "cumulative_to_date"
     else:
         if as_of not in act_pts:
             return _missing("plan_to_date", "the revenue row holds no value for the as-of month"), None
         actual_value = act_pts[as_of][0]
         cells = [act_pts[as_of][1], plan_ref(plan_pts[as_of][1])]
         basis, note = "month", "actual of the as-of month against the plan of the same month"
-    plan_value = plan_pts[as_of][0]
     variance = actual_value - plan_value
+    rule = ("Plan to date = actual from the start of the fiscal year to the as-of month − the plan row to the same month; "
+            "cumulative only where the plan row is cumulative")
     block = {"period": str(as_of), "basis": basis, "actual": actual_value, "plan": plan_value, "variance": variance,
              "variance_pct": variance / abs(plan_value) if plan_value else None, "note": note,
-             "source": {"file": actual["file"], "sheet": actual["sheet"], "row": actual["row"], "cells": cells,
-                        "rule": "Plan to date = actual to the as-of month − the plan row to the same month; cumulative only where the plan row is cumulative"}}
-    entry = _entry("plan_to_date", period=str(as_of), basis=basis, unit="money", value=variance, label=note,
-                   source=_source(actual, cells, block["source"]["rule"]))
+             "source": {"file": row_["file"], "sheet": row_["sheet"], "row": row_["row"], "cells": cells, "rule": rule}}
+    entry = _entry("plan_to_date", period=str(as_of), basis=basis, unit="money", value=variance, label=note, source=_source(row_, cells, rule))
     return entry, block
 
 
@@ -539,33 +561,50 @@ def _fiscal_year(month: pd.Period, fye: int) -> int:
     return month.year if fye == 12 or month.month <= fye else month.year + 1
 
 
-def growth_by_year(table, as_of, fye) -> List[Dict]:
-    """[{"period", "value", "prior", "growth", "source"}] per fiscal year of the revenue row with a year before it: the yearly row's own cells, or
-    the sum of the twelve months of a monthly flow row (a year with fewer months is not a year). Actual only, to the as-of month."""
-    yearly: Dict[str, Tuple[float, List[str]]] = {}
-    rec = pick(table, "revenue", "yearly")
-    if rec is not None:
-        for period, (value, cell) in rec["actual"].items():
-            end = _end_month(period, fye)
-            if re.fullmatch(r"\d{4}", period) and end is not None and end <= as_of:
-                yearly[period] = (value, [cell])
+def _cite_cells(rec: Dict, cells: List[str], home: Dict) -> List[str]:
+    """The cells as cited beside those of `home`'s row: with their sheet (and file) when they sit elsewhere."""
+    if (rec["file"], rec["sheet"]) == (home["file"], home["sheet"]):
+        return cells
+    return [f"{rec['sheet']}!{c}" for c in cells]
+
+
+def growth_by_year(table, as_of, fye, deck: Optional[List[Dict]] = None) -> List[Dict]:
+    """[{"period", "value", "prior", "growth", "source", "deck_note"}] per fiscal year of revenue with a year before it. Each year's value comes from
+    the spreadsheet first and cites the cells it is made of: the sum of the twelve months of the monthly revenue row (a year with fewer months is
+    not a year; a cumulative or last-12-months row is not a flow), else the yearly P&L row's own cell, never another row. A year no spreadsheet
+    gives is taken from the deck figure of that year, if there is one, and says "from deck, page N, unverified". Actual only, to the as-of month."""
+    years: Dict[str, Dict] = {}
     rec = pick(table, "revenue", "monthly")
     if rec is not None and rec["basis"] not in (CUMULATIVE, "last_12_months"):
         by_year: Dict[int, List] = {}
         for month, value, cell in _months(rec, "actual", as_of, fye):
             by_year.setdefault(_fiscal_year(month, fye), []).append((month, value, cell))
         for year, pts in by_year.items():
-            if len(pts) == 12 and str(year) not in yearly:
-                yearly[str(year)] = (sum(v for _, v, _ in pts), [pts[0][2], pts[-1][2]])
+            if len(pts) == 12:
+                years[str(year)] = {"value": sum(v for _, v, _ in pts), "cells": [f"{pts[0][2]}:{pts[-1][2]}"], "rec": rec}
+    yearly = pick(table, "revenue", "yearly")
+    if yearly is not None:
+        for period, (value, cell) in yearly["actual"].items():
+            end = _end_month(period, fye)
+            if re.fullmatch(r"\d{4}", period) and end is not None and end <= as_of and period not in years:
+                years[period] = {"value": value, "cells": [cell], "rec": yearly}
+    chosen, _ = _one_deck_figure_per_year(deck or [], as_of, fye)
+    for fig in chosen:
+        if fig["metric"] == "revenue" and re.fullmatch(r"\d{4}", fig["period"]) and fig["period"] not in years:
+            years[fig["period"]] = {"value": fig["value"], "cells": [], "rec": None, "deck": fig}
     out = []
-    for period in sorted(yearly):
-        prev = yearly.get(str(int(period) - 1))
-        if prev is None or not prev[0]:
+    for period in sorted(years):
+        cur, prev = years[period], years.get(str(int(period) - 1))
+        if prev is None or not prev["value"]:
             continue
-        value, cells = yearly[period]
-        src = rec if rec is not None else pick(table, "revenue")
-        out.append({"period": period, "value": value, "prior": prev[0], "growth": value / prev[0] - 1,
-                    "source": _source(src, prev[1] + cells, "Growth by year = revenue of the fiscal year ÷ revenue of the year before − 1")})
+        home = cur["rec"] or prev["rec"]
+        if home is None:                    # both years from the deck: nothing of a file to cite
+            continue
+        notes = [f"{y} from deck, page {item['deck']['page']}, unverified" for y, item in ((str(int(period) - 1), prev), (period, cur)) if item.get("deck")]
+        cells = (_cite_cells(prev["rec"], prev["cells"], home) if prev["rec"] else []) + (_cite_cells(cur["rec"], cur["cells"], home) if cur["rec"] else [])
+        rule = "Growth by year = revenue of the fiscal year ÷ revenue of the year before − 1" + (f" ({'; '.join(notes)})" if notes else "")
+        out.append({"period": period, "value": cur["value"], "prior": prev["value"], "growth": cur["value"] / prev["value"] - 1,
+                    "source": _source(home, cells, rule), "deck_note": "; ".join(notes) or None})
     return out
 
 
@@ -621,14 +660,24 @@ def _one_deck_figure_per_year(deck: List[Dict], as_of: pd.Period, fye: int) -> T
     return chosen, also
 
 
+_POWERS = {10: "ten", 100: "hundred", 1_000: "thousand", 10_000: "ten thousand", 100_000: "hundred thousand", 1_000_000: "million",
+           10_000_000: "ten million", 100_000_000: "hundred million", 1_000_000_000: "billion"}
+
+
+def precision_unit(precision: float) -> str:
+    """"thousand", "hundred thousand", "million": the unit a figure is printed to the nearest of."""
+    return _POWERS.get(int(round(precision)), fmt.fmt_number(precision))
+
+
 def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, currency: Optional[str] = None) -> List[Dict]:
     """[{"metric", "period", "basis", "status", "gap", "gap_pct", "sources": [{"kind", "file", "where", "value"}]}] for every metric and period
     that two or more sources state: a sheet row (as the file states it, or the sum of its months for a year), a deck figure. Sources on another
     basis or in another currency are not compared. Actual only, to the as-of month."""
     seen: Dict[Tuple[str, str], List[Dict]] = {}
 
-    def add(metric, period, kind, file, where, value, basis, ccy):
-        seen.setdefault((metric, period), []).append({"kind": kind, "file": file, "where": where, "value": value, "basis": basis, "currency": ccy})
+    def add(metric, period, kind, file, where, value, basis, ccy, precision=0.0):
+        seen.setdefault((metric, period), []).append({"kind": kind, "file": file, "where": where, "value": value, "basis": basis, "currency": ccy,
+                                                      "precision": precision or 0.0})
     for rec in table:
         if rec["role"] not in RECONCILE_ROLES or rec["segment"] is not None:
             continue
@@ -650,7 +699,7 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
     for fig in chosen:
         role, period = DECK_METRICS[fig["metric"]], fig["period"]
         basis = "yearly" if re.fullmatch(r"\d{4}", period) else "monthly" if re.fullmatch(r"\d{4}-\d{2}", period) else "quarterly"
-        add(role, period, "deck", fig.get("file"), f"page {fig['page']}", fig["value"], basis, fig.get("currency"))
+        add(role, period, "deck", fig.get("file"), f"page {fig['page']}", fig["value"], basis, fig.get("currency"), fig.get("precision"))
     out = []
     for (metric, period), items in sorted(seen.items()):
         if len(items) < 2 or len({i["kind"] + str(i["file"]) + i["where"] for i in items}) < 2:
@@ -661,7 +710,7 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
         values = [i["value"] for i in items]
         entry = {"metric": metric, "period": period, "basis": items[0]["basis"], "gap": None, "gap_pct": None,
                  "sources": [{k: i[k] for k in ("kind", "file", "where", "value")} for i in items],
-                 "also_read": also.get((metric, period), [])}
+                 "also_read": also.get((metric, period), []), "note": None}
         if len(ccys) > 1:
             entry["status"] = "not_compared"
             entry["reason"] = "the sources state different currencies"
@@ -670,7 +719,16 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
             ref = max(abs(v) for v in values)
             tolerance = 0 if metric in ("customers", "headcount") else RECONCILE_TOLERANCE
             entry["gap"], entry["gap_pct"] = gap, (gap / ref if ref else None)
-            entry["status"] = "agrees" if (gap == 0 or (ref and gap / ref <= tolerance)) else "differs"
+            coarse = max(i["precision"] for i in items)
+            if gap == 0:
+                entry["status"] = "agrees"
+            elif coarse and gap <= coarse / 2 + 1e-9:
+                # a figure printed to the nearest thousand or the like agrees with one that is exact when the two differ by no more than half
+                # of the coarser precision: a rounding, not a difference
+                entry["status"] = "agrees_rounded"
+                entry["note"] = f"deck figure printed to the nearest {precision_unit(coarse)}"
+            else:
+                entry["status"] = "agrees" if (ref and gap / ref <= tolerance) else "differs"
             entry["reason"] = None
         out.append(entry)
     return out
@@ -720,7 +778,7 @@ def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: 
                 run("cash", lambda: stock("cash", "cash", "money", table, as_of, fye)),
                 run("headcount", lambda: stock("headcount", "headcount", "count", table, as_of, fye))]
     reconciliation = _guarded("reconciliation", lambda: reconcile(table, deck or [], as_of, fye), on_error, lambda e: [])
-    by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye), on_error, lambda e: [])
+    by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye, deck), on_error, lambda e: [])
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
                              "growth_by_year": by_year},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,

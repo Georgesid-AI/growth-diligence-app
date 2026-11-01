@@ -103,3 +103,63 @@ def test_with_old_claims_on_the_claim_sections_are_still_there():
     from test_ic_memo import inputs
     out = im.build_memo(**inputs())
     assert "## Deal thesis" in out and "## Appendix A" in out and "Value at risk" in out
+
+
+# ---------------------------------------------------------------------------
+# PR 4e: the report drops the stale blocks, cites ranges, and says what a rounded agreement and a deck figure are
+# ---------------------------------------------------------------------------
+def appendix_c(text):
+    return text.split("## Appendix C")[1].split("## Appendix D")[0]
+
+
+def test_cells_of_one_row_are_cited_as_a_range_not_cell_by_cell():
+    assert im.cell_ranges([f"{c}19" for c in ("B", "C", "D", "E")]) == ["B19:E19"]
+    assert im.cell_ranges(["B4", "C4"]) == ["B4", "C4"], "a run of two stays two cells"
+    assert im.cell_ranges(["Y9", "Z9", "AA9", "AB9", "C3"]) == ["Y9:AB9", "C3"], "a range runs through the column letters"
+    assert im.cell_ranges(["B6+B7", "C6+C7", "D6+D7"]) == ["B6+B7", "C6+C7", "D6+D7"], "a sum of rows is never a range"
+    assert im.cell_ranges(["P&L!B4", "P&L!C4", "P&L!D4", "B9"]) == ["P&L!B4:D4", "B9"]
+    assert im.cell_ranges(["B4", "B5", "B6"]) == ["B4", "B5", "B6"], "only the cells of a row"
+
+
+def test_a_series_and_a_year_of_monthly_revenue_are_cited_as_ranges_in_the_memo():
+    from test_role_engine import file_of, sheet
+    months = [f"{2024 + i // 12}-{i % 12 + 1:02d}" for i in range(24)]
+    files = [file_of("report", [sheet("Report", [row(19, "revenue", [100] * 12 + [150] * 12, months), row(20, "mrr", [10 + i for i in range(24)], months)])])]
+    appendix = appendix_c(build(run(files, as_of="2025-12")))
+    assert "Report!B20:Y20" in appendix, "the 24 months of the MRR row are one range"
+    assert "Report!B19:M19" in appendix and "N19:Y19" in appendix, "a year of revenue is its first and last cell"
+    assert "B20, C20" not in appendix
+
+
+def test_the_old_empty_blocks_are_left_out_of_appendix_c():
+    tables = [{"sheet": "Headline", "rows": [["Metric", "Value"], ["Company", "SynthCo"], ["Ending ARR (EUR)", ""], ["NRR overall", ""]]},
+              {"sheet": "CAC by Quarter", "rows": [["Quarter"], ["(P&L not provided)"]]},
+              {"sheet": "Path to Plan", "rows": [["Metric", "Value"], ["Current customers", ""], ["Target ARR", ""]]},
+              {"sheet": "Anomalies", "rows": [["Check", "Count"], ["Gaps", "2"]]}]
+    appendix = appendix_c(build(reading_results(), tables=tables))
+    assert "P&L not provided" not in appendix and "CAC by Quarter" not in appendix
+    assert "Path to Plan" not in appendix.replace("Plan to date", "")
+    assert "Ending ARR (EUR)" not in appendix and "NRR overall" not in appendix, "a Headline row with no value"
+    assert "| Company | SynthCo |" in appendix, "a Headline row with a value stays"
+    assert "| Gaps | 2 |" in appendix
+
+
+def test_data_reliability_has_no_stale_no_pnl_text_and_names_the_role_reconciliation(text):
+    reliability = next(line for line in text.split("\n") if line.startswith("| Data reliability |"))
+    assert "no P&L to reconcile" not in text
+    assert "Revenue reconciliation: " in reliability
+
+
+def test_a_rounded_agreement_reads_agrees_rounded_with_its_note_and_a_deck_year_says_unverified():
+    from test_role_engine import file_of, sheet
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000_000, 1_234_000], ["2024", "2025"], basis="yearly")], granularity="yearly")])]
+    deck = [{"metric": "revenue", "period": "2025", "value": 1_200_000.0, "currency": "EUR", "actual_plan": "actual", "file": "deck.pdf", "page": 6,
+             "label": "Total revenue FY2025", "precision": 100_000},
+            {"metric": "revenue", "period": "2026", "value": 1_500_000.0, "currency": "EUR", "actual_plan": "actual", "file": "deck.pdf", "page": 7,
+             "label": "Total revenue FY2026", "precision": 0}]
+    results = run(pnl, as_of="2026-12", deck=deck)
+    appendix = appendix_c(build(results))
+    recon = appendix.split("Revenue reconciliation")[1]
+    assert "Agrees (rounded) (deck figure printed to the nearest hundred thousand)" in recon
+    growth = appendix.split("Growth by year")[1].split("Plan to date")[0]
+    assert "2026 from deck, page 7, unverified" in growth
