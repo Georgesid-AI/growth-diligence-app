@@ -289,13 +289,14 @@ test("the inputs: the review date and the thesis (300 characters each, drafted f
   await unmount();
 });
 
-test("the analyst note closes the report, directly before the anomaly flags: optional, 1,000 characters, saved on blur, never required", async () => {
+test("the analyst note closes the report, outside Supporting detail and directly above the final Download report button: optional, 1,000 characters, saved on blur, never required", async () => {
   api.putIcInputs.mockResolvedValue({});
   const { host, unmount } = await mountDashboard(sample, OK);
   expect(host.querySelector('[data-testid="report-download"] [data-testid="analyst-note"]')).toBeNull();
   const section = host.querySelector('[data-testid="report-note"]');
-  const flags = host.querySelector('[data-testid="anomaly-flags"]');
-  expect(section.nextElementSibling).toBe(flags.parentElement);       // the note, then the block that holds the anomaly flags
+  expect(section.closest("details")).toBeNull();                      // visible without expanding anything
+  expect(section.nextElementSibling).toBe(host.querySelector('[data-testid="report-download-end"]'));
+  expect(host.querySelector('[data-testid="supporting-detail"] [data-testid="anomaly-flags"]')).not.toBeNull();   // anomaly flags stay
   const note = section.querySelector('[data-testid="analyst-note-text"]');
   expect(note.maxLength).toBe(1000);
   expect(host.querySelector('[data-testid="analyst-note"]').textContent).toContain("Analyst note (optional)");
