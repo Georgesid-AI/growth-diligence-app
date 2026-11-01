@@ -376,3 +376,29 @@ describe("the top of the page", () => {
     expect(document.body.textContent).not.toContain("Why this step matters");
   });
 });
+
+describe("a reviewer's card (PR 4b)", () => {
+  const LONG = "Rows 4 and 10 both carry the recognised revenue of the month, so the report counts it twice; the second row is the bookings line of the sales team, which is booked before it is recognised and sits under the same heading as the revenue line.";
+  const FINDING_CARD = { id: "r1", kind: "reviewer_disagreement", status: "open", title: LONG, subject: {}, actions: ["use_reader"],
+    source: { file: "revenue.xlsx", file_hash: "h1", sheet: "Report", cell: "B4:M4" },
+    reader: { label: "Reader, twice", value: null }, other: { label: "Reviewer", evidence: "Row 10 is bookings." },
+    finding: { what: LONG, reading: "Row 10 is bookings.", confidence: "high" },
+    cites: [
+      { key: "row:Report:4", kind: "row", label: "Row 4", reader: { role: "revenue", metric: "revenue", basis: "monthly", second_role: "revenue" }, source: { file: "revenue.xlsx", file_hash: "h1", sheet: "Report", cell: "B4:M4" } },
+      { key: "figure:0", kind: "figure", label: "Figure revenue", reader: { metric: "revenue", value: 10625, unit: "money", currency: "EUR", period: "2025-06" }, source: { file: "revenue.xlsx", file_hash: "h1", sheet: "Report", cell: "G4" } },
+      { key: "p2a", kind: "page_figure", label: "Page 2: arr", reader: { metric: "arr", value: 447223, unit: "money", currency: "EUR", period: "2024-12" }, source: { file: "deck.pdf", deck_id: "d1", page: 2 } },
+    ] };
+
+  test("one finding is one card with its full text and each cited row or figure with the reader's own value", async () => {
+    await show({ ...REGISTER, cards: [FINDING_CARD] });
+    const cards = all("card-reviewer_disagreement");
+    expect(cards).toHaveLength(1);
+    expect(q("card-title").textContent).toBe(LONG);
+    expect(q("card-reviewer-reading").textContent).toContain("Row 10 is bookings.");
+    const cites = all("card-cite");
+    expect(cites.map((c) => c.querySelector("b").textContent)).toEqual(["Row 4", "Figure revenue", "Page 2: arr"]);
+    expect(cites.map((c) => c.querySelector('[data-testid="card-cite-reader"]').textContent)).toEqual([
+      "read as revenue, monthly", "10,625 EUR, June 2025", "447,223 EUR, December 2024"]);
+    expect(cites[1].querySelector('[data-testid="source-link"]').textContent).toContain("G4");
+  });
+});

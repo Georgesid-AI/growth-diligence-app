@@ -43,20 +43,27 @@ def _now() -> str:
 
 async def open_card(db, audit_id: str, *, kind: str, item: str, title: str, source: Dict, reader: Optional[Dict], other: Optional[Dict],
                     cell_value: Optional[float] = None, reading: Optional[str] = None, path: Optional[str] = None,
-                    subject: Optional[Dict] = None, actions: Optional[List[str]] = None) -> Dict:
+                    subject: Optional[Dict] = None, actions: Optional[List[str]] = None, cites: Optional[List[Dict]] = None,
+                    finding: Optional[Dict] = None, review: Optional[str] = None) -> Dict:
     """Open the card of (audit, kind, item) unless it exists. `source` is {file, sheet, cell | page, file_hash | deck_id}; `reader` and `other` are
     the two readings to show, each {label, value, unit, currency, period, evidence}. `cell_value` is what the cell holds (for "use the cell"),
     `reading` the key of the stored reading and `path` the place in it a decision overrides, `subject` {metric, period} for the heading and
-    `actions` the buttons offered: all three for a value with a cell to use, "use the reader" alone where nothing else can be used."""
+    `actions` the buttons offered: all three for a value with a cell to use, "use the reader" alone where nothing else can be used. A reviewer's
+    card is one per finding: `finding` is its full text, `cites` every row or figure it cites with the reader's value for that one, `review` the
+    run (the review's created_at) that opened or last met it; the register shows the cards of the latest completed run only."""
     if kind not in KINDS:
         raise ValueError(f"unknown card kind {kind!r}")
     cid = card_id(audit_id, kind, item)
     kept = await db[readings.CARDS].find_one({"id": cid}, {"_id": 0})
     if kept:
+        if review is not None and kept.get("review") != review:
+            await db[readings.CARDS].update_one({"id": cid}, {"$set": {"review": review}})
+            kept = {**kept, "review": review}
         return kept
     doc = {"id": cid, "audit_id": audit_id, "kind": kind, "item": item, "title": title, "source": source, "reader": reader, "other": other,
            "cell_value": cell_value, "reading": reading, "path": path, "subject": subject or {},
-           "actions": actions or ([USE_CELL, USE_READER, TYPED] if cell_value is not None else [USE_READER, TYPED]), "status": OPEN, "decision": None, "created_at": _now()}
+           "actions": actions or ([USE_CELL, USE_READER, TYPED] if cell_value is not None else [USE_READER, TYPED]), "status": OPEN, "decision": None, "created_at": _now(),
+           **({"cites": cites, "finding": finding, "review": review} if cites is not None or finding is not None else {})}
     await db[readings.CARDS].insert_one(dict(doc))
     return doc
 

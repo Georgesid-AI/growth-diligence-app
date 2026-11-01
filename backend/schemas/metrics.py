@@ -857,11 +857,21 @@ class RoleReconciliation(Block):
     sources: List[ReconciliationSourceItem]
 
 
+class GrowthYear(Block):
+    """Revenue of a fiscal year against the year before, with the cells of both."""
+    period: str
+    value: float = Field(allow_inf_nan=False)
+    prior: float = Field(allow_inf_nan=False)
+    growth: float = Field(allow_inf_nan=False)
+    source: RoleSource
+
+
 class RoleMetrics(Block):
     as_of_month: str
     metrics: List[RoleMetric]
     plan_to_date: Optional[PlanToDate] = None
     reconciliation: List[RoleReconciliation]
+    growth_by_year: List[GrowthYear] = []           # results stored before PR 4b do not carry it
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import MappingWizard from "./MappingWizard";
 import * as api from "@/lib/api";
-import { S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S7_REFUSED, S7B_XLS_REFUSED, S_UPLOAD_RETRY } from "@/lib/chatUpload";
+import { S4_DROP_ZONE_BOLD, S7_REFUSED, S7B_XLS_REFUSED, S_UPLOAD_RETRY } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), reportUsage: jest.fn(),
@@ -112,7 +112,10 @@ describe("the upload list (read-check-review.md section 11.1)", () => {
     expect(q("attachment-note").textContent).toBe("attached – not read yet");
     expect(q("chat-drop-zone")).not.toBeNull();             // the upload box stays after a drop
     expect(q("chat-drop-zone").textContent).toContain(S4_DROP_ZONE_BOLD);
-    expect(q("chat-drop-zone").textContent).toContain(S4_DROP_ZONE_LEAD.slice(0, 40));
+    expect(q("chat-drop-zone").textContent).toBe("Drop files here or use the paperclip. .xlsx or .csv only. A monthly revenue or ARR report is required; a P&L, revenue by customer and a CRM export add more metrics.");
+    expect(q("chat-drop-zone").querySelector("strong").textContent).toBe(".xlsx or .csv only");
+    expect(q("run-audit-panel").querySelector("p").textContent).toBe("Files are read automatically. Nothing waits for your confirmation.");
+    expect(document.body.textContent).not.toContain("Attach the files in the box above");
     await pick([file("b.csv")]);
     expect(all("chat-analyst-bubble").length).toBe(2);
     await act(async () => { q("chat-map").click(); });

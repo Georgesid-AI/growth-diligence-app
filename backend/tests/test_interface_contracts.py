@@ -189,7 +189,7 @@ NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry bo
                    # docs/specs/revenue-file-recognition.md section 9: closed words and counts about how the revenue was read
                    "recognition": "closed words and counts; a sheet with two tables that differ adds, per month, both figures and their cell positions",
                    # docs/design/read-check-review.md section 16: every metric carries its own source (the cells), or the roles it needs
-                   "role_metrics": "each metric and the plan to date carry a RoleSource of cells; a missing one names the roles it needs"}
+                   "role_metrics": "each metric, the plan to date and each year of growth carry a RoleSource of cells; a missing metric names the roles it needs; a reconciliation lists its sources by cell or page"}
 
 
 def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_engine_output():

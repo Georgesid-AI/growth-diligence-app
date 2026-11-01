@@ -24,6 +24,7 @@ import FiveClaims from "@/components/FiveClaims";
 import NeedsAttention from "@/components/NeedsAttention";
 import IntegrityCoverage from "@/components/IntegrityCoverage";
 import YearlyBasis from "@/components/YearlyBasis";
+import { MissingMetrics, PlanToDate, ReconciliationTable, RoleCards, YearlyPayback } from "@/components/RoleReport";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
@@ -269,6 +270,9 @@ export default function Dashboard() {
 
       <AssumptionsStrip audit={por} results={r} onChange={() => nav(`/audit/${id}/mapping`)} />
 
+      {/* One reason per metric the files could not give: the Data gaps table below carries the same lines (read-check-review.md section 16) */}
+      <MissingMetrics rm={r.role_metrics} />
+
       {/* The conclusion with its contradiction lines, the five selected claims, the questions, the report (docs/design/simplified-flow.md) */}
       {/* PR 4: the five-claims conclusion, the questions, the claim register, the reasons, the key gates and the claim labels stay in the code
           and are shown only when the server says OLD_CLAIMS is on (the audit's `old_claims`). */}
@@ -306,10 +310,11 @@ export default function Dashboard() {
       />
 
       {/* Metric strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 mb-6">
         <MetricCard id="arr" period={periods.arr} label={metricLabel("arr.value")} qualifier={bracketed(metricQualifier("arr.value"))} status="growth_positive" source={r.arr?.source}
           value={r.arr ? fmtCurrency(r.arr.value, ccy) : "—"} sub={r.arr ? `MRR ${fmtCurrency(r.arr.mrr, ccy)}` : ""}
           caption="Shows distance to target" />
+        <RoleCards rm={r.role_metrics} ccy={ccy} />
         <MetricCard id="nrr" period={periods.nrr} label={metricLabel("nrr.overall_pct")} qualifier={bracketed(metricQualifier("nrr.overall_pct"))} status={nrrStatus} source={r.nrr?.source}
           value={r.nrr ? fmtPct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${fmtCount(r.nrr.nrr_base_customers ?? r.nrr.n)} base customers` : "needs 12m history"}
           caption="Growth from existing customers alone" />
@@ -360,6 +365,7 @@ export default function Dashboard() {
           conclusion and coverage are Python's and sit above the A2 narrative, which explains them. */}
       <StepNarrative auditId={id} step="data_inventory" ready={!!data} onChanged={stepWritten} />
       <IntegrityCoverage integrity={integrity} />
+      <ReconciliationTable rm={r.role_metrics} ccy={ccy} />
       <StepNarrative auditId={id} step="data_integrity" ready={!!data} onChanged={stepWritten} />
 
       {/* Charts */}
@@ -433,7 +439,8 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        <Card className="lg:col-span-4" testid="path-to-plan-panel" period={periods.acv_path} title="Path to Plan" hint="simple view · flat base · today's ACV · net-new customers / year">
+        <Card className="lg:col-span-4" testid="path-to-plan-panel" period={periods.acv_path} title="Path to Plan" hint={r.acv_path ? "simple view · flat base · today's ACV · net-new customers / year" : "actual to the as-of month against the plan"}>
+          <PlanToDate rm={r.role_metrics} ccy={ccy} />
           {r.acv_path ? (
             <>
               {r.acv_path.target_date_error && (
@@ -489,7 +496,7 @@ export default function Dashboard() {
                 </div>
               )}
             </>
-          ) : <NotComputable label="No revenue data" />}
+          ) : null}
         </Card>
       </div>
 
@@ -543,7 +550,7 @@ export default function Dashboard() {
           ) : <NotComputable label="'Founder involved' column not mapped" />}
         </Card>
 
-        <Card className="lg:col-span-8" testid="cac-payback-chart" period={periods.cac_payback} title="CAC Payback by Quarter" hint="months · L = quarters of S&M lag">
+        <Card className="lg:col-span-8" testid="cac-payback-chart" period={periods.cac_payback} title="CAC Payback by Quarter" hint={r.cac_payback ? "months · L = quarters of S&M lag" : "yearly P&L only"}>
           {r.cac_payback ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -582,7 +589,7 @@ export default function Dashboard() {
                 </tbody>
               </table>
             </div>
-          ) : <NotComputable label="P&L not provided" />}
+          ) : <YearlyPayback rm={r.role_metrics} yearly={r.yearly_basis} ccy={ccy} />}
         </Card>
       </div>
 

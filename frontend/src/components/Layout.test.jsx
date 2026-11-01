@@ -121,8 +121,8 @@ test("an open audit has three tabs in this order, no Review tab, no Details menu
   api.getBlockers.mockResolvedValue([]);
   await mount(AUDIT);
   expect(["nav-tab-mapping-wizard", "nav-tab-audit", "nav-tab-missing-data"].map((id) => q(id).textContent))
-    .toEqual(["Upload & Mapping", "Audit", "Diagnostics"]);
-  expect([...q("nav-tab-audit").parentElement.children].map((b) => b.textContent)).toEqual(["Upload & Mapping", "Audit", "Diagnostics"]);
+    .toEqual(["Upload", "Audit", "Diagnostics"]);
+  expect([...q("nav-tab-audit").parentElement.children].map((b) => b.textContent)).toEqual(["Upload", "Audit", "Diagnostics"]);
   expect(q("nav-tab-review")).toBeNull();
   expect(q("nav-details")).toBeNull();
   expect(q("details-menu")).toBeNull();

@@ -10,6 +10,7 @@ import RunAuditPanel from "@/components/RunAuditPanel";
 import ReadingScreen, { ReadingTop } from "@/components/ReadingScreen";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { getAudit, reportUsage, saveFx } from "@/lib/api";
 import { asOfInputValue } from "@/lib/auditForm";
 import { mapState } from "@/lib/chatUpload";
@@ -42,6 +43,13 @@ export default function MappingWizard() {
     const timer = setTimeout(() => { load(); setReadKey((k) => k + 1); }, 3000);
     return () => clearTimeout(timer);
   }, [audit]); // eslint-disable-line react-hooks/exhaustive-deps
+  // When the background reading finishes, the blockers (a "No file has been read yet" line) are read again: no page reload.
+  const wasPending = useRef(false);
+  useEffect(() => {
+    const pending = Number(audit?.sheet_reads_pending) > 0;
+    if (wasPending.current && !pending) window.dispatchEvent(new Event(BLOCKERS_CHANGED));
+    wasPending.current = pending;
+  }, [audit]);
   const busy = mapping || running;
   const map = mapState({ attached, loaded: views.length, busy });
 

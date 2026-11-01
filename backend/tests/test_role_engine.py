@@ -266,3 +266,130 @@ def test_a_plan_row_on_another_sheet_is_cited_with_its_sheet():
     files = [file_of("f", [sheet("Actuals", [row(4, "revenue", [100 + 5 * i for i in range(18)], MONTHS)]), sheet("Budget", [plan])])]
     p = run(files)["role_metrics"]["plan_to_date"]
     assert p["source"]["sheet"] == "Actuals" and p["source"]["cells"] == ["S4", "Budget!S3"]
+
+
+# ---------------------------------------------------------------------------
+# PR 4b: the sign of the cost rows, S&M over several rows or in plan years only, the sheet's own gross margin row, growth by year
+# ---------------------------------------------------------------------------
+YEARS = ["2023", "2024", "2025"]
+
+
+def pnl_with(*extra, costs_sign=-1, sm_rows=None, labels=None):
+    rows = [row(4, "revenue", [1_000, 1_500, 2_400], YEARS, basis="yearly"),
+            row(5, "cost_of_revenue", [costs_sign * v for v in (300, 450, 600)], YEARS, basis="yearly")]
+    rows += sm_rows if sm_rows is not None else [row(6, "sales_marketing", [costs_sign * v for v in (400, 500, 900)], YEARS, basis="yearly")]
+    rows += list(extra)
+    f = file_of("pnl", [sheet("P&L", rows, granularity="yearly")])
+    f["labels"] = labels or {}
+    return [f]
+
+
+def test_cost_rows_that_carry_the_opposite_sign_to_revenue_are_used_in_absolute_values():
+    r = run(pnl_with(costs_sign=-1))
+    year = r["yearly_basis"]["years"][-1]
+    assert year["gross_margin_pct"] == pytest.approx(0.75), "(2400 − |−600|) ÷ 2400, never (2400 + 600) ÷ 2400"
+    assert year["sm_pct_revenue"] == pytest.approx(900 / 2_400) and year["sm_expense"] == 900
+    assert year["cac_payback_months"] == pytest.approx(12 * 900 / ((2_400 - 1_500) * 0.75), abs=0.01)
+    for name in ("gross_margin", "sm_share", "yearly_cac_payback"):
+        m = metric(r, name)
+        assert m["status"] == "computed" and "costs shown as negative" in (m["detail"] or ""), name
+    assert metric(r, "gross_margin")["value"] == pytest.approx(0.75)
+    same = run(pnl_with(costs_sign=1))
+    assert metric(same, "gross_margin")["value"] == pytest.approx(0.75)
+    assert all("negative" not in (metric(same, n)["detail"] or "") for n in ("gross_margin", "sm_share", "yearly_cac_payback"))
+
+
+@pytest.mark.parametrize("sign", [1, -1])
+def test_gross_margin_never_exceeds_100_percent_whatever_sign_the_cost_rows_carry(sign):
+    r = run(pnl_with(costs_sign=sign))
+    for y in r["yearly_basis"]["years"]:
+        assert y["gross_margin_pct"] is None or y["gross_margin_pct"] <= 1
+    assert metric(r, "gross_margin")["value"] <= 1
+
+
+def test_the_other_cost_shares_use_absolute_values_too():
+    rnd = row(7, "rnd", [-200, -250, -480], YEARS, basis="yearly")
+    r = run(pnl_with(rnd))
+    m = metric(r, "rnd_share")
+    assert m["value"] == pytest.approx(480 / 2_400) and m["detail"] == "costs shown as negative"
+
+
+def test_every_sales_marketing_row_is_summed():
+    sm = [row(6, "sales_marketing", [150, 200, 500], YEARS, basis="yearly"), row(7, "sales_marketing", [250, 300, 400], YEARS, basis="yearly")]
+    r = run(pnl_with(sm_rows=sm, costs_sign=1, labels={"P&L:6": "Sales", "P&L:7": "Marketing"}))
+    year = r["yearly_basis"]["years"][-1]
+    assert year["sm_expense"] == 900 and year["sm_scope"] == "sales and marketing"
+    assert metric(r, "sm_share")["value"] == pytest.approx(900 / 2_400)
+    assert metric(r, "sm_share")["source"]["cells"][:2] == ["D6", "D7"], "both rows' cells are cited"
+
+
+def test_a_sub_row_of_a_total_s_and_m_row_is_not_added_to_it():
+    total = row(6, "sales_marketing", [400, 500, 900], YEARS, basis="yearly")
+    child = {**row(7, "sales_marketing", [300, 400, 700], YEARS, basis="yearly"), "parent_row": 6}
+    r = run(pnl_with(sm_rows=[total, child], costs_sign=1))
+    assert r["yearly_basis"]["years"][-1]["sm_expense"] == 900
+
+
+def test_s_and_m_that_exists_only_in_plan_years_says_so_and_not_that_a_row_is_needed():
+    plan = {**row(6, "sales_marketing", [1_000, 1_200], ["2026", "2027"], basis="yearly", actual_plan="plan", plan=True)}
+    opex = row(8, "opex", [800, 1_100, 1_900], YEARS, basis="yearly")
+    r = run(pnl_with(opex, sm_rows=[plan], costs_sign=1))
+    text = "S&M split only in plan years; actual years carry OPEX total only"
+    assert metric(r, "sm_share")["reason"] == text
+    assert metric(r, "yearly_cac_payback")["reason"] == text
+    assert r["yearly_basis"]["years"][-1]["cac_payback_reason"] == "needs a sales_marketing row", "the legacy block keeps its own words"
+    none = run(pnl_with(sm_rows=[], costs_sign=1))
+    assert metric(none, "sm_share")["reason"] == "needs a sales_marketing row"
+
+
+def test_the_sheets_own_gross_margin_row_is_compared_with_the_computed_margin():
+    own = {**row(9, "margin_rate", [0.70, 0.70, 0.62], YEARS, basis="rate", unit="rate"), "metric": "gross_margin"}
+    r = run(pnl_with(own, costs_sign=1))
+    detail = metric(r, "gross_margin")["detail"]
+    assert "62%" in detail and "75%" in detail and "difference 13%" in detail
+    agree = {**own, **row(9, "margin_rate", [0.75, 0.75, 0.75], YEARS, basis="rate", unit="rate"), "metric": "gross_margin"}
+    assert metric(run(pnl_with(agree, costs_sign=1)), "gross_margin")["detail"] is None
+
+
+def test_growth_by_year_from_a_monthly_row_and_a_yearly_row_with_the_cells():
+    r = run(monthly_report())
+    years = r["role_metrics"]["growth_by_year"]
+    assert [y["period"] for y in years] == [] or all(y["source"]["cells"] for y in years)
+    full = [file_of("f", [sheet("R", [row(4, "revenue", [100] * 12 + [150] * 12, [f"{2024 + i // 12}-{i % 12 + 1:02d}" for i in range(24)])])])]
+    y = run(full, as_of="2025-12")["role_metrics"]["growth_by_year"]
+    assert len(y) == 1 and y[0]["period"] == "2025" and y[0]["value"] == 1_800 and y[0]["prior"] == 1_200
+    assert y[0]["growth"] == pytest.approx(0.5) and len(y[0]["source"]["cells"]) == 4
+    yearly = run(pnl_with(costs_sign=1))["role_metrics"]["growth_by_year"]
+    assert [(x["period"], round(x["growth"], 3)) for x in yearly] == [("2024", 0.5), ("2025", 0.6)]
+
+
+def test_the_reconciliation_compares_a_year_of_monthly_revenue_with_a_yearly_row_even_when_the_row_says_monthly():
+    monthly = [file_of("report", [sheet("Report", [row(4, "revenue", [100] * 12, [f"2025-{m:02d}" for m in range(1, 13)])])])]
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_150], ["2025"], basis="monthly")], granularity="yearly")])]
+    rec = [x for x in run(monthly + pnl)["role_metrics"]["reconciliation"] if x["period"] == "2025"]
+    assert len(rec) == 1 and rec[0]["status"] == "differs" and rec[0]["gap"] == 50
+
+
+def test_the_missing_metrics_have_one_reason_each_and_the_data_gaps_table_carries_the_same_text():
+    from app import verdict
+    r = run(yearly_pnl(with_sm=False))
+    reasons = {m["metric"]: m["reason"] for m in r["role_metrics"]["metrics"] if m["status"] != "computed"}
+    top = {x["metric"]: x["reason"] for x in re_.missing_reasons(r["role_metrics"])}
+    assert top == {re_.NAMES[k]: v for k, v in reasons.items() if k != "ending_arr"}, "one line, one reason, per missing metric"
+    gaps = {g["item"]: g for g in verdict.data_gaps(r, [], [])}
+    assert top and set(top) <= set(gaps)
+    for name, reason in top.items():
+        assert reason in gaps[name]["why"], (name, reason, gaps[name]["why"])
+    assert top["S&M share of revenue"] == "needs a sales_marketing row"
+
+
+def test_the_integrity_block_reads_the_yearly_revenue_reconciliation_of_the_map():
+    from app import integrity
+    monthly = [file_of("report", [sheet("Report", [row(4, "revenue", [100] * 12, [f"2025-{m:02d}" for m in range(1, 13)])])])]
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_300], ["2025"], basis="yearly")], granularity="yearly")])]
+    deck = [{"metric": "revenue", "period": "2025", "value": 1_200.0, "currency": "EUR", "actual_plan": "actual", "file": "deck", "page": 7}]
+    bad = integrity.assess(run(monthly + pnl, deck=deck), 1, [])
+    row_ = next(x for x in bad["results"] if x["check"] == "Revenue reconciliation")
+    assert row_["result"] == "Red" and "1 of 1 years differ" in row_["finding"] and "page 7" in row_["source"]
+    good = integrity.assess(run(monthly + [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_200], ["2025"], basis="yearly")], granularity="yearly")])]), 0, [])
+    assert next(x for x in good["results"] if x["check"] == "Revenue reconciliation")["result"] == "Green"

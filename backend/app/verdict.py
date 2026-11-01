@@ -16,6 +16,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from app import claim_groups as cg
 from app import claim_matching as cm
+from app import role_engine
 from app.decks import claims as deck_claims
 
 TOP_N = 5
@@ -439,6 +440,15 @@ def data_gaps(results: Optional[dict], rows: List[dict], top5_ids: List[str], ta
                     "ranks": [r["rank"] for r in blocked], "blocks_top5": sum(1 for r in blocked if r["claim_id"] in top),
                     "why": f"Blocks {analysis}{claims}. {reason}".rstrip(),
                     "requested": item.get("unlocked_by"), "target_date": target_dates.get(metric), "index": index})
+    known = {g["item"] for g in out}
+    for index, miss in enumerate(role_engine.missing_reasons((results or {}).get("role_metrics")), start=len((results or {}).get("missing_data") or ())):
+        if miss["metric"] in known:
+            continue
+        reason = miss["reason"] if miss["reason"][-1:] in ".!?" else miss["reason"] + "."
+        out.append({"item": miss["metric"], "analysis": miss["metric"], "claims": [], "ranks": [], "blocks_top5": 0,
+                    "why": f"Blocks {miss['metric']}. {reason}", "requested": "A file with " + " and ".join(
+                        f"{role_engine._a(n)} {n} row" for n in (x.replace('/', ' or ') for x in miss["needs"])),
+                    "target_date": target_dates.get(miss["metric"]), "index": index})
     out.sort(key=lambda g: (-g["blocks_top5"], -len(g["claims"]), g["index"]))
     return out
 
