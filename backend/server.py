@@ -999,6 +999,16 @@ async def _review_safely(audit_id: str, force: bool = False) -> None:
         logger.error("review failed: run_id=%s error=%s", audit_id, type(exc).__name__)
 
 
+async def _review_if_not_read(audit_id: str, background: BackgroundTasks) -> None:
+    """Queue the reviewer when the audit's last stored review is missing or its status is anything other than "read" (not_read, incomplete, none,
+    too_large, ...). A review that read is not asked again here: the engine stage asks for a new one only when the input changed (review_audit)."""
+    if await llm_gateway.reviewer_startup_problem(db) is not None:
+        return
+    last = await db[readings_mod.REVIEWS].find_one({"audit_id": audit_id}, {"_id": 0, "status": 1})
+    if last is None or last.get("status") != "read":
+        background.add_task(_review_safely, audit_id)
+
+
 @api.post("/audits/{audit_id}/review-readings")
 async def review_readings(audit_id: str, background: BackgroundTasks, force: bool = False):
     """Ask for the review of the audit's readings now (the reviewer also runs after the calculations of Run audit). One call per audit and input;
@@ -1771,12 +1781,16 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
             # does not depend on it (read-check-review.md section 6).
             await _run_compute(audit_id)
             if await llm_gateway.reviewer_startup_problem(db) is None:        # no reviewer prompt: Run audit goes on without the reviewer stage
-                background.add_task(_review_safely, audit_id)        # the reviewer runs again whenever its last status is not "read"
+                background.add_task(_review_safely, audit_id)        # one review per audit and input; a review already made is kept
             result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF)
         else:
             if not audit.get("results"):
                 result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_ENGINE)
             else:
+                # Run audit with every stage done carries on from this last one (the calculations are not repeated): the reviewer runs again here
+                # whenever its last stored status is anything other than "read" (PR 4), so a review that was refused, cut off or incomplete is
+                # not left behind for want of a new calculation.
+                await _review_if_not_read(audit_id, background)
                 # A deck the page reader could not read for want of the deck_reading prompt is read again, with no new upload, once the
                 # store holds it (George, 2026-10-23, review of PR 164, M6).
                 # A deck still waiting for the revenue file is read again then too, once the audit has it (George, 2026-10-23, decision 2c).
@@ -2250,16 +2264,6 @@ async def audit_blockers(audit_id: str):
         raise HTTPException(404, "Audit not found")
     return sanitize({"blockers": await _blocker_list(audit_id, audit)})
 
-
-
-
-async def _revenue_satisfied(database, audit_id: str) -> Optional[bool]:
-    """The deck-reading gate: a deck never waits for a file to be mapped, because there is no mapping to wait for (read-check-review.md
-    section 12). None: another database."""
-    return True if database is db else None
-
-
-structures.revenue_satisfied = _revenue_satisfied
 
 
 async def _blocker_list(audit_id: str, audit: dict) -> list:

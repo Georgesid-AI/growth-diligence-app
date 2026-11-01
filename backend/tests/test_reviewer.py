@@ -2,6 +2,7 @@
 """The reviewer, its findings and the re-read (docs/design/read-check-review.md sections 3, 7, 9; PR 3 step b), on the synthetic monthly report of
 the sheet reader flow tests. The provider is a router that answers a sheet reading and a review from scripts, so no test can reach a model."""
 import asyncio
+import re
 import copy
 import json
 import sys
@@ -235,7 +236,10 @@ def test_the_review_input_is_masked_holds_no_evidence_line_no_file_name_and_the_
     assert COMPANY not in text and MONTHLY not in text, "no company name, no file name"
     assert "read by the reader" not in text and "Recognised revenue row" not in text, "the readers' evidence lines are left out"
     (file1,) = sent["input"]["files"]
-    assert file1["kind"] == "sheet" and file1["map"]["sheets"][0]["rows"][1]["series"]["refs"][0] == "B10", "maps go with their series"
+    row = file1["map"]["sheets"][0]["rows"][1]
+    assert file1["kind"] == "sheet" and row["cells"] and row["role"], "maps go with their roles and ranges"
+    assert "series" not in row and "plan_series" not in row, "and without the stored series (PR 4)"
+    assert '"values"' not in json.dumps(file1["map"]) and "refs" not in json.dumps(file1["map"])
     assert "cannot_check" in sent["input"] and "computed" in sent["input"]
     assert redact.personal_items(text) == []
 
@@ -469,7 +473,9 @@ def test_the_reviewer_has_its_own_cap_and_a_refusal_writes_one_log_line_and_the_
     assert done["status"] == "not_read" and router.review_calls == 0
     run_id = audit_of(flow)["id"]
     (line,) = _refusals(caplog)
-    assert line == f"ai call refused: step=reviewer run_id={run_id} reason=reviewer_token_cap used=0 cap=5000"
+    assert re.fullmatch(rf"ai call refused: step=reviewer run_id={run_id} reason=reviewer_token_cap used=0 cap=5000 input=[1-9]\d*", line), line
+    refused = [c for c in flow.db["llm_calls"].docs if c.get("status") == "reviewer_token_cap_reached"]
+    assert [c["refused_input_tokens"] > 0 for c in refused] == [True], "the llm_calls entry keeps the refused input estimate too"
     summary = asyncio.run(register.build(flow.db, run_id))["review"]
     assert summary["not_completed"] == "review not completed: token allowance reached"
 
@@ -484,18 +490,38 @@ def test_the_reviewer_cap_defaults_to_80000_and_counts_only_reviewer_tokens(flow
     flow.db["llm_calls"].docs += [{"run_id": run_id, "step": "structures", "structure_type": "sheet_reading", "cache_hit": False, "input_tokens": 70_000, "output_tokens": 1},
                                   {"run_id": run_id, "step": "structures", "structure_type": "reviewer", "cache_hit": False, "input_tokens": 10, "output_tokens": 5}]
     assert asyncio.run(guards.reviewer_tokens_used(flow.db, run_id)) == 15
-    assert asyncio.run(guards.structure_tokens_used(flow.db, run_id)) == 70_001
+    assert asyncio.run(guards.structure_tokens_used(flow.db, run_id)) == 0, "a file reading is counted per file, not against the audit's structure cap"
+    assert asyncio.run(guards.file_tokens_used(flow.db, run_id, "h1")) == 0
+    flow.db["llm_calls"].docs[0]["file_hash"] = "h1"
+    assert asyncio.run(guards.file_tokens_used(flow.db, run_id, "h1")) == 70_001 and asyncio.run(guards.file_tokens_used(flow.db, run_id, "h2")) == 0
 
 
-def test_a_sheet_read_refused_by_the_reading_cap_writes_the_same_line(flow, monkeypatch, caplog):
+def test_a_sheet_read_refused_by_the_per_file_cap_writes_the_ai_call_refused_line_and_no_structure_not_read_line(flow, monkeypatch, caplog):
     import logging
-    from app.llm import guards
-    monkeypatch.setattr(guards, "STRUCTURE_TOKEN_CAP", 1000)
+    monkeypatch.setenv("FILE_TOKEN_CAP", "1000")
     caplog.set_level(logging.INFO)
     start(flow, map_with("bookings"))
     run_id = audit_of(flow)["id"]
     lines = _refusals(caplog)
-    assert f"ai call refused: step=sheet_reading run_id={run_id} reason=token_cap used=0 cap=1000" in lines      # (the file recognition beside it is refused too)
+    assert any(re.fullmatch(rf"ai call refused: step=sheet_reading run_id={run_id} reason=token_cap used=0 cap=1000 input=[1-9]\d*", line) for line in lines), lines
+    assert not [r for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    refused = [c for c in flow.db["llm_calls"].docs if c.get("status") == "file_token_cap_reached"]
+    assert refused and refused[0]["refused_input_tokens"] > 0 and refused[0]["file_hash"]
+    assert audit_of(flow)["sheet_reads_pending"] == 0, "the upload goes on"
+
+
+def test_the_per_file_cap_counts_a_file_by_its_hash_and_one_file_does_not_stop_another(flow, monkeypatch):
+    from app.llm import guards
+    monkeypatch.setenv("FILE_TOKEN_CAP", "50000")
+    run_id = "r1"
+    flow.db["llm_calls"].docs.append({"run_id": run_id, "step": "structures", "structure_type": "sheet_reading", "cache_hit": False,
+                                      "input_tokens": 40_000, "output_tokens": 5_000, "file_hash": "h1"})
+    with pytest.raises(guards.GuardRefusal) as caught:
+        asyncio.run(guards.check_file_token_cap(flow.db, run_id, "h1", 3_000, 16_000))
+    assert caught.value.reason == "file_token_cap_reached" and caught.value.used == 45_000 and caught.value.cap == 50_000
+    asyncio.run(guards.check_file_token_cap(flow.db, run_id, "h2", 3_000, 16_000))         # another file of the same audit is read
+    monkeypatch.setenv("FILE_TOKEN_CAP", "junk")
+    assert guards.file_token_cap() == 400_000, "a typo is never unlimited"
 
 
 def test_the_status_line_names_a_missing_prompt_and_a_provider_error(flow):
@@ -511,3 +537,46 @@ def test_the_status_line_names_a_missing_prompt_and_a_provider_error(flow):
     flow.db["llm_calls"].docs[:] = [{"run_id": run_id, "step": "structures", "structure_type": "reviewer", "status": "provider_error"}]
     assert not_completed_line() == "review not completed: provider error"
     assert "Not read by AI" not in not_completed_line()
+
+
+# --- Run audit re-runs the reviewer whenever its last stored status is not "read", even when Calculate is done (PR 4) ---------------------------
+
+def _stage(flow, name):
+    audit = audit_of(flow)["id"]
+    r = flow.post(f"/api/audits/{audit}/run/{name}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _stored_review(flow):
+    return flow.db[readings.REVIEWS].docs[0]
+
+
+@pytest.mark.parametrize("last", ["not_read", "incomplete", "too_large", "none"])
+def test_run_audit_asks_the_reviewer_again_when_its_last_status_is_not_read_even_with_the_calculations_done(flow, last):
+    router = start(flow, map_with("bookings"), review={"findings": []})
+    assert _stage(flow, "engine")["status"] == "done"
+    assert router.review_calls == 1 and _stored_review(flow)["status"] == "read"
+    _stage(flow, "claims")                                       # every stage done: Run audit now carries on from the last one
+    assert router.review_calls == 1, "a review that read is not asked again"
+    _stored_review(flow)["status"] = last                        # the review the last run left behind did not read
+    assert _stage(flow, "claims")["status"] == "done"
+    assert router.review_calls == 2 and _stored_review(flow)["status"] == "read", "the claims stage queued it; the calculations were not repeated"
+    assert router.sheet_calls == 1, "no file was read again"
+
+
+def test_run_audit_asks_for_a_review_when_none_was_ever_stored(flow):
+    router = start(flow, map_with("bookings"), review={"findings": []})
+    flow.db["audits"].docs[0]["results"] = {"contract_version": 16}           # calculated before; no review document at all
+    assert flow.db[readings.REVIEWS].docs == []
+    _stage(flow, "claims")
+    assert router.review_calls == 1 and _stored_review(flow)["status"] == "read"
+
+
+def test_the_reviewer_stays_off_when_it_has_no_prompt_and_run_audit_still_finishes(flow):
+    start(flow, map_with("bookings"), review={"findings": []})
+    _stage(flow, "engine")
+    flow.db["prompts"].docs[:] = [d for d in flow.db["prompts"].docs if d["name"] != "reviewer"]
+    flow.db[readings.REVIEWS].docs[:] = []
+    assert _stage(flow, "claims")["status"] == "done"
+    assert flow.db[readings.REVIEWS].docs == [], "no prompt, no review: the stage goes on without it"

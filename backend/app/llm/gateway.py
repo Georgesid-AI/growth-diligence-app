@@ -1026,7 +1026,7 @@ async def log_call(
     cache_hit: bool, status: str, unmatched_numbers: Optional[List[str]] = None,
     content_hash: Optional[str] = None, deck_id: Optional[str] = None,
     http_status: Optional[int] = None, error_type: Optional[str] = None, structure_type: Optional[str] = None,
-    image_tokens: int = 0, image_cost_usd: float = 0.0,
+    image_tokens: int = 0, image_cost_usd: float = 0.0, file_hash: Optional[str] = None, refused_input_tokens: Optional[int] = None,
 ) -> None:
     """Append to llm_calls.
 
@@ -1036,10 +1036,12 @@ async def log_call(
     the payload does NOT hold, so it cannot echo the computed figures back. A
     structure reading call adds the content hash of the text sent (never the
     text) and the deck it came from (CLAUDE.md rule 17). A provider error adds
-    its HTTP status and error type, never its message.
+    its HTTP status and error type, never its message. A file reading adds the file's hash (the per-file cap counts by it); a call a cap refused adds
+    the input tokens it would have sent (`refused_input_tokens`, the provider's count).
     """
     extra = {k: v for k, v in (("content_hash", content_hash), ("deck_id", deck_id), ("http_status", http_status),
-                               ("error_type", error_type), ("structure_type", structure_type)) if v is not None}
+                               ("error_type", error_type), ("structure_type", structure_type), ("file_hash", file_hash),
+                               ("refused_input_tokens", refused_input_tokens)) if v is not None}
     await db[CALLS_COLLECTION].insert_one({**extra,
         "run_id": run_id,
         "step": step,
@@ -1646,16 +1648,16 @@ NOT_READ = "Not read by AI"
 PROMPT_MISSING_TEXT = "AI reading not run – deck_reading prompt missing in prompt store"
 TOO_LARGE = "Too large for AI reading"
 # The reason a cap refusal's "structure not read" line gives, per guard code (llm_calls keeps the code).
-CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap",
+CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap", "file_token_cap_reached": "token_cap",
                "reviewer_token_cap_reached": "reviewer_token_cap", "monthly_allowance_reached": "allowance",
                "call_cap_exceeded": "call_cap"}
 
 
 def log_refusal(step: str, run_id: str, refusal: "guards.GuardRefusal") -> None:
     """One backend log line for every cap refusal on any AI call: closed words and numbers only."""
-    logger.warning("ai call refused: step=%s run_id=%s reason=%s used=%s cap=%s", step, run_id,
+    logger.warning("ai call refused: step=%s run_id=%s reason=%s used=%s cap=%s input=%s", step, run_id,
                    CAP_REASONS.get(refusal.reason, "cap"), "-" if refusal.used is None else refusal.used,
-                   "-" if refusal.cap is None else refusal.cap)
+                   "-" if refusal.cap is None else refusal.cap, "-" if refusal.input_tokens is None else refusal.input_tokens)
 # The calls outside the daily spend cap: a column mapping (chat-upload.md 4.2) and a page read (ai-reads-rules-check.md). Both still
 # count in the tester's monthly allowance and in the day's spend every other call is checked against.
 SPEND_CAP_EXEMPT = frozenset({PAGE_CLAIMS})
@@ -2183,7 +2185,7 @@ async def read_structure(
         kept = await readings.get_reread(db, reading_key, recheck_items, recheck_id) if recheck else await readings.get(db, account, file_hash, prompt_hash, model)
         if kept:
             await readings.use(db, audit_id, reading_key)
-            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
+            await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
                            estimated_cost_usd=0.0, cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id,
                            structure_type=structure_type)
             logger.info("sheet reading stored: run_id=%s step=%s hash=%s", audit_id, STRUCTURE_STEP, digest)
@@ -2196,7 +2198,7 @@ async def read_structure(
     elif use_cache:
         hit = await cache.get_structure(db, audit_id, key)
         if hit:
-            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
+            await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=model, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
             logger.info("structure cache hit: run_id=%s step=%s hash=%s type=%s", audit_id, STRUCTURE_STEP, digest, structure_type)
@@ -2232,7 +2234,7 @@ async def read_structure(
         # Codes, and on a 4xx the provider's message, capped: it names schema and request faults and carries no file content
         # (_logged_provider_message). Never the exception's own text, a request body, a key or the prompt.
         code, status, kind = exc.reason, exc.status, exc.error_type
-        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
+        await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
                        input_tokens=0, output_tokens=0, estimated_cost_usd=0.0, cache_hit=False, status=code,
                        content_hash=digest, deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
         shown = _message_field(exc, text, system, user_payload, prompt.text)
@@ -2262,7 +2264,10 @@ async def read_structure(
             while True:
                 beside = _inflight_tokens.get(audit_id, 0) if parallel else 0
                 try:
-                    await guards.check_structure_token_cap(db, audit_id, counted + beside, max_tokens)
+                    if structure_type == SHEET_READING:
+                        await guards.check_file_token_cap(db, audit_id, file_hash, counted, max_tokens)      # a file has its own cap (PR 4)
+                    else:
+                        await guards.check_structure_token_cap(db, audit_id, counted + beside, max_tokens)
                     break
                 except guards.GuardRefusal:
                     if not beside:
@@ -2274,14 +2279,12 @@ async def read_structure(
                 await guards.release(db, audit_id, STRUCTURE_STEP, token)       # the provider call runs outside the lock
                 token = None
         except guards.GuardRefusal as refusal:
-            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
-                           model=model, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
+            refusal.input_tokens = counted          # what the refused call would have sent, kept on the row and on the log line
+            await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
+                           model=model, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0, refused_input_tokens=counted,
                            cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id, structure_type=structure_type)
-            log_refusal(structure_type or STRUCTURE_STEP, audit_id, refusal)
-            cap = CAP_REASONS.get(refusal.reason, "cap")          # a closed word, never the guard's message
-            logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=- type=-", audit_id,
-                           STRUCTURE_STEP, digest, cap)
-            stopped = refusal.reason == "structure_token_cap_reached"
+            log_refusal(structure_type or STRUCTURE_STEP, audit_id, refusal)         # the one line of a cap refusal: no "structure not read" line beside it
+            stopped = refusal.reason in ("structure_token_cap_reached", "file_token_cap_reached")
             return _structure_result("stopped" if stopped else "not_read", structure_type,
                                      refusal.detail if stopped else NOT_READ, **base)
         try:
@@ -2298,7 +2301,7 @@ async def read_structure(
             shown = _message_field(exc, text, system, user_payload, prompt.text)
             image_billed = min(billed[0], image_tokens * getattr(exc, "billed_calls", 0))
             image_cost = estimate_cost_usd(model, image_billed, 0)
-            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
+            await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=model, input_tokens=billed[0], output_tokens=billed[1],
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
                            deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type,
@@ -2356,7 +2359,7 @@ async def read_structure(
             await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
                                    model_type=model_type, output=stored, prompt_version=prompt.version,
                                    input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page, pages=pages, model=model)
-        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
+        await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
                        input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, cache_hit=False,
                        status="ok", content_hash=digest, deck_id=deck_id, structure_type=structure_type,
                        image_tokens=image_billed, image_cost_usd=image_cost)
@@ -2487,8 +2490,10 @@ async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, slee
             await guards.check_spend_cap(db)
             await guards.check_reviewer_token_cap(db, audit_id, counted, REVIEWER_MAX_TOKENS)
         except guards.GuardRefusal as refusal:
+            refusal.input_tokens = counted
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
-                           estimated_cost_usd=0.0, cache_hit=False, status=refusal.reason, content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE)
+                           estimated_cost_usd=0.0, cache_hit=False, status=refusal.reason, content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE,
+                           refused_input_tokens=counted)
             log_refusal(REVIEW_STRUCTURE_TYPE, audit_id, refusal)
             return ReviewRead("not_read", reason=NOT_READ, **base)
         billed_in = billed_out = attempts = 0

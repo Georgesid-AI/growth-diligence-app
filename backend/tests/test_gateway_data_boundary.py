@@ -214,7 +214,6 @@ def test_demo_upload_leaks_no_file_sheet_header_or_cell_value():
     os.environ.setdefault("DB_NAME", "data_boundary_test")
     import demo_data
     import growth_engine as ge
-    import server
 
     file, sheet, header, cell = "Acme_Revenue.xlsx", "Acme Data", "Acme Segment", "Jane Doe (CEO)"
     spec = demo_data.DEMO_AUDITS[0]
@@ -304,7 +303,6 @@ def _engine_results(spec, inject: bool) -> dict:
     content shows it."""
     import demo_data
     import growth_engine as ge
-    import server
 
     datasets, meta = demo_data.build(spec)
     uploads = {}
@@ -575,7 +573,6 @@ def test_the_outermost_500_handler_and_the_gateway_failure_log_type_run_id_and_s
     pytest.importorskip("fastapi")
     import logging
     from fastapi.testclient import TestClient
-    import server
 
     def boom(*args, **kwargs):
         raise RuntimeError("cannot parse cell 'Jane Doe (CEO)'")
@@ -1112,7 +1109,7 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
     import logging
     from datetime import datetime, timezone
     assert set(gateway.CAP_REASONS.values()) == CAP_REASONS
-    assert set(gateway.CAP_REASONS) == {"daily_spend_cap_exceeded", "structure_token_cap_reached", "monthly_allowance_reached",
+    assert set(gateway.CAP_REASONS) == {"daily_spend_cap_exceeded", "structure_token_cap_reached", "file_token_cap_reached", "monthly_allowance_reached",
                                          "reviewer_token_cap_reached", "call_cap_exceeded"}
     db = _structure_db()
     db["llm_calls"].docs.append({"run_id": STRUCTURE_AUDIT["id"], "step": "structures", "cache_hit": False,
@@ -1125,8 +1122,11 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
         spent["llm_calls"].docs.append({"run_id": "elsewhere", "cache_hit": False, "estimated_cost_usd": 1.0,
                                         "timestamp": datetime.now(timezone.utc).isoformat()})
         _send(spent, GOOD_ITEMS)
-    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert [line.split("reason=")[1] for line in lines] == ["token_cap status=- type=-", "spend_cap status=- type=-"]
+    assert not [r for r in caplog.records if r.getMessage().startswith("structure not read:")], "a cap refusal is the one \"ai call refused\" line"
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("ai call refused:")]
+    assert [line.split("reason=")[1].split(" ")[0] for line in lines] == ["token_cap", "spend_cap"]
+    assert all(re.search(r"input=\d+$", line) for line in lines), "the refused input token estimate is on the line"
+    assert [c["refused_input_tokens"] > 0 for c in db["llm_calls"].docs if c.get("status") == "structure_token_cap_reached"] == [True]
     for needle in ("Revenue", "£1,200,000", "400,000-token", "spent today", "$"):
         assert needle not in "".join(lines), f"{needle!r} was logged"
 
@@ -1139,13 +1139,12 @@ def test_an_allowance_refusal_logs_the_closed_word_and_no_amount_label_or_id(cap
     db["audits"].docs[0]["owner"] = "tester-9"
     with caplog.at_level(logging.DEBUG):
         result, adapter = _send(db, GOOD_ITEMS)
-    lines = "".join(r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:"))
     assert result.status == "not_read" and adapter.calls == 0
-    assert "reason=allowance status=- type=-" in lines
+    assert not [r for r in caplog.records if r.getMessage().startswith("structure not read:")]
     for needle in ("tester-9", "Label Nine", "10.0", "USD", "$"):
         assert needle not in "".join(r.getMessage() for r in caplog.records), f"{needle!r} was logged"
     refused = [r.getMessage() for r in caplog.records if r.getMessage().startswith("ai call refused:")]
-    assert refused and all(line.endswith("reason=allowance used=- cap=-") for line in refused), "the 'ai call refused' line carries no allowance amount"
+    assert refused and all(re.search(r"reason=allowance used=- cap=- input=\d+$", line) for line in refused), "the 'ai call refused' line carries no allowance amount"
 
 
 def test_the_owner_audit_cost_rows_hold_a_closed_key_set_and_the_tester_filter_covers_every_cost_key(caplog):
@@ -1161,7 +1160,7 @@ def test_the_owner_audit_cost_rows_hold_a_closed_key_set_and_the_tester_filter_c
     assert rows == [{"tester": "Label One", "created_at": "2026-10-18T12:32:00+00:00", "calls": 1, "tokens": 10, "cost_usd": 0.1,
                      "image_tokens": 0, "image_cost_usd": 0.0}]
     assert "Acme Zed" not in json.dumps(rows) and "deck_zed" not in json.dumps(rows)
-    assert {"input_tokens", "output_tokens", "estimated_cost_usd", "image_tokens", "image_cost_usd"} <= tester_view.HIDDEN_KEYS
+    assert {"input_tokens", "output_tokens", "estimated_cost_usd", "image_tokens", "image_cost_usd", "refused_input_tokens"} <= tester_view.HIDDEN_KEYS
 
 
 # The check a "structure not read" line names for a reply that fails validation (issue #64): a closed word, never the
@@ -3638,7 +3637,6 @@ def test_delete_audit_removes_a_legacy_map_document_and_startup_drops_the_collec
     """The map's former collection (pseudonym_map, one document per run): Delete audit removes the audit's document and leaves another
     audit's; the startup step keeps the collection while it holds a document and drops it once empty. Its log line carries a count,
     never a name (rule 22)."""
-    import server
     from upload_support import AUDIT, COMPANY
     caplog.set_level(logging.DEBUG)
     legacy = api.db[redaction.LEGACY_MAP_COLLECTION]
@@ -3901,7 +3899,6 @@ def test_the_reading_records_prompt_text_is_in_no_api_response_no_map_export_and
     import test_sheet_reader_flow as flow_t
     from fastapi.testclient import TestClient
     from app import readings
-    import server
 
     monkeypatch.undo()          # tests/conftest.py switches the sheet reader off for this module; this test lets the upload queue it
     db = t.FakeDB()

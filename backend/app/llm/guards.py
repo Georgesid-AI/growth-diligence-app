@@ -32,11 +32,14 @@ LOCKS_COLLECTION = "llm_locks"
 MAX_CALLS_PER_RUN = 15             # narrative calls only
 DEFAULT_DAILY_SPEND_CAP_USD = 5.00
 STRUCTURE_STEP = "structures"      # the step every structure reading call is logged and locked under
-STRUCTURE_TOKEN_CAP = 400_000      # billed input and output tokens per audit, structure calls only
+STRUCTURE_TOKEN_CAP = 400_000      # billed input and output tokens per audit, deck structure and page calls only (not a file reading, not the reviewer)
+SHEET_READING_TYPE = "sheet_reading"   # structure_type of a file reading: counted per file against FILE_TOKEN_CAP, never against the audit's cap
+DEFAULT_FILE_TOKEN_CAP = 400_000   # billed input and output tokens per file, its readings and re-reads (env FILE_TOKEN_CAP); replaces the per-audit cap for files
 REVIEWER_STEP_TYPE = "reviewer"    # structure_type of the reviewer's calls: counted against REVIEWER_TOKEN_CAP, never against the reading cap
 DEFAULT_REVIEWER_TOKEN_CAP = 80_000  # billed input and output tokens per audit, reviewer call only (env REVIEWER_TOKEN_CAP)
 STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 400,000-token limit. The remaining "
                          "structures were read by Python only.")
+FILE_CAP_MESSAGE = "This file reached its reading limit; it was not read again."
 
 # How long a lock may be held before it is treated as abandoned, so a worker
 # that died mid-call cannot wedge the step forever. Must exceed the worst live
@@ -49,12 +52,25 @@ LOCK_POLL_SECONDS = 0.25
 class GuardRefusal(Exception):
     """A guard refused the call. Carries a client-safe reason code."""
 
-    def __init__(self, reason: str, detail: str = "", used: Optional[float] = None, cap: Optional[float] = None):
+    def __init__(self, reason: str, detail: str = "", used: Optional[float] = None, cap: Optional[float] = None,
+                 input_tokens: Optional[int] = None):
         self.reason = reason
         self.detail = detail
         self.used = used          # what the cap counted so far and the cap itself, for the "ai call refused" log line
         self.cap = cap
+        self.input_tokens = input_tokens      # the input the refused call would have sent (the provider's count): kept on the log line and the llm_calls row
         super().__init__(f"{reason}: {detail}" if detail else reason)
+
+
+def file_token_cap() -> int:
+    """Per-file token allowance of a file reading, from FILE_TOKEN_CAP (default 400,000). A malformed or non-positive value falls back to the
+    default: a typo must never mean "unlimited"."""
+    raw = os.environ.get("FILE_TOKEN_CAP", "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_FILE_TOKEN_CAP
+    except ValueError:
+        return DEFAULT_FILE_TOKEN_CAP
+    return value if value > 0 else DEFAULT_FILE_TOKEN_CAP
 
 
 def reviewer_token_cap() -> int:
@@ -98,7 +114,15 @@ async def structure_tokens_used(db, run_id: str) -> int:
         {"run_id": run_id, "step": STRUCTURE_STEP, "cache_hit": False},
         {"_id": 0, "input_tokens": 1, "output_tokens": 1, "structure_type": 1}).to_list(100000)
     return sum(int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0)) for r in rows
-               if r.get("structure_type") != REVIEWER_STEP_TYPE)
+               if r.get("structure_type") not in (REVIEWER_STEP_TYPE, SHEET_READING_TYPE))
+
+
+async def file_tokens_used(db, run_id: str, file_hash: str) -> int:
+    """Billed input and output tokens of this audit's readings of one file (its first reading and its re-reads)."""
+    rows = await db[CALLS_COLLECTION].find(
+        {"run_id": run_id, "step": STRUCTURE_STEP, "cache_hit": False, "file_hash": file_hash},
+        {"_id": 0, "input_tokens": 1, "output_tokens": 1, "structure_type": 1}).to_list(100000)
+    return sum(int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0)) for r in rows if r.get("structure_type") == SHEET_READING_TYPE)
 
 
 async def reviewer_tokens_used(db, run_id: str) -> int:
@@ -115,6 +139,13 @@ async def check_structure_token_cap(db, run_id: str, input_tokens: int, max_toke
     used = await structure_tokens_used(db, run_id)
     if used + input_tokens + max_tokens > STRUCTURE_TOKEN_CAP:
         raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE, used=used, cap=STRUCTURE_TOKEN_CAP)
+
+
+async def check_file_token_cap(db, run_id: str, file_hash: str, input_tokens: int, max_tokens: int) -> None:
+    """A file reading goes out only if the tokens already used on this file + its input + its max_tokens fit under the per-file cap."""
+    used, cap = await file_tokens_used(db, run_id, file_hash), file_token_cap()
+    if used + input_tokens + max_tokens > cap:
+        raise GuardRefusal("file_token_cap_reached", FILE_CAP_MESSAGE, used=used, cap=cap)
 
 
 async def check_reviewer_token_cap(db, run_id: str, input_tokens: int, max_tokens: int) -> None:

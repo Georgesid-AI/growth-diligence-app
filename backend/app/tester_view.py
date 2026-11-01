@@ -7,7 +7,7 @@ import json
 
 HIDDEN_KEYS = frozenset({
     "input_tokens", "output_tokens", "estimated_cost_usd", "ai_cost_usd", "cost_usd", "estimate_usd", "total_usd",
-    "structure_tokens", "structure_token_cap", "tokens", "allowance_usd", "used_usd", "image_tokens", "image_cost_usd",
+    "structure_tokens", "structure_token_cap", "tokens", "allowance_usd", "used_usd", "image_tokens", "image_cost_usd", "refused_input_tokens",
 })
 
 

@@ -256,7 +256,7 @@ def test_no_collection_holds_the_text_the_sheet_reader_was_sent_and_the_calls_ho
             assert line not in stored.get("llm_calls", ""), line
     assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd", "image_tokens",
                           "image_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp", "content_hash", "deck_id", "http_status",
-                          "error_type", "structure_type"} for c in flow.db["llm_calls"].docs)
+                          "error_type", "structure_type", "file_hash", "refused_input_tokens"} for c in flow.db["llm_calls"].docs)
 
 
 def test_the_log_lines_of_an_upload_a_compute_and_a_delete_hold_no_file_name_cell_value_or_company_name(flow, caplog):

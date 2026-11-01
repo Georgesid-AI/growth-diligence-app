@@ -210,31 +210,11 @@ def deck_pipeline() -> str:
     path below (read at call time: the gateway imports this package)."""
     return gateway.deck_pipeline()
 
-# Set by server.py: `async (db, audit_id) -> Optional[bool]`, True when the audit has the revenue file the rest of the app counts (the
-# blocker banner's own check): a revenue file saved with `_is_mapped` (a column mapping, a statement's line map, or a recognition with no
-# choice left to the analyst *now*), or, with no revenue file, a P&L confirmed with two or more periods. None means no answer (no server,
-# or another database), and `revenue_mapped` on the stored file stands.
-revenue_satisfied = None
-
-
-def revenue_mapped(dataset: Optional[Dict]) -> bool:
-    """True once the revenue file is uploaded and confirmed: its columns with the customer among them, or, for a file read by
-    recognition only (a monthly revenue report, a revenue summary, financial statements, an ARR or MRR snapshot: no customer rows,
-    so no customer rows), its recognition with no choice left to the analyst (`mapped_at` is set only then)."""
-    if not dataset or not dataset.get("mapped_at"):
-        return False
-    return bool(dataset.get("recognition_only") or (dataset.get("mapping") or {}).get("customer_id"))
-
 
 async def revenue_ready(db, audit_id: str) -> bool:
-    """Whether the deck read may start: the audit has its revenue file (see `revenue_satisfied`). Where the server gives no answer,
-    the stored revenue file must be mapped (`revenue_mapped`)."""
-    if revenue_satisfied is not None:
-        answer = await revenue_satisfied(db, audit_id)
-        if answer is not None:
-            return answer
-    return revenue_mapped(await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
-                                                     {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1}))
+    """Whether the deck read may start: always. A deck never waits for a file to be mapped or confirmed, because there is no mapping to wait for
+    (docs/design/read-check-review.md section 12, PR 4). The name stays for the callers that ask."""
+    return True
 
 
 CANDIDATE_KEY = ("audit_id", "deck_id", "structure_key", "order", "cell")       # what one candidate is: reading a deck again writes it once

@@ -16,7 +16,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 import reading_fixtures as rf  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
-from app import as_of, checks, readings, sheet_reader  # noqa: E402
+from app import checks, readings, sheet_reader  # noqa: E402
 from app import column_rules as cr  # noqa: E402
 from app.llm import gateway  # noqa: E402
 from app.structures import reading_input, redact  # noqa: E402

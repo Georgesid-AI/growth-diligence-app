@@ -1025,7 +1025,8 @@ def test_an_audit_of_8_decks_of_5_structures_fits_the_token_cap():
 
 def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
     """A structure the daily spend cap or the 400,000-token cap refuses was not read and printed nothing, so a run
-    that hit a cap showed only "0 of N structures read". It now logs reason=spend_cap or reason=token_cap."""
+    that hit a cap showed only "0 of N structures read". It logs the one "ai call refused" line, reason=spend_cap or reason=token_cap, with the
+    input tokens the call would have sent; there is no "structure not read" line beside it (PR 4)."""
     import logging
     from datetime import datetime, timezone
     db = _db()
@@ -1034,9 +1035,9 @@ def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         result, adapter = _read(db)
     assert (result.status, adapter.calls) == ("stopped", 0)
-    assert caplog.text.count("structure not read:") == 1
-    assert "structure not read: run_id=audit-s step=structures hash=" in caplog.text
-    assert "reason=token_cap status=- type=-" in caplog.text
+    assert caplog.text.count("structure not read:") == 0
+    assert caplog.text.count("ai call refused:") == 1 and "reason=token_cap used=399500 cap=400000 input=" in caplog.text
+    assert db["llm_calls"].docs[-1]["status"] == "structure_token_cap_reached" and db["llm_calls"].docs[-1]["refused_input_tokens"] > 0
     caplog.clear()
     monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
     db = _db()
@@ -1045,7 +1046,7 @@ def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         result, adapter = _read(db)
     assert (result.status, adapter.calls) == ("not_read", 0)
-    assert caplog.text.count("structure not read:") == 1 and "reason=spend_cap status=- type=-" in caplog.text
+    assert caplog.text.count("structure not read:") == 0 and caplog.text.count("ai call refused:") == 1 and "reason=spend_cap" in caplog.text
     assert db["llm_calls"].docs[-1]["status"] == "daily_spend_cap_exceeded", "llm_calls keeps the guard's code"
 
 
@@ -1266,6 +1267,16 @@ def _upload_deck(client, name="05-zero2hero.pdf"):
     r = client.post(f"/api/audits/{AUDIT}/decks/upload", files={"file": (name, (DECKS / name).read_bytes())})
     assert r.status_code == 200, r.text
     return r.json()
+
+
+def test_a_deck_is_read_at_its_upload_with_no_file_in_the_audit_and_never_waits(monkeypatch):
+    """PR 4 (read-check-review.md section 12): there is no mapping to wait for, so a deck never waits for a revenue file."""
+    client, db, adapter = _deck_api(monkeypatch)
+    assert db["datasets"].docs == []
+    _upload_deck(client)
+    deck = _deck(client)["decks"][0]
+    assert deck["ai_status"] == "read" and adapter.calls > 0
+    assert asyncio.run(structures.revenue_ready(db, AUDIT)) is True
 
 
 def _map_revenue(client):

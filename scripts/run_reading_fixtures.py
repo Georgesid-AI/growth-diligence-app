@@ -206,7 +206,6 @@ async def read_decks(db, adapter=None) -> int:
             continue
         audit = f"fx-{name}"
         db["audits"].docs.append({"id": audit, "company_name": rf.COMPANY, "structure_reading_consent": True, "fiscal_year_end": 12})
-        db["datasets"].docs.append({"audit_id": audit, "dtype": "revenue", "recognition_only": True, "mapped_at": "2026-01-01T00:00:00+00:00"})
         deck = parser.parse_deck(path.read_bytes(), path.name)
         deck_id = f"deck-{name}"
         sendable = len(grids_mod.sendable(grids_mod.page_grids(deck["blocks"])))
