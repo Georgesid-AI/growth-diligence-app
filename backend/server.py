@@ -32,7 +32,9 @@ from app import reading_export
 from app import reviewer
 from app import register
 from app import cards as cards_mod
+from app import checks as checks_mod
 from app import deck_figures
+from app import role_engine
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
@@ -3474,11 +3476,35 @@ async def export_memo(audit_id: str):
 STALE_ON_CHANGE_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month", "fiscal_year_end"}
 
 
+async def _role_inputs(audit_id: str, audit: dict) -> Optional[dict]:
+    """The engine's inputs from the stored map (docs/design/read-check-review.md section 16): the role table of the audit's readings, with each
+    row's stored series and the overrides in force, and the deck figures that did not fail their page check. None when no file has been read."""
+    done = [c for c in await readings_mod.checks_for(db, audit_id) if c.get("status") == "read"]
+    if not done:
+        return None
+    files = []
+    for check in sorted(done, key=lambda c: c.get("file") or ""):
+        reading = await db[readings_mod.READINGS].find_one({"key": check.get("reading_key")}, {"_id": 0})
+        if not reading:
+            continue
+        file_map = readings_mod.effective(reading["file_map"], await readings_mod.overrides_for(db, audit_id, reading["key"]))
+        items = [i for i in check.get("items") or [] if str(i.get("key", "")).startswith("row:")]
+        files.append({"file": check.get("file"), "file_map": file_map,
+                      "rejected": [i["key"] for i in items if i["outcome"] == checks_mod.REJECTED],
+                      "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT]})
+    deck = [{**f, "file": d["file"], "page": f["source"]["page"]} for d in await deck_figures.checked(db, audit_id) for f in d["figures"]
+            if f["outcome"] != checks_mod.REJECTED]
+    return {"table": role_engine.build_table(files), "deck": deck, "fye": _fiscal_year_end(audit)}
+
+
 async def _run_compute(audit_id: str) -> dict:
     await _refresh_as_of(audit_id)
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
+    roles = await _role_inputs(audit_id, a)
+    if roles is not None:
+        return await _compute_on_the_map(audit_id, a, roles)
     read = await _claims_files(audit_id)        # a file read as claims is not an engine input (chat-upload.md section 20)
     ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)
           if d.get("file_hash") not in read or d.get("sheet_map")}       # a statement file stays an input (section 26.6)
@@ -3560,6 +3586,42 @@ async def _run_compute(audit_id: str) -> dict:
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
                   "metrics_stale": False, "setup_stale": False}},
     )
+    await _enter_matched_claims(audit_id, await db.audits.find_one({"id": audit_id}))
+    return results
+
+
+async def _compute_on_the_map(audit_id: str, a: dict, roles: dict) -> dict:
+    """Run the engine with its inputs from the stored map. Customer-level revenue lines and CRM deals still come from their own files, when
+    the audit holds them with a mapping; the metrics that need them say so when it does not. Nothing here waits for an answer."""
+    held = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)
+            if d["dtype"] in ("revenue", "crm") and d.get("mapping") and not d.get("recognition_only") and not d.get("sheet_map")}
+
+    def read(dtype):
+        d = held[dtype]
+        return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1, d.get("constants"))
+    rev = read("revenue") if "revenue" in held else pd.DataFrame()
+    crm = read("crm") if "crm" in held else pd.DataFrame()
+    fx = merged_fx(a, (held.get("revenue") or {}).get("fx"))
+    config = {"reporting_currency": a["reporting_currency"], "target_arr": a["target_arr"], "target_date": a["target_date"], "fx": fx,
+              "billing_terms": (held.get("revenue") or {}).get("billing_terms", {}), "default_l": 1, "as_of_month": a.get("as_of_month"),
+              "roles": roles}
+    sources = {t: {"file": held[t]["file"], "sheet": held[t]["sheet"]} for t in held}
+    failures = []
+
+    def on_error(exc):
+        failures.append(type(exc).__name__)
+        _log_metric_error(exc, audit_id)
+    try:
+        results = sanitize(ge.compute_all(rev, crm, pd.DataFrame(), config, sources, files=candidate_views(held), on_error=on_error))
+    except Exception as exc:
+        failed = failures + [type(exc).__name__]
+        await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failed))
+        raise
+    await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failures))
+    await db.audits.update_one(
+        {"id": audit_id},
+        {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
+                  "metrics_stale": False, "setup_stale": False}})
     await _enter_matched_claims(audit_id, await db.audits.find_one({"id": audit_id}))
     return results
 

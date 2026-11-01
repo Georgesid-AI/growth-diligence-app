@@ -283,6 +283,7 @@ SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # inter
                                    "yearly_basis",                          # chat-upload.md section 26.8: no narrative reads it
                                    "pnl_lines",                             # docs/design/pnl-lines.md: line labels and plan cells of the file; no narrative reads it
                                    "recognition",                           # revenue-file-recognition.md section 9: closed words and counts, in no slice
+                                   "role_metrics",                          # read-check-review.md section 16: values, cells and the file's own names; no narrative reads it
                                    "as_of_month"})                          # the analyst's setting: the model is told evidence_to and last_month_status instead
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
@@ -1006,6 +1007,13 @@ def test_the_yearly_basis_block_never_reaches_a_narrative_payload():
     from schemas.metrics import MetricsPayload
     assert "yearly_basis" in MetricsPayload.model_fields and "yearly_basis" in SERVER_ONLY_TOP_LEVEL
     assert "yearly_basis" not in gateway.OUTBOUND_TOP_LEVEL and "yearly_basis" not in gateway.OUTBOUND_FIELDS
+
+
+def test_the_role_metrics_block_never_reaches_a_narrative_payload():
+    """PR 4: the engine on the map writes `role_metrics` (metrics by role, with the cells and the files' own names). Server-only: in no step slice."""
+    from schemas.metrics import MetricsPayload
+    assert "role_metrics" in MetricsPayload.model_fields and "role_metrics" in SERVER_ONLY_TOP_LEVEL
+    assert "role_metrics" not in gateway.OUTBOUND_TOP_LEVEL and "role_metrics" not in gateway.OUTBOUND_FIELDS
 
 
 # docs/design/pnl-lines.md: the statement's findings carry the file's own line labels and its plan cells. The block is server-only, pure Python, and

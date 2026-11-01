@@ -321,7 +321,7 @@ def test_the_yearly_basis_metrics_of_the_actual_years_each_labelled():
     assert y23["gross_margin_change"] == round((1300 - 360) / 1300 - (1000 - 290) / 1000, 4)
     assert y23["new_revenue"] == 300000
     assert y23["cac_payback_months"] == round(12 * 550000 / (300000 * (1300 - 360) / 1300), 2)
-    assert years["FY2022"]["cac_payback_months"] is None and years["FY2022"]["cac_payback_reason"] == "no S&M line"
+    assert years["FY2022"]["cac_payback_months"] is None and years["FY2022"]["cac_payback_reason"] == "needs a sales_marketing row"
     assert all(y["basis"] == "yearly basis, not monthly" for y in block["years"]) and block["basis"] == "yearly basis, not monthly"
     assert "yearly basis, not monthly" in y23["source"]["rule"] and "D10" in y23["source"]["rule"]
     assert [m["text"] for m in block["missing"]] == ["Missing: monthly P&L / revenue by customer, last 24 months"] * 5

@@ -227,3 +227,19 @@ def test_delete_audit_removes_the_reading_the_checks_and_the_overrides_with_the_
     gone = flow.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": COMPANY})
     assert gone.status_code == 200 and gone.json()["llm_purged"]["readings"] == 1
     assert all(not flow.db[c].docs for c in readings.COLLECTIONS), "no document of the audit survives in any collection"
+
+
+def test_compute_reads_the_stored_map_and_series_by_role_and_needs_no_confirmation(flow):
+    """PR 4 step a: Calculate takes its inputs from the stored reading; the revenue row is the only row mapped, so the other roles say so."""
+    upload(flow, MONTHLY, monthly())
+    got = flow.post(f"/api/audits/{AUDIT}/compute")
+    assert got.status_code == 200, got.text
+    results = got.json()
+    series = results["revenue_series"]
+    assert series["months"][0] == "2025-01" and series["months"][-1] == "2025-06", "to the confirmed as-of month, the plan months are left out"
+    assert series["data"][-1]["total"] == 10625.0 and series["source"]["rule"].startswith("Revenue = the revenue row")
+    by_name = {m["metric"]: m for m in results["role_metrics"]["metrics"]}
+    assert by_name["customers"]["reason"] == "needs a customers row" and by_name["monthly_churn"]["reason"] == "needs a churn_rate row"
+    assert by_name["ending_arr"]["reason"] == "needs an arr row or an mrr row"
+    assert results["contract_version"] == 16
+    assert flow.get(f"/api/audits/{AUDIT}/results").status_code == 200

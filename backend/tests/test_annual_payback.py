@@ -50,7 +50,7 @@ def test_the_proxies_are_independent_of_each_other():
 def test_the_block_validates_against_the_contract_and_the_contract_moves_to_10():
     found = metrics.YearlyBasis.model_validate(block())
     assert found.years[-1].net_new_arr == 360_000
-    assert metrics.CONTRACT_VERSION == 15, "15 added the file map (no engine block); 14 added the pnl_lines block and cac_payback_label; 13 added revenue_cells to the yearly-basis years (deck-actuals.md); 12 moved for the one as-of month; the optional fields of section 4.5 came earlier"
+    assert metrics.CONTRACT_VERSION == 16, "16 added role_metrics, the engine on the map (section 16); 15 added the file map (no engine block); 14 added the pnl_lines block and cac_payback_label; 13 added revenue_cells to the yearly-basis years (deck-actuals.md); 12 moved for the one as-of month; the optional fields of section 4.5 came earlier"
 
 
 def test_a_marketing_only_line_is_calculated_and_named_never_total_sm():
@@ -69,8 +69,8 @@ def test_a_year_with_no_prior_year_has_a_reason_for_each_proxy():
 
 def test_no_s_and_m_line_gives_no_proxy_and_the_reason():
     y = years(block(yearly_input(sm=(250_000, 300_000, None))))["FY2024"]
-    assert (y["cac_payback_months"], y["cac_payback_reason"]) == (None, "no S&M line")
-    assert (y["cac_payback_net_new_arr_months"], y["cac_payback_net_new_arr_reason"]) == (None, "no S&M line")
+    assert (y["cac_payback_months"], y["cac_payback_reason"]) == (None, "needs a sales_marketing row")
+    assert (y["cac_payback_net_new_arr_months"], y["cac_payback_net_new_arr_reason"]) == (None, "needs a sales_marketing row")
     assert y["sm_expense"] is None and y["sm_scope"] is None
 
 
@@ -84,7 +84,7 @@ def test_s_and_m_that_is_not_positive_gives_no_proxy(sm):
 def test_no_arr_series_leaves_the_revenue_proxy_and_names_what_is_missing():
     y = years(block(mrr={"months": [], "segments": [], "data": [], "source": {}}))["FY2024"]
     assert y["cac_payback_months"] == 24.0
-    assert y["cac_payback_net_new_arr_months"] is None and y["cac_payback_net_new_arr_reason"] == "no ARR series (revenue file)"
+    assert y["cac_payback_net_new_arr_months"] is None and y["cac_payback_net_new_arr_reason"] == "needs an mrr row"
     assert y["arr_year_end"] is None and y["net_new_arr"] is None
 
 
@@ -104,8 +104,8 @@ def test_a_revenue_growth_that_is_not_positive_is_an_invalid_denominator_with_it
 
 def test_a_gross_margin_that_is_not_positive_gives_no_proxy():
     y = years(block(yearly_input(cost=(300_000, 360_000, 1_440_000))))["FY2024"]
-    assert y["cac_payback_reason"] == "gross margin not positive or missing"
-    assert y["cac_payback_net_new_arr_reason"] == "gross margin not positive or missing"
+    assert y["cac_payback_reason"] == "gross margin not positive"
+    assert y["cac_payback_net_new_arr_reason"] == "gross margin not positive"
 
 
 def test_the_monthly_timing_request_is_named_apart_in_the_blocks_missing_list():

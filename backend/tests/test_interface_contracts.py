@@ -182,7 +182,9 @@ NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry bo
                    # docs/specs/dates-and-periods.md sections 2-3: months as text, read from the uploads, no figure
                    "source_period": "months as text, no figure", "metric_periods": "months as text, no figure",
                    # docs/specs/revenue-file-recognition.md section 9: closed words and counts about how the revenue was read
-                   "recognition": "closed words and counts; a sheet with two tables that differ adds, per month, both figures and their cell positions"}
+                   "recognition": "closed words and counts; a sheet with two tables that differ adds, per month, both figures and their cell positions",
+                   # docs/design/read-check-review.md section 16: every metric carries its own source (the cells), or the roles it needs
+                   "role_metrics": "each metric and the plan to date carry a RoleSource of cells; a missing one names the roles it needs"}
 
 
 def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_engine_output():
@@ -214,7 +216,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 15 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 16 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -554,7 +556,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 15 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 16 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"

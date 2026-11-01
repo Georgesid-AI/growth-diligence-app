@@ -128,7 +128,7 @@ def test_h2_the_memo_appendix_a_names_the_case_of_a_scenario_row():
 
 
 def test_h2_the_deck_list_groups_a_best_or_worst_case_under_scenarios_and_the_contract_names_the_fields(run_api):
-    assert metrics.CONTRACT_VERSION == 15
+    assert metrics.CONTRACT_VERSION == 16
     assert metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     prepared(run_api, claim("best", **CASE), claim("plain", basis="projection", scenario="realistic"))
     listed = {c["id"]: c for c in run_api.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]}
