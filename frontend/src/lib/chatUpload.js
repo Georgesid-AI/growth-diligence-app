@@ -180,6 +180,14 @@ export const S13_status = (view) => {
   if (view.missing_required.length > 0) return `Required field not mapped: ${view.missing_required.map(fieldName).join(", ")}`;
   return S13_READY;
 };
+/** How many answers the old mapping path still waits for on a file (0 = none). A blocked file with no counted choice waits for one. */
+export const openAnswers = (view) => {
+  if (!view || S13_status(view) === S13_READY) return 0;
+  const counted = (view.pending || 0) + (view.currency_pending && !view.recognition_only ? 1 : 0);
+  return Math.max(1, counted);
+};
+export const OLDER_MAPPING_WAITS = (n) => `Older mapping waits for ${n} ${n === 1 ? "answer" : "answers"} before the engine can run — `;
+export const OLDER_MAPPING_LINK = "answer them";
 export const S14_same = (version) => `Same file as before: saved mapping v${version} applied.`;
 
 // S30a-h (2026-10-18, section 26): a P&L read as a statement, one row per line. Wording chosen under rule 19 for George's review.
