@@ -598,9 +598,6 @@ export default function Dashboard() {
       {/* Segment mix paths to target ARR - hidden for results computed before it existed */}
       {r.segment_paths && <SegmentPaths sp={r.segment_paths} ccy={ccy} period={periods.segment_paths} />}
 
-      {/* The analyst note closes the report, directly before the anomaly flags */}
-      <ReportNote auditId={id} note={verdict?.ic_inputs?.note} noteMax={verdict?.note_max} />
-
       {/* Missing data + anomalies summary */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <Card className="lg:col-span-4" testid="anomaly-flags" source={r.anomalies?.source} title="Anomaly Flags" hint="detected, not interpreted">
@@ -671,6 +668,9 @@ export default function Dashboard() {
       )}
         </div>
       </details>
+
+      {/* The analyst note closes the report page: outside Supporting detail, directly above the final Download report button */}
+      <ReportNote auditId={id} note={verdict?.ic_inputs?.note} noteMax={verdict?.note_max} />
 
       <ReportDownload auditId={id} end />
     </Layout>

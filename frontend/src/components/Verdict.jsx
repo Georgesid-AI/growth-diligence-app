@@ -129,7 +129,7 @@ export function AnalystNote({ auditId, note, noteMax }) {
 
 /** Download report: the IC memo. Nothing is required first: the server builds the report from what is stored, or refuses (toast) only for a
  *  number it cannot find, the word limit or results that fail the contract. The button sits at the top of the report page and again at the
- *  very end (`end`); both call the same download. The analyst note sits in the page, before the anomaly flags (`ReportNote`). */
+ *  very end (`end`); both call the same download. The analyst note sits outside Supporting detail, directly above the final button (`ReportNote`). */
 export function ReportDownload({ auditId, end = false }) {
   return (
     <section className="mb-6 flex flex-wrap items-start gap-4" data-testid={end ? "report-download-end" : "report-download"}>
@@ -140,7 +140,7 @@ export function ReportDownload({ auditId, end = false }) {
   );
 }
 
-/** The analyst note, placed at the end of the report page, directly before the anomaly flags. Text and behaviour as before. */
+/** The analyst note, placed at the end of the report page, directly above the final Download report button. Text and behaviour as before. */
 export function ReportNote({ auditId, note, noteMax }) {
   return (
     <section className="mb-6" data-testid="report-note">
