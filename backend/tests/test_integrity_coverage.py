@@ -289,3 +289,13 @@ def test_a_same_source_reconciliation_is_not_a_completed_check_and_cannot_supply
     assert out["applicable"] == normal["applicable"] - 1, "Not applicable leaves the denominator"
     assert out["completed"] == normal["completed"] - 1
     assert out["code"] == "insufficient", "the conclusion needs the reconciliation among the completed checks"
+
+
+def test_a_check_with_no_rows_to_test_is_not_applicable_and_never_green():
+    ig = _integrity()
+    empty_gaps = {"anomalies": {"revenue_gap_then_resume": [], "revenue_missing_customer_id": {"count": 0}, "source": {"file": None}}}
+    out = ig.assess(empty_gaps, deck_count=1, candidates=[])
+    gaps = next(r for r in out["coverage"] if r["check"] == "Gaps in customer data")
+    assert (gaps["status"], gaps["result"]) == ("Not applicable", None) and gaps["reason"]
+    assert "Gaps in customer data" not in {r["check"] for r in out["results"]}, "never in the results, so never Green"
+    assert "Gaps in customer data" not in out["blocked"] and not any("Gaps in customer data" in d for d in out["data_requests"])

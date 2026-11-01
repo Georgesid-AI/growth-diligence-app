@@ -337,7 +337,8 @@ def test_s_and_m_that_exists_only_in_plan_years_says_so_and_not_that_a_row_is_ne
     text = "S&M split only in plan years; actual years carry OPEX total only"
     assert metric(r, "sm_share")["reason"] == text
     assert metric(r, "yearly_cac_payback")["reason"] == text
-    assert r["yearly_basis"]["years"][-1]["cac_payback_reason"] == "needs a sales_marketing row", "the legacy block keeps its own words"
+    assert r["yearly_basis"]["years"][-1]["cac_payback_reason"] == text, "the yearly table says the same, never 'needs a sales_marketing row'"
+    assert r["yearly_basis"]["years"][-1]["cac_payback_net_new_arr_reason"] == text
     none = run(pnl_with(sm_rows=[], costs_sign=1))
     assert metric(none, "sm_share")["reason"] == "needs a sales_marketing row"
 
@@ -393,3 +394,88 @@ def test_the_integrity_block_reads_the_yearly_revenue_reconciliation_of_the_map(
     assert row_["result"] == "Red" and "1 of 1 years differ" in row_["finding"] and "page 7" in row_["source"]
     good = integrity.assess(run(monthly + [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_200], ["2025"], basis="yearly")], granularity="yearly")])]), 0, [])
     assert next(x for x in good["results"] if x["check"] == "Revenue reconciliation")["result"] == "Green"
+
+
+# ---------------------------------------------------------------------------
+# PR 4c: a mixed row is its own plan, plan-only cost splits, one reconciliation figure per source and year, one reason per missing metric
+# ---------------------------------------------------------------------------
+def mixed_revenue(plan_months):
+    """One revenue row: actual to 2026-06, the plan of the same row for `plan_months` (a mixed row; no forecast row)."""
+    out = row(4, "revenue", [100 + 5 * i for i in range(18)], MONTHS, actual_plan="mixed")
+    plan = series([110] * len(plan_months), plan_months, first_row=4, col0=22)
+    out["plan_series"] = plan
+    return out
+
+
+def test_plan_to_date_reads_the_plan_part_of_a_mixed_row_when_no_forecast_row_exists():
+    jan_jun = [f"2026-{m:02d}" for m in range(1, 7)]
+    files = [file_of("plan sheet", [sheet("Report", [mixed_revenue(jan_jun)])])]
+    r = run(files)
+    p = r["role_metrics"]["plan_to_date"]
+    assert p is not None and p["basis"] == "cumulative_to_date" and p["period"] == "2026-06"
+    assert p["actual"] == sum(100 + 5 * i for i in range(12, 18)) and p["plan"] == 6 * 110
+    assert p["variance"] == p["actual"] - p["plan"]
+    assert len(p["source"]["cells"]) == 12 and "N4" in p["source"]["cells"] and "V4" in p["source"]["cells"], "both ranges are cited"
+    assert metric(r, "plan_to_date")["status"] == "computed"
+
+
+def test_a_mixed_row_whose_plan_starts_after_the_as_of_month_has_no_plan_to_date_and_says_so():
+    later = [f"2026-{m:02d}" for m in range(7, 13)]
+    m = metric(run([file_of("f", [sheet("Report", [mixed_revenue(later)])])]), "plan_to_date")
+    assert m["status"] == "needs_row" and "plan" in m["reason"] and "as-of month" in m["reason"]
+    assert "needs a forecast row" not in m["reason"]
+
+
+def test_a_forecast_row_still_comes_before_the_plan_part_of_a_mixed_row():
+    jan_jun = [f"2026-{m:02d}" for m in range(1, 7)]
+    forecast = row(9, "forecast", [200] * 18, MONTHS, actual_plan="plan", plan=True)
+    p = run([file_of("f", [sheet("Report", [mixed_revenue(jan_jun), forecast])])])["role_metrics"]["plan_to_date"]
+    assert p["plan"] == 200
+
+
+@pytest.mark.parametrize("role,name", [("sales_marketing", "S&M"), ("rnd", "R&D"), ("ga", "G&A")])
+def test_a_cost_row_with_plan_values_only_says_the_split_sits_in_plan_years(role, name):
+    plan = row(6, role, [1_000, 1_200], ["2026", "2027"], basis="yearly", actual_plan="plan", plan=True)
+    opex = row(8, "opex", [800, 1_100, 1_900], YEARS, basis="yearly")
+    r = run(pnl_with(opex, sm_rows=[plan] if role == "sales_marketing" else None, costs_sign=1) if role == "sales_marketing"
+            else pnl_with(opex, plan, costs_sign=1))
+    metric_name = {"sales_marketing": "sm_share", "rnd": "rnd_share", "ga": "ga_share"}[role]
+    text = f"{name} split only in plan years; actual years carry OPEX total only"
+    assert metric(r, metric_name)["reason"] == text
+    assert "needs a" not in metric(r, metric_name)["reason"]
+    if role == "sales_marketing":
+        assert metric(r, "yearly_cac_payback")["reason"] == text
+        assert not any("needs a sales_marketing row" in str(v) for v in r["yearly_basis"]["years"][-1].values())
+
+
+def deck_fig(page, value, label, period="2025", file="deck"):
+    return {"metric": "revenue", "period": period, "value": value, "currency": "EUR", "actual_plan": "actual", "file": file, "page": page,
+            "label": label}
+
+
+def test_a_page_with_two_fy_figures_gives_one_difference_and_lists_the_other_as_also_read():
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_200], ["2025"], basis="yearly")], granularity="yearly")])]
+    deck = [deck_fig(4, 1_500.0, "Total revenue FY2025"), deck_fig(4, 400.0, "Revenue, new customers FY2025")]
+    rec = [x for x in run(pnl, deck=deck)["role_metrics"]["reconciliation"] if x["period"] == "2025"]
+    assert len(rec) == 1 and rec[0]["status"] == "differs" and rec[0]["gap"] == 300
+    assert [s["value"] for s in rec[0]["sources"] if s["kind"] == "deck"] == [1_500.0]
+    assert rec[0]["also_read"] == [{"kind": "deck", "file": "deck", "where": "page 4", "value": 400.0}]
+
+
+def test_the_figure_labelled_as_the_yearly_total_is_chosen_whatever_its_order_on_the_page():
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_200], ["2025"], basis="yearly")], granularity="yearly")])]
+    deck = [deck_fig(4, 400.0, "Revenue, new customers"), deck_fig(4, 1_200.0, "Annual revenue")]
+    rec = [x for x in run(pnl, deck=deck)["role_metrics"]["reconciliation"] if x["period"] == "2025"]
+    assert rec[0]["status"] == "agrees" and rec[0]["also_read"][0]["value"] == 400.0
+
+
+def test_several_deck_figures_of_a_year_and_none_labelled_as_the_total_are_not_compared_and_all_listed():
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_200], ["2025"], basis="yearly")], granularity="yearly")])]
+    deck = [deck_fig(4, 700.0, "Revenue, EMEA"), deck_fig(4, 500.0, "Revenue, US")]
+    assert [x for x in run(pnl, deck=deck)["role_metrics"]["reconciliation"] if x["period"] == "2025"] == []
+
+
+def test_no_block_prints_the_old_missing_monthly_line():
+    r = run(yearly_pnl())
+    assert "missing" not in r["yearly_basis"], "the five 'Missing: monthly P&L / revenue by customer, last 24 months' lines are gone"
+    assert "Missing: monthly P&L" not in str(r)

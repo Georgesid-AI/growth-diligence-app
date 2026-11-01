@@ -2416,6 +2416,24 @@ def _memo_filename(company: str) -> str:
     return f"{safe or 'audit'}_ic_memo.md"
 
 
+P_AND_L_ROLES = ("cost_of_revenue", "sales_marketing", "rnd", "ga", "opex", "ebitda")
+
+
+async def _memo_files(audit_id: str, audit: dict, datasets: list) -> list:
+    """The files the memo lists as reviewed: the stored datasets, and every file read through the map (a file whose map holds a cost or profit
+    row is a P&L, dtype "pnl"; any other is "reading", which covers no evidence category). A file is listed once."""
+    files = [{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets]
+    seen = {f["file"] for f in files}
+    table = (await _role_inputs(audit_id, audit))["table"]
+    for name in dict.fromkeys(r["file"] for r in table):
+        if name in seen:
+            continue
+        rows = [r for r in table if r["file"] == name]
+        pnl = [r for r in rows if r["role"] in P_AND_L_ROLES]
+        files.append({"dtype": "pnl" if pnl else "reading", "file": name, "sheet": (pnl or rows)[0]["sheet"]})
+    return files
+
+
 @api.get("/audits/{audit_id}/memo.md")
 async def export_memo(audit_id: str):
     """The IC memo as Markdown, built now from the stored data and never stored (verdict-and-memo.md section 7). It needs no rating,
@@ -2453,7 +2471,7 @@ async def export_memo(audit_id: str):
             key=verdict_mod.key_gates(rows, ver["top5"]["in_force"]) if claims else {"gates": [], "note": None},
             gaps=ctx["gaps"], ic={**ctx["ic"], "open_questions": ctx["open_questions"]},
             blockers=await _blocker_list(audit_id, audit), narratives=narratives,
-            files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
+            files=await _memo_files(audit_id, audit, datasets),
             decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit),
             integrity=await _integrity(audit_id, results, _fiscal_year_end(audit)))
     except ic_memo.MemoRefused as exc:

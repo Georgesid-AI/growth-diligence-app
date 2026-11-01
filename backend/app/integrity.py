@@ -42,6 +42,7 @@ INSUFFICIENT_NOTE = ("Insufficient assessment coverage is not a finding about th
                      "be completed.")
 CONCLUSIONS = {"reliable": "Reliable", "needs_clarification": "Needs clarification", "material_concerns": "Material concerns"}
 COMPLETED_TEXT = "Completed {x} of {y} applicable checks"
+NO_CUSTOMER_ROWS = "No customer-level rows to test"
 SAME_SOURCE = "Not applicable – same source"      # the P&L is the only revenue source: the reconciliation would compare it with itself
 
 
@@ -208,11 +209,15 @@ def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fis
     # Below CLUSTERING_MIN_DEALS won deals the clustering check is Not applicable: no data request, out of the denominator.
     few = deals is not None and deals["result"] is None
     same = (results.get("revenue_reconciliation") or {}).get("status") == "not_applicable"
+    # A check with no rows to test is Not applicable (PR 4c), never Green: the gaps check with no customer-level file behind it.
+    no_rows = {GAPS: ran[GAPS] is not None and not ((results.get("anomalies") or {}).get("source") or {}).get("file")}
+    if no_rows[GAPS]:
+        ran[GAPS] = None
     reasons = {**REASONS, **({CLUSTERING: CLUSTERING_FEW.format(n=deals["won"])} if few else {}),
-               **({RECONCILIATION: SAME_SOURCE} if same else {})}
+               **({RECONCILIATION: SAME_SOURCE} if same else {}), **({GAPS: NO_CUSTOMER_ROWS} if no_rows[GAPS] else {})}
     coverage = []
     for check in CHECKS:
-        status = (NOT_APPLICABLE if check == BENFORD or (check == CLUSTERING and few) or (check == RECONCILIATION and same)
+        status = (NOT_APPLICABLE if check == BENFORD or (check == CLUSTERING and few) or (check == RECONCILIATION and same) or no_rows.get(check)
                   else COMPLETED if ran[check] else BLOCKED)
         coverage.append({"check": check, "status": status, "reason": None if status == COMPLETED else reasons[check],
                          "result": ran[check]["result"] if status == COMPLETED else None})

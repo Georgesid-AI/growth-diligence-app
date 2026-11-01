@@ -1414,7 +1414,6 @@ def dedupe_deals(deals: pd.DataFrame):
 # ---------------------------------------------------------------------------
 YEARLY_BASIS = "yearly basis, not monthly"
 CAC_PAYBACK_LABEL = "yearly, revenue-based"      # docs/design/pnl-lines.md section 6: the name of a payback read from yearly columns
-NEEDS_MONTHLY = "Missing: monthly P&L / revenue by customer, last 24 months"
 YEARLY_FIELD_NAMES = {"revenue": "Revenue", "cost_of_revenue": "Cost of revenue", "sm_expense": "S&M expense",
                       "gross_margin": "Gross margin", "opex": "Operating expenses", "ebitda": "EBITDA"}
 
@@ -1554,12 +1553,7 @@ def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dic
                          "basis": YEARLY_BASIS,
                          "source": _yearly_source(yearly, item["revenue"]["cells"],
                                                   f"Revenue file over {months[0]}–{months[-1]} against the reported revenue")})
-    rec = results.get("revenue_reconciliation") or {}
-    needs = (("NRR (12-month)", results.get("nrr")), ("Gross revenue churn", results.get("gross_churn")),
-             ("Integrity tests (revenue reconciliation)", rec if rec.get("available") else None),
-             ("Median sales cycle", results.get("sales_cycle")), ("CAC payback (monthly timing)", results.get("cac_payback")))
     return {"basis": YEARLY_BASIS, "years": years, "track_record": track, "reported_vs_file": reported,
-            "missing": [{"metric": name, "text": NEEDS_MONTHLY} for name, found in needs if not found],
             "source": _yearly_source(yearly, [f"A{r}" for r in yearly.get("rows") or ()],
                                      "Actual-tagged year columns of the P&L read as a statement, the rows of its lines")}
 

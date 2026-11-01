@@ -41,8 +41,9 @@ def test_the_downloaded_report_holds_no_claim_register_conclusion_reasons_gates_
     text = memo(run_api)
     for word in CLAIM_WORDS:
         assert word not in text, f"{word!r} is in the report with OLD_CLAIMS off"
-    assert "Not part of this report." in text, "the claim appendix says so instead of listing claims"
-    assert "Deal thesis" in text and "Data reliability" in text, "the rest of the report is there"
+    for phrase in ("Appendix A", "Not part of this report.", "Deal thesis", "Value at risk", "claim question"):
+        assert phrase not in text, f"{phrase!r} is in the report with OLD_CLAIMS off (PR 4c)"
+    assert "Data reliability" in text, "the rest of the report is there"
 
 
 def test_the_report_with_the_flag_on_is_the_one_with_claims(run_api, monkeypatch):
@@ -50,7 +51,7 @@ def test_the_report_with_the_flag_on_is_the_one_with_claims(run_api, monkeypatch
     monkeypatch.setenv("OLD_CLAIMS", "on")
     text = memo(run_api)
     assert "Verdict:" in text and "Reasons:" in text and "Claims: " in text
-    assert "Not part of this report." not in text
+    assert "Not part of this report." not in text and "## Appendix A" in text and "## Deal thesis" in text
 
 
 def test_a_contradicted_claim_is_no_blocker_with_the_flag_off_and_is_with_it_on(run_api, monkeypatch):
