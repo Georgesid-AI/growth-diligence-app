@@ -156,6 +156,11 @@ export function ReconciliationTable({ rm, ccy }) {
                       {s.kind === "deck" ? "Deck" : "File"} {s.file} · {s.where} · {fmtCurrency(s.value, ccy)}
                     </div>
                   ))}
+                  {(y.also_read || []).map((s, i) => (
+                    <div key={`also-${i}`} className="font-mono text-[11px] text-slate-500" data-testid="reconciliation-also-read">
+                      Also read on {s.where} · {fmtCurrency(s.value, ccy)}
+                    </div>
+                  ))}
                 </td>
                 <td className="py-2 px-3 font-mono" data-testid="reconciliation-gap">{y.status === "not_compared" ? "—" : fmtCurrency(y.gap, ccy)}</td>
                 <td className="py-2 px-3 font-mono">{y.gap_pct == null ? "—" : fmtPct(y.gap_pct)}</td>

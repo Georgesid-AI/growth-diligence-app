@@ -270,6 +270,7 @@ test("the inputs: the review date and the thesis (300 characters each, drafted f
   const { host, unmount } = await mountDashboard(sample, OK);
   const inputs = host.querySelector('[data-testid="verdict-inputs"]');
   expect(host.querySelector('[data-testid="report-download"] [data-testid="verdict-memo"]').textContent).toBe("Download report");
+  expect(host.querySelector('[data-testid="report-download-end"] [data-testid="verdict-memo-end"]').textContent).toBe("Download report");
   expect(inputs.querySelector('[data-testid="verdict-memo"]')).toBeNull();
   expect(host.querySelector('[data-testid^="inputs-rating-"]')).toBeNull();
   expect(host.querySelector('[data-testid^="judgment-"]')).toBeNull();
@@ -288,16 +289,31 @@ test("the inputs: the review date and the thesis (300 characters each, drafted f
   await unmount();
 });
 
-test("the analyst note sits beside Download report: optional, 1,000 characters, saved on blur, never required", async () => {
+test("the analyst note closes the report, directly before the anomaly flags: optional, 1,000 characters, saved on blur, never required", async () => {
   api.putIcInputs.mockResolvedValue({});
   const { host, unmount } = await mountDashboard(sample, OK);
-  const note = host.querySelector('[data-testid="report-download"] [data-testid="analyst-note-text"]');
+  expect(host.querySelector('[data-testid="report-download"] [data-testid="analyst-note"]')).toBeNull();
+  const section = host.querySelector('[data-testid="report-note"]');
+  const flags = host.querySelector('[data-testid="anomaly-flags"]');
+  expect(section.nextElementSibling).toBe(flags.parentElement);       // the note, then the block that holds the anomaly flags
+  const note = section.querySelector('[data-testid="analyst-note-text"]');
   expect(note.maxLength).toBe(1000);
   expect(host.querySelector('[data-testid="analyst-note"]').textContent).toContain("Analyst note (optional)");
   await type(note, "  Call with the CFO booked for 3 Nov.  ");
   await act(async () => { note.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); note.blur(); });
   await act(async () => { note.focus(); note.blur(); });
   expect(api.putIcInputs).toHaveBeenCalledWith("a1", { note: "Call with the CFO booked for 3 Nov." });
+  await unmount();
+});
+
+test("the two Download report buttons call the same download", async () => {
+  api.getMemo.mockClear();
+  api.getMemo.mockRejectedValue({ response: { status: 409, data: JSON.stringify({ detail: "refused" }) } });
+  const { host, unmount } = await mountDashboard(sample, OK);
+  await act(async () => { host.querySelector('[data-testid="verdict-memo"]').click(); });
+  await act(async () => { host.querySelector('[data-testid="verdict-memo-end"]').click(); });
+  expect(api.getMemo).toHaveBeenCalledTimes(2);
+  expect(api.getMemo.mock.calls[0]).toEqual(api.getMemo.mock.calls[1]);
   await unmount();
 });
 
@@ -355,25 +371,15 @@ const YEARLY = {
   track_record: [{ period: "2023 Actual", line: "Revenue", tag: "budget", forecast: 1000, actual: 900, gap: -100, gap_pct: -0.1,
     basis: "yearly basis, not monthly", source: CITE }],
   reported_vs_file: [],
-  missing: [{ metric: "CAC payback (monthly)", text: "Missing: monthly P&L / revenue by customer, last 24 months" }],
 };
 
-test("the yearly-basis section shows each year, the track record and the missing lines, every row labelled (S30g)", async () => {
-  const results = { ...sample, results: { ...sample.results, yearly_basis: YEARLY } };
+test("the Yearly basis (P&L summary) table is gone, with the five 'Missing: monthly P&L' lines; the yearly table under CAC Payback stays", async () => {
+  const results = { ...sample, results: { ...sample.results, cac_payback: null, yearly_basis: YEARLY } };
   const { host, unmount } = await mountDashboard(results, OK);
-  const section = host.querySelector('[data-testid="yearly-basis"]');
-  expect(section.textContent).toContain("Yearly basis (P&L summary)");
-  const labels = [...section.querySelectorAll('[data-testid="yearly-basis-label"]')].map((x) => x.textContent);
-  expect(labels).toEqual(Array(3).fill("yearly basis, not monthly"));
-  const y23 = section.querySelector('[data-testid="yearly-year-FY2023"]').textContent;
-  expect(y23).toContain("42%");
-  expect(y23).toContain("+1.3 pts");
-  expect(y23).toContain("30 months");
-  expect(section.querySelector('[data-testid="yearly-year-FY2022"]').textContent).toContain("n/c");
-  expect(section.querySelector('[data-testid="yearly-track"]').textContent).toContain("(budget)");
-  expect(section.querySelector('[data-testid="yearly-reported"]')).toBeNull();
-  expect(section.querySelector('[data-testid="yearly-missing"]').textContent)
-    .toBe("CAC payback (monthly) – Missing: monthly P&L / revenue by customer, last 24 months");
+  expect(host.querySelector('[data-testid="yearly-basis"]')).toBeNull();
+  expect(host.textContent).not.toContain("Yearly basis (P&L summary)");
+  expect(host.textContent).not.toContain("Missing: monthly P&L / revenue by customer, last 24 months");
+  expect(host.querySelector('[data-testid="cac-yearly"]')).not.toBeNull();
   await unmount();
 });
 

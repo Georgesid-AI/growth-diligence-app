@@ -20,7 +20,7 @@ jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{childr
 jest.mock("@/components/NeedsAttention", () => () => <div data-testid="needs-attention" />);
 jest.mock("@/components/FiveClaims", () => () => <div data-testid="verdict-five" />);
 jest.mock("@/components/ClaimRegister", () => () => <div data-testid="claim-register" />);
-jest.mock("@/components/Verdict", () => ({ Conclusion: () => <div data-testid="verdict" />, VerdictDetail: () => <div data-testid="verdict-detail" />, ReportDownload: () => null }));
+jest.mock("@/components/Verdict", () => ({ Conclusion: () => <div data-testid="verdict" />, VerdictDetail: () => <div data-testid="verdict-detail" />, ReportDownload: () => null, ReportNote: () => null }));
 jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{children}</div> }));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

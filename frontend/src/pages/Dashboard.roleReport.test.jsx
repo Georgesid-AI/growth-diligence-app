@@ -37,7 +37,8 @@ const RM = {
   reconciliation: [
     { metric: "revenue", period: "2025", basis: "yearly", status: "differs", reason: null, gap: 300, gap_pct: 0.2,
       sources: [{ kind: "file", file: "report.xlsx", where: "Report!B4:M4", value: 1200 }, { kind: "file", file: "pnl.xlsx", where: "P&L!D4", value: 1300 },
-        { kind: "deck", file: "board.pdf", where: "page 7", value: 1500 }] },
+        { kind: "deck", file: "board.pdf", where: "page 7", value: 1500 }],
+      also_read: [{ kind: "deck", file: "board.pdf", where: "page 7", value: 400 }] },
   ],
   growth_by_year: [
     { period: "2024", value: 1500, prior: 1000, growth: 0.5, source: SRC(["D4", "E4"]) },
@@ -128,6 +129,7 @@ test("the revenue reconciliation lists each year with its sources by cell or pag
     const sources = [...row.querySelectorAll('[data-testid="reconciliation-source"]')].map((e) => e.textContent);
     expect(sources).toEqual(["File report.xlsx · Report!B4:M4 · 1,200 EUR", "File pnl.xlsx · P&L!D4 · 1,300 EUR", "Deck board.pdf · page 7 · 1,500 EUR"]);
     expect(text(row, "reconciliation-gap")).toBe("300 EUR");
+    expect([...row.querySelectorAll('[data-testid="reconciliation-also-read"]')].map((e) => e.textContent)).toEqual(["Also read on page 7 · 400 EUR"]);
     expect(row.textContent).toContain("20%");
     expect(row.textContent).toContain("Differs");
   } finally { await done(); }

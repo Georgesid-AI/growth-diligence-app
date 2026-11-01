@@ -18,12 +18,11 @@ import { GLOSSARY, seeGlossary } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import ClaimRegister from "@/components/ClaimRegister";
 import DataGaps from "@/components/DataGaps";
-import { Conclusion, VerdictDetail, ReportDownload } from "@/components/Verdict";
+import { Conclusion, VerdictDetail, ReportDownload, ReportNote } from "@/components/Verdict";
 import AssumptionsStrip from "@/components/AssumptionsStrip";
 import FiveClaims from "@/components/FiveClaims";
 import NeedsAttention from "@/components/NeedsAttention";
 import IntegrityCoverage from "@/components/IntegrityCoverage";
-import YearlyBasis from "@/components/YearlyBasis";
 import { MissingMetrics, PlanToDate, ReconciliationTable, RoleCards, YearlyPayback } from "@/components/RoleReport";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
@@ -207,6 +206,9 @@ export default function Dashboard() {
     : fxRates.map(([c, rate]) => `1 ${c} = ${rate} ${ccy}`).join(" · ");
   const periods = r.metric_periods || {};
   const missing = missingRows(r);
+  // ACV bands need customer-level revenue: the reason is the customers metric's own, the text of the top cards and the Data gaps table.
+  const customersMetric = (r.role_metrics?.metrics || []).find((m) => m.metric === "customers");
+  const acvReason = (customersMetric && customersMetric.status !== "computed" && customersMetric.reason) || "needs customer-level revenue lines";
   const questions = questionRows(r);
   const flags = anomalyFlags(r);
 
@@ -279,7 +281,7 @@ export default function Dashboard() {
       {oldClaims && <Conclusion auditId={id} verdict={verdict} onChanged={refreshVerdict} />}
       {oldClaims && <FiveClaims auditId={id} verdict={verdict} ccy={ccy} tick={verdictTick + registerKey} />}
       {oldClaims && <NeedsAttention auditId={id} onChanged={answered} />}
-      <ReportDownload auditId={id} note={verdict?.ic_inputs?.note} noteMax={verdict?.note_max} />
+      <ReportDownload auditId={id} />
 
       {/* Everything else, collapsed. A native details element keeps its content in the page, so nothing below is unmounted. */}
       <details className="mb-6 rounded-md border border-[#E5E7EB]" data-testid="supporting-detail">
@@ -526,7 +528,7 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
-          ) : <NotComputable label="No revenue data" />}
+          ) : <NotComputable label={acvReason} />}
         </Card>
       </div>
 
@@ -593,11 +595,11 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Yearly-basis metrics: a yearly P&L read as a statement, with no monthly P&L (chat-upload.md section 26.8) */}
-      <YearlyBasis block={r.yearly_basis} ccy={ccy} />
-
       {/* Segment mix paths to target ARR - hidden for results computed before it existed */}
       {r.segment_paths && <SegmentPaths sp={r.segment_paths} ccy={ccy} period={periods.segment_paths} />}
+
+      {/* The analyst note closes the report, directly before the anomaly flags */}
+      <ReportNote auditId={id} note={verdict?.ic_inputs?.note} noteMax={verdict?.note_max} />
 
       {/* Missing data + anomalies summary */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -669,6 +671,8 @@ export default function Dashboard() {
       )}
         </div>
       </details>
+
+      <ReportDownload auditId={id} end />
     </Layout>
   );
 }
