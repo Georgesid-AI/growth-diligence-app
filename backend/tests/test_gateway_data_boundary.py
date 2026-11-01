@@ -3965,7 +3965,7 @@ def test_row_labels_coded_is_a_count_only_and_a_metric_label_on_a_period_sheet_r
     equals a name the map holds goes out as its token."""
     from app.register import privacy_counts
     labels = ["FORECAST: RECOGNISED REVENUE (current year)", "LIFETIME SALES", "EUR/CZK", "Zenith Retail Ltd"]
-    cells = [(1, c, h) for c, h in enumerate(("Customers", "Jan-24", "Feb-24", "Mar-24"), 1)]
+    cells = [(1, c, h) for c, h in enumerate(("Metric", "Jan-24", "Feb-24", "Mar-24"), 1)]
     for r, label in enumerate(labels, 2):
         cells += [(r, 1, label), (r, 2, "1")]
     text = structure_redact.reading_text([{"name": "S", "cells": [{"row": r, "col": c, "text": t} for r, c, t in cells]}])

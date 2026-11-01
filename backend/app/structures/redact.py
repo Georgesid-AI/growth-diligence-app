@@ -1007,7 +1007,7 @@ PERIOD_ROW_MIN = 3                      # a row with this many period headers is
 def label_positions(cells: List[Dict]) -> frozenset:
     """{(row, col)} of the cells that are the row labels or the header rows of a metric-by-period sheet; empty for any other sheet (PR 4d).
     A metric-by-period sheet has a row with PERIOD_ROW_MIN or more period headers (a year, a quarter, a month, a date). Its header rows are the
-    rows down to the last such row within two rows of the first; its label columns are the columns left of the first period column. A text cell
+    rows down to the last such row within two rows of the first; its label columns are the columns left of the first period column, except one headed by a customer header in a header row. A text cell
     there is a metric name, a unit or a section heading: it is coded only when the audit's map already holds it, never learned, whatever its
     capitalisation, length or shape. Ledgers (one customer per row, dates in a column) have no such row."""
     by_row: Dict[int, List[int]] = {}
@@ -1020,7 +1020,11 @@ def label_positions(cells: List[Dict]) -> frozenset:
     first = period_rows[0]
     header_last = max(r for r in period_rows if r <= first + 2)
     first_col = min(by_row[first])
-    return frozenset((c["row"], c["col"]) for c in cells if c["row"] <= header_last or c["col"] < first_col)
+    # A label column whose header-row cell is a customer header (Customer, Client, Account, Customer name) is a column of customer names
+    # (a revenue-by-customer table): its body is learned as any customer column is. A heading lower in the column does not trigger it.
+    customer_cols = {c["col"] for c in cells if c["row"] <= header_last and c["col"] < first_col and _CUSTOMER_HEADER.search(c["text"])}
+    return frozenset((c["row"], c["col"]) for c in cells
+                     if c["row"] <= header_last or (c["col"] < first_col and c["col"] not in customer_cols))
 
 
 def reading_company_names(text: str, company_name: Optional[str], mapping: Dict[str, str]) -> List[str]:

@@ -64,6 +64,13 @@
     model returns the file map (`FileMap`, schemas/metrics.py); Python opens every cited cell (app/checks.py) and decides what the cell
     cannot show to be unchecked. The spreadsheet calls of rule 16 above (file_type, structure_reading, column mapping) are unchanged,
     still learn no names, and stay behind `READER_V1` (off turns them off; default on) for PR 2 only.
+    Amended 2026-11-01 (George, PR 4d; for approval before merge, rule 32): name learning in `sheet_reading` payloads. On a metric-by-period sheet (a row
+    of 3 or more period headers: year, quarter, month, date) the row labels (the columns left of the first period column) and the header rows are
+    never learned as company names, by capitalisation, length or word shape or by any header above them; they are coded only when the audit's
+    known-name list (names from customer columns, CRM owner or customer fields, a deck's coded names) holds the name, and that coding is counted as
+    "row labels coded", apart from "company names coded". The one exception: a label column whose header-row cell is a customer header (Customer,
+    Client, Account, Customer name) is a customer column and is learned; a heading lower in the column does not trigger it. Personal-data patterns
+    (email, phone, IBAN, ID) apply everywhere; ledger customer-name columns are unchanged.
     Amended 2026-10-30 (read-check-review.md sections 7, 9 and 13, PR 3; for George's approval before merge, rule 32): a new step `reviewer`. One
     call per audit, with the audit's consent, on the sheet reader's model allow-list, with the `reviewer` prompt of the store (rule 26). It may
     receive the stored file map of every spreadsheet with its stored series (period, value, cell) and without the readers' evidence lines, the

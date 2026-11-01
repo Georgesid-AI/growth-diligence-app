@@ -134,15 +134,32 @@ def test_a_customers_row_label_followed_by_figures_does_not_make_the_labels_belo
     assert masked == text and mapping == {}
 
 
-def test_a_customer_header_with_year_headers_beside_it_codes_only_known_names():
-    """PR 4d: "Customer | 2023 | 2024" is a metric-by-period sheet; its label column is coded only for names the audit already holds."""
+@pytest.mark.parametrize("header", ["Customer", "Client", "Account", "Customer name", "Customers"])
+def test_a_wide_revenue_by_customer_table_has_every_label_coded(header):
+    """PR 4d follow-up: a label column whose header-row cell is a customer header is a customer column; its names are learned."""
+    months = [f"{m}-24" for m in ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug")]
+    names = ["Zenith Retail Ltd", "Birch Labs Ltd", "Quartz Trading", "Mono Group"]
+    cells = [(1, 1, header)] + [(1, c, m) for c, m in enumerate(months, 2)]
+    for r, n in enumerate(names, 2):
+        cells += [(r, 1, n)] + [(r, c, "10") for c in range(2, 10)]
+    (masked, counts), mapping = mask(text_of(*cells))
+    assert set(mapping) == set(names) and counts["company"] == 4 and counts["row_labels"] == 0
+    assert not any(n.split()[0] in masked for n in names)
+
+
+def test_a_mid_column_customers_heading_on_a_period_sheet_learns_nothing():
+    text = text_of((1, 1, "Metric"), (1, 2, "Jan-24"), (1, 3, "Feb-24"), (1, 4, "Mar-24"), (2, 1, "Revenue"), (2, 2, "1"),
+                   (3, 1, "CUSTOMERS"), (4, 1, "TOTAL CLIENTS ACHIEVED (lifetime)"), (4, 2, "5"), (5, 1, "LIFETIME SALES"), (5, 2, "6"))
+    (masked, counts), mapping = mask(text)
+    assert masked == text and mapping == {} and counts["row_labels"] == 0
+
+
+def test_a_customer_header_with_year_headers_beside_it_is_a_customer_column_and_known_names_are_coded():
     text = text_of((1, 1, "Customer"), (1, 2, "2023"), (1, 3, "2024"), (1, 4, "2025"), (2, 1, "Zenith Retail Ltd"), (2, 2, "100"), (2, 3, "120"))
     (masked, _), mapping = mask(text)
-    assert "A2: Zenith Retail Ltd" in masked and mapping == {}
-    known, counts = redact.mask_reading(text, COMPANY, {"Zenith Retail Ltd": "Client-01"})
-    assert "A2: Client-01" in known and counts["row_labels"] == 1
+    assert "A2: Client-01" in masked and mapping == {"Zenith Retail Ltd": "Client-01"}
     dated = text_of((1, 1, "Customer name"), (1, 2, "2024-01-31"), (2, 1, "Birch Labs Ltd"), (2, 2, "5"))
-    assert "Birch" not in mask(dated)[0][0], "one date column is no period row: a customer column is learned"
+    assert "Birch" not in mask(dated)[0][0]
 
 
 def test_a_merged_cell_carries_its_span_after_its_text_and_the_span_survives_masking():
@@ -160,7 +177,7 @@ def test_a_merged_cell_carries_its_span_after_its_text_and_the_span_survives_mas
 PERIOD_LABELS = ["FORECAST: RECOGNISED REVENUE (current year)", "TOTAL CLIENTS ACHIEVED (lifetime)", "LIFETIME SALES", "EBITDA (current year)", "EUR/CZK"]
 
 
-def period_sheet(*labels, header=(1, 1, "Customers")):
+def period_sheet(*labels, header=(1, 1, "Metric")):
     cells = [header, (1, 2, "Jan-24"), (1, 3, "Feb-24"), (1, 4, "Mar-24")]
     for r, label in enumerate(labels, 2):
         cells += [(r, 1, label), (r, 2, "100.5"), (r, 3, "110.5"), (r, 4, "120.5")]
