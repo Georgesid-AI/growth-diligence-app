@@ -850,8 +850,9 @@ class RoleReconciliation(Block):
     metric: str
     period: str
     basis: Optional[str] = None
-    status: Literal["agrees", "differs", "not_compared"]
+    status: Literal["agrees", "agrees_rounded", "differs", "not_compared"]
     reason: Optional[str] = None
+    note: Optional[str] = None                         # PR 4e: "deck figure printed to the nearest <unit>" on an agrees_rounded row
     gap: Optional[float] = Field(default=None, allow_inf_nan=False)
     gap_pct: Optional[float] = Field(default=None, allow_inf_nan=False)
     sources: List[ReconciliationSourceItem]
@@ -865,6 +866,7 @@ class GrowthYear(Block):
     prior: float = Field(allow_inf_nan=False)
     growth: float = Field(allow_inf_nan=False)
     source: RoleSource
+    deck_note: Optional[str] = None                     # PR 4e: "<year> from deck, page N, unverified" when a year comes from a deck figure
 
 
 class RoleMetrics(Block):

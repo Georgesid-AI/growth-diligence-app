@@ -880,6 +880,13 @@ def test_the_role_metrics_block_never_reaches_a_narrative_payload():
     assert "also_read" in RoleReconciliation.model_fields
     assert set(ReconciliationSourceItem.model_fields) == {"kind", "file", "where", "value"}, "no label, no deck text"
     assert "also_read" not in {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
+    # PR 4e: the rounded-agreement note ("deck figure printed to the nearest thousand": a closed sentence with a unit word) and the deck note of a
+    # growth year ("2025 from deck, page 6, unverified": a page number) are in the same server-only block. The printed precision of a deck figure is
+    # a number read from the page's text, not stored, and not a field of any block.
+    from schemas.metrics import GrowthYear
+    assert "note" in RoleReconciliation.model_fields and "deck_note" in GrowthYear.model_fields
+    assert "precision" not in set(RoleReconciliation.model_fields) | set(ReconciliationSourceItem.model_fields) | set(GrowthYear.model_fields)
+    assert not {"note", "deck_note"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
 
 
 # docs/design/pnl-lines.md: the statement's findings carry the file's own line labels and its plan cells. The block is server-only, pure Python, and

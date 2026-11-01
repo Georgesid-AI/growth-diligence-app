@@ -479,3 +479,111 @@ def test_no_block_prints_the_old_missing_monthly_line():
     r = run(yearly_pnl())
     assert "missing" not in r["yearly_basis"], "the five 'Missing: monthly P&L / revenue by customer, last 24 months' lines are gone"
     assert "Missing: monthly P&L" not in str(r)
+
+
+# ---------------------------------------------------------------------------
+# PR 4e: fixes from the third live run (synthetic figures)
+# ---------------------------------------------------------------------------
+def cumulative_plan(first_row=9):
+    """A plan row that is cumulative and resets each January: 10 a month in 2025 (10..120), 20 a month in 2026 (20..120 at June)."""
+    values = [10 * (i + 1) for i in range(12)] + [20 * (i + 1) for i in range(6)]
+    return row(first_row, "forecast", values, MONTHS, basis="cumulative_to_date", actual_plan="plan", plan=True)
+
+
+def test_plan_to_date_with_a_cumulative_plan_that_resets_each_january_is_the_year_to_date_comparison():
+    files = monthly_report([cumulative_plan()])
+    p = run(files, as_of="2026-06")["role_metrics"]["plan_to_date"]
+    assert p["actual"] == sum(100 + 5 * i for i in range(12, 18)), "January to June 2026 only, never summed from the start of the series"
+    assert p["plan"] == 120 and p["variance"] == p["actual"] - 120
+    cells = p["source"]["cells"]
+    assert len(cells) == 7 and "N4" in cells and "C4" not in cells and "M4" not in cells, "six months of the year and the plan's cumulative cell"
+
+
+def test_plan_to_date_in_the_first_fiscal_year_is_the_same_year_to_date_sum():
+    p = run(monthly_report([cumulative_plan()]), as_of="2025-03")["role_metrics"]["plan_to_date"]
+    assert p["actual"] == 100 + 105 + 110 and p["plan"] == 30
+
+
+def test_plan_to_date_uses_the_files_own_cumulative_revenue_row_at_the_as_of_month_and_cites_it():
+    ytd = [sum(100 + 5 * i for i in range(12, 12 + k + 1)) for k in range(6)]
+    cumulative_revenue = row(10, "revenue", [sum(100 + 5 * i for i in range(k + 1)) for k in range(12)] + ytd, MONTHS, basis="cumulative_to_date")
+    p = run(monthly_report([cumulative_plan(), cumulative_revenue]), as_of="2026-06")["role_metrics"]["plan_to_date"]
+    assert p["actual"] == ytd[-1] and p["plan"] == 120
+    assert p["source"]["row"] == 10 and len(p["source"]["cells"]) == 2 and p["source"]["cells"][0].endswith("10") and p["source"]["cells"][1].endswith("9")
+
+
+def test_a_cumulative_plan_that_does_not_reset_is_compared_by_its_difference_over_the_year():
+    values = [10 * (i + 1) for i in range(18)]
+    plan = row(9, "forecast", values, MONTHS, basis="cumulative_to_date", actual_plan="plan", plan=True)
+    p = run(monthly_report([plan]), as_of="2026-06")["role_metrics"]["plan_to_date"]
+    assert p["plan"] == 180 - 120 and p["actual"] == sum(100 + 5 * i for i in range(12, 18))
+
+
+def two_sheet_growth():
+    """The monthly report holds six months of revenue (no full year); the yearly P&L holds 2024 and 2025."""
+    report = file_of("report", [sheet("Report", [row(9, "revenue", [100] * 6, MONTHS[:6])])])
+    pnl = file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000, 1_500], ["2024", "2025"], basis="yearly")], granularity="yearly")])
+    return [report, pnl]
+
+
+def test_growth_by_year_cites_the_cells_of_the_row_its_values_come_from_and_no_other_row():
+    y = run(two_sheet_growth(), as_of="2026-06")["role_metrics"]["growth_by_year"]
+    assert len(y) == 1
+    assert (y[0]["source"]["sheet"], y[0]["source"]["row"], y[0]["source"]["file"]) == ("P&L", 4, "pnl")
+    assert y[0]["source"]["cells"] == ["B4", "C4"] and y[0]["growth"] == pytest.approx(0.5)
+
+
+def test_growth_by_year_takes_a_year_from_the_monthly_row_first_and_cites_the_range_ends():
+    monthly = file_of("report", [sheet("Report", [row(9, "revenue", [100] * 12, MONTHS[:12])])])
+    pnl = file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000, 1_300], ["2024", "2025"], basis="yearly")], granularity="yearly")])
+    y = run([monthly, pnl], as_of="2026-06")["role_metrics"]["growth_by_year"]
+    assert y[0]["value"] == 1_200 and y[0]["prior"] == 1_000
+    assert y[0]["source"]["sheet"] == "Report" and y[0]["source"]["row"] == 9
+    assert y[0]["source"]["cells"] == ["P&L!B4", "B9", "M9"], "the prior year's cell with its sheet, then the twelve months' first and last cell"
+
+
+def test_growth_by_year_uses_a_deck_figure_only_for_a_year_no_spreadsheet_gives_and_says_so():
+    pnl = file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000], ["2024"], basis="yearly")], granularity="yearly")])
+    deck = [deck_fig(6, 1_400.0, "Total revenue FY2025")]
+    y = run([pnl], as_of="2026-06", deck=deck)["role_metrics"]["growth_by_year"]
+    assert len(y) == 1 and y[0]["value"] == 1_400.0 and y[0]["growth"] == pytest.approx(0.4)
+    assert y[0]["deck_note"] == "2025 from deck, page 6, unverified" and "from deck, page 6, unverified" in y[0]["source"]["rule"]
+    both = run([file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000, 1_500], ["2024", "2025"], basis="yearly")], granularity="yearly")])],
+               as_of="2026-06", deck=deck)["role_metrics"]["growth_by_year"]
+    assert both[0]["value"] == 1_500 and both[0]["deck_note"] is None, "a spreadsheet figure is never replaced by the deck's"
+
+
+def rounded_case(deck_value, precision, exact=1_234_000):
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [exact], ["2025"], basis="yearly")], granularity="yearly")])]
+    deck = [{**deck_fig(4, deck_value, "Total revenue FY2025"), "precision": precision}]
+    return [x for x in run(pnl, deck=deck)["role_metrics"]["reconciliation"] if x["period"] == "2025"][0]
+
+
+def test_a_deck_figure_printed_to_the_nearest_hundred_thousand_agrees_when_within_half_of_it():
+    rec = rounded_case(1_200_000.0, 100_000)                 # "$1.2M" against 1,234,000: a gap of 34,000
+    assert rec["status"] == "agrees_rounded" and rec["note"] == "deck figure printed to the nearest hundred thousand"
+    assert rounded_case(1_200_000.0, 100_000, exact=1_250_000)["status"] == "agrees_rounded", "exactly half the precision still agrees"
+    assert rounded_case(1_850_000.0, 1_000, exact=1_850_400)["note"] == "deck figure printed to the nearest thousand"
+
+
+def test_a_real_difference_is_still_a_difference_whatever_the_precision():
+    rec = rounded_case(1_200_000.0, 100_000, exact=1_251_000)      # 51,000 is more than half of 100,000
+    assert rec["status"] == "differs" and rec["note"] is None
+    assert rounded_case(1_500_000.0, 0)["status"] == "differs", "an exact deck figure has no rounding to forgive"
+
+
+def test_a_rounded_agreement_does_not_count_toward_the_reliability_rating():
+    from app import integrity
+    pnl = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_234_000], ["2025"], basis="yearly")], granularity="yearly")])]
+    deck = [{**deck_fig(4, 1_200_000.0, "Total revenue FY2025"), "precision": 100_000}]
+    results = run(pnl, deck=deck)
+    assert results["role_metrics"]["reconciliation"][0]["status"] == "agrees_rounded"
+    assert integrity._role_reconciliation(results) is None
+
+
+def test_an_s_and_m_split_with_actuals_in_an_earlier_year_is_not_called_plan_only_just_as_r_and_d_is_not():
+    for role, name in (("rnd", "rnd_share"), ("sales_marketing", "sm_share")):
+        rows = [row(6, role, [100, 120], ["2024", "2026"], basis="yearly"), row(7, role, [150], ["2025"], basis="yearly", actual_plan="plan", plan=True)]
+        r = run(pnl_with(*rows, sm_rows=[] if role == "sales_marketing" else None, costs_sign=1))
+        assert "split only in plan years" not in str(metric(r, name)["reason"]), role
+    assert re_.sm_reason(re_.build_table(pnl_with(row(6, "sales_marketing", [100], ["2024"], basis="yearly"), sm_rows=[])), "2025") is None

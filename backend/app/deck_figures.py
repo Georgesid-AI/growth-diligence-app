@@ -71,6 +71,27 @@ def page_numbers(deck: Dict, page: int) -> List[float]:
     return out
 
 
+_PRINTED_NUMBER = re.compile(r"[\d,\s\u00a0\u202f]*\d(?:\.(\d+))?")
+
+
+def printed_precision(deck: Dict, page: int, value) -> float:
+    """The precision a figure is printed at, in full units, read from the page's text: 0 when the digits are all there (exact), else the step the
+    last printed digit stands for under its K, M or B suffix ("$850K" is 1,000, "$1.2M" is 100,000, "$2M" is 1,000,000). 0 when the figure is not
+    found on the page (its text layer is missing) or is printed without a suffix: nothing is assumed rounded that the page does not show."""
+    if value is None:
+        return 0.0
+    for line in page_lines(deck, page):
+        for f in claims.figures(line["text"]):
+            if f.get("value") is None or f.get("value_high") is not None or not f.get("mult"):
+                continue
+            if abs(abs(f["value"]) - abs(float(value))) > 1e-6 * max(1.0, abs(float(value))):
+                continue
+            m = _PRINTED_NUMBER.match(line["text"], f["pos"])
+            decimals = len(m.group(1) or "") if m else 0
+            return claims._SCALE[f["mult"].lower()] / (10 ** decimals)
+    return 0.0
+
+
 def page_unscaled(deck: Dict, page: int) -> List[float]:
     """The numbers of the page as written, before k, m or bn: used only to say that a scale differs, never to confirm."""
     out: List[float] = []
@@ -116,7 +137,8 @@ def figure_of(candidate: Dict, deck: Dict) -> Dict:
     return {"id": candidate.get("id"), "deck_id": candidate.get("deck_id"), "metric": candidate.get("claim_type"), "value": value,
             "unit": unit, "currency": candidate.get("currency"), "period": period, "label": label,
             "actual_plan": "plan" if candidate.get("basis") == "projection" else "actual" if candidate.get("basis") == "actual" else None,
-            "segment": candidate.get("page_segment"), "source": {"page": page, "text_layer": bool(page and page_numbers(deck, page))}}
+            "segment": candidate.get("page_segment"), "precision": printed_precision(deck, page, value) if unit in ("money", "count") else 0.0,
+            "source": {"page": page, "text_layer": bool(page and page_numbers(deck, page))}}
 
 
 def check_figure(figure: Dict, candidate: Dict, deck: Dict) -> Dict:

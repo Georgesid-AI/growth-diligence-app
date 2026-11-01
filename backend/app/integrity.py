@@ -62,7 +62,8 @@ def revenue_years(results: dict) -> List[dict]:
 
 
 def _role_reconciliation(results: dict) -> Optional[dict]:
-    years = revenue_years(results)
+    # A year that agrees only after rounding (a deck figure printed to the nearest thousand) is a row of the table, never a count of the rating.
+    years = [y for y in revenue_years(results) if y["status"] != "agrees_rounded"]
     if not years:
         return None
     differing = [y for y in years if y["status"] == "differs"]
