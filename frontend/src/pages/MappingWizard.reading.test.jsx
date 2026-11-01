@@ -73,3 +73,29 @@ test("the default Upload page has the deck box and, under an uploaded deck, its 
   await act(async () => { root.unmount(); });
   host.remove();
 });
+
+test("when background reading finishes the blockers are read again, with no page reload", async () => {
+  jest.useFakeTimers();
+  api.getAudit.mockResolvedValueOnce({ ...AUDIT, sheet_reads_pending: 1 }).mockResolvedValue(AUDIT);
+  api.getDatasets.mockResolvedValue([]);
+  api.reportUsage.mockResolvedValue({});
+  api.getReview.mockResolvedValue({ computed: false });
+  api.getDecks.mockResolvedValue({ decks: [], candidates: [] });
+  api.getReading.mockResolvedValue(EMPTY);
+  const { BLOCKERS_CHANGED } = require("@/components/BlockerBanner");
+  const fired = jest.fn();
+  window.addEventListener(BLOCKERS_CHANGED, fired);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<MappingWizard />); });
+  await act(async () => { await Promise.resolve(); });
+  expect(fired).not.toHaveBeenCalled();
+  await act(async () => { jest.advanceTimersByTime(3100); });
+  await act(async () => { await Promise.resolve(); });
+  expect(fired).toHaveBeenCalledTimes(1);
+  window.removeEventListener(BLOCKERS_CHANGED, fired);
+  await act(async () => { root.unmount(); });
+  host.remove();
+  jest.useRealTimers();
+});
