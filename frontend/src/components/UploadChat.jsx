@@ -11,13 +11,21 @@ import {
   S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, S13_READY, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, S28_read, S28_SHOW_CLAIMS, S28_cap, S28_CONFIRM,
-  forecastValueText, forecastCells, MAP_LABEL, CALCULATE_CLASS, ALL_CONFIRMED_LINE, mappingComplete, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S25_STATEMENT_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  forecastValueText, forecastCells, openAnswers, OLDER_MAPPING_WAITS, OLDER_MAPPING_LINK, MAP_LABEL, CALCULATE_CLASS, ALL_CONFIRMED_LINE, mappingComplete, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S25_STATEMENT_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
-/** The compact upload (the reading screen, docs/design/read-check-review.md section 11) lists a file's mapping bubble only while the file waits for
- *  the analyst's answer; a settled file is a block of the reading screen. The rules reading goes in PR 4. */
-const systemWaits = (view) => !!view && S13_status(view) !== S13_READY;
+/** The compact upload (the default Upload page) never shows the old mapping block. A file the old path still waits on gets one line in its place,
+ *  linking to ?view=legacy; any other file shows nothing. */
+function OlderMappingLine({ view }) {
+  const n = openAnswers(view);
+  if (!n) return null;
+  return (
+    <p className="text-xs text-amber-800" data-testid="older-mapping-waits">
+      {OLDER_MAPPING_WAITS(n)}<a href="?view=legacy" className="underline">{OLDER_MAPPING_LINK}</a>
+    </p>
+  );
+}
 const AI_FAILED = ["timeout", "not_read", "refused", "stopped", "too_large"];
 let nextId = 1;
 const uid = () => `m${nextId++}`;
@@ -244,7 +252,7 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
       </div>
       {deck}
       <div data-testid="chat-messages" className="px-5 py-4 space-y-3">
-        {messages.filter((m) => !compact || m.kind !== "system" || systemWaits(m.view)).map((m) => (
+        {messages.map((m) => (compact && m.kind === "system" && m.view) ? <OlderMappingLine key={m.id} view={m.view} /> : (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
             decide={decide} decideLines={decideSheetLines} decideRecognition={decideRecognitionPart} retype={retype} claimsSaved={claimsSaved} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
