@@ -869,6 +869,11 @@ def test_the_role_metrics_block_never_reaches_a_narrative_payload():
     from schemas.metrics import MetricsPayload
     assert "role_metrics" in MetricsPayload.model_fields and "role_metrics" in SERVER_ONLY_TOP_LEVEL
     assert "role_metrics" not in gateway.OUTBOUND_TOP_LEVEL and "role_metrics" not in gateway.OUTBOUND_FIELDS
+    # PR 4b: growth by year, the reconciliation's sources (a deck page, a file's own name) and the reasons ("S&M split only in plan years ...",
+    # "costs shown as negative") sit inside that one server-only block, so they reach no step slice, no log line and no provider payload.
+    from schemas.metrics import RoleMetrics
+    assert "growth_by_year" in RoleMetrics.model_fields
+    assert "growth_by_year" not in {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
 
 
 # docs/design/pnl-lines.md: the statement's findings carry the file's own line labels and its plan cells. The block is server-only, pure Python, and

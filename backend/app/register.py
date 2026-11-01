@@ -209,7 +209,10 @@ async def _not_read_reason(db, audit_id: str) -> str:
 
 
 async def build(db, audit_id: str) -> Dict:
-    all_cards = await cards.for_audit(db, audit_id)
+    stored = await db[readings.REVIEWS].find({"audit_id": audit_id}, {"_id": 0}).to_list(50)
+    latest = max((r.get("created_at") or "" for r in stored if r.get("status") == "read"), default=None)
+    # The reviewer's cards of the latest completed run only: an earlier run's findings are not this review's.
+    all_cards = [c for c in await cards.for_audit(db, audit_id) if c["kind"] != cards.DISAGREEMENT or (latest is not None and c.get("review") == latest)]
     decided = {c["item"]: c for c in all_cards if c["status"] == cards.DECIDED}
     card_ids = {c["item"]: c["id"] for c in all_cards if c["status"] == cards.OPEN}
     files: List[Dict] = []
@@ -254,7 +257,7 @@ async def build(db, audit_id: str) -> Dict:
                       "figures": [{"key": f["key"], "metric": f.get("metric"), "value": f.get("value"), "unit": f.get("unit"), "currency": f.get("currency"),
                                    "period": f.get("period"), "label": f.get("label"), "page": f["source"]["page"], "outcome": f["outcome"]}
                                   for f in deck["figures"]]})
-    review = await db[readings.REVIEWS].find_one({"audit_id": audit_id}, {"_id": 0})
+    review = max(stored, key=lambda r: r.get("created_at") or "", default=None)
     status = (review or {}).get("status")
     reason = (review or {}).get("reason")
     if review and status == "not_read":

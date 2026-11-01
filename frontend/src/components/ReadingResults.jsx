@@ -117,11 +117,34 @@ function Card({ card, auditId, onDecided }) {
       </div>
     );
   };
+  // A reviewer's card is one finding: its full text, then every row or figure it cites with the reader's own reading of that item.
+  const readerText = (r) => [
+    r?.value !== null && r?.value !== undefined ? valueText(r.value, r.unit, r.currency) : null,
+    r?.period ? periodLabel(r.period) : null,
+    r?.role ? `read as ${r.role}${r.second_role && r.second_role !== r.role ? `, then ${r.second_role}` : ""}` : null,
+    r?.basis ? basisLabel(r.basis) : null,
+  ].filter(Boolean).join(", ") || PLACEHOLDER;
   return (
     <div className="card" id={`card-${card.id}`} data-testid={`card-${card.kind}`}>
-      <h3>{cardTitle(card)}</h3>
-      <div className="two">{card.reader && side(card.reader)}{card.other && side(card.other)}</div>
-      <p className="muted"><SourceLink auditId={auditId} source={card.source} /></p>
+      <h3 data-testid="card-title">{card.finding ? card.finding.what : cardTitle(card)}</h3>
+      {card.finding ? (
+        <>
+          <p className="muted" data-testid="card-reviewer-reading"><b>Reviewer</b> {card.finding.reading}{card.finding.confidence ? ` (${card.finding.confidence} confidence)` : ""}</p>
+          <ul data-testid="card-cites">
+            {(card.cites || []).map((c) => (
+              <li key={`${c.source?.file}-${c.key}`} data-testid="card-cite">
+                <b>{c.label}</b> · reader: <span data-testid="card-cite-reader">{c.reader ? readerText(c.reader) : "no mapped row or figure"}</span>
+                {" · "}<SourceLink auditId={auditId} source={c.source} />
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <>
+          <div className="two">{card.reader && side(card.reader)}{card.other && side(card.other)}</div>
+          <p className="muted"><SourceLink auditId={auditId} source={card.source} /></p>
+        </>
+      )}
       <div className="actions">
         {card.actions.filter((a) => a !== "type_value").map((a) => (
           <button key={a} type="button" className="btn quiet" data-testid={`card-${a}`} onClick={() => send(a)}>{ACTION_LABELS[a]}</button>

@@ -6,7 +6,7 @@ import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { Button } from "@/components/ui/button";
 import * as apiModule from "@/lib/api";
 import { getDatasets, getDecks, getReview } from "@/lib/api";
-import { setCalculatePressed } from "@/lib/chatUpload";
+import { S_RUN_LINE, setCalculatePressed } from "@/lib/chatUpload";
 import { RETRY_LABEL, RUN_BUTTON_CLASS, RUN_LABEL, STAGES, STAGE_STATUS_TEXT, firstStageNotDone, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
 
 /**
@@ -71,8 +71,7 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
   return (
     <section className="mt-5" data-testid="run-audit-panel">
       <p className="text-sm text-slate-600 mb-3 max-w-3xl">
-        Attach the files in the box above and press Run audit. The columns are mapped, the metrics calculated and the deck claims read.
-        You stop only where a decision is yours, on the Audit page.
+        {S_RUN_LINE}
       </p>
       {runButton("run-audit")}
       {topHost && createPortal(runButton("run-audit-top"), topHost)}

@@ -18,9 +18,10 @@ export const s2Explainer = (zdr) =>
   + "Uploaded files are stored for this audit and deleted with it.";
 export const S3_EXPLAINER_NO_CONSENT =
   "AI-assisted reading is off for this audit: uploaded spreadsheets and decks are stored but not read. Tick the box above to read them.";
-export const S4_DROP_ZONE_LEAD =
-  "Drop files here or use the paperclip. Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. ";
-export const S4_DROP_ZONE_BOLD = ".xlsx or .csv only";      // the only bold part of the text
+export const S4_DROP_ZONE_LEAD = "Drop files here or use the paperclip. ";
+export const S4_DROP_ZONE_TAIL = ". A monthly revenue or ARR report is required; a P&L, revenue by customer and a CRM export add more metrics.";
+export const S4_DROP_ZONE_BOLD = ".xlsx or .csv only";      // the only bold part of the text, between the lead and the tail
+export const S_RUN_LINE = "Files are read automatically. Nothing waits for your confirmation.";
 export const S7_REFUSED = "This window takes .xlsx and .csv files. Decks go in the deck panel below.";
 export const S7B_XLS_REFUSED = "Save as .xlsx or .csv and upload again.";
 export const S_UPLOAD_RETRY = "The file could not be read. Press Map to try again.";   // no answer from the server (timeout or network error)

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
 import { uploadChatFile, getDatasets, reportUsage } from "@/lib/api";
 import {
-  S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S7_REFUSED, S7B_XLS_REFUSED, S_UPLOAD_RETRY, ALLOWED_EXTENSIONS, MAP_LABEL, CALCULATE_CLASS,
+  S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S4_DROP_ZONE_TAIL, S7_REFUSED, S7B_XLS_REFUSED, S_UPLOAD_RETRY, ALLOWED_EXTENSIONS, MAP_LABEL, CALCULATE_CLASS,
   setCalculatePressed, fmtBytes, extensionOf,
 } from "@/lib/chatUpload";
 
@@ -144,7 +144,7 @@ export default function UploadChat({ audit, onViews, onStaged, onMapping, mapBut
       <div className="px-5 pt-4">
         {/* The drop zone stays after a drop: more files can be attached until Map is pressed. */}
         <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg text-center text-slate-500 ${messages.length === 0 ? "py-14 text-sm" : "py-3 text-xs"} ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
-          {S4_DROP_ZONE_LEAD}<strong>{S4_DROP_ZONE_BOLD}</strong>
+          {S4_DROP_ZONE_LEAD}<strong>{S4_DROP_ZONE_BOLD}</strong>{S4_DROP_ZONE_TAIL}
         </div>
       </div>
       {deck}

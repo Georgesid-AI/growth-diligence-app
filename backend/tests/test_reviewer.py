@@ -580,3 +580,83 @@ def test_the_reviewer_stays_off_when_it_has_no_prompt_and_run_audit_still_finish
     flow.db[readings.REVIEWS].docs[:] = []
     assert _stage(flow, "claims")["status"] == "done"
     assert flow.db[readings.REVIEWS].docs == [], "no prompt, no review: the stage goes on without it"
+
+
+# ---------------------------------------------------------------------------
+# PR 4b: the reviewer's cards — one per finding, its full text, every row or figure it cites, the latest completed run only
+# ---------------------------------------------------------------------------
+LONG = ("Rows 4 and 10 both carry the recognised revenue of the month, so the report counts it twice; the second row is the bookings line of the "
+        "sales team, which is booked before it is recognised and which sits under the same heading as the revenue line. " * 1)
+
+
+def two_rows(**over):
+    return finding(**{"what": LONG, "refs": [{"file": 1, "sheet": SHEET, "cell": "B4:M4", "page": None},
+                                             {"file": 1, "sheet": SHEET, "cell": "B10:M10", "page": None}], **over})
+
+
+def test_one_finding_citing_two_rows_is_one_card_with_its_full_text_and_each_row_with_its_own_reading(flow):
+    start(flow, map_with("revenue"), again=map_with("revenue"), review={"findings": [two_rows()]})
+    review(flow)
+    (card,) = cards_of(flow)
+    assert card["title"] == LONG and card["finding"]["what"] == LONG and len(LONG) > 160, "the full text, not the first 160 characters"
+    assert card["finding"]["reading"] == "Row 10 is bookings."
+    assert [c["label"] for c in card["cites"]] == ["Row 4", "Figure revenue", "Row 10"], "every row and figure the finding cites, once, in order"
+    figure = card["cites"][1]["reader"]
+    assert figure["value"] == 10625 and figure["period"] == "2025-06", "the reader's value for that figure"
+    assert [c["reader"]["metric"] for c in card["cites"]] == ["revenue", "revenue", "revenue"]
+    assert [c["source"]["cell"] for c in card["cites"]] == ["B4:M4", "G4", "B10:M10"]
+    assert card["reader"]["label"] == "Reader, twice"
+
+
+def test_two_findings_are_two_cards_and_the_same_finding_in_a_second_run_is_the_same_card(flow):
+    other = finding(what="Row 4 is a plan row.", cell="B4:M4", reading="plan")
+    start(flow, map_with("revenue"), again=map_with("revenue"), review={"findings": [finding(), other]})
+    review(flow)
+    assert len(cards_of(flow)) == 2
+    review(flow, force=True)
+    assert len(cards_of(flow)) == 2, "a finding is known by what it says and cites, not by its place in the reply"
+
+
+def test_a_page_with_two_figures_lists_each_with_its_own_value_and_the_finding_picks_the_one_it_names(flow):
+    start(flow, map_with("bookings"), review={"findings": [
+        {"what": "The plan value 90,000 on this page is read as actual.", "refs": [{"file": 2, "sheet": None, "cell": None, "page": 2}],
+         "reading": "plan", "confidence": "low"}]})
+    flow.db[TEXT_COLLECTION].docs.append({**deck([{"page": 2, "text": "ARR 447,223 and plan 90,000", "kind": "text"}]), "audit_id": audit_of(flow)["id"]})
+    flow.db[CANDIDATES_COLLECTION].docs += [{**candidate(447223), "audit_id": audit_of(flow)["id"]},
+                                            {**candidate(90000, claim_type="revenue"), "id": "c2", "audit_id": audit_of(flow)["id"]}]
+    review(flow)
+    (card,) = cards_of(flow)
+    values = [c["reader"]["value"] for c in card["cites"]]
+    assert values == [90000], "the figure the finding names, not the first figure of the page"
+    assert card["reader"]["value"] == 90000
+
+
+def test_a_page_the_finding_does_not_pin_to_a_figure_lists_every_figure_of_the_page(flow):
+    start(flow, map_with("bookings"), review={"findings": [
+        {"what": "This page mixes plan and actual figures.", "refs": [{"file": 2, "sheet": None, "cell": None, "page": 2}],
+         "reading": "mixed", "confidence": "low"}]})
+    flow.db[TEXT_COLLECTION].docs.append({**deck([{"page": 2, "text": "ARR 447,223 and revenue 90,000", "kind": "text"}]), "audit_id": audit_of(flow)["id"]})
+    flow.db[CANDIDATES_COLLECTION].docs += [{**candidate(447223), "audit_id": audit_of(flow)["id"]},
+                                            {**candidate(90000, claim_type="revenue"), "id": "c2", "audit_id": audit_of(flow)["id"]}]
+    review(flow)
+    (card,) = cards_of(flow)
+    assert sorted(c["reader"]["value"] for c in card["cites"]) == [90000, 447223]
+
+
+def test_a_register_with_two_stored_reviews_shows_the_cards_of_the_latest_completed_run_only(flow):
+    from app import register
+    start(flow, map_with("revenue"), again=map_with("revenue"), review={"findings": [finding()]})
+    review(flow)
+    (first_card,) = cards_of(flow)
+    old_stamp = first_card["review"]
+    # a second run, stored beside the first (two background reviews of one audit can leave two documents), with a finding of its own
+    newer = {**flow.db[readings.REVIEWS].docs[0], "created_at": "9999-01-01T00:00:00+00:00", "findings": []}
+    flow.db[readings.REVIEWS].docs.append(newer)
+    asyncio.run(cards.open_card(flow.db, audit_of(flow)["id"], kind=cards.DISAGREEMENT, item="finding:newer", title="The newer finding", source={"file": "f"},
+                                reader=None, other=None, actions=[cards.USE_READER], cites=[], finding={"what": "The newer finding", "reading": "r", "confidence": "low"},
+                                review=newer["created_at"]))
+    shown = asyncio.run(register.build(flow.db, audit_of(flow)["id"]))["cards"]
+    assert [c["title"] for c in shown] == ["The newer finding"] and old_stamp != newer["created_at"]
+    newer["status"] = "incomplete"          # the newer run did not complete: the latest completed run is the first again
+    again = asyncio.run(register.build(flow.db, audit_of(flow)["id"]))["cards"]
+    assert [c["review"] for c in again] == [old_stamp]

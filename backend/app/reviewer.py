@@ -16,6 +16,7 @@ analyst asks (`force`); a new input, a new prompt or a new model is a new review
 """
 import hashlib
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -356,19 +357,19 @@ async def review_audit(db, audit: Dict, adapter=None, force: bool = False) -> Di
     not_run: List[str] = []
     for finding in valid:
         entry = {**finding, "items": [], "state": "valid"}
+        results = []
         for n, key in plan[finding["id"]]:
             res = outcomes.get((n, key), {"result": UNREAD, "reason": REASON_NOT_READ})
-            f = files.get(n)
-            item = {"file": n, "key": key, "result": res["result"], "overrides": res.get("overrides", [])}
             if res["result"] == UNREAD:
                 # The re-read never ran: no card (a card is a disagreement that survived one re-read), and the review is not done.
                 not_run.append(res.get("reason") or REASON_NOT_READ)
-            elif res["result"] != AGREES:
-                await _card_for(db, audit_id, finding, f, key, res)
-            entry["items"].append(item)
+            results.append(res["result"])
+            entry["items"].append({"file": n, "key": key, "result": res["result"], "overrides": res.get("overrides", [])})
         if not plan[finding["id"]]:
-            await _card_without_item(db, audit_id, finding, files)
             entry["items"].append({"file": finding["refs"][0]["file"], "key": None, "result": NO_ITEM, "overrides": []})
+        # One card per finding, once every item it is about was read again and at least one is not settled (or nothing could be read again).
+        if UNREAD not in results and (not results or any(r != AGREES for r in results)):
+            await _finding_card(db, audit_id, finding, files, outcomes, doc["created_at"])
         doc["findings"].append(entry)
     doc["findings"] += [{**d, "state": "dropped", "items": []} for d in dropped]
     if not_run:
@@ -383,32 +384,89 @@ async def _save(db, doc: Dict) -> None:
     await db[readings.REVIEWS].insert_one(dict(doc))
 
 
-def _title(finding: Dict) -> str:
-    return finding["what"][:160]
+def _digest(finding: Dict) -> str:
+    """The identity of a finding across runs: what it says and what it cites (not its position in a reply)."""
+    return hashlib.sha256(cache.canonical_json({"what": finding["what"], "refs": finding["refs"]}).encode("utf-8")).hexdigest()[:16]
 
 
-async def _card_for(db, audit_id: str, finding: Dict, f: Dict, key: str, res: Dict) -> None:
-    """The reader–reviewer disagreement that survived the re-read: both readings, the cell or page."""
-    path = _paths(f["reading"], key) if f["kind"] == "sheet" else None
-    entry = (path or (None, None))[1]            # a decision on this card keeps the reader's reading or not: it overrides no number
-    ref = finding["refs"][0]
-    source = {"file": f["file"], "file_hash": f.get("file_hash"), "sheet": ref.get("sheet"), "cell": ref.get("cell")}
-    reader = _reader_side(entry, res.get("second"))
-    reader["label"] = "Reader, twice" if res["result"] in (REPEATS, THIRD) else "Reader"
+def _numbers(text: str) -> set:
+    return {t.replace(",", "").rstrip(".") for t in re.findall(r"\d[\d,]*\.?\d*", text or "")}
+
+
+def _mentions(figure: Dict, finding: Dict) -> bool:
+    """Whether the finding's own words name this figure: its value (as digits) or its metric."""
+    text = f"{finding['what']} {finding['reading']}"
+    value = figure.get("value")
+    if isinstance(value, (int, float)) and value:
+        plain = {repr(float(abs(value))).rstrip("0").rstrip("."), str(int(abs(value))) if float(abs(value)).is_integer() else ""} - {""}
+        if plain & _numbers(text):
+            return True
+    return bool(figure.get("metric")) and str(figure["metric"]).lower() in text.lower()
+
+
+def _cite_of(f: Dict, key: str, ref: Dict, res: Optional[Dict]) -> Dict:
+    """One row or figure of a spreadsheet the finding cites, with what the reader read for exactly that item."""
+    path = _paths(f["reading"], key)
+    entry = path[1] if path else {}
+    src = {"file": f["file"], "file_hash": f.get("file_hash"), "sheet": ref.get("sheet"), "cell": ref.get("cell")}
+    if key.startswith("figure:"):
+        fsrc = entry.get("source") or {}
+        src.update(sheet=fsrc.get("sheet") or src["sheet"], cell=fsrc.get("cell") or src["cell"])
+        reader = {k: entry.get(k) for k in ("metric", "value", "unit", "currency", "period")}
+        label = f"Figure {entry.get('metric') or ''}".strip()
+    elif key.startswith("row:"):
+        src["cell"] = entry.get("cells") or src["cell"]
+        reader = {k: entry.get(k) for k in ("role", "metric", "basis", "actual_plan", "unit", "currency")}
+        reader["second_role"] = ((res or {}).get("second") or {}).get("role")
+        label = f"Row {key.rsplit(':', 1)[1]}"
+    else:
+        reader = {"column": entry.get("column")}
+        label = "Last actual column"
+    return {"key": key, "kind": key.partition(":")[0], "label": label, "reader": reader, "source": src, "result": (res or {}).get("result")}
+
+
+def _cites(finding: Dict, files: Files, outcomes: Dict) -> List[Dict]:
+    """Every row or figure the finding cites, in the order it cites them, once each. A page names no figure: the figures of that page that the
+    finding's words name, else every figure of the page, each with its own value, never one picked for the others."""
+    out: List[Dict] = []
+    for ref in finding["refs"]:
+        f = files.get(ref["file"])
+        if f["kind"] == "deck":
+            on_page = [x for x in f.get("figures") or [] if x["source"]["page"] == ref.get("page")]
+            named = [x for x in on_page if _mentions(x, finding)] or on_page
+            for x in named:
+                out.append({"key": x["key"], "kind": "page_figure", "label": f"Page {ref['page']}: {x.get('metric') or 'figure'}",
+                            "reader": {k: x.get(k) for k in ("metric", "value", "unit", "currency", "period")},
+                            "source": {"file": f["file"], "deck_id": f.get("deck_id"), "page": ref["page"]}, "result": x.get("outcome")})
+            if not on_page:
+                out.append({"key": f"page:{ref['page']}", "kind": "page", "label": f"Page {ref['page']}", "reader": None,
+                            "source": {"file": f["file"], "deck_id": f.get("deck_id"), "page": ref["page"]}, "result": None})
+            continue
+        found = items_of({"refs": [ref]}, files)
+        if not found:
+            out.append({"key": f"cell:{ref['sheet']}:{ref['cell']}", "kind": "cell", "label": f"Cell {ref['cell']}", "reader": None,
+                        "source": {"file": f["file"], "file_hash": f.get("file_hash"), "sheet": ref["sheet"], "cell": ref["cell"]},
+                        "result": NO_ITEM})
+        for n, key in found:
+            out.append(_cite_of(files.get(n), key, ref, outcomes.get((n, key))))
+    seen, unique = set(), []
+    for c in out:
+        marker = (c["source"]["file"], c["key"])
+        if marker not in seen:
+            seen.add(marker)
+            unique.append(c)
+    return unique
+
+
+async def _finding_card(db, audit_id: str, finding: Dict, files: Files, outcomes: Dict, stamp: str) -> None:
+    """The card of a finding the reader did not settle: one card for the finding, its full text, every row or figure it cites each with the
+    reader's reading of that item, and the cell or page. The decision keeps the reader's reading: it overrides no number."""
+    cites = _cites(finding, files, outcomes)
+    first = cites[0] if cites else {"source": {"file": files.get(finding["refs"][0]["file"])["file"]}, "reader": None}
+    twice = any(c.get("result") in (REPEATS, THIRD) for c in cites)
+    reader = {"label": "Reader, twice" if twice else "Reader", "value": None, "unit": None, "currency": None, "period": None, "evidence": None,
+              **(first["reader"] or {})}
     other = {"label": "Reviewer", "evidence": finding["reading"], "confidence": finding["confidence"], "what": finding["what"]}
-    await cards.open_card(db, audit_id, kind=cards.DISAGREEMENT, item=f"{finding['id']}:{key}", title=_title(finding), source=source, reader=reader,
-                          other=other, actions=[cards.USE_READER])
-
-
-async def _card_without_item(db, audit_id: str, finding: Dict, files: Files) -> None:
-    """A valid finding about a cell no mapped row holds, or about a deck page: nothing to read again, so the card shows what the reviewer reads."""
-    ref = finding["refs"][0]
-    f = files.get(ref["file"])
-    source = {"file": f["file"], "file_hash": f.get("file_hash"), "deck_id": f.get("deck_id"), "sheet": ref.get("sheet"), "cell": ref.get("cell"),
-              "page": ref.get("page")}
-    figure = next((x for x in f.get("figures") or [] if x["source"]["page"] == ref.get("page")), None) if f["kind"] == "deck" else None
-    reader = {"label": "Reader", "value": (figure or {}).get("value"), "unit": (figure or {}).get("unit"), "currency": (figure or {}).get("currency"),
-              "period": (figure or {}).get("period"), "evidence": None}
-    other = {"label": "Reviewer", "evidence": finding["reading"], "confidence": finding["confidence"], "what": finding["what"]}
-    await cards.open_card(db, audit_id, kind=cards.DISAGREEMENT, item=f"{finding['id']}:{ref.get('cell') or 'p' + str(ref.get('page'))}",
-                          title=_title(finding), source=source, reader=reader, other=other, actions=[cards.USE_READER])
+    await cards.open_card(db, audit_id, kind=cards.DISAGREEMENT, item=f"finding:{_digest(finding)}", title=finding["what"], source=first["source"],
+                          reader=reader, other=other, actions=[cards.USE_READER], cites=cites,
+                          finding={"what": finding["what"], "reading": finding["reading"], "confidence": finding["confidence"]}, review=stamp)
