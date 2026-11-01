@@ -235,17 +235,18 @@ def test_a_page_read_twice_is_served_from_the_cache_and_lists_no_row_twice(monke
     assert [(r["pages"], r["status"]) for r in db[TEXT_COLLECTION].docs[0]["page_reads"]] == [([1], "read")]
 
 
-def test_without_consent_or_before_the_revenue_file_no_page_goes(monkeypatch):
+def test_without_consent_no_page_goes_and_no_file_is_waited_for(monkeypatch):
     monkeypatch.setenv("DECK_PIPELINE", "ai")
     parsed = deck([TITLE, *LINES])
     db = _page_db(parsed)
     db["audits"].docs[0]["structure_reading_consent"] = False
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
     assert asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep)) == "python_only"
-    db = _page_db(parsed)
-    db["datasets"].docs.clear()
-    assert asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep)) == "waiting"
     assert adapter.calls == 0
+    db = _page_db(parsed)
+    db["datasets"].docs.clear()          # no file in the audit: a deck never waits for one (PR 4), it is read
+    assert asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep)) != "waiting"
+    assert adapter.calls > 0
 
 
 def test_an_axis_tick_is_marked_on_its_own_cell_and_a_bar_value_in_the_same_column_is_not():

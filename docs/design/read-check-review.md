@@ -1,6 +1,6 @@
 # Read, check, review
 
-Design note · docs/design/read-check-review.md · 29 October 2026 · status: proposed, awaiting owner approval
+Design note · docs/design/read-check-review.md · 29 October 2026 · status: proposed, awaiting owner approval · PRs 0 to 4 built (section 13); section 12 done, section 16 added in PR 4
 
 ## 1. Purpose
 
@@ -170,7 +170,9 @@ start. It has no memory of the reading calls.
 Masked, already stored:
 
 1. the file maps and figures from every file and deck, as the reader returned
-   them, without the reader's reasoning
+   them, without the reader's reasoning and (PR 4) without the stored series:
+   roles, ranges, boundaries and figures only; a cell value of the file went to
+   the model once, in the reading
 2. the computed results
 3. the list of cannot-check items
 
@@ -181,6 +183,18 @@ revenue; a cumulative series read as monthly; the actual/plan boundary in the
 wrong column; parts that do not sum to their named total; a unit or currency
 read inconsistently across a row; a map inconsistent with the chosen as-of
 month.
+
+Run audit asks for the review again whenever its last stored status is anything
+other than read (refused, cut off, incomplete, not yet made), from whichever
+stage it carries on from; a review that read is asked again only when its input
+changed. Its allowance is its own (`REVIEWER_TOKEN_CAP`, default 80,000 tokens
+per audit). A file reading has a per-file allowance (`FILE_TOKEN_CAP`, default
+400,000 tokens per file, counting its reading and its re-reads), which replaces
+the per-audit allowance for files; the per-audit 400,000 stays for deck structure
+and page calls only. A call a cap refuses logs the one line `ai call refused:
+step=… reason=token_cap used=… cap=… input=…` (reason `token_cap` for either
+allowance) and writes its `llm_calls` row with `refused_input_tokens`, the input
+the call would have sent. There is no "structure not read" line beside it.
 
 Not its job yet: contradictions between sources, plausibility of plan figures,
 anything about management claims (section 14).
@@ -348,15 +362,41 @@ Whole numbers everywhere. One decimal only for a single-digit multiple (3.3x),
 a single-digit number (1.2) or a single-digit percent (4.5 %). Same rule in
 the memo and the export. Stored values are never rounded.
 
-## 12. Removed
+## 12. Removed (done in PR 4)
 
-Column mapping by rules, confidence scores, the auto-accept threshold, the
-"AI suggestion – confirm" rows, the mapping tables (Line · Role · Meaning ·
-Basis · Used · Confidence · Checks), as-of detection and all its fallbacks,
-label correction and its Diagnostics log, the "possibly partial" branch, the
-Type-by-rules line, the file-type picker as a step. The prompts `structure_
-reading` and `file_type` are retired once PR 2 is live; `sheet_reading` and
-`reviewer` replace them.
+Done. What was deleted, and what stays in code behind a flag.
+
+Deleted
+
+- The model calls `file_type`, `file_recognition`, `sheet_structure` and the column mapping, with their prompts (`file_type`, `sheet_structure`
+  leave the prompt store's list; the repository's stubs go), schemas, masking text builders and the `READER_V1` flag. `structure_reading` stays:
+  the deck structures of the rules read (`DECK_PIPELINE=rules`, Add from deck) use it.
+- Column mapping by rules as a step: the confidence scores and the auto-accept threshold as a state machine, the "AI suggestion – confirm" rows,
+  the per-file mapping table (Line · Role · Meaning · Basis · Used · Confidence · Checks), Confirm all, the file-type picker, the revenue-row
+  picker, the "lines wait for your decision" and "answers waiting" lines, the hidden-block safeguard and `?view=legacy`.
+- Recognition (`recognition.py`), the statement reader (`structures/sheet.py`, `structures/pnl_lines.py`) and the forecast-table reader
+  (`forecast_claims.py`). The header-period parser the cell checks need moved to `app/periods.py`, the stored-sheet packing to
+  `app/stored_sheets.py`.
+- As-of detection and all its fallbacks: the audit's month is the latest confirmed actual month of the readings, or the analyst's. Nothing is
+  read from rows, from the last column with a number, from a file name or from a deck.
+- The label-correction startup migration and the Diagnostics page's deck lines.
+- The "possibly partial" and "Needs your review" gating: Run audit never waits for a confirmation. Its mapping stage is done once a file is
+  stored and read ("The files are still being read" while a read runs); its engine stage always calculates; a deck never waits for a file.
+- The claim questions on the Audit page.
+
+Behind `OLD_CLAIMS` (default off, `backend/app/flags.py`; the audit says `old_claims` to the screen)
+
+- The claim register, the five-claims conclusion, the three reasons, the key gates, the claim labels, "claim questions open" and the
+  contradicted-claim blockers. Off, none of them is on the Audit page, in the blockers or in the downloaded report: the report holds no verdict,
+  no reasons, no claim counts, no key gates (the section is "Deal terms"), no claim appendix ("Not part of this report.") and no claim
+  glossary terms. On, everything is as before PR 4. The code and its tests stay.
+
+Kept on purpose
+
+- `column_rules.suggest_mapping` and `server.normalize`: the header rules that turn a customer-level or CRM export into the engine's frames. No
+  upload calls them. The demo companies and the engine's tests use them as an adapter until ledger mode (section 14) replaces them.
+- The label-correction branch of `structures/corrections.py` (period and label options of a deck claim): the deck claims are still read, and
+  the claim register behind `OLD_CLAIMS` still lists them.
 
 ## 13. Build plan
 
@@ -371,9 +411,9 @@ line is removed).
 | 1 | masking module on every outbound payload, sheets and deck pages; counts on screen; explainer text | Sonnet | short Opus (privacy) |
 | 2 | sheet reader with the file map schema; cell checks with reasons; as-of per file and per audit; immutable readings; `sheet_reading` v1 prompt (owner pastes); fixture set and CI job; engine contract bump; old mapping path kept behind a flag for this PR only | Sonnet | Opus |
 | 3 | reviewer call; re-read; automatic register; cards; `reviewer` v1 prompt (owner pastes); three result tables | Sonnet | Opus |
-| 4 | delete the rules reading (section 12); file blocks as in 11.2 | Sonnet | none |
+| 4 | the engine reads the stored map by role (section 16); delete the rules reading (section 12), claims behind `OLD_CLAIMS`; the reviewer runs again whenever its last status is not read, reads maps without their series, and refusals log the input estimate; a per-file reading cap replaces the per-audit cap for files | Sonnet | none |
 
-Emergent updates after PR 2 and after PR 4. First run on the current test
+Emergent updates after PR 2 and after PR 4 (built; the owner's first run on the current test company's three files is the update). First run on the current test
 company's three files, expected: as-of month read from the monthly file with
 confirmed evidence, revenue row confirmed, plan-to-date variance computed, zero
 to three cards. Then the second company's files, before any prompt or rule
@@ -414,3 +454,34 @@ Each a failing test before a fix, on synthetic fixtures:
 8. masked name in a citation — compared in masked space, confirmed
 9. a check that would "fix" a citation — does not exist; only three outcomes
 10. a figure with no reference — cannot check, never confirmed
+
+## 16. Engine inputs by role
+
+From PR 4 every engine input comes from the stored map and its stored series (sections 4 and 9), by the role the reader gave the row. Code
+picks a row by role, a total (no segment) before a split, the granularity the metric needs, and does arithmetic on the cells the series holds. A
+row whose check was rejected is not an input. A metric runs when the rows it needs exist; otherwise its entry reads "needs a <role> row" and
+names the roles. It never reads "no S&M line" or the like. The results carry the entries in `role_metrics` (contract 16, server-only); the blocks
+the map feeds (`arr`, `mrr_series`, `revenue_series`, `customers_series`, `yearly_basis`) keep their shape.
+
+| Metric | Roles it needs | Basis | Rule |
+|---|---|---|---|
+| Ending ARR | arr, or mrr | monthly | the arr row at the latest actual month, else the mrr row × 12 |
+| MRR series | mrr | monthly | the mrr row month by month to the as-of month |
+| Monthly churn | churn_rate | monthly | the churn_rate row at the latest actual month, as the file states it (a fraction) |
+| Customer count | customers | monthly | the customers row at the latest actual month |
+| Growth | revenue, else arr, else mrr | monthly or yearly | month on month and year on year of a monthly flow row; year on year of a yearly row; a cumulative or last-12-months row gets no month-on-month |
+| Plan to date | revenue, forecast | monthly | actual to the as-of month against the plan row to the same month; the plan row is a forecast row of revenue (a P&L's forecast row of a cost line is not the revenue plan), a monthly one before any other, so a yearly plan beside it never takes its place; cumulative only where the plan row is cumulative (actual accumulated over the plan row's own span); a full-year plan row is never compared with actual-to-date; a plan cell on another sheet is cited with its sheet |
+| Yearly revenue | revenue | yearly | the revenue row of the fiscal year, labelled yearly |
+| Gross margin | revenue, cost_of_revenue | yearly | (revenue − cost of revenue) ÷ revenue |
+| S&M share | revenue, sales_marketing | yearly or monthly | S&M ÷ revenue in the latest period both rows hold |
+| CAC payback (yearly) | revenue, cost_of_revenue, sales_marketing | yearly | 12 × S&M ÷ (revenue growth × gross margin), labelled "yearly, revenue-based"; the net-new-ARR proxy also needs an mrr row |
+| R&D, G&A, opex share; EBITDA margin | revenue and rnd, ga, opex or ebitda | as the rows | the line ÷ revenue |
+| Bookings, cash, headcount | bookings, cash or headcount | as the row | the row at the latest actual month |
+| Reconciliation | any role stated by two sources | as the sources | the same metric and period from two or more of: a file's row, the sum of its twelve months for a year, a deck figure (not a plan figure, not a rejected one); sources on another basis or in another currency are not compared; money within 0.5 %, counts exact |
+
+Not in this PR, each its own change: ledger mode (customer-level and CRM files read into the engine; until then NRR, gross churn, Path to
+Plan, segment paths, cohorts, the quarterly CAC payback, sales cycle and win rate say "needs customer-level revenue lines" or "needs CRM
+deals"), `rate_scale` (a rate is used as the file states it), timestamps, card layout, formatters and fixtures.
+
+An entry whose calculation stops on an unexpected error reads "the calculation stopped on an unexpected <error type>; reported as Missing, not
+estimated" and the other metrics are unaffected (rule 20).

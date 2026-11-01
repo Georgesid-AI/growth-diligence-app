@@ -16,7 +16,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 import reading_fixtures as rf  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
-from app import as_of, checks, readings, sheet_reader  # noqa: E402
+from app import checks, readings, sheet_reader  # noqa: E402
 from app import column_rules as cr  # noqa: E402
 from app.llm import gateway  # noqa: E402
 from app.structures import reading_input, redact  # noqa: E402
@@ -196,18 +196,6 @@ def test_the_comparison_names_a_wrong_revenue_row_a_wrong_role_and_a_wrong_figur
     assert rf.compare(exp, "2024-06", exp["file_map"]) == []
 
 
-def test_the_test_companys_pnl_has_periods_down_the_sheet_and_its_month_comes_from_the_rules_path():
-    fixture = next(f for f in SHEETS if f["name"] == "testco_pnl")
-    sheet = workbook(fixture)[0]
-    ds = {"dtype": "pnl", "file": "pnl.csv", "mapping": {"month": "Month", "revenue": "Revenue"}, "rows": sheet.frame.to_dict("records")}
-    assert as_of.detect({"pnl": ds}) == {"month": "2024-02", "file": "pnl.csv", "evidence": None}
-    assert fixture["expected_map"]["as_of_source"] == "rules"
-    assert rf.compare(fixture["expected_map"], "2024-03", {"sheets": []}), "a month the rules path does not give is a difference"
-    revenue = rf.manifest()[-1]
-    sheet = cr.read_workbook(rf.path_of(revenue).read_bytes(), "revenue.csv")
-    sent = redact.parse_reading_text(reading_input.reading_text(sheet))
-    assert len(sent) == 1 and len(sent[0]["cells"]) == len(reading_input.sheet_cells(sheet[0])), \
-        "no rule decides a sheet is a ledger: an invoice list is sent like any sheet, every cell"
 
 
 def test_the_deck_fixture_has_rotated_axis_labels_and_parts_that_sum_to_its_headline():

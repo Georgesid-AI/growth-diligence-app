@@ -532,51 +532,8 @@ LISTED_CURRENCIES = ("EUR", "USD", "GBP", "CHF", "BGN", "RON", "PLN", "CZK", "HU
                      "RSD", "JPY", "CNY", "INR", "AUD", "CAD")
 
 
-def test_deck_structures_use_the_labelling_schema_and_a_column_mapping_keeps_its_own():
-    """Spec section 3: one labelling schema for every deck type, {"type", "labels", "pairs"}; a label holds exactly
-    item, metric, period, unit, unit_other and actual_or_forecast: no value, cell id or flag. Column mapping keeps
-    its own schema, and the gateway picks the schema by type."""
-    from app.llm import schemas
-    schema = schemas.labelling_output_schema()
-    assert list(schema["properties"]) == ["type", "labels", "pairs"] == schema["required"]
-    assert schema["additionalProperties"] is False and schema["properties"]["type"]["enum"] == list(schemas.DECK_TYPES)
-    label = schema["properties"]["labels"]["items"]
-    assert list(label["properties"]) == ["item", "metric", "period", "unit", "unit_other", "actual_or_forecast"]
-    assert label["required"] == list(label["properties"]) and label["additionalProperties"] is False
-    assert label["properties"]["metric"]["enum"] == [*schemas.CLAIM_METRICS, "use_of_funds", "other", "not_a_metric"]
-    pair = schema["properties"]["pairs"]["items"]
-    assert pair["properties"] == {"line": {"type": "string"}, "date": {"type": "string"}, "category": {
-        "type": "string", "enum": ["launch", "feature", "expansion", "partnership", "hiring", "break_even", "funding",
-                                   "certification", "other"]}}
-    assert pair["required"] == ["line", "date", "category"] and pair["additionalProperties"] is False
-    assert all(schemas.output_schema(kind) == schema for kind in schemas.DECK_TYPES)
-    assert schemas.output_schema("column_mapping") == schemas.structure_output_schema()
-    assert set(schemas.output_schema("column_mapping")["properties"]) == {"type", "items"}
-    result, adapter = _read(_db(), MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
-    assert (result.status, result.items, result.labels) == ("read", ONE_MAPPING["items"], [])
-    assert set(adapter.requests[0]["json_schema"]["properties"]) == {"type", "items"}
-    assert set(adapter.count_requests[-1]["json_schema"]["properties"]) == {"type", "items"}
 
 
-def test_each_schemas_hash_enters_the_cache_key_of_its_own_type(monkeypatch):
-    """Spec section 3: each schema's hash enters the cache key, so a reading stored under another schema is never
-    served: the next read misses the cache and calls the model. A change to one schema moves only its own keys."""
-    from app.llm import schemas
-    db = _db()
-    first, _ = _read(db)
-    mapping, _ = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
-    again, adapter = _read(db)
-    assert (again.cache_hit, adapter.calls, again.key) == (True, 0, first.key)
-    labelling = schemas.labelling_output_schema()
-    monkeypatch.setattr(schemas, "labelling_output_schema", lambda: {**labelling, "required": ["labels", "type", "pairs"]})
-    changed, adapter = _read(db)
-    assert (changed.status, changed.cache_hit, adapter.calls) == ("read", False, 1) and changed.key != first.key
-    kept, adapter = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
-    assert (kept.cache_hit, kept.key, adapter.calls) == (True, mapping.key, 0), "the column-mapping key stays"
-    old = schemas.structure_output_schema()
-    monkeypatch.setattr(schemas, "structure_output_schema", lambda: {**old, "required": ["items", "type"]})
-    moved, adapter = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
-    assert (moved.cache_hit, adapter.calls) == (False, 1) and moved.key != mapping.key
 
 
 
@@ -894,28 +851,6 @@ def test_a_reply_that_fails_validation_logs_the_check_it_failed(bad, check, capl
     assert line.endswith(f"reason=parse_failed status=- type=- fields=- check={check}"), line
 
 
-def test_the_check_follows_the_last_reply_and_a_mapping_has_its_own_metric_list(caplog):
-    """The reask's check is the one logged; a column mapping's metric outside the sheet fields is metric_list, a cell
-    outside the structure other, and a failure that is not a reply's logs check=-."""
-    import logging
-    unknown = json.dumps({**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "i9"}]})
-    mapping = json.loads(json.dumps(ONE_MAPPING))
-    mapping["items"][0]["metric"] = "ebitda"
-    elsewhere = json.loads(json.dumps(ONE_MAPPING))
-    elsewhere["items"][0]["value_cell"] = "r9c9"
-
-    class Refusing(t.FakeAdapter):
-        def complete(self, **kwargs):
-            self.calls += 1
-            raise gateway.GatewayError("model_refused", "declined")
-    with caplog.at_level(logging.INFO):
-        _read(_db(), adapter=t.FakeAdapter(replies=["not json", unknown]))
-        _read(_db(), MAPPING_TEXT, "column_mapping", replies=[mapping])
-        _read(_db(), MAPPING_TEXT, "column_mapping", replies=[elsewhere])
-        _read(_db(), adapter=Refusing())
-    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert [line.rsplit(" ", 1)[1] for line in lines] == ["check=item_count", "check=metric_list", "check=other",
-                                                         "check=-"]
 
 
 def _pair(line, date, category="launch"):
@@ -968,18 +903,6 @@ def test_each_roadmap_category_maps_to_a_claim_type():
     assert tuple(verify.MILESTONE_TYPES) == schemas.ROADMAP_CATEGORIES
 
 
-def test_the_reply_follows_the_type_python_sent_and_a_corrected_type_is_only_logged(caplog):
-    import logging
-    db = _db()
-    with caplog.at_level(logging.INFO):
-        result, _ = _read(db, replies=[{**REPLY, "type": "unit_economics"}])
-    assert (result.status, result.type, result.model_type) == ("read", "table", "unit_economics")
-    assert result.labels == REPLY["labels"]
-    stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert (stored["type"], stored["model_type"]) == ("table", "unit_economics")
-    assert "type_change=table->unit_economics" in caplog.text
-    result, adapter = _read(_db(), MAPPING_TEXT, "column_mapping", replies=[REPLY, REPLY])
-    assert result.status == "not_read" and adapter.calls == 2, "a column mapping stays a column mapping"
 
 
 def test_the_schema_lists_match_the_claim_types_and_the_mapping_fields():
@@ -1102,7 +1025,8 @@ def test_an_audit_of_8_decks_of_5_structures_fits_the_token_cap():
 
 def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
     """A structure the daily spend cap or the 400,000-token cap refuses was not read and printed nothing, so a run
-    that hit a cap showed only "0 of N structures read". It now logs reason=spend_cap or reason=token_cap."""
+    that hit a cap showed only "0 of N structures read". It logs the one "ai call refused" line, reason=spend_cap or reason=token_cap, with the
+    input tokens the call would have sent; there is no "structure not read" line beside it (PR 4)."""
     import logging
     from datetime import datetime, timezone
     db = _db()
@@ -1111,9 +1035,9 @@ def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         result, adapter = _read(db)
     assert (result.status, adapter.calls) == ("stopped", 0)
-    assert caplog.text.count("structure not read:") == 1
-    assert "structure not read: run_id=audit-s step=structures hash=" in caplog.text
-    assert "reason=token_cap status=- type=-" in caplog.text
+    assert caplog.text.count("structure not read:") == 0
+    assert caplog.text.count("ai call refused:") == 1 and "reason=token_cap used=399500 cap=400000 input=" in caplog.text
+    assert db["llm_calls"].docs[-1]["status"] == "structure_token_cap_reached" and db["llm_calls"].docs[-1]["refused_input_tokens"] > 0
     caplog.clear()
     monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
     db = _db()
@@ -1122,7 +1046,7 @@ def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         result, adapter = _read(db)
     assert (result.status, adapter.calls) == ("not_read", 0)
-    assert caplog.text.count("structure not read:") == 1 and "reason=spend_cap status=- type=-" in caplog.text
+    assert caplog.text.count("structure not read:") == 0 and caplog.text.count("ai call refused:") == 1 and "reason=spend_cap" in caplog.text
     assert db["llm_calls"].docs[-1]["status"] == "daily_spend_cap_exceeded", "llm_calls keeps the guard's code"
 
 
@@ -1211,15 +1135,6 @@ def _sheet():
     return columns, rows
 
 
-def test_numeric_and_date_columns_send_up_to_3_samples_and_text_columns_a_profile_only():
-    columns, rows = _sheet()
-    text = structures.column_mapping_text(columns, rows, "Target", {}, ("Kundennummer",))
-    parsed = redact.parse_column_text(text)
-    assert parsed["samples"] == {2: ["2025-01-28", "2025-02-28", "2025-03-28"], 3: ["100.5", "201", "301.5"]}
-    assert set(parsed["profiles"]) == {1, 4, 5}, "text columns and the customer column send a profile"
-    assert parsed["profiles"][1] == {"distinct": 5, "length": 19, "shape": "Aa Aa Aa 0"}
-    assert SECRET.lower() not in text.lower() and "10001" not in text, "no text cell value, no customer number"
-    assert redact.column_text_problem(text) is None
 
 
 def test_the_header_stack_is_capped_at_the_3_rows_nearest_the_data():
@@ -1260,60 +1175,14 @@ MAPPING_REPLY = {"type": "column_mapping", "items": [
 ONE_MAPPING = {"type": "column_mapping", "items": [MAPPING_REPLY["items"][0]]}     # fits MAPPING_TEXT
 
 
-def test_the_model_proposes_what_the_aliases_miss_and_the_screen_marks_it_as_a_suggestion(monkeypatch):
-    client, db, adapter = _api(monkeypatch, [MAPPING_REPLY])
-    r = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev.csv", GERMAN)})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert adapter.calls == 1 and json.loads(adapter.payloads[0])["type"] == "column_mapping"
-    assert body["suggested_mapping"]["customer_id"] == "Kunde" and body["mapping_source"]["customer_id"] == "ai"
-    assert body["suggested_mapping"]["invoice_date"] == "Rechnungsdatum"
-    assert "deal_id" not in body["suggested_mapping"], "a field of another file type is left out"
-    sent = json.loads(adapter.payloads[0])["text"]
-    assert "Acme" not in sent and "Beta" not in sent, "customer cells travel as a profile"
-    stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert stored["statuses"] == ["suggestion"] * 5, "a column mapping is never Verified"
 
 
-def test_one_click_confirms_and_the_confirmed_mapping_is_reused_for_the_same_headers(monkeypatch):
-    client, db, adapter = _api(monkeypatch, [MAPPING_REPLY])
-    client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev.csv", GERMAN)})
-    mapping = {"customer_id": "Kunde", "invoice_date": "Rechnungsdatum", "amount": "Betrag", "currency": "Waehrung"}
-    assert client.put(f"/api/audits/{AUDIT}/datasets/revenue/mapping", json={"mapping": mapping}).status_code == 200
-    again = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev2.csv", GERMAN)}).json()
-    assert adapter.calls == 1, "the stored correction is used: no second model call"
-    assert {f: again["suggested_mapping"][f] for f in mapping} == mapping
-    assert set(again["mapping_source"].values()) == {"stored"}
-    assert again["status"] == "same_file", "the same bytes: the saved mapping is applied, no prompt"
-    client.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": AUDIT_DOC["company_name"]})
-    assert db[structures.COLUMN_MAPPINGS_COLLECTION].docs == [], "Delete audit removes the stored mapping"
 
 
-def test_without_consent_the_mapping_comes_from_the_aliases_only(monkeypatch):
-    client, _, adapter = _api(monkeypatch, [MAPPING_REPLY], consent=False)
-    body = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev.csv", GERMAN)}).json()
-    assert adapter.calls == 0 and body["ai_reading"]["status"] == "no_consent"
-    assert "ai" not in body["mapping_source"].values()
 
 
-def test_a_proposal_names_a_field_of_this_file_type_and_cites_an_existing_header():
-    items = [dict(MAPPING_REPLY["items"][0]), {**MAPPING_REPLY["items"][0], "metric": "deal_id", "value_cell": "r1c3"},
-             {**MAPPING_REPLY["items"][0], "metric": "amount", "value_cell": "r1c9"},
-             {**MAPPING_REPLY["items"][0], "metric": "currency", "value_cell": "r1c1"}]
-    fields = ["customer_id", "invoice_date", "amount", "currency"]
-    assert structures.proposed_mapping(items, ["Kunde", "Datum", "Betrag"], fields) == {"customer_id": "Kunde"}, \
-        "deal_id is a CRM field, r1c9 does not exist, Kunde is already proposed"
 
 
-def test_the_aliases_keep_their_fields_and_the_model_fills_the_rest(monkeypatch):
-    reply = {"type": "column_mapping", "items": [
-        {**MAPPING_REPLY["items"][0], "metric": "amount", "value_cell": "r1c4"},
-        {**MAPPING_REPLY["items"][0], "metric": "customer_id", "value_cell": "r1c1"}]}
-    client, _, _ = _api(monkeypatch, [reply])
-    sheet = "Kunde,Rechnungsdatum,Amount,Betrag,Waehrung\nAcme,2025-01-31,1,2,EUR\n"
-    body = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("r.csv", sheet)}).json()
-    assert (body["suggested_mapping"]["amount"], body["mapping_source"]["amount"]) == ("Amount", "rules")
-    assert (body["suggested_mapping"]["customer_id"], body["mapping_source"]["customer_id"]) == ("Kunde", "ai")
 
 
 # ---------------------------------------------------------------------------
@@ -1400,9 +1269,18 @@ def _upload_deck(client, name="05-zero2hero.pdf"):
     return r.json()
 
 
+def test_a_deck_is_read_at_its_upload_with_no_file_in_the_audit_and_never_waits(monkeypatch):
+    """PR 4 (read-check-review.md section 12): there is no mapping to wait for, so a deck never waits for a revenue file."""
+    client, db, adapter = _deck_api(monkeypatch)
+    assert db["datasets"].docs == []
+    _upload_deck(client)
+    deck = _deck(client)["decks"][0]
+    assert deck["ai_status"] == "read" and adapter.calls > 0
+    assert not hasattr(structures, "revenue_ready"), "the gate is gone, not a function that answers True"
+
+
 def _map_revenue(client):
-    client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev.csv", REVENUE)})
-    assert client.put(f"/api/audits/{AUDIT}/datasets/revenue/mapping", json={"mapping": REVENUE_MAPPING}).status_code == 200
+    """There is no mapping to wait for since PR 4 (read-check-review.md section 12): a deck is read at its upload."""
 
 
 def _deck(client):
@@ -1503,31 +1381,8 @@ def test_ticking_consent_later_stops_at_the_testers_allowance_like_any_structure
     assert {c["status"] for c in db["llm_calls"].docs} == {"monthly_allowance_reached"}
 
 
-def test_ticking_consent_while_the_revenue_file_is_unmapped_makes_the_decks_wait_and_a_second_tick_save_queues_nothing(monkeypatch):
-    client, db, adapter = _deck_api(monkeypatch, consent=False)
-    _upload_deck(client)
-    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True})
-    assert _deck(client)["decks"][0]["ai_status"] == "waiting" and adapter.calls == 0
-    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True, "target_arr": 5})       # no change in consent
-    assert _deck(client)["decks"][0]["ai_status"] == "waiting" and adapter.calls == 0
 
 
-def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeypatch):
-    client, db, adapter = _deck_api(monkeypatch)
-    upload = _upload_deck(client)
-    listed = _deck(client)
-    assert listed["decks"][0]["ai_status"] == "waiting" and listed["decks"][0]["ai_message"] == "waiting for revenue file"
-    assert adapter.calls == 0, "nothing is sent before the customers are in the mapping"
-    assert not [c for c in listed["candidates"] if c.get("origin") == "ai"]
-    _map_revenue(client)
-    calls_for_mapping = 1                    # with consent every upload asks the model once (chat-upload.md section 4.2)
-    assert adapter.calls == calls_for_mapping + upload["structures"], "every structure read once"
-    deck = _deck(client)["decks"][0]
-    assert deck["ai_status"] == "read" and deck["sent_pages"] == [11, 17, 19, 22]
-    assert "ai_cost_usd" not in deck, "the deck's AI log shows no cost to a tester (usage-and-allowance.md section 9)"
-    usage = client.get(f"/api/runs/{AUDIT}/llm-usage").json()
-    assert usage["by_deck"][upload["deck_id"]]["calls"] == upload["structures"] and usage["calls"] == 0
-    assert usage["structure_calls"] == upload["structures"] + calls_for_mapping
 
 
 def test_results_show_in_the_approval_list_labelled_and_citing_their_cell(monkeypatch):
@@ -1735,15 +1590,6 @@ def test_unticked_consent_is_the_python_only_path(monkeypatch):
     assert listed["candidates"] and not [c for c in listed["candidates"] if c.get("origin") == "ai"]
 
 
-def test_a_deck_already_read_is_not_sent_again_when_the_crm_file_is_mapped_later(monkeypatch):
-    client, db, adapter = _deck_api(monkeypatch)
-    _map_revenue(client)
-    _upload_deck(client)
-    before = adapter.calls
-    crm = "Deal ID,Account,Created,Close Date,Stage,Amount\nD1,Zeta,2025-01-01,2025-02-01,won,10\n"
-    client.post(f"/api/audits/{AUDIT}/datasets/crm/upload", files={"file": ("crm.csv", crm)})
-    client.put(f"/api/audits/{AUDIT}/datasets/crm/mapping", json={"mapping": {"deal_id": "Deal ID"}})
-    assert adapter.calls == before + 1, "only the CRM file's own column-mapping call"
 
 
 def test_uploading_the_same_deck_again_is_served_from_the_cache_and_lists_no_row_twice(monkeypatch):
@@ -1890,12 +1736,13 @@ def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client)
-    assert db[gateway.STRUCTURES_COLLECTION].docs and db["audits"].docs[0].get("token_map") and db["column_mappings"].docs
+    assert db[gateway.STRUCTURES_COLLECTION].docs
+    db["audits"].docs[0]["token_map"] = {"Zero2Hero Partner": "Client-01"}         # learned while a payload was masked
     assert all(doc.get("items") for doc in db[gateway.STRUCTURES_COLLECTION].docs if "labels" in doc["output"])
     purged = client.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": AUDIT_DOC["company_name"]}).json()
     assert purged["llm_purged"]["llm_structures"] > 0, "the replies and their item lists go with the audit"
     assert not any(d.get("token_map") for d in db["audits"].docs), "the token map goes with the audit"
-    for name in (gateway.STRUCTURES_COLLECTION, "column_mappings", "llm_calls", "deck_candidates",
+    for name in (gateway.STRUCTURES_COLLECTION, "llm_calls", "deck_candidates",
                  "deck_text"):
         assert db[name].docs == [], name
 
@@ -2656,17 +2503,6 @@ def test_ordinary_text_with_a_dot_is_not_taken_for_a_file_name():
     assert result.status == "refused" and adapter.calls == 0
 
 
-def test_a_metric_must_belong_to_the_kind_of_structure_read():
-    deck_reply = {**REPLY, "labels": [{**REPLY["labels"][0], "metric": "invoice_date"}, REPLY["labels"][1]]}
-    result, adapter = _read(_db(), replies=[deck_reply, deck_reply])
-    assert result.status == "not_read" and adapter.calls == 2, "a spreadsheet field is not a deck claim"
-    mapping_reply = {"type": "column_mapping", "items": [{**MAPPING_REPLY["items"][0], "metric": "revenue_growth"}]}
-    result, adapter = _read(_db(), "r1c1: Customer\nr1c2: Amount\nc2 sample: 1200", "column_mapping",
-                            replies=[mapping_reply, mapping_reply])
-    assert result.status == "not_read" and adapter.calls == 2, "a claim type is not a spreadsheet field"
-    both = {"type": "column_mapping", "items": [{**MAPPING_REPLY["items"][0], "metric": "revenue", "value_cell": "r1c2"}]}
-    result, _ = _read(_db(), "r1c1: Customer\nr1c2: Revenue\nc2 sample: 1200", "column_mapping", replies=[both])
-    assert result.status == "read", "revenue is a P&L field and a claim type"
 
 
 def test_an_edited_ai_row_keeps_the_label_under_parsed_never_next_to_the_analysts_value(monkeypatch):
@@ -2684,7 +2520,6 @@ def test_every_structure_refusal_reason_in_the_code_is_declared_in_the_boundary_
     import test_gateway_data_boundary as boundary
     found = set()
     for path, function in ((BACKEND / "app" / "llm" / "gateway.py", "structure_text_problem"),
-                           (BACKEND / "app" / "structures" / "redact.py", "column_text_problem"),
                            (BACKEND / "app" / "structures" / "redact.py", "page_text_problem")):
         tree = _ast.parse(path.read_text(encoding="utf-8"))
         body = next(n for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef) and n.name == function)

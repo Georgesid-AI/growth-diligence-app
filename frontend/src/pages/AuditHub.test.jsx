@@ -301,16 +301,11 @@ describe("the audit tile (docs/specs/chat-upload.md section 24)", () => {
       expect(api.runStage.mock.calls).toEqual([["a1", "engine"], ["a1", "claims"]]);
       expect(mockNavigate.mock.calls.map((c) => c[0])).toEqual(["/audit/a1/dashboard"]);
     });
-    test("a run that waits for the analyst's answers ends on the Audit page too", async () => {
-      api.runStage.mockResolvedValue({ stage: "engine", status: "needs_review" });
-      await press("run-audit-a1");
-      expect(mockNavigate.mock.calls.map((c) => c[0])).toEqual(["/audit/a1/dashboard"]);
-    });
-    test("with no mapped file the audit does not run: Upload & Mapping opens with one line saying what is missing", async () => {
+    test("with no file the audit does not run: Upload & Mapping opens with one line saying what is missing", async () => {
       api.getDatasets.mockResolvedValue([]);
       await press("run-audit-a1");
       expect(api.runStage).not.toHaveBeenCalled();
-      expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/mapping", { state: { missing: "The audit cannot run yet. Missing: a mapped file." } });
+      expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/mapping", { state: { missing: "The audit cannot run yet. Missing: a file." } });
     });
     test("with Target ARR and Target date not set it still runs: they are parked and never block", async () => {
       await press("run-audit-a2");

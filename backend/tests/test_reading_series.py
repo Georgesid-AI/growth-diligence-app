@@ -16,7 +16,7 @@ sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
 from app import checks, readings, reading_export, series  # noqa: E402
-from test_chat_upload import AUDIT  # noqa: E402
+from upload_support import AUDIT  # noqa: E402
 from test_checks import build, cells_of, row  # noqa: E402
 from test_sheet_reader_flow import MONTHLY, flow, monthly, upload  # noqa: E402
 

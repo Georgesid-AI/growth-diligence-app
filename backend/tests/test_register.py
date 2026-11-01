@@ -16,7 +16,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 from app import cards, checks, lines, readings, register  # noqa: E402
 from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION  # noqa: E402
-from test_chat_upload import AUDIT  # noqa: E402
+from upload_support import AUDIT  # noqa: E402
 from test_reviewer import (ReviewRouter, audit_of, candidate, deck, finding, map_with, review, start)  # noqa: E402
 from test_sheet_reader_flow import COMPANY, MONTHLY, SHEET, flow, good_map, monthly, upload  # noqa: E402
 

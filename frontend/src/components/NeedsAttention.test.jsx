@@ -78,46 +78,36 @@ test("an Other figure is never a question; an open Definition check asks Yes / N
   } finally { await done(); }
 });
 
-test("a column that waits is a card; mapping questions come before claims", async () => {
+test("a file with a column that waits is no question: there is no mapping to answer", async () => {
   const view = { dtype: "revenue", file: "revenue.csv", pending: 1, missing_required: [], fields: { required: ["amount"], optional: [] },
     columns: [{ column: "Amt", field: "amount", state: "matched", pending: true, confidence: 70, decision: null }] };
   const { host, done } = await mount([claim("k1")], [view]);
   try {
     const cards = host.querySelectorAll('[data-testid="attention-card"]');
-    expect(cards.length).toBe(2);
-    expect(cards[0].querySelector('[data-testid="attention-mapping"]')).not.toBeNull();
-    expect(cards[1].querySelector('[data-testid="attention-claim"]')).not.toBeNull();
+    expect(cards.length).toBe(1);
+    expect(host.querySelector('[data-testid="attention-mapping"]')).toBeNull();
+    expect(cards[0].querySelector('[data-testid="attention-claim"]')).not.toBeNull();
   } finally { await done(); }
 });
-
-const ids = (host) => [...host.querySelectorAll('[data-testid="attention-claim"]')].map((n) => /k\d/.exec(n.textContent)?.[0]);
-
-test("the claim questions follow the server's ranking and the questions of the five come first, before the columns", async () => {
-  const view = { dtype: "revenue", file: "revenue.csv", pending: 1, missing_required: [], fields: { required: ["amount"], optional: [] },
-    columns: [{ column: "Amt", field: "amount", state: "matched", pending: true, confidence: 70, decision: null }] };
-  const cs = [1, 2, 3, 4].map((n) => claim(`k${n}`, { snippet: `k${n}` }));
+test("the claim questions follow the server's ranking and the questions of the five come first", async () => {
+  const cs = [1, 2, 3, 4].map((n) => claim(`k${n}`, { value: n * 111111 }));
   const attention = [{ id: "k3", in_top5: true }, { id: "k1", in_top5: true }, { id: "k4", in_top5: false }, { id: "k2", in_top5: false }];
-  const { host, done } = await mount(cs, [view], {}, attention);
+  const { host, done } = await mount(cs, [], {}, attention);
   try {
     await act(async () => { q(host, "attention-more").click(); });
-    const order = [...host.querySelectorAll('[data-testid="attention-card"]')].map((card) => (card.querySelector('[data-testid="attention-mapping"]') ? "column" : "claim"));
-    expect(order).toEqual(["claim", "claim", "column", "claim", "claim"]);
-    expect(q(host, "attention-count").textContent).toBe("5 questions need a word from you");
+    const order = [...host.querySelectorAll('[data-testid="attention-card"]')].map((card) => ["333", "111", "444", "222"].find((n) => card.textContent.includes(n)));
+    expect(order).toEqual(["333", "111", "444", "222"]);
+    expect(q(host, "attention-count").textContent).toBe("4 questions need a word from you");
   } finally { await done(); }
 });
-
-test("without a ranking the claims keep the server's list order and the columns stay first", async () => {
-  const view = { dtype: "revenue", file: "revenue.csv", pending: 1, missing_required: [], fields: { required: ["amount"], optional: [] },
-    columns: [{ column: "Amt", field: "amount", state: "matched", pending: true, confidence: 70, decision: null }] };
-  const { host, done } = await mount([claim("k2", { value: 222 }), claim("k1", { value: 111 })], [view]);
+test("without a ranking the claims keep the server's list order", async () => {
+  const { host, done } = await mount([claim("k2", { value: 222 }), claim("k1", { value: 111 })], []);
   try {
     const cards = [...host.querySelectorAll('[data-testid="attention-card"]')];
-    expect(cards.map((card) => (card.querySelector('[data-testid="attention-mapping"]') ? "column" : "claim"))).toEqual(["column", "claim", "claim"]);
-    expect(cards[1].textContent).toContain("222");
-    expect(cards[2].textContent).toContain("111");
+    expect(cards[0].textContent).toContain("222");
+    expect(cards[1].textContent).toContain("111");
   } finally { await done(); }
 });
-
 test("a card for a claim says Keep and Not a company claim; the old Approve and Reject words are gone", async () => {
   const { host, done } = await mount([claim("k1")]);
   try {

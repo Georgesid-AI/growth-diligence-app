@@ -287,18 +287,6 @@ def test_a_users_claim_whose_label_names_the_population_asks_nothing_and_one_tha
     assert cm.candidate_fields({**base, "label_from": "Users"}, None)["population"] is None
 
 
-def test_pages_with_a_stored_label_correction_are_marked_so_a_run_audit_reads_them_again():
-    # hotfix of PR 182: rows corrected to the title (r1c1) in stored results are stale; the mark is idempotent and touches no other page
-    db = tc._db()
-    db[TEXT_COLLECTION].docs.append({
-        "audit_id": AUDIT, "deck_id": "d1", "file": "deck.pdf", "ai_status": "read", "retry_pages": [],
-        "page_reads": [{"pages": [1], "status": "read"}, {"pages": [2], "status": "read"}],
-        "diagnostics": [{"page": 1, "kind": "corrected", "field": "label", "reason": checker.LABEL_MISMATCH, "original": "r2c2", "corrected": "r1c1"},
-                        {"page": 2, "kind": "corrected", "field": "period", "reason": "x", "original": "a", "corrected": "b"}]})
-    assert asyncio.run(structures.mark_label_corrections_stale(db)) == 1
-    deck_doc, = db[TEXT_COLLECTION].docs
-    assert deck_doc["retry_pages"] == [1] and [r["status"] for r in deck_doc["page_reads"]] == ["stale", "read"]
-    assert asyncio.run(structures.mark_label_corrections_stale(db)) == 0
 
 
 def test_a_page_read_again_replaces_an_auto_entered_row_and_keeps_an_analyst_edited_one():

@@ -63,8 +63,9 @@ def test_listed_paths_cover_everything_the_sheet_reader_imports():
     assert not missing, f"imported by the sheet reader but not in .github/reading-path.txt: {missing}"
 
 
-def test_recognition_is_listed():
-    assert "backend/app/recognition.py" in LISTED
+def test_the_modules_that_replaced_recognition_are_listed_and_recognition_is_gone():
+    assert {"backend/app/periods.py", "backend/app/stored_sheets.py", "backend/app/role_engine.py"} <= set(LISTED)
+    assert "backend/app/recognition.py" not in LISTED and not (REPO / "backend" / "app" / "recognition.py").exists()
 
 
 DECK_LISTED = [line.strip() for line in (REPO / ".github" / "deck-reading-path.txt").read_text().splitlines() if line.strip() and not line.startswith("#")]

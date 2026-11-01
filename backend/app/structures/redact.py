@@ -19,7 +19,7 @@ from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
 from ..llm.redaction import TOKEN_PREFIX, norm
-from ..llm.schemas import MAPPING_FIELDS
+
 
 _LINE = re.compile(r"^r(?P<row>\d+)c(?P<col>\d+)(?P<title> title)?: (?P<text>.*?)"
                    r"(?: \(r(?P=row)c(?P=col):r(?P<row2>\d+)c(?P<col2>\d+)\))?$")
@@ -200,69 +200,15 @@ def items_in_format(lines: List[str], cells: List[Dict], roadmap: bool) -> bool:
 # ---------------------------------------------------------------------------
 MAX_HEADER_ROWS = 3
 MAX_SAMPLES = 3
-_SAMPLE_LINE = re.compile(r"^c(?P<col>\d+) sample: (?P<value>.+)$")
-_HINT_LINE = re.compile(r"^c(?P<col>\d+) rule: (?P<field>.+?) (?P<confidence>\d+)$")
-_PROFILE_LINE = re.compile(r"^c(?P<col>\d+) profile: distinct (?P<distinct>\d+), typical length (?P<length>\d+), "
-                           r"shape (?P<shape>[Aa0 \-_./@:,#()+&']{1,20})$")
 # A sample value: a number (sign, currency symbol, separators, %) or an ISO date or date-time.
 SAMPLE_VALUE = re.compile(r"^(?:[-+(]?\s?(?:[£$€¥]\s?)?\d[\d,]*(?:\.\d+)?\s?%?\)?"
                           r"|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?)$")
 
 
-def column_text(headers: List[Dict], samples: Dict[int, List[str]], profiles: Dict[int, Dict],
-                hints: Optional[Dict[int, Tuple[str, int]]] = None) -> str:
-    """The column-mapping text: header cells, then samples, then profiles, then the rules' hints, each in column order."""
-    lines = [structure_text(headers)] if headers else []
-    lines += [f"c{col} sample: {value}" for col in sorted(samples) for value in samples[col]]
-    lines += [f"c{col} profile: distinct {p['distinct']}, typical length {p['length']}, shape {p['shape']}"
-              for col, p in sorted(profiles.items())]
-    lines += [f"c{col} rule: {field} {confidence}" for col, (field, confidence) in sorted((hints or {}).items())]
-    return "\n".join(line for line in lines if line)
 
 
-def parse_column_text(text: str) -> Optional[Dict]:
-    """{"headers": cells, "samples": {col: [values]}, "profiles": {col: {...}}, "hints": [(col, field, confidence)]},
-    or None when a line is neither a header cell, a sample, a profile nor a hint."""
-    headers, samples, profiles, hints = [], {}, {}, []
-    for line in (text or "").split("\n"):
-        sample, profile, hint = _SAMPLE_LINE.match(line), _PROFILE_LINE.match(line), _HINT_LINE.match(line)
-        if hint:
-            hints.append((int(hint.group("col")), hint.group("field"), int(hint.group("confidence"))))
-        elif sample:
-            samples.setdefault(int(sample.group("col")), []).append(sample.group("value"))
-        elif profile:
-            profiles[int(profile.group("col"))] = {"distinct": int(profile.group("distinct")),
-                                                   "length": int(profile.group("length")), "shape": profile.group("shape")}
-        else:
-            cells = parse_structure_text(line)
-            if not cells:
-                return None
-            headers += cells
-    return {"headers": headers, "samples": samples, "profiles": profiles, "hints": hints}
 
 
-def column_text_problem(text: str) -> Optional[str]:
-    """Why a column-mapping text may not reach the model, or None: more than 3 header rows, more than
-    3 samples for a column, a sample that is not a number or a date (a text cell value), a column
-    with both samples and a profile, or a hint that is not one field of the closed list and a
-    confidence from 0 to 100, once per column."""
-    parsed = parse_column_text(text)
-    if parsed is None:
-        return "not_cells"
-    if len({c["row"] for c in parsed["headers"]}) > MAX_HEADER_ROWS or \
-            any(c["row"] + c.get("row_span", 1) - 1 > MAX_HEADER_ROWS for c in parsed["headers"]):
-        return "too_many_header_rows"
-    if any(len(v) > MAX_SAMPLES for v in parsed["samples"].values()):
-        return "too_many_samples"
-    if any(not SAMPLE_VALUE.match(v) for values in parsed["samples"].values() for v in values):
-        return "text_value"
-    if set(parsed["samples"]) & set(parsed["profiles"]):
-        return "text_value"
-    hinted = [col for col, _, _ in parsed["hints"]]
-    if len(set(hinted)) != len(hinted) or \
-            any(field not in MAPPING_FIELDS or confidence > 100 for _, field, confidence in parsed["hints"]):
-        return "bad_hint"
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -279,12 +225,6 @@ def column_text_problem(text: str) -> Optional[str]:
 FILE_MAX_SHEETS = 6
 FILE_MAX_TITLE_ROWS = 6
 FILE_MAX_COLUMNS = 40
-_FT_SHEET = re.compile(r"^s(?P<s>\d+): (?P<text>.+)$")
-_FT_TITLE = re.compile(r"^s(?P<s>\d+) title r(?P<row>\d+)c(?P<col>\d+): (?P<text>.+)$")
-_FT_HEADER = re.compile(r"^s(?P<s>\d+) header r(?P<row>\d+)c(?P<col>\d+): (?P<text>.+)$")
-_FT_SAMPLE = re.compile(r"^s(?P<s>\d+) c(?P<col>\d+) sample: (?P<value>.+)$")
-_FT_PROFILE = re.compile(r"^s(?P<s>\d+) c(?P<col>\d+) profile: distinct (?P<distinct>\d+), typical length (?P<length>\d+), "
-                         r"shape (?P<shape>[Aa0 \-_./@:,#()+&']{1,20})$")
 
 
 def file_type_text(sheets: List[Dict]) -> str:
@@ -300,33 +240,6 @@ def file_type_text(sheets: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def parse_file_type_text(text: str) -> Optional[List[Dict]]:
-    """The sheets of a file-type text, or None when a line is of no kind above or a sheet line is out of order."""
-    sheets: Dict[int, Dict] = {}
-    for line in (text or "").split("\n"):
-        for kind, rx in (("name", _FT_SHEET), ("titles", _FT_TITLE), ("headers", _FT_HEADER), ("sample", _FT_SAMPLE),
-                         ("profile", _FT_PROFILE)):
-            m = rx.match(line)
-            if m:
-                break
-        else:
-            return None
-        k = int(m.group("s"))
-        if kind == "name":
-            if k in sheets or k != len(sheets) + 1:
-                return None
-            sheets[k] = {"name": m.group("text"), "titles": [], "headers": [], "samples": {}, "profiles": {}}
-            continue
-        if k not in sheets:
-            return None
-        if kind in ("titles", "headers"):
-            sheets[k][kind].append({"row": int(m.group("row")), "col": int(m.group("col")), "text": m.group("text")})
-        elif kind == "sample":
-            sheets[k]["samples"].setdefault(int(m.group("col")), []).append(m.group("value"))
-        else:
-            sheets[k]["profiles"][int(m.group("col"))] = {"distinct": int(m.group("distinct")),
-                                                           "length": int(m.group("length")), "shape": m.group("shape")}
-    return list(sheets.values()) or None
 
 
 def file_type_cells(sheet: Dict) -> List[Dict]:
@@ -334,24 +247,6 @@ def file_type_cells(sheet: Dict) -> List[Dict]:
     return [{"row": 0, "col": 0, "text": sheet["name"]}] + list(sheet["titles"]) + list(sheet["headers"])
 
 
-def file_type_text_problem(text: str) -> Optional[str]:
-    """Why a file-type text may not reach the model, or None: a line of no kind, more than 6 sheets, 6 title rows
-    or 40 columns, a sample that is not a number or a date, or a column with both a sample and a profile."""
-    sheets = parse_file_type_text(text)
-    if sheets is None:
-        return "not_cells"
-    if len(sheets) > FILE_MAX_SHEETS or any(len({c["row"] for c in s["titles"]}) > FILE_MAX_TITLE_ROWS for s in sheets):
-        return "too_many_header_rows"
-    if any(len({c["col"] for c in s["headers"]}) > FILE_MAX_COLUMNS or len({c["row"] for c in s["headers"]}) > 1
-           for s in sheets):
-        return "too_many_header_rows"
-    if any(len(v) > MAX_SAMPLES for s in sheets for v in s["samples"].values()):
-        return "too_many_samples"
-    if any(not SAMPLE_VALUE.match(v) for s in sheets for values in s["samples"].values() for v in values):
-        return "text_value"
-    if any(set(s["samples"]) & set(s["profiles"]) for s in sheets):
-        return "text_value"
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -362,92 +257,14 @@ def file_type_text_problem(text: str) -> Optional[str]:
 #     s1 label r4: Recognised revenue (EUR)  (masked: s1 label r4: Row 1)
 # ---------------------------------------------------------------------------
 RECOGNITION_MAX_ROWS = 400              # rows with text per sheet, title and header rows included
-_RC_LABELS = re.compile(r"^s(?P<s>\d+) labels: (?P<mode>metric|masked)$")
-_RC_LABEL = re.compile(r"^s(?P<s>\d+) label r(?P<row>[1-9]\d*): (?P<text>.+)$")
-_MASKED_LABEL = re.compile(r"^Row [1-9]\d*$")
 
 
-def recognition_text(sheets: List[Dict]) -> str:
-    """The text for [{"name", "titles", "headers", "labels": None | "metric" | "masked", "label_rows": [(row, text)], "samples",
-    "profiles"}]: the lines of file_type_text, and after a sheet's headers its labels line and its label lines."""
-    lines = []
-    for k, sheet in enumerate(sheets, 1):
-        lines.append(f"s{k}: {cell_text({'text': sheet['name']})}")
-        lines += [f"s{k} title r{c['row']}c{c['col']}: {cell_text(c)}" for c in sheet["titles"] if cell_text(c)]
-        lines += [f"s{k} header r{c['row']}c{c['col']}: {cell_text(c)}" for c in sheet["headers"] if cell_text(c)]
-        if sheet.get("labels"):
-            lines.append(f"s{k} labels: {sheet['labels']}")
-            lines += [f"s{k} label r{row}: {text}" for row, text in sheet.get("label_rows") or [] if text]
-        lines += [f"s{k} c{col} sample: {v}" for col in sorted(sheet["samples"]) for v in sheet["samples"][col]]
-        lines += [f"s{k} c{col} profile: distinct {p['distinct']}, typical length {p['length']}, shape {p['shape']}"
-                  for col, p in sorted(sheet["profiles"].items())]
-    return "\n".join(lines)
 
 
-def parse_recognition_text(text: str) -> Optional[List[Dict]]:
-    """The sheets of a recognition text, or None when a line is of no kind, a sheet line is out of order or a label line comes
-    before its sheet's labels line."""
-    sheets: Dict[int, Dict] = {}
-    for line in (text or "").split("\n"):
-        for kind, rx in (("name", _FT_SHEET), ("titles", _FT_TITLE), ("headers", _FT_HEADER), ("sample", _FT_SAMPLE),
-                         ("profile", _FT_PROFILE), ("mode", _RC_LABELS), ("label", _RC_LABEL)):
-            m = rx.match(line)
-            if m:
-                break
-        else:
-            return None
-        k = int(m.group("s"))
-        if kind == "name":
-            if k in sheets or k != len(sheets) + 1:
-                return None
-            sheets[k] = {"name": m.group("text"), "titles": [], "headers": [], "samples": {}, "profiles": {}, "labels": None,
-                         "label_rows": []}
-            continue
-        if k not in sheets:
-            return None
-        sheet = sheets[k]
-        if kind in ("titles", "headers"):
-            sheet[kind].append({"row": int(m.group("row")), "col": int(m.group("col")), "text": m.group("text")})
-        elif kind == "sample":
-            sheet["samples"].setdefault(int(m.group("col")), []).append(m.group("value"))
-        elif kind == "profile":
-            sheet["profiles"][int(m.group("col"))] = {"distinct": int(m.group("distinct")), "length": int(m.group("length")),
-                                                      "shape": m.group("shape")}
-        elif kind == "mode":
-            if sheet["labels"] is not None:
-                return None
-            sheet["labels"] = m.group("mode")
-        else:
-            if sheet["labels"] is None:
-                return None
-            sheet["label_rows"].append((int(m.group("row")), m.group("text")))
-    return list(sheets.values()) or None
 
 
-def recognition_cells(sheet: Dict) -> List[Dict]:
-    """The text cells of one sheet in the order redaction reads them: the name, titles, headers and the label lines (column 0)."""
-    return file_type_cells(sheet) + [{"row": row, "col": 0, "text": text} for row, text in sheet.get("label_rows") or []]
 
 
-def recognition_text_problem(text: str) -> Optional[str]:
-    """Why a recognition text may not reach the model, or None: the problems of the file-type text, a label line on a masked sheet
-    that is not "Row n", a label that is a figure, or more than 400 rows with text on one sheet."""
-    sheets = parse_recognition_text(text)
-    if sheets is None:
-        return "not_cells"
-    plain = [line for line in text.split("\n") if not (_RC_LABELS.match(line) or _RC_LABEL.match(line))]
-    problem = file_type_text_problem("\n".join(plain))
-    if problem:
-        return problem
-    for sheet in sheets:
-        if sheet["labels"] == "masked" and any(not _MASKED_LABEL.match(t) for _, t in sheet["label_rows"]):
-            return "label_on_masked_sheet"
-        if any(is_figure(t) for _, t in sheet["label_rows"]):
-            return "figure_in_label"
-        rows = {c["row"] for c in sheet["titles"] + sheet["headers"]} | {r for r, _ in sheet["label_rows"]}
-        if len(rows) > RECOGNITION_MAX_ROWS:
-            return "too_many_rows"
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -569,9 +386,6 @@ def _word_spans(text: str, word: str) -> List[Tuple[int, int]]:
     return [(s, e) for s, e in found if _edge(text, s) and _edge(text, e)]
 
 
-def has_word(text: str, word: Optional[str]) -> bool:
-    """True when the word stands in the text as a whole word, in any case (the boundaries of _edge)."""
-    return bool(_word_spans(text or "", word))
 
 
 def _protected(text: str, company_name: Optional[str]) -> List[Tuple[int, int]]:
@@ -870,17 +684,6 @@ def withheld_columns(cells: List[Dict]) -> Dict[int, int]:
             and sum(1 for t in texts if has_finance_word(t)) < WITHHOLD_FINANCE_SHARE * len(texts)}
 
 
-def col_ranges(cols) -> str:
-    """Columns as a row line writes them: [2, 3, 4, 6] -> "c2-c4,c6"."""
-    out, cols = [], sorted(set(cols))
-    i = 0
-    while i < len(cols):
-        j = i
-        while j + 1 < len(cols) and cols[j + 1] == cols[j] + 1:
-            j += 1
-        out.append(f"c{cols[i]}" if i == j else f"c{cols[i]}-c{cols[j]}")
-        i = j + 1
-    return ",".join(out)
 
 
 def _parse_cols(text: Optional[str]) -> List[int]:
@@ -896,27 +699,6 @@ def _parse_cols(text: Optional[str]) -> List[int]:
     return out
 
 
-def sheet_text(cells: List[Dict], rows: List[Dict], withheld: Dict[int, int]) -> str:
-    """The skeleton for cells (row, col, text and a span), rows ({"row", "indent", "num", "blank"}) and the withheld columns: per
-    row its cell lines and then its row line, in sheet order; the withheld lines last."""
-    by_row: Dict[int, List[Dict]] = {}
-    for c in cells:
-        by_row.setdefault(c["row"], []).append(c)
-    lines = []
-    row_lines = {r["row"]: r for r in rows}
-    for n in sorted(set(by_row) | set(row_lines)):
-        if n in by_row:
-            lines.append(structure_text(by_row[n]))
-        r = row_lines.get(n)
-        if r:
-            line = f"r{n} indent {int(r.get('indent') or 0)}"
-            if r.get("num"):
-                line += f" num {col_ranges(r['num'])}"
-            if r.get("blank"):
-                line += f" blank {col_ranges(r['blank'])}"
-            lines.append(line)
-    lines += [f"c{col} withheld: text, {n} distinct values" for col, n in sorted(withheld.items())]
-    return "\n".join(line for line in lines if line)
 
 
 def parse_sheet_text(text: str) -> Optional[Dict]:
@@ -1060,14 +842,9 @@ def mask_pages(text: str, company_name: Optional[str], mapping: Dict[str, str]) 
     return page_text(out), counts
 
 
-_BARE_YEAR = re.compile(r"^(?:19|20)\d{2}$")
 _ISO_DATE = re.compile(r"(?<![\d.,])(?:19|20)\d{2}-\d{2}(?:-\d{2})?(?![\d])")
 
 
-def digit_figure(text: str) -> bool:
-    """True when the text holds a figure written in digits that is not a year or a date."""
-    blanked = _ISO_DATE.sub(lambda m: " " * len(m.group(0)), blank_currency(text or ""))
-    return any(m.group("num") and not _BARE_YEAR.match(m.group("num")) for m in NUMBER[False].finditer(blanked))
 
 
 def has_digit(text: str) -> bool:

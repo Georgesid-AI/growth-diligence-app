@@ -18,7 +18,6 @@ jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{childr
 jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{children}</div> }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-window.history.pushState({}, "", "/?view=legacy");      // PR 3: the earlier screen, which this file tests, is behind ?view=legacy (lib/legacyView.js)
 
 // What GET /audits/{id}/verdict and GET answer (docs/specs/verdict-and-memo.md). The server tests, ranks and words.
 const TOP = {
@@ -43,7 +42,7 @@ const VERDICT_NONE = VERDICT_BASE;
 
 // Degrade, don't die (CLAUDE.md rule 20): the gateway fails, every computed metric still renders with its citation.
 test("when the narrative cannot be generated the metrics render with their sources and S17 says why", async () => {
-  api.getAudit.mockResolvedValue(sample.audit);
+  api.getAudit.mockResolvedValue({ ...sample.audit, old_claims: true });
   api.getResults.mockResolvedValue(sample);
   api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "The provider did not answer" });
   api.getDisclosure.mockResolvedValue(null);
@@ -68,7 +67,7 @@ test("when the narrative cannot be generated the metrics render with their sourc
 });
 
 test("results of an older engine contract answer 409 Stale – re-run audit: the dashboard says so and shows no figure (George, 2026-10-20)", async () => {
-  api.getAudit.mockResolvedValue(sample.audit);
+  api.getAudit.mockResolvedValue({ ...sample.audit, old_claims: true });
   api.getResults.mockRejectedValue({ response: { status: 409, data: { detail: { code: "results_stale", message: "Stale – re-run audit" } } } });
   api.getVerdict.mockResolvedValue(VERDICT_NONE);
   api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
@@ -98,7 +97,7 @@ test("the dashboard offers one Write narrative button for the data inventory and
 const CITED_BLOCKS = ["mrr-by-segment-chart", "cohort-retention", "anomaly-flags", "segment-paths", "new-mrr-by-quarter"];
 
 async function mountDashboard(results, verdict = VERDICT_NONE, audit = sample.audit) {
-  api.getAudit.mockResolvedValue(audit);
+  api.getAudit.mockResolvedValue({ ...audit, old_claims: true });
   api.getResults.mockResolvedValue(results);
   api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "x" });
   api.getDisclosure.mockResolvedValue(null);
@@ -113,7 +112,7 @@ async function mountDashboard(results, verdict = VERDICT_NONE, audit = sample.au
 }
 
 test("the Data integrity section shows the server's conclusion and both blocks above the A2 narrative (integrity-coverage.md)", async () => {
-  api.getAudit.mockResolvedValue(sample.audit);
+  api.getAudit.mockResolvedValue({ ...sample.audit, old_claims: true });
   api.getResults.mockResolvedValue(sample);
   api.readNarrative.mockResolvedValue(null);
   api.getDisclosure.mockResolvedValue(null);

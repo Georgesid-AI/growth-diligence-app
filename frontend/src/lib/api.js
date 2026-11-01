@@ -37,50 +37,18 @@ export const updateAudit = (id, payload) => api.put(`/audits/${id}`, payload).th
 export const deleteAudit = (id, confirm) => api.delete(`/audits/${id}`, { data: { confirm } }).then((r) => r.data);
 export const getResults = (id) => api.get(`/audits/${id}/results`).then((r) => r.data);
 export const exportUrl = (id) => `${API}/audits/${id}/export`;
-export const getFields = () => api.get("/fields").then((r) => r.data);
 export const computeAudit = (id) => api.post(`/audits/${id}/compute`).then((r) => r.data);
-export const saveMapping = (id, dtype, payload) =>
-  api.put(`/audits/${id}/datasets/${dtype}/mapping`, payload).then((r) => r.data);
-
-export const getRevenueCustomers = (id, customerCol) =>
-  api.get(`/audits/${id}/datasets/revenue/customers`, { params: customerCol ? { customer_col: customerCol } : {} }).then((r) => r.data);
-
-export const uploadDataset = (id, dtype, file) => {
-  const fd = new FormData();
-  fd.append("file", file);
-  return api
-    .post(`/audits/${id}/datasets/${dtype}/upload`, fd, { headers: { "Content-Type": "multipart/form-data" } })
-    .then((r) => r.data);
-};
-
-// Chat upload (docs/specs/chat-upload.md): one file at a time, its type detected unless dtype is given; a loaded
-// type with other bytes answers 409 unless replace is true.
+// Upload (docs/design/read-check-review.md section 3): one file at a time, stored and read by the sheet reader; no type, no mapping.
 // A read that gets no answer for UPLOAD_TIMEOUT_MS is given up, so the file can be attached again (a hung request left it stuck).
 export const UPLOAD_TIMEOUT_MS = 120000;
-export const uploadChatFile = (id, file, { dtype, replace } = {}) => {
+export const uploadChatFile = (id, file) => {
   const fd = new FormData();
   fd.append("file", file);
-  const params = {};
-  if (dtype) params.dtype = dtype;
-  if (replace) params.replace = true;
   return api
-    .post(`/audits/${id}/datasets/upload`, fd, { params, timeout: UPLOAD_TIMEOUT_MS, headers: { "Content-Type": "multipart/form-data" } })
+    .post(`/audits/${id}/datasets/upload`, fd, { timeout: UPLOAD_TIMEOUT_MS, headers: { "Content-Type": "multipart/form-data" } })
     .then((r) => r.data);
 };
 export const getDatasets = (id) => api.get(`/audits/${id}/datasets`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data.datasets);
-export const decideColumns = (id, dtype, decisions) =>
-  api.post(`/audits/${id}/datasets/${dtype}/decisions`, decisions).then((r) => r.data);
-// A statement file's lines (chat-upload.md section 26.7): [{row, action: "confirm" | "change", role, meaning}].
-export const decideLines = (id, dtype, decisions) =>
-  api.post(`/audits/${id}/datasets/${dtype}/lines`, decisions).then((r) => r.data);
-// The analyst changes the type a stored file was read as; a type already loaded needs replace (chat-upload.md section 19).
-/** One decision about the recognition of a file (revenue-file-recognition.md section 6.6); answers the dataset view. */
-export const decideRecognition = (id, dtype, body) => api.post(`/audits/${id}/datasets/${dtype}/recognition`, body).then((r) => r.data);
-export const changeDatasetType = (id, dtype, to, replace = false) =>
-  api.post(`/audits/${id}/datasets/${dtype}/type`, { to, replace }).then((r) => r.data);
-// A forecast table read as claims: the sheet rows of the ticked lines; the server reads the values again (chat-upload.md section 20).
-export const confirmForecastClaims = (id, dtype, rows) =>
-  api.post(`/audits/${id}/datasets/${dtype}/forecast-claims`, { rows }).then((r) => r.data);
 export const getBlockers = (id) => api.get(`/audits/${id}/blockers`).then((r) => r.data.blockers);
 // Usage counters: the screen the analyst is on, or the extension of a file the browser refused. Never a name or a value.
 export const reportUsage = (id, event) => api.post(`/audits/${id}/usage`, event).then((r) => r.data).catch(() => null);
@@ -156,7 +124,7 @@ export const generateNarrative = (id, step) =>
 // Read-only; the same text is written into the exports.
 export const getDisclosure = (id) => api.get(`/runs/${id}/disclosure`).then((r) => r.data.disclosure);
 
-// Run audit (one button): three stages in order, each answering done, needs_review, waiting, running or failed with a plain-English
+// Run audit (one button): three stages in order, each answering done, waiting, running or failed with a plain-English
 // message; and what the Audit page opens with. The files themselves go through the endpoints above.
 export const runStage = (id, stage) => api.post(`/audits/${id}/run/${stage}`, null, { timeout: 120000 }).then((r) => r.data);
 export const getReview = (id) => api.get(`/audits/${id}/review`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);

@@ -79,28 +79,5 @@ def _waiting(db):
     return db
 
 
-def test_two_triggers_on_one_waiting_deck_make_one_model_read():
-    """The upload's settle step and a Map save both call process_waiting_decks_safely: the second finds the deck taken."""
-    db = _waiting(_page_db(deck([TITLE, *LINES])))
-    adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-
-    async def go():
-        return await asyncio.gather(*[structures.process_waiting_decks(db, AUDIT, adapter=adapter, sleep=t._noop_sleep) for _ in range(2)])
-
-    ran = asyncio.run(go())
-    assert sorted(len(r) for r in ran) == [0, 1] and adapter.calls == 1, "one trigger read the deck, the other left it alone"
-    assert len(db[CANDIDATES_COLLECTION].docs) == 3
 
 
-def test_a_waiting_deck_whose_read_fails_returns_to_waiting():
-    db = _waiting(_page_db(deck([TITLE, *LINES])))
-
-    async def boom(*a, **k):
-        raise RuntimeError("x")
-
-    import pytest as _p
-    with _p.MonkeyPatch.context() as m:
-        m.setattr(structures, "process_deck", boom)
-        asyncio.run(structures.process_waiting_decks_safely(db, AUDIT))
-    assert db[TEXT_COLLECTION].docs[0]["ai_status"] == "waiting"
-    assert asyncio.run(structures.process_waiting_decks(db, AUDIT, adapter=t.FakeAdapter(replies=[json.dumps(REPLY)]), sleep=t._noop_sleep)) == ["d1"]

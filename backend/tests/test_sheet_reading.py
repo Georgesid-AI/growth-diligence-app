@@ -303,19 +303,6 @@ def test_nothing_sent_reaches_the_call_log_or_the_log_lines(caplog):
     assert "llm_structures" not in {n for n, c in db._cols.items() if c.docs}, "the reading lives in `readings`, not beside the structure cache"
 
 
-def test_the_old_mapping_calls_stay_on_by_default_and_go_off_with_reader_v1_off(monkeypatch):
-    refused = ("file_type", "file_recognition", "sheet_structure", "column_mapping")
-    assert gateway.reader_v1_enabled() is True
-    for value in ("", "on", "ON", "anything"):
-        monkeypatch.setenv("READER_V1", value)
-        assert gateway.reader_v1_enabled() is True
-    monkeypatch.setenv("READER_V1", "off")
-    assert gateway.reader_v1_enabled() is False
-    for kind in refused:
-        adapter = t.FakeAdapter()
-        result = asyncio.run(gateway.read_structure(audit_db(), "a1", "r1c1: Revenue", kind, adapter=adapter, sleep=t._noop_sleep))
-        assert result.status == "not_read" and adapter.calls == 0, kind
-    assert read(audit_db())[0].status == "read", "the new reader is not behind the flag"
 
 
 def test_a_second_reading_of_rejected_items_is_stored_beside_the_first_and_made_once():

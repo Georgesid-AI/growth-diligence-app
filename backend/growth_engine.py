@@ -13,6 +13,7 @@ import re
 import numpy as np
 import pandas as pd
 
+from app import role_engine
 from schemas import metrics as contract
 
 RECURRING_ALIASES = {"recurring", "subscription", "mrr", "arr", "rec"}
@@ -1459,15 +1460,17 @@ YEARLY_PAYBACK_RULE = ("CAC payback = 12 × S&M ÷ (incremental annual recurring
 def _payback(sm: dict | None, denominator: float | None, gm: float | None, missing: str, invalid: str) -> tuple:
     """(months, reason) of one proxy: 12 × S&M ÷ (denominator × gross margin), the first input that is missing or not positive naming itself."""
     if not sm:
-        return None, "no S&M line"
+        return None, "needs a sales_marketing row"
     if sm["value"] <= 0:
         return None, "S&M not positive"
     if denominator is None:
         return None, missing
     if denominator <= 0:
         return None, invalid
-    if gm is None or gm <= 0:
-        return None, "gross margin not positive or missing"
+    if gm is None:
+        return None, "needs a cost_of_revenue row"
+    if gm <= 0:
+        return None, "gross margin not positive"
     return _round(12 * sm["value"] / (denominator * gm)), None
 
 
@@ -1494,7 +1497,7 @@ def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dic
         arr_end, arr_prior = _arr_at(mrr, end), _arr_at(mrr, _month_back(end, 12))
         net_new = arr_end - arr_prior if arr_end is not None and arr_prior is not None else None
         if not (mrr or {}).get("months"):
-            arr_missing = "no ARR series (revenue file)"
+            arr_missing = "needs an mrr row"
         elif arr_end is None:
             arr_missing = "no ARR for the year-end"
         else:
@@ -1798,6 +1801,43 @@ def compute_without_as_of(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFr
     return results
 
 
+CUSTOMER_LEVEL = "needs customer-level revenue lines (one row per customer or invoice)"
+CUSTOMER_LEVEL_UNLOCKED = "Upload the file of customer-level revenue lines"
+NEEDS_CRM = "needs CRM deals"
+
+
+def _on_the_map(results: dict, mapped: dict, as_of, no_customer_rows: bool, no_monthly_pnl: bool) -> None:
+    """What the stored map changes in a run (docs/design/read-check-review.md section 16): the source period and the periods of the blocks it
+    feeds come from the series' months, and the metrics that need a file the map does not hold say what they need, not "no usable rows"."""
+    months = [d["month"] for d in (results.get("revenue_series") or {}).get("data") or ()]
+    if not results.get("source_period") and months and as_of is not None:
+        last = pd.Period(months[-1], "M")
+        results["source_period"] = {"month": months[-1], "status": COMPLETE, "complete_by": "as_of", "evidence_to": _period_str(min(last, as_of))}
+    if months and as_of is not None:
+        span = _span([pd.Period(m, "M") for m in months])
+        for key in ("mrr_series", "customers_series", "revenue_series"):
+            if results.get(key, {}) and results[key].get("data") and key not in results["metric_periods"]:
+                results["metric_periods"][key] = span
+        if results.get("arr") and "arr" not in results["metric_periods"]:
+            results["metric_periods"]["arr"] = span
+    kept = []
+    for item in results["missing_data"]:
+        name = item["metric"]
+        if no_customer_rows and name in ("Segment paths to target ARR", "NRR (12-month)", "Gross revenue churn"):
+            item = {**item, "reason": CUSTOMER_LEVEL, "unlocked_by": CUSTOMER_LEVEL_UNLOCKED}
+        elif no_customer_rows and name == "CAC payback" and no_monthly_pnl:
+            item = {**item, "reason": CUSTOMER_LEVEL + " and a monthly P&L", "unlocked_by": CUSTOMER_LEVEL_UNLOCKED}
+        elif name == "Sales cycle & win rate" and "not provided" in item["reason"]:
+            item = {**item, "reason": NEEDS_CRM, "unlocked_by": "Upload the CRM deals file"}
+        kept.append(item)
+    if no_customer_rows:
+        for name in ("NRR (12-month)", "Gross revenue churn"):
+            if not any(i["metric"] == name for i in kept):
+                kept.append({"metric": name, "reason": CUSTOMER_LEVEL, "unlocked_by": CUSTOMER_LEVEL_UNLOCKED,
+                             "file": None, "status": MISSING_STATUS})
+    results["missing_data"] = kept
+
+
 def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
                     files: dict | None = None, on_error=None, yearly: dict | None = None, statement: dict | None = None,
                     _undetermined: bool = False):
@@ -1828,6 +1868,10 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     # As-of month: truncate all "current"/time-series views to <= as_of. MRR after the
     # as-of month is deferred revenue and must not appear in current figures.
     as_of = _resolve_as_of(config.get("as_of_month"))
+    roles = config.get("roles")            # the stored map's role table (app/role_engine.py): the engine's inputs when it is given
+    mapped = role_engine.compute(roles["table"], as_of, roles.get("fye", 12), roles.get("deck"), on_error) if roles is not None else None
+    if mapped and yearly is None:
+        yearly = mapped["yearly"]
     if not mrr.empty and as_of is not None:
         keep = [c for c in mrr.columns if c <= as_of]
         mrr = mrr.loc[:, keep] if keep else mrr.iloc[:, :0]
@@ -1924,6 +1968,11 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
             "month": _period_str(latest),
             "source": src(rev_src, contrib_rows, "ARR = current-month recurring MRR × 12"),
         }
+    elif mapped is not None:                  # the map supplies ARR from an arr row, else an mrr row × 12
+        results["arr"] = mapped["arr"]
+        if mapped["arr"] is None:
+            missing_data.append({"metric": "ARR / MRR", "reason": "needs an arr row or an mrr row",
+                                 "unlocked_by": "A report with an arr row or an mrr row, monthly", "file": rev_src.get("file")})
     else:
         results["arr"] = None
         total_report = (config.get("recognition") or {}).get("file_type") == "monthly_revenue_report"
@@ -2083,6 +2132,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     results["mrr_series"] = guarded("MRR by segment", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                     compute_mrr_series, mrr, seg_map)
     results["mrr_series"]["source"] = src(rev_src, contrib_rows, "MRR = recurring MRR per customer in the month, summed by segment")
+    if mapped is not None and mapped["mrr_series"] and not results["mrr_series"]["data"]:
+        results["mrr_series"] = mapped["mrr_series"]
     # Two monthly series that only the claim-matching module reads: never in a narrative payload.
     revenue_series = guarded("Revenue by month", rev_src.get("file"), {"months": [], "segments": [], "data": [], "rows": []},
                              compute_revenue_series, rev, billing_terms, fx, as_of)
@@ -2095,6 +2146,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         revenue_series = guarded("Revenue by month", feed.get("file"), revenue_series, revenue_series_from_recognition, feed, as_of)
         rev_src = {"file": feed["file"], "sheet": feed.get("sheet")}
         month_rows = {}
+    if mapped is not None and mapped["revenue_series"] and not revenue_series.get("data"):
+        revenue_series = mapped["revenue_series"]
     results["revenue_series"] = revenue_series
     # Server-only like the two series: the revenue file against the P&L, window total and evidence table.
     results["revenue_reconciliation"] = guarded("Revenue reconciliation", pnl_src.get("file"), None,
@@ -2114,6 +2167,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     customers_series = guarded("Customers by month", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                compute_customers_series, mrr, seg_map)
     customers_series["source"] = src(rev_src, contrib_rows, "Customers = customers with MRR above 0 in the month")
+    if mapped is not None and mapped["customers_series"] and not customers_series["data"]:
+        customers_series = mapped["customers_series"]
     results["customers_series"] = customers_series
     results["cohort_retention"] = guarded("Cohort retention", rev_src.get("file"), {"cohorts": [], "max_offset": 0, "data": []},
                                           compute_cohort_retention, mrr, first_month)
@@ -2124,6 +2179,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         default_l=config.get("default_l", 1))
     results["source_period"] = source
     results["metric_periods"] = metric_periods(results, rev, pnl, deals, source)
+    if mapped is not None:
+        _on_the_map(results, mapped, as_of, mrr.empty, pnl.empty)
     if pnl.empty and yearly:
         try:
             results["yearly_basis"] = compute_yearly_basis(yearly, results, revenue_series)
@@ -2135,6 +2192,9 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                 "metric": "Yearly-basis metrics (calculation error)", "status": MISSING_STATUS,
                 "reason": f"The calculation stopped on an unexpected {type(exc).__name__}; reported as Missing, not estimated",
                 "unlocked_by": "Not computable from the data as supplied; the server log has the run id", "file": yearly.get("file")})
+    if mapped is not None and mapped["role_metrics"] is not None:
+        role_engine.fill_yearly(mapped["role_metrics"], roles["table"], results.get("yearly_basis"))
+        results["role_metrics"] = mapped["role_metrics"]
     if statement:
         try:
             results["pnl_lines"] = compute_pnl_lines(statement, pnl_src)

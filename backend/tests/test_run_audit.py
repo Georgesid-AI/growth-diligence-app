@@ -53,13 +53,8 @@ class EchoAdapter(t.FakeAdapter):
         self.calls += 1
         self.payloads.append(user_payload)
         sent = json.loads(user_payload)
-        if sent.get("type") == "file_recognition":     # a recognition call (revenue-file-recognition.md 5.7): a valid reply that names only the type
-            return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "financial_statements", "revenue_row": None,
-                               "currency": None, "non_revenue_rows": []}), 100, 20
-        if "valid_source_keys" not in sent:            # a column-mapping call: the model proposes the S&M column of the P&L
-            item = {"metric": "sm_expense", "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown",
-                    "value_cell": "r1c2", "unit_other": None, "period_cells": [], "proposed_flags": []}
-            return json.dumps({"type": "column_mapping", "items": [item]}), 100, 20
+        if "valid_source_keys" not in sent:            # a sheet reading: this provider reads no file (the engine stage is seeded, conftest.run_api)
+            raise gateway.GatewayError("model_refused", "not scripted")
         keys = sent["valid_source_keys"]
         key = "S1" if "S1" in keys else keys[0]
         base = {"headline": "The data supports a first reading.", "what_this_means": "Read the figures with their sources.",
@@ -99,19 +94,6 @@ def add_deck(client, only_verified=False):
         client.db[decks.CANDIDATES_COLLECTION].docs.append({**c, "audit_id": AUDIT, "deck_id": "d1", "order": n, "status": "pending"})
 
 
-def confirm_open_columns(client):
-    """The analyst's Confirm on every column that waits (what the review screen's mapping rows do). Returns how many."""
-    n = 0
-    for ds in client.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"]:
-        pending = [c for c in ds["columns"] if c["pending"]]
-        if pending:
-            r = client.post(f"/api/audits/{AUDIT}/datasets/{ds['dtype']}/decisions",
-                            json=[{"column": c["column"], "action": "confirm", "field": c["field"]} for c in pending])
-            assert r.status_code == 200, r.text
-            n += len(pending)
-    return n
-
-
 def stage(client, name):
     r = client.post(f"/api/audits/{AUDIT}/run/{name}")
     assert r.status_code == 200, r.text
@@ -143,7 +125,6 @@ def candidates(client):
 
 def test_the_stages_run_in_the_order_mapping_engine_claims_and_each_reports_done(run_api):
     upload_files(run_api)
-    confirm_open_columns(run_api)
     add_deck(run_api)
     assert run_audit.STAGES == ("mapping", "engine", "claims")
     results = run_audit_button(run_api)
@@ -153,7 +134,6 @@ def test_the_stages_run_in_the_order_mapping_engine_claims_and_each_reports_done
 
 def test_a_stage_asked_out_of_order_waits_and_does_nothing(run_api):
     upload_files(run_api)
-    confirm_open_columns(run_api)
     add_deck(run_api)
     assert stage(run_api, "claims")["status"] == "waiting" and not run_api.db["audits"].docs[0]["results"]
     assert all(c["status"] == "pending" for c in candidates(run_api)), "no claim is accepted before the calculations"
@@ -161,29 +141,14 @@ def test_a_stage_asked_out_of_order_waits_and_does_nothing(run_api):
     assert stage(run_api, "claims")["status"] == "done"
 
 
-def test_a_mapping_confirmed_or_corrected_after_the_last_calculation_makes_the_engine_stale_until_it_runs_again(run_api):
-    upload_files(run_api)
-    confirm_open_columns(run_api)
-    assert review(run_api)["engine_stale"] is False, "no results yet: the engine is not done, but nothing is stale"
-    run_audit_button(run_api)
-    assert (review(run_api)["computed"], review(run_api)["engine_stale"]) == (True, False)
-    revenue = next(d for d in run_api.db["datasets"].docs if d["dtype"] == "revenue")
-    revenue["mapped_at"] = usage_mod.now()                           # a column confirmed or corrected after the calculation
-    assert (review(run_api)["computed"], review(run_api)["engine_stale"]) == (True, True)
-    assert stage(run_api, "engine")["status"] == "done"
-    assert review(run_api)["engine_stale"] is False, "the calculation that follows the decision clears it"
-
-
 def test_engine_stale_follows_the_flag_of_a_recompute_that_could_not_run():
     audit = {"results": {"contract_version": CONTRACT_VERSION}, "computed_at": "2026-10-11T08:00:00+00:00", "metrics_stale": True}
-    datasets = [{"mapped_at": "2026-10-11T07:00:00+00:00"}, {"mapped_at": None}]
-    assert run_audit.engine_stale(audit, datasets) is True
-    assert run_audit.engine_stale({**audit, "metrics_stale": False}, datasets) is False
-    assert run_audit.engine_stale({**audit, "metrics_stale": False}, datasets + [{"mapped_at": "2026-10-11T09:00:00+00:00"}]) is True
-    assert run_audit.engine_stale({"results": None, "metrics_stale": True}, datasets) is False
-    # George, 2026-10-20: results of an older engine contract are stale whatever the mapping dates say
+    assert run_audit.engine_stale(audit) is True
+    assert run_audit.engine_stale({**audit, "metrics_stale": False}) is False
+    assert run_audit.engine_stale({"results": None, "metrics_stale": True}) is False
+    # George, 2026-10-20: results of an older engine contract are stale whatever else says
     older = {**audit, "metrics_stale": False, "results": {"contract_version": CONTRACT_VERSION - 1}}
-    assert run_audit.engine_stale(older, datasets) is True
+    assert run_audit.engine_stale(older) is True
 
 
 def test_an_unknown_stage_is_a_404_and_an_unknown_audit_too(run_api):
@@ -196,25 +161,24 @@ def test_with_no_file_the_mapping_stage_says_so_in_plain_english(run_api):
     res = stage(run_api, "mapping")
     assert (res["status"], res["message"]) == ("failed", run_audit.NO_FILES)
     upload_files(run_api, ("crm",))
-    assert stage(run_api, "mapping")["message"] == run_audit.NO_REVENUE
+    assert stage(run_api, "mapping")["status"] == "done", "any file is a file: the reader maps it, nothing is asked"
 
 
-def test_a_column_that_waits_stops_the_run_at_the_mapping_stage_and_the_engine_waits(run_api):
+def test_run_audit_never_waits_for_a_confirmation_only_for_a_file_still_being_read(run_api):
+    """read-check-review.md section 12 (PR 4): there is no mapping to confirm. The mapping stage is done once a file is stored and read; a read
+    still running says so and is asked again; the engine runs whatever the files hold."""
     upload_files(run_api)
-    confirm_open_columns(run_api)
-    doc = next(d for d in run_api.db["datasets"].docs if d["dtype"] == "revenue")
-    doc["columns_state"][0] = {**doc["columns_state"][0], "state": "unsure"}
-    results = run_audit_button(run_api)
-    assert [(r["stage"], r["status"]) for r in results] == [("mapping", "needs_review")] and results[0]["open"] == 1
-    assert stage(run_api, "engine")["status"] == "waiting" and not run_api.db["audits"].docs[0]["results"]
-    doc["columns_state"][0] = {**doc["columns_state"][0], "state": "confirmed"}
-    assert [r["status"] for r in run_audit_button(run_api)] == ["done", "done", "done"], "Run audit again carries on"
+    run_api.db["audits"].docs[0]["sheet_reads_pending"] = 1
+    res = stage(run_api, "mapping")
+    assert (res["status"], res["message"]) == ("running", run_audit.FILES_READING)
+    run_api.db["audits"].docs[0]["sheet_reads_pending"] = 0
+    assert [r["status"] for r in run_audit_button(run_api)] == ["done", "done", "done"]
+    assert "needs_review" not in {r["status"] for r in run_audit_button(run_api)}
 
 
 def test_a_stage_that_fails_says_what_to_do_without_the_exception_text_and_retry_runs_it_again(run_api, monkeypatch, caplog):
     import logging
     upload_files(run_api)
-    confirm_open_columns(run_api)
     original = server._run_compute
 
     async def broken(audit_id):
@@ -231,7 +195,6 @@ def test_a_stage_that_fails_says_what_to_do_without_the_exception_text_and_retry
 
 def test_the_claims_stage_waits_while_the_decks_are_read(run_api):
     upload_files(run_api)
-    confirm_open_columns(run_api)
     add_deck(run_api)
     run_api.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] = "reading"
     stage(run_api, "engine")
@@ -242,7 +205,6 @@ def test_the_claims_stage_waits_while_the_decks_are_read(run_api):
 
 def test_an_audit_with_no_deck_has_no_claims_to_read(run_api):
     upload_files(run_api)
-    confirm_open_columns(run_api)
     stage(run_api, "engine")
     res = stage(run_api, "claims")
     assert (res["status"], res["entered"], res["open"], res["message"]) == ("done", 0, 0, run_audit.NO_DECKS)
@@ -255,21 +217,9 @@ def test_no_threshold_or_tolerance_changed():
     assert (cm.RATE_TOLERANCE_PP, cm.AMOUNT_TOLERANCE) == (1.0, 0.05)
 
 
-def test_columns_the_rules_accepted_are_counted_and_the_ones_that_wait_are_listed_once(run_api):
-    uploads = upload_files(run_api)
-    waiting = sum(1 for body in uploads.values() for c in body["columns"] if c["pending"])
-    auto = sum(1 for body in uploads.values() for c in body["columns"] if c["state"] == "auto")
-    res = stage(run_api, "mapping")
-    assert auto > 0 and (res["status"], res["open"], res["auto"]) == ("needs_review" if waiting else "done", waiting, auto)
-    assert confirm_open_columns(run_api) == waiting
-    assert review(run_api)["mappings"]["open"] == 0 and review(run_api)["mappings"]["auto"] == auto, "a Confirm does not change the count of auto columns"
-    assert stage(run_api, "mapping")["status"] == "done"
-
-
 def test_every_matched_claim_enters_whatever_its_label_and_the_ones_a_check_asks_about_wait(run_api):
     """simplified-flow.md section 2: the tolerance decides a claim's label, no longer whether it enters the register."""
     upload_files(run_api)
-    confirm_open_columns(run_api)
     add_deck(run_api)
     stage(run_api, "engine")
     res = stage(run_api, "claims")
@@ -290,7 +240,6 @@ def test_every_matched_claim_enters_whatever_its_label_and_the_ones_a_check_asks
 
 def test_an_accepted_claim_can_still_be_rejected_or_edited_by_the_analyst(run_api):
     upload_files(run_api)
-    confirm_open_columns(run_api)
     add_deck(run_api)
     stage(run_api, "engine")
     stage(run_api, "claims")
@@ -303,7 +252,6 @@ def test_an_accepted_claim_can_still_be_rejected_or_edited_by_the_analyst(run_ap
 
 def test_a_claim_with_an_open_revenue_or_volume_question_is_never_accepted(run_api):
     upload_files(run_api)
-    confirm_open_columns(run_api)
     add_deck(run_api)
     # A turnover claim the deck makes in the TestCo wording, whose figure the revenue file would otherwise confirm.
     base = next(c for c in candidates(run_api) if c["claim_type"] == "revenue")
@@ -326,7 +274,6 @@ def test_a_claim_with_an_open_revenue_or_volume_question_is_never_accepted(run_a
 
 def ready_for_review(client, only_verified=False):
     upload_files(client)
-    confirm_open_columns(client)
     add_deck(client, only_verified)
     assert [r["status"] for r in run_audit_button(client)] == ["done", "done", "done"]
 
@@ -388,8 +335,7 @@ def test_write_all_narratives_runs_every_enabled_step_through_the_gateway_and_a_
     est2, again = write_all(run_api)
     assert len(run_api.adapter.payloads) == calls, "the cache serves the second press"
     assert all(s["cached"] for s in est2["steps"])
-    assert {c["status"] for c in run_api.db["llm_calls"].docs} <= {"ok", "flagged"}, "the recognition calls end ok too, none parse_failed"
-    assert any(c.get("structure_type") == "file_recognition" for c in run_api.db["llm_calls"].docs), "a valid recognition reply was read"
+    assert {c["status"] for c in run_api.db["llm_calls"].docs if c.get("step") != "structures"} <= {"ok", "flagged"}
 
 
 def test_write_all_narratives_keeps_the_spend_cap_and_a_refusal_degrades_to_the_metrics(run_api, monkeypatch):
@@ -456,12 +402,7 @@ def analyst_flow(client, only_verified):
     upload_files(client)
     add_deck(client, only_verified)
     clicks("Run audit")
-    results = run_audit_button(client)
-    waiting = confirm_open_columns(client)
-    for _ in range(waiting):
-        clicks("Confirm a mapping row")
-    if waiting:
-        results = run_audit_button(client)            # the Audit page runs the stages again when the last row is decided
+    results = run_audit_button(client)            # nothing waits for a confirmation: the map is the reading
     assert [r["status"] for r in results] == ["done", "done", "done"], results
 
     # The cards: a claim a check asks about is kept or fixed in one click. Everything else was entered by Python.
@@ -505,3 +446,15 @@ def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_no_gate_edit
     assert len(gated) == 5, "the five's gates are written from the claims: no click"
     assert not [x for x in clicks.log if "gate" in x or "rating" in x or "judgment" in x or "thesis" in x or "top 5" in x]
     assert clicks.n <= MAX_CLICKS_FULL, f"{clicks.n} clicks: {clicks.log}"
+
+
+def test_a_deck_stored_as_waiting_by_an_older_version_is_read_again_and_never_makes_run_audit_wait_for_a_file(run_api):
+    """read-check-review.md section 12 (PR 4): a deck never waits for a file. A deck an older version left at "waiting for revenue file" is
+    queued again by the claims stage and reported as still being read, never as needs_review."""
+    upload_files(run_api)
+    add_deck(run_api)
+    run_api.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] = "waiting"
+    stage(run_api, "engine")
+    res = stage(run_api, "claims")
+    assert (res["status"], res["message"]) == ("running", run_audit.DECKS_READING)
+    assert "waiting for revenue file" not in json.dumps(res)

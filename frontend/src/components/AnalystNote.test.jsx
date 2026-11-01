@@ -5,7 +5,6 @@ import { createRoot } from "react-dom/client";
 import { AnalystNote } from "./Verdict";
 import { NOTE_HELP } from "@/lib/verdict";
 import { deckReadLine, deckSummaryLine } from "@/lib/deckClaims";
-import { S30a_sent } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({ putIcInputs: jest.fn(() => Promise.resolve({})) }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -51,7 +50,7 @@ test("the counter shows the length and the API's note_max, red at the limit, and
 
 test("no summary line says tokenised", () => {
   const deck = { pages: 24, figure_pages: 9, ai_status: "read", read: 7, rejected: 2, personal_removed: 3, names_replaced: 5 };
-  for (const line of [deckReadLine(deck), deckSummaryLine(deck), S30a_sent({ lines: 2, email: 0, phone: 0, person: 0, customer: 1, company: 1, columns: 0 })]) {
+  for (const line of [deckReadLine(deck), deckSummaryLine(deck), "Sent to the AI: 2 lines. Personal items removed: 0. Company names coded: 2. Columns withheld: 0."]) {
     expect(line).not.toMatch(/tokenised/i);
     expect(line).toMatch(/company names coded/i);
   }

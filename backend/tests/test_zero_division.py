@@ -174,24 +174,23 @@ def test_one_failing_metric_is_missing_and_the_others_compute(monkeypatch):
 
 
 def test_the_compute_endpoint_survives_a_failing_metric_and_logs_type_run_id_and_step(monkeypatch, caplog):
-    _break_cohort_retention(monkeypatch)
-    datasets, meta = demo_data.build(SPEC)
+    from app import role_engine
+
+    def broken(*a, **k):
+        raise ValueError("1990 Zeta secret")
+    monkeypatch.setattr(role_engine, "customers", broken)
     db = t.FakeDB()
     db["audits"].docs.append({"id": "aud-z", "reporting_currency": "EUR", "target_arr": SPEC["target_arr"],
-                              "target_date": SPEC["target_date"], "as_of_month": None})
-    for dtype, (df, mapping) in datasets.items():
-        recs = server.df_to_records(df)
-        db["datasets"].docs.append({"audit_id": "aud-z", "dtype": dtype, "file": meta[dtype]["file"],
-                                    "sheet": meta[dtype]["sheet"], "columns": list(df.columns), "rows": recs,
-                                    "mapping": mapping, "fx": meta.get("fx", {}), "billing_terms": {}})
+                              "target_date": SPEC["target_date"], "as_of_month": "2019-06-30"})
     monkeypatch.setattr(server, "db", db)
     with caplog.at_level(logging.DEBUG):
         results = asyncio.run(server.compute_audit("aud-z"))
-    assert results["arr"]["value"] > 0
-    assert any(m["metric"] == "Cohort retention (calculation error)" for m in results["missing_data"])
+    by_name = {m["metric"]: m for m in results["role_metrics"]["metrics"]}
+    assert by_name["customers"]["status"] == "error" and "ValueError" in by_name["customers"]["reason"] and "Zeta" not in by_name["customers"]["reason"]
+    assert by_name["ending_arr"]["status"] == "needs_row", "the other metrics of the map still run"
     assert db["audits"].docs[0]["status"] == "computed"
-    assert "metric failed: error=KeyError run_id=aud-z step=compute_cohort_retention" in caplog.text
-    assert "1990" not in caplog.text, "the exception message is never logged"
+    assert "metric failed: error=ValueError run_id=aud-z" in caplog.text
+    assert "1990" not in caplog.text and "Zeta" not in caplog.text, "the exception message is never logged"
     assert all(r.exc_info is None for r in caplog.records), "no traceback text in the log"
 
 
@@ -275,7 +274,7 @@ def test_unset_as_of_defaults_to_the_last_invoice_month_not_the_last_service_mon
     from app import as_of
     rev = _prepaid_annual_revenue()
     rows = [{"invoice_date": str(r["invoice_date"].date()), "amount": r["amount"]} for r in rev.to_dict("records")]
-    found = as_of.detect({"revenue": {"mapping": {"invoice_date": "invoice_date", "amount": "amount"}, "rows": rows}})
+    found = demo_data.detect_month({"revenue": {"mapping": {"invoice_date": "invoice_date", "amount": "amount"}, "rows": rows}})
     assert found["month"] == "2026-06", "the last invoice month, not the last service month (2027-05)"
     results = _reported_settings(as_of.month_end(found["month"]))
     assert results["as_of_month"] == "2026-06"

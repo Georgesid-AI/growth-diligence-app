@@ -41,16 +41,8 @@ def run(as_of_month=None, revenue=None, pnl_last="2019-12"):
     return run_engine(uploads, as_of_month)
 
 
-# 5 --------------------------------------------------------------------------------------------------------------------------
-def test_the_default_as_of_month_is_the_revenue_files_last_month_not_the_pnls():
-    results = run()
-    assert results["as_of_month"] == "2019-06", "the P&L runs to 2019-12; the actuals end with the revenue file"
-    assert results["source_period"]["month"] == "2019-06" and results["source_period"]["evidence_to"] == "2019-06"
 
 
-def test_the_default_skips_a_trailing_month_with_no_amount():
-    revenue = synthetic_revenue("2017-07", "2019-06") + b"C-01,2019-09-01,0,EUR,Enterprise,recurring\n"
-    assert run(revenue=revenue)["as_of_month"] == "2019-06", "a row with a zero amount is no actual month"
 
 
 def test_an_as_of_month_the_analyst_set_is_kept_before_and_after_the_revenue_files_last_month():
@@ -81,12 +73,6 @@ def _fake_db(*datasets, audit=None):
     return db
 
 
-def test_recognition_reads_the_stored_as_of_month_and_never_the_files_months(monkeypatch):
-    """One stored field (dates-and-periods.md section 2): no fallback to a dataset's months (PR 196 review, finding 1)."""
-    monkeypatch.setattr(server, "db", _fake_db({"dtype": "revenue", "months": {"count": 24, "first": "2017-07", "last": "2019-06"}},
-                                              {"dtype": "pnl", "months": {"count": 24, "first": "2018-01", "last": "2019-12"}}))
-    assert asyncio.run(server._effective_as_of("aud-1", {})) is None
-    assert asyncio.run(server._effective_as_of("aud-1", {"as_of_month": "2019-03-31"})) == "2019-03-31"
 
 
 def test_the_screen_gets_the_months_of_the_revenue_file(monkeypatch):
@@ -139,7 +125,7 @@ def assert_stale(api):
     assert r.status_code == 409 and r.json()["detail"] == {"code": "results_stale", "message": STALE}
     assert api.get("/api/audits/aud-1/claims").json()["results_stale"] is True
     assert not [c for c in api.calls if c == "aud-1"], "no automatic recompute: Run audit calculates again"
-    assert run_audit.engine_stale(api.db["audits"].docs[0], []) is True
+    assert run_audit.engine_stale(api.db["audits"].docs[0]) is True
 
 
 def assert_current(api):
@@ -207,7 +193,7 @@ def test_run_audit_calculates_again_and_clears_the_mark(monkeypatch):
     assert run_audit.results_stale(db["audits"].docs[0]) is True
     asyncio.run(server.compute_audit("aud-z"))
     audit = db["audits"].docs[0]
-    assert audit["setup_stale"] is False and run_audit.results_stale(audit) is False and run_audit.engine_stale(audit, []) is False
+    assert audit["setup_stale"] is False and run_audit.results_stale(audit) is False and run_audit.engine_stale(audit) is False
 
 
 def test_the_mark_alone_decides_for_results_of_the_current_contract():

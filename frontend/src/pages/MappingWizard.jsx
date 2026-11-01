@@ -1,23 +1,19 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, Plus, X, Search } from "lucide-react";
+import { Loader2, Plus, X } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import DeckPanel from "@/components/DeckPanel";
 import { ConsentBlock, AssumptionsSetup, ParkedBlocks } from "@/components/AuditSetup";
 import UploadChat from "@/components/UploadChat";
 import RunAuditPanel from "@/components/RunAuditPanel";
 import ReadingScreen, { ReadingTop } from "@/components/ReadingScreen";
-import { legacyView } from "@/lib/legacyView";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getAudit, saveMapping, getRevenueCustomers, reportUsage, saveFx } from "@/lib/api";
+import { getAudit, reportUsage, saveFx } from "@/lib/api";
 import { asOfInputValue } from "@/lib/auditForm";
 import { mapState } from "@/lib/chatUpload";
-import { seeGlossary } from "@/lib/glossary";
 import { splitFiles } from "@/lib/runAudit";
-import { fmtCount } from "@/lib/format";
 
 export default function MappingWizard() {
   const { id } = useParams();
@@ -53,46 +49,13 @@ export default function MappingWizard() {
     return <Layout audit={audit}><div className="flex justify-center py-32 text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div></Layout>;
   }
 
-  if (legacyView()) {
-  return (
-    <Layout audit={audit}>
-      <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Upload & Mapping</h1>
-        </div>
-        <div ref={setTopHost} data-testid="run-audit-top-host" />
-      </div>
-      {missing && <p role="status" className="mb-4 text-sm text-amber-800" data-testid="run-missing-line">{missing}</p>}
-
-      <ConsentBlock audit={audit} setAudit={setAudit} />
-
-      <UploadChat audit={audit} onViews={setViews} onStaged={setAttached} onMapping={setMapping}
-        onFiles={attach} leftover={leftover}
-        mapButton={map}
-        deck={<div className="px-5 pt-4"><DeckPanel auditId={audit.id} reloadKey={fxVersion} /></div>}
-        extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
-
-      <div className="mt-5">
-        <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
-      </div>
-
-      <AssumptionsSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
-
-      <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={mapping} topHost={topHost} />
-
-      <ParkedBlocks audit={audit} setAudit={setAudit} asOf={asOf} />
-    </Layout>
-  );
-  }
-
-  const revenueViews = views.filter((v) => v.dtype === "revenue" && !v.recognition_only);
   return (
     <Layout audit={audit}>
       <ReadingTop audit={audit} setAudit={setAudit} host={<div ref={setTopHost} data-testid="run-audit-top-host" />} />
       {missing && <p role="status" className="mb-4 text-sm text-amber-800" data-testid="run-missing-line">{missing}</p>}
 
       <UploadChat audit={audit} onViews={setViews} onStaged={setAttached} onMapping={setMapping}
-        onFiles={attach} leftover={leftover} mapButton={map} compact
+        onFiles={attach} leftover={leftover} mapButton={map}
         deck={<div className="px-5 pt-4"><DeckPanel auditId={audit.id} reloadKey={fxVersion} compact /></div>} />
 
       <ReadingScreen audit={audit} setAudit={setAudit} reloadKey={readKey + fxVersion} />
@@ -102,41 +65,12 @@ export default function MappingWizard() {
       <details className="mt-5" data-testid="more-settings">
         <summary className="cursor-pointer text-sm text-sky-700">More settings</summary>
         <div className="mt-3">
-          {revenueViews.map((view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />)}
           <div className="mt-5"><FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} /></div>
           <AssumptionsSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
           <ParkedBlocks audit={audit} setAudit={setAudit} asOf={asOf} />
         </div>
       </details>
     </Layout>
-  );
-}
-
-/** What follows a revenue file's mapping table, unchanged: FX rates and billing terms. They save as they change. */
-function RevenueSettings({ audit, view }) {
-  const [billingTerms, setBillingTerms] = useState(view.billing_terms || {});
-  const first = useRef(true);
-  const mapping = view.mapping || {};
-
-  useEffect(() => {
-    if (first.current) { first.current = false; return undefined; }
-    const timer = setTimeout(() => {
-      saveMapping(audit.id, "revenue", { billing_terms: billingTerms })   // never the mapping (a click decides it) and no rates (they are the audit's)
-        .catch(() => toast.error("Save failed"));
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [billingTerms]); // eslint-disable-line
-
-  return (
-    <div data-testid="revenue-settings">
-      <BillingTerms
-        auditId={audit.id}
-        customerCol={mapping.customer_id}
-        hasServiceDates={!!mapping.service_start && !!mapping.service_end}
-        billingTerms={billingTerms}
-        setBillingTerms={setBillingTerms}
-      />
-    </div>
   );
 }
 
@@ -185,103 +119,6 @@ function FxEditor({ fx, setFx, baseCcy }) {
         <span className="text-slate-500 text-sm">{baseCcy}</span>
         <Button size="sm" variant="outline" onClick={add} className="bg-transparent border-[#D1D5DB] text-slate-800 gap-1"><Plus className="h-3.5 w-3.5" /> Add</Button>
       </div>
-    </div>
-  );
-}
-
-const TERMS = ["monthly", "quarterly", "annual"];
-
-function BillingTerms({ auditId, customerCol, hasServiceDates, billingTerms, setBillingTerms }) {
-  const [customers, setCustomers] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [query, setQuery] = useState("");
-
-  useEffect(() => {
-    if (hasServiceDates || !customerCol) { setCustomers(null); return; }
-    setLoading(true);
-    getRevenueCustomers(auditId, customerCol)
-      .then((d) => setCustomers(d.customers))
-      .catch(() => setCustomers([]))
-      .finally(() => setLoading(false));
-  }, [auditId, customerCol, hasServiceDates]);
-
-  if (hasServiceDates) {
-    return (
-      <div className="mt-5 pt-5 border-t border-[#E5E7EB]">
-        <div className="text-xs text-slate-700 mb-1">Billing terms</div>
-        <p className="text-[11px] text-slate-500">
-          {seeGlossary("Service start & end dates are mapped — MRR is spread across the exact service months, so per-customer billing terms aren't needed.")}
-        </p>
-      </div>
-    );
-  }
-
-  const setTerm = (cust, term) => {
-    const next = { ...billingTerms };
-    if (term === "monthly") delete next[cust]; else next[cust] = term;
-    setBillingTerms(next);
-  };
-  const applyAll = (term) => {
-    if (!customers) return;
-    const next = {};
-    if (term !== "monthly") customers.forEach((c) => { next[c] = term; });
-    setBillingTerms(next);
-  };
-
-  const filtered = (customers || []).filter((c) => c.toLowerCase().includes(query.toLowerCase()));
-  const overrideCount = Object.keys(billingTerms).length;
-
-  return (
-    <div className="mt-5 pt-5 border-t border-[#E5E7EB]" data-testid="billing-terms-section">
-      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-        <div className="text-xs text-slate-700">
-          Billing terms <span className="text-slate-500">(no service dates — each invoice is spread over its term. Default: monthly = 1 month.)</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono text-slate-500">apply to all:</span>
-          {TERMS.map((t) => (
-            <button key={t} data-testid={`billing-apply-all-${t}`} onClick={() => applyAll(t)}
-              className="text-[10px] font-mono px-2 py-1 rounded bg-sky-50 border border-[#D1D5DB] text-slate-700 hover:bg-slate-100 capitalize">
-              {t}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center gap-2 text-slate-500 text-xs py-4"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading customers…</div>
-      ) : !customerCol ? (
-        <p className="text-[11px] text-amber-700">Map the customer ID column first to set billing terms.</p>
-      ) : (customers && customers.length === 0) ? (
-        <p className="text-[11px] text-slate-500">No customers found in the mapped column.</p>
-      ) : (
-        <>
-          <div className="relative mb-2">
-            <Search className="h-3.5 w-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search customers…"
-              className="h-8 pl-8 bg-white border-[#E5E7EB] text-xs" data-testid="billing-search-input" />
-          </div>
-          <div className="text-[10px] font-mono text-slate-500 mb-2">
-            {fmtCount(customers?.length ?? 0)} customers · {overrideCount} non-monthly override{overrideCount === 1 ? "" : "s"}
-          </div>
-          <div className="max-h-56 overflow-y-auto pr-1 space-y-1.5">
-            {filtered.slice(0, 200).map((cust) => (
-              <div key={cust} className="flex items-center justify-between gap-3" data-testid={`billing-row-${cust}`}>
-                <span className="text-xs font-mono text-slate-700 truncate">{cust}</span>
-                <Select value={billingTerms[cust] || "monthly"} onValueChange={(v) => setTerm(cust, v)}>
-                  <SelectTrigger data-testid={`billing-term-${cust}`} className="h-7 w-32 bg-white border-[#E5E7EB] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border-[#E5E7EB] text-slate-900">
-                    {TERMS.map((t) => <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            ))}
-            {filtered.length > 200 && <div className="text-[10px] text-slate-600 py-1">Showing first 200 — use search to narrow.</div>}
-          </div>
-        </>
-      )}
     </div>
   );
 }

@@ -21,17 +21,9 @@ export const KEEP_UNDATED = "Keep undated";
 export const undatedTitle = (n, page) => `Set the period for ${n} figures on ${page || "this page"}`;
 export const addsUpText = (name) => `These add up to the ${name} total`;
 
-/** The views of the uploaded files that hold a column or a required field waiting for the analyst. */
-export const openViews = (views) => (views || []).filter((v) => v.pending > 0 || v.missing_required.length > 0);
-
-/** The questions: the five's claim questions first, then the columns that wait, then the other claim questions; the claims keep the server's
- *  ranking (`attention`: [{id, in_top5}], best first). An Other figure is never a task. */
-export function openQuestions(views, candidates, attention, groups, sales = []) {
-  const columns = [];
-  openViews(views).forEach((view) => {
-    const rows = view.missing_required.length ? view.columns : view.columns.filter((c) => c.pending);
-    rows.forEach((row) => columns.push({ key: `col-${view.dtype}-${row.column}`, kind: "mapping", view, row }));
-  });
+/** The questions: the five's claim questions first, then the other claim questions; the claims keep the server's ranking (`attention`:
+ *  [{id, in_top5}], best first). An Other figure is never a task. No question is about a column: there is no mapping to answer. */
+export function openQuestions(candidates, attention, groups, sales = []) {
   const claims = [];
   // a claim in the register whose reason asks the analyst to set or confirm something (the server names the reason in `set`)
   const asked = new Map((attention || []).filter((a) => a.set).map((a) => [a.id, a.set]));
@@ -59,5 +51,5 @@ export function openQuestions(views, candidates, attention, groups, sales = []) 
   // the questions the groups raise (which annual figure, which parts) and the conflicts that stay unresolved: after the claims that wait
   const related = groupQuestions(groups).map((q) => ({ key: `group-${q.id}`, kind: "group", q }));
   const asks = (sales || []).map((q) => ({ key: `sales-${q.deck_id}`, kind: "sales", q }));       // one per deck
-  return [...claims.filter((x) => at(x).top), ...columns, ...claims.filter((x) => !at(x).top), ...asks, ...related];
+  return [...claims.filter((x) => at(x).top), ...claims.filter((x) => !at(x).top), ...asks, ...related];
 }

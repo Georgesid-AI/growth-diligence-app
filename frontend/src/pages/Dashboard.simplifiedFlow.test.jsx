@@ -20,7 +20,6 @@ jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavig
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
 jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{children}</div> }));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-window.history.pushState({}, "", "/?view=legacy");      // PR 3: the earlier screen, which this file tests, is behind ?view=legacy (lib/legacyView.js)
 
 const LINE = "Top-5 claim contradicted: revenue 200,000 EUR vs 150,000 EUR observed (board.pptx, slide 4).";
 const ROW = (n, label, extra = {}) => ({
@@ -48,7 +47,7 @@ const DECKS = { decks: [], candidates: [{ id: "k1", claim_type: "revenue", statu
 async function mount({ audit = { ...sample.audit, target_arr: 1000000, target_date: "2026-12-31", fiscal_year_end: 3, as_of_month: null, reporting_currency: "EUR",
   datasets: { revenue: { months: { first: "2023-01", last: "2024-02" } } } }, decks = { decks: [], candidates: [] }, results = sample } = {}) {
   api.getBlockers.mockResolvedValue([{ kind: "claim_contradicted", text: LINE }]);
-  api.getAudit.mockResolvedValue(audit);
+  api.getAudit.mockResolvedValue({ ...audit, old_claims: true });
   api.getResults.mockResolvedValue(results);
   api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "x" });
   api.getDisclosure.mockResolvedValue(null);

@@ -22,13 +22,12 @@ def api(monkeypatch):
     import test_llm_gateway as t
     from app import usage as usage_mod
     from app.llm import gateway
-    from test_chat_upload import AUDIT_DOC, mapping_reply
+    from upload_support import AUDIT_DOC
 
     db = t.FakeDB()
     db["audits"].docs.append({**AUDIT_DOC, "usage": usage_mod.empty()})
     monkeypatch.setattr(server, "db", db)
-    server._RECOGNITION_CACHE.clear()
-    state = {"adapter": t.FakeAdapter(replies=[mapping_reply()])}
+    state = {"adapter": t.FakeAdapter(replies=[])}
     monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: state["adapter"])
     client = TestClient(server.app, raise_server_exceptions=False)
     client.db, client.state = db, state
@@ -74,6 +73,21 @@ def run_api(monkeypatch):
     monkeypatch.setattr(server, "db", db)
     adapter = EchoAdapter()
     monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: adapter)
+
+    async def engine_from_the_sample_files(audit_id, audit, roles):
+        """The engine stage of these tests runs the engine over the sample files' rows (claim_matching_support.engine_results): the
+        figures the claims, the narratives and the memo are tested against. The engine on the stored map has its own tests
+        (test_role_engine.py, test_sheet_reader_flow.py)."""
+        from datetime import datetime, timezone
+
+        from claim_matching_support import engine_results
+        results = engine_results(("revenue", "pnl", "crm"), audit.get("as_of_month"))
+        await db.audits.update_one({"id": audit_id}, {"$set": {"results": results, "status": "computed", "metrics_stale": False,
+                                                                "setup_stale": False,
+                                                                "computed_at": datetime.now(timezone.utc).isoformat()}})
+        await server._enter_matched_claims(audit_id, await db.audits.find_one({"id": audit_id}))
+        return results
+    monkeypatch.setattr(server, "_compute_on_the_map", engine_from_the_sample_files)
     client = TestClient(server.app, raise_server_exceptions=False)
     client.db, client.adapter = db, adapter
     return client
@@ -123,3 +137,14 @@ def sheet_reader_off_unless_tested(request, monkeypatch):
         return None
     monkeypatch.setattr(server, "_queue_workbook_read", not_queued)
     monkeypatch.setattr(server, "_review_safely", not_queued)          # the reviewer runs after the calculations; only its own tests let it
+
+
+@pytest.fixture(autouse=True)
+def old_claims_on_unless_testing_the_default(request, monkeypatch):
+    """OLD_CLAIMS is off by default (PR 4): the claim register, the five-claims conclusion, the reasons, the key gates and the claim labels leave
+    the screen and the downloaded report. Their code stays, and the tests of it run with the flag on. A module that tests the default says so with
+    `TESTS_THE_DEFAULT = True` (tests/test_old_claims_flag.py)."""
+    if getattr(request.module, "TESTS_THE_DEFAULT", False):
+        monkeypatch.delenv("OLD_CLAIMS", raising=False)
+        return
+    monkeypatch.setenv("OLD_CLAIMS", "on")

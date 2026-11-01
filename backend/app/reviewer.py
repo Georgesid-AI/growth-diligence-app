@@ -2,8 +2,8 @@
 
 One review per audit:
 
-    1. the input: the stored file maps of every spreadsheet (with their series and overrides, without the readers' evidence lines), the deck
-       figures, the computed results and the list of cannot-check items;
+    1. the input: the stored file maps of every spreadsheet (with the overrides in force, without the readers' evidence lines and without the
+       stored series: roles, ranges, boundaries and figures only), the deck figures, the computed results and the list of cannot-check items;
     2. one model call through the gateway (gateway.run_reviewer: masked there, the prompt `reviewer` of the store, the reader's model allow-list);
     3. the findings, each reference opened by code: a finding that cites a file, sheet, cell or page that does not exist is dropped and logged;
     4. a valid finding about a spreadsheet item is read again once, with the finding attached, through the gateway's recheck path. The reader
@@ -14,7 +14,6 @@ One review per audit:
 Scope is reading errors only (section 7.3). The review is stored once per audit and input: the same input is not reviewed again unless the
 analyst asks (`force`); a new input, a new prompt or a new model is a new review.
 """
-import copy
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -42,8 +41,10 @@ def _now() -> str:
 
 
 def strip_evidence(file_map: Dict) -> Dict:
-    """The map as the reviewer sees it: the readers' evidence lines (the reason for a role, a basis or a boundary) left out. Series stay."""
-    out = copy.deepcopy(file_map)
+    """The map as the reviewer sees it: the readers' evidence lines (the reason for a role, a basis or a boundary) left out, and the stored series
+    left out too (PR 4): the reviewer reads what each row is, where its cells are and where actual ends, and the computed results; a cell value
+    of the file goes to the model once, in the reading, and nowhere else."""
+    out = series.strip(file_map)
     for smap in out.get("sheets") or []:
         if smap.get("last_actual"):
             smap["last_actual"].pop("evidence", None)
@@ -195,7 +196,7 @@ def _plain(reading: Optional[Dict]) -> Optional[Dict]:
 # The re-read of one file's flagged items
 # ---------------------------------------------------------------------------
 async def _dataset_sheets(db, audit_id: str, file_hash: str):
-    from . import recognition as rec
+    from . import stored_sheets as rec
     ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": file_hash}, {"_id": 0, "recognition_sheets": 1})
     return rec.unpack_sheets((ds or {}).get("recognition_sheets") or []) if ds else []
 

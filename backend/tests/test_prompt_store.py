@@ -88,7 +88,7 @@ def test_an_upload_the_store_refuses_adds_nothing(name, text, why):
 
 def test_the_names_are_the_prompts_the_gateway_reads():
     enabled = {c["prompt"] for c in gateway.STEP_CONFIG.values() if c.get("enabled")}
-    assert set(prompt_store.NAMES) == enabled | {gateway.STRUCTURE_PROMPT, gateway.FILE_TYPE_PROMPT, gateway.SHEET_STRUCTURE_PROMPT,
+    assert set(prompt_store.NAMES) == enabled | {gateway.STRUCTURE_PROMPT,
                                                  gateway.PAGE_CLAIMS_PROMPT, gateway.SHEET_READING_PROMPT,
                                                  gateway.REVIEWER_PROMPT}
 

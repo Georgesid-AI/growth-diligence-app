@@ -73,25 +73,16 @@ def test_a_dataset_the_audit_does_not_hold_is_not_listed():
 @pytest.fixture()
 def api(monkeypatch):
     from fastapi.testclient import TestClient
-    ups, _ = uploads()
     db = t.FakeDB()
     db["audits"].docs.append({"id": "aud-1", "company_name": "Acme", "reporting_currency": "EUR", "status": "mapped", "target_arr": 0,
                               "target_date": None, "as_of_month": None, "as_of_by": "detected", "fiscal_year_end": 12, "fx": {}})
-    for dtype, u in ups.items():
-        db["datasets"].docs.append({"audit_id": "aud-1", "dtype": dtype, "file": u["file"], "sheet": u["sheet"], "rows": u["rows"],
-                                    "mapping": u["mapping"], "columns": u["columns"], "mapped_at": "2026-01-01"})
-
-    async def counts(audit_id, audit, datasets=None):
-        return {"open": 0, "missing_required": 0}, True
+    db["datasets"].docs.append({"audit_id": "aud-1", "dtype": "file", "file": "report.xlsx", "file_hash": "h1"})
 
     async def nothing(*a, **k):
         return {}
 
     monkeypatch.setattr(server, "db", db)
-    monkeypatch.setattr(server, "_mapping_counts", counts)
     monkeypatch.setattr(server, "_enter_matched_claims", nothing)
-    monkeypatch.setattr(server, "_claims_files", lambda audit_id: _async([]))
-    monkeypatch.setattr(server, "_is_revenue_file", lambda *a, **k: _async(True))
     monkeypatch.setattr(server, "_usage_update", nothing)
     monkeypatch.setattr(as_of_mod, "detect", lambda *a, **k: None)         # no file gives a confirmed month
     client = TestClient(server.app, raise_server_exceptions=False)
@@ -99,22 +90,20 @@ def api(monkeypatch):
     return client
 
 
-async def _async(value):
-    return value
-
-
-def test_run_audit_on_files_with_no_confirmed_month_stores_missing_blocks_and_no_period(api):
+def test_run_audit_with_no_confirmed_month_stores_no_period_and_no_map_metric(api):
     out = api.post("/api/audits/aud-1/run/engine").json()
     assert (out["status"], out["message"]) == ("done", run_audit.NO_AS_OF)
     stored = api.db["audits"].docs[0]["results"]
     assert stored["as_of_month"] is None and stored["source_period"] is None and stored["arr"] is None
-    assert {m["reason"] for m in stored["missing_data"]} == {REASON}
+    assert "role_metrics" not in stored, "nothing that reads a month is computed on the map either"
     assert stored["revenue_series"]["data"] == [] and stored["nrr"] is None
 
 
-def test_run_audit_with_a_typed_month_computes(api):
+def test_run_audit_with_a_typed_month_computes_and_each_missing_role_row_is_named(api):
     api.db["audits"].docs[0].update(as_of_month="2019-06-30", as_of_by="analyst")
     out = api.post("/api/audits/aud-1/run/engine").json()
     assert (out["status"], out["message"]) == ("done", None)
     stored = api.db["audits"].docs[0]["results"]
-    assert stored["as_of_month"] == "2019-06" and stored["arr"] and stored["source_period"]["status"] == "Complete"
+    assert stored["as_of_month"] == "2019-06"
+    by_name = {m["metric"]: m for m in stored["role_metrics"]["metrics"]}
+    assert by_name["ending_arr"]["reason"] == "needs an arr row or an mrr row" and by_name["customers"]["reason"] == "needs a customers row"

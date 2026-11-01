@@ -275,9 +275,9 @@ def _without_text(item: Dict) -> Dict:
 
 async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
     """Read one deck page by page with the model and check every claim against its page; returns the deck's AI status (the
-    words of process_deck). Unticked consent: no call. Ticked but the revenue file not yet mapped: the deck waits."""
-    from . import (CANDIDATES_COLLECTION as _c, BLOCKED, NOT_READ, PYTHON_ONLY, READ, STOPPED, WAITING, WAITING_TEXT, _cell_key,  # noqa: F401
-                   CONSENT_OFF_LINE, PROMPT_MISSING, _deck_status, _python_cells, analyst_copy, revenue_ready, rules_copy, store_candidate, value_match)
+    words of process_deck). Unticked consent: no call. A deck never waits for a file (read-check-review.md section 12)."""
+    from . import (CANDIDATES_COLLECTION as _c, BLOCKED, NOT_READ, PYTHON_ONLY, READ, STOPPED, _cell_key,  # noqa: F401
+                   CONSENT_OFF_LINE, PROMPT_MISSING, _deck_status, _python_cells, analyst_copy, rules_copy, store_candidate, value_match)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
@@ -287,8 +287,6 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         return NOT_READ
     if audit.get("structure_reading_consent") is not True:
         return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY, CONSENT_OFF_LINE)
-    if not await revenue_ready(db, audit_id):
-        return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
     year_end = int(audit.get("fiscal_year_end") or 12)
     grids = page_grids_mod.page_grids(deck.get("blocks") or [], deck.get("layout"))
     by_page = {page_grids_mod.page_number(g): g for g in grids}

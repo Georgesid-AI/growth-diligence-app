@@ -49,7 +49,7 @@ test("scope message is the spec text", () => {
     "The app cannot read:\n" +
     "- Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.\n" +
     "- Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.\n" +
-    "If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.",
+    "If a number you need sits in a picture, upload the source spreadsheet instead.",
   );
 });
 

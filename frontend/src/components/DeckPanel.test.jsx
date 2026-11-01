@@ -680,7 +680,7 @@ describe("Add claim", () => {
     expect(lines[0]).toBe("Claims found in the uploaded documents");
     expect(lines[1]).toBe("These figures were read from the uploaded documents and tested against the data automatically. Errors are possible: check only the claims that look incorrect or implausible against their source slides, or that wait for your answer.");
     expect(lines.slice(2).map((l) => l.split(":")[0])).toEqual(["✓ Keep", "✎ Edit", "✕ Reject"]);
-    expect(q("deck-scope-message").textContent).toContain("If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.");
+    expect(q("deck-scope-message").textContent).toContain("If a number you need sits in a picture, upload the source spreadsheet instead.");
   });
 
   test("one row opens with the metric list of the other rows and a dropdown of the uploaded decks", async () => {
@@ -846,7 +846,7 @@ describe("upload box", () => {
       "The app cannot read:\n" +
       "- Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.\n" +
       "- Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.\n" +
-      "If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.");
+      "If a number you need sits in a picture, upload the source spreadsheet instead.");
     expect(q("deck-upload-input").getAttribute("accept")).toBe(".pptx,.pdf,.docx");
   });
 

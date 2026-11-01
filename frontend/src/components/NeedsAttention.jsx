@@ -1,36 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ColumnRow } from "@/components/UploadChat";
 import DateField from "@/components/DateField";
 import { DefinitionCell, TurnoverCell } from "@/components/ClaimRegister";
 import { CandidateRow } from "@/components/DeckPanel";
 import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
-import * as apiModule from "@/lib/api";
-import { answerCorrection, answerDefinitionCheck, answerSales, answerTurnover, chooseGroup, decideColumns, getClaimRegister, getDatasets, getDecks, keepUndated, undoGroupChoice, updateCandidate } from "@/lib/api";
+import { answerCorrection, answerDefinitionCheck, answerSales, answerTurnover, chooseGroup, getClaimRegister, getDecks, keepUndated, undoGroupChoice, updateCandidate } from "@/lib/api";
 import { CHOOSE_FIGURE, CHOSEN, CLAIMS_LIST_ID, EXCLUDE, EXCLUDE_REASON, KEPT_NOTE, OPEN_CLAIMS, TOO_MANY_NOTE, UNDO_CHOICE, figureText, questionTitle, sourceText, tooMany } from "@/lib/claimGroups";
 import { EDIT_REASONS } from "@/lib/deckClaims";
 import { POPULATION_ANSWERS, POPULATION_QUESTION, asksPopulationOnly, claimPeriod, claimValue, flagsText, scenarioText, sourceRef, typeLabel, waitingCorrections } from "@/lib/deckClaims";
 import { definitionOf, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
-import { MAPPING_HEADERS, S13_status } from "@/lib/chatUpload";
-import { ATTENTION_HEADING, KEEP_UNDATED, SALES_ANSWERS, UNDATED_ACTION, undatedTitle, SALES_QUESTION, SHOWN_QUESTIONS, addsUpText, attentionCount, salesCount, lessLabel, moreLabel, openQuestions, openViews } from "@/lib/attention";
+import { ATTENTION_HEADING, KEEP_UNDATED, SALES_ANSWERS, UNDATED_ACTION, undatedTitle, SALES_QUESTION, SHOWN_QUESTIONS, addsUpText, attentionCount, salesCount, lessLabel, moreLabel, openQuestions } from "@/lib/attention";
 import { describeRequestError } from "@/lib/requestError";
-import { runAudit } from "@/lib/runAudit";
 
 const safe = (call, fallback) => Promise.resolve().then(call).catch(() => fallback);
-
-function MappingCard({ item, decide, lastReason, setLastReason }) {
-  const { view, row } = item;
-  return (
-    <div data-testid="attention-mapping">
-      <div className="text-xs font-medium text-slate-900">{view.file} <span className="font-mono text-amber-700">· {S13_status(view)}</span></div>
-      <table className="w-full text-xs mt-1">
-        <thead><tr className="text-left text-slate-500 border-b border-[#E5E7EB]">{MAPPING_HEADERS.map((h, i) => <th key={i} className="py-1.5 pr-3 font-medium">{h}</th>)}</tr></thead>
-        <tbody><ColumnRow row={row} view={view} decide={decide} lastReason={lastReason} setLastReason={setLastReason} /></tbody>
-      </table>
-    </div>
-  );
-}
 
 function ClaimCard({ item, busy, act, auditId, addsUp }) {
   const { c } = item;
@@ -214,23 +197,19 @@ function SetCard({ item, save, answer }) {
  *  the card and the page reads the results again; nothing is deleted. Hidden at 0. `computed` is false while the results do not
  *  exist yet: the last answered column then carries the run on, as Review did. */
 export default function NeedsAttention({ auditId, computed = true, onChanged }) {
-  const [views, setViews] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [attention, setAttention] = useState([]);
   const [groups, setGroups] = useState(null);
   const [sales, setSales] = useState([]);
   const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(null);
-  const [lastReason, setLastReason] = useState("header_misleading");
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const reload = useCallback(async () => {
-    const [v, d, g] = await Promise.all([safe(() => getDatasets(auditId), []), safe(() => getDecks(auditId), { decks: [], candidates: [] }),
-      safe(() => getClaimRegister(auditId), null)]);
+    const [d, g] = await Promise.all([safe(() => getDecks(auditId), { decks: [], candidates: [] }), safe(() => getClaimRegister(auditId), null)]);
     if (!alive.current) return;
-    setViews(v || []); setCandidates(d?.candidates || []); setAttention(d?.attention || []); setSales(d?.sales_questions || []); setGroups(g);
-    return v || [];
+    setCandidates(d?.candidates || []); setAttention(d?.attention || []); setSales(d?.sales_questions || []); setGroups(g);
   }, [auditId]);
   useEffect(() => { reload(); }, [reload]);
 
@@ -244,15 +223,6 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
     setBusy(key);
     try { await fn(); await changed(); } catch (e) { toast.error(describeRequestError(e).message); } finally { if (alive.current) setBusy(null); }
   };
-  const decide = async (view, decisions) => {
-    const next = await decideColumns(auditId, view.dtype, decisions);
-    const fresh = await reload();
-    if (!computed && openViews(fresh).length === 0) {
-      await runAudit({ api: apiModule, auditId, from: "mapping" });
-      await changed();
-    } else await changed();
-    return next;
-  };
   const answer = async (row, payload) => {
     try { await answerTurnover(auditId, row.claim_id, payload); await changed(); } catch (e) { toast.error(describeRequestError(e).message); throw e; }
   };
@@ -262,7 +232,7 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
     try { await updateCandidate(auditId, candidate.id, payload); await changed(); return true; } catch (e) { toast.error(describeRequestError(e).message); return false; }
   };
 
-  const questions = openQuestions(views, candidates, attention, groups, sales);
+  const questions = openQuestions(candidates, attention, groups, sales);
   if (!questions.length) return null;
   const shown = all ? questions : questions.slice(0, SHOWN_QUESTIONS);
   const more = questions.length - SHOWN_QUESTIONS;
@@ -273,7 +243,6 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
       <ul className="space-y-3">
         {shown.map((item) => (
           <li key={item.key} className="rounded-md border border-[#E5E7EB] bg-white p-3" data-testid="attention-card">
-            {item.kind === "mapping" && <MappingCard item={item} decide={decide} lastReason={lastReason} setLastReason={setLastReason} />}
             {item.kind === "claim" && <ClaimCard item={item} busy={busy} act={act} auditId={auditId} addsUp={attention.find((a) => a.id === item.c.id)?.adds_up_to} />}
             {item.kind === "sales" && <SalesCard item={item} busy={busy} act={act} auditId={auditId} />}
             {item.kind === "turnover" && <TurnoverCard item={item} answer={answer} />}

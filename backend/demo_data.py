@@ -127,3 +127,33 @@ def build(spec):
         "fx": {"USD": 0.92} if spec["multi_ccy"] else {},
     }
     return datasets, meta
+
+
+def detect_month(uploads: dict):
+    """{"month": "YYYY-MM", "file": name, "evidence": None} for a demo or test company whose files are rows (revenue invoices, a P&L of one row
+    per month): the last month of the revenue file with a non-zero amount, or of the P&L. Not the app's detection (app/as_of.py reads the
+    checked readings only); a company seeded from rows has no reading."""
+    from app import column_rules as cr
+
+    def amount(v):
+        try:
+            return float(str(v).replace(",", "").replace(" ", ""))
+        except (TypeError, ValueError):
+            return None
+
+    def last(ds, date_field, amount_field):
+        mapping, rows = (ds or {}).get("mapping") or {}, (ds or {}).get("rows") or []
+        col = mapping.get(date_field)
+        if not (col and rows):
+            return None
+        if mapping.get(amount_field):
+            rows = [r for r in rows if amount(r.get(mapping[amount_field])) not in (None, 0.0)]
+        found = cr.months_of([r.get(col) for r in rows])
+        return found["last"] if found else None
+    revenue = last(uploads.get("revenue"), "invoice_date", "amount")
+    pnl = last(uploads.get("pnl"), "month", "revenue")
+    found = [(m, uploads[t].get("file")) for m, t in ((revenue, "revenue"), (pnl, "pnl")) if m]
+    if not found:
+        return None
+    month, file = max(found)
+    return {"month": month, "file": file, "evidence": None}

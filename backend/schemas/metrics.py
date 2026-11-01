@@ -24,7 +24,8 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 15         # 15: the file map (docs/design/read-check-review.md section 4, PR 2): `FileMap` joins this file as the one schema of a reading, for sheets and decks (a row may name its variance columns: actual | budget | variance per period), and the as-of month comes from the reader's checked evidence (the rules' boundary-cue path and last-unmarked-column fallback are gone); no engine block changes, and results stored under 14 read "Stale – re-run audit".
+CONTRACT_VERSION = 16         # 16: the engine on the map (docs/design/read-check-review.md section 16, PR 4): the new server-only block `role_metrics` (every metric by role: computed or "needs a <role> row"; plan to date; the same metric and period across files and decks); the yearly payback reasons name the role row they need; results stored under 15 read "Stale – re-run audit".
+                              # 15: the file map (docs/design/read-check-review.md section 4, PR 2): `FileMap` joins this file as the one schema of a reading, for sheets and decks (a row may name its variance columns: actual | budget | variance per period), and the as-of month comes from the reader's checked evidence (the rules' boundary-cue path and last-unmarked-column fallback are gone); no engine block changes, and results stored under 14 read "Stale – re-run audit".
                               # 14: P&L lines (docs/design/pnl-lines.md): the new server-only block `pnl_lines` (findings of the sum, recompute and sign checks, plan cells with implied against observed rate) and `yearly_basis.years.cac_payback_label` ("yearly, revenue-based"); S&M leaves out the sub-lines mapped to overhead (internal events); results stored under 13 read "Stale – re-run audit".
                               # 13: deck actuals (docs/design/deck-actuals.md, 2026-10-28): `yearly_basis.years[].revenue_cells` names the cells a deck figure is reconciled with; results stored under 12 read "Stale – re-run audit".
                               # 12: one as-of month (docs/specs/dates-and-periods.md section 2, 2026-10-28): the as-of month always counts as complete, `source_period.status` is always Complete and `complete_by` "as_of", the last month is no longer left out of NRR, gross churn and growth, and the fiscal year-end sets the months of a yearly column; results stored under 11 read "Stale – re-run audit".
@@ -793,6 +794,77 @@ class FileMap(MapBlock):
 
 
 # ---------------------------------------------------------------------------
+# The engine on the map (docs/design/read-check-review.md section 16): every metric by the role of the rows it reads. Server-only.
+# ---------------------------------------------------------------------------
+ROLE_METRICS = ("ending_arr", "mrr_series", "monthly_churn", "customers", "growth", "plan_to_date", "yearly_revenue", "gross_margin", "sm_share",
+                "yearly_cac_payback", "rnd_share", "ga_share", "opex_share", "ebitda_margin", "bookings", "cash", "headcount", "reconciliation")
+
+
+class RoleSource(Block):
+    """The cells a figure was computed from, in the file the reader mapped."""
+    file: Optional[str] = None
+    sheet: Optional[str] = None
+    row: int
+    cells: List[str]
+    rule: str
+
+
+class RoleMetric(Block):
+    """One metric of section 16. `status` computed carries its value; needs_row carries the reason ("needs a revenue row") and the roles it needs; error carries the closed sentence of a calculation that stopped (rule 20).
+    `value` is held as the file states it: money in the file's currency, a rate as a fraction, months, a count."""
+    metric: Literal[ROLE_METRICS]
+    name: str
+    status: Literal["computed", "needs_row", "error"]
+    reason: Optional[str] = None
+    needs: List[str]
+    period: Optional[str] = None
+    basis: Optional[str] = None
+    unit: Optional[Literal["money", "count", "rate", "months"]] = None
+    value: Optional[float] = Field(default=None, allow_inf_nan=False)
+    label: Optional[str] = None
+    detail: Optional[str] = None
+    source: Optional[RoleSource] = None
+
+
+class PlanToDate(Block):
+    """Actual to the as-of month against the plan row to the same month (a month, or the cumulative span where the plan row is cumulative)."""
+    period: str
+    basis: Literal["month", "cumulative_to_date"]
+    actual: float = Field(allow_inf_nan=False)
+    plan: float = Field(allow_inf_nan=False)
+    variance: float = Field(allow_inf_nan=False)
+    variance_pct: Optional[float] = Field(default=None, allow_inf_nan=False)
+    note: str
+    source: RoleSource
+
+
+class ReconciliationSourceItem(Block):
+    kind: Literal["file", "deck"]
+    file: Optional[str] = None
+    where: str
+    value: float = Field(allow_inf_nan=False)
+
+
+class RoleReconciliation(Block):
+    """The same metric in the same period from two or more sources."""
+    metric: str
+    period: str
+    basis: Optional[str] = None
+    status: Literal["agrees", "differs", "not_compared"]
+    reason: Optional[str] = None
+    gap: Optional[float] = Field(default=None, allow_inf_nan=False)
+    gap_pct: Optional[float] = Field(default=None, allow_inf_nan=False)
+    sources: List[ReconciliationSourceItem]
+
+
+class RoleMetrics(Block):
+    as_of_month: str
+    metrics: List[RoleMetric]
+    plan_to_date: Optional[PlanToDate] = None
+    reconciliation: List[RoleReconciliation]
+
+
+# ---------------------------------------------------------------------------
 # What could not be computed
 # ---------------------------------------------------------------------------
 class MissingItem(Block):
@@ -835,7 +907,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[15]
+    contract_version: Literal[16]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]
@@ -862,6 +934,7 @@ class MetricsPayload(Block):
     metric_periods: Dict[str, MetricPeriod] = Field(default_factory=dict)
     pnl_lines: Optional[PnlLines] = None            # 13: a P&L read as a statement, yearly or monthly (docs/design/pnl-lines.md); server-only
     yearly_basis: Optional[YearlyBasis] = None      # a P&L read as a statement with actual years and no monthly P&L (section 26.8)
+    role_metrics: Optional[RoleMetrics] = None      # 16: every metric by role, from the stored map (section 16); server-only
     recognition: Optional[RecognitionSummary] = None    # a recognised file with no customer rows supplies the revenue series (section 9)
 
 
