@@ -254,7 +254,7 @@ REPEATS = {"rows": 9, "distinct_ids": 3, "collapsed": 6, "rows_list": [2, 3, 4]}
 
 def test_the_xlsx_anomalies_sheet_lists_crm_rows_sharing_a_deal_id_after_the_deals_closed_before_created():
     import openpyxl
-    stored = cf.stored(anomalies=cf.anomalies(deals_duplicate_id=REPEATS))
+    stored = cf.stored(anomalies=cf.anomalies(deals_duplicate_id=REPEATS, deals_source=cf.cite("crm.csv")))
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, stored))
     rows = [tuple(c.value for c in r) for r in wb["Anomalies"].iter_rows(min_row=2)]
     labels = [r[0] for r in rows]
@@ -264,5 +264,5 @@ def test_the_xlsx_anomalies_sheet_lists_crm_rows_sharing_a_deal_id_after_the_dea
 
 def test_the_memo_anomaly_count_adds_the_collapsed_rows_as_the_screen_lists_them():
     from app import ic_memo as im
-    assert im.anomaly_count(cf.stored(anomalies=cf.anomalies(deals_duplicate_id=REPEATS))) == 6
-    assert im.anomaly_count(cf.stored(anomalies=cf.anomalies())) == 0
+    assert im.anomaly_count(cf.stored(anomalies=cf.anomalies(deals_duplicate_id=REPEATS, deals_source=cf.cite("crm.csv")))) == 6
+    assert im.anomaly_count(cf.stored(anomalies=cf.anomalies(deals_source=cf.cite("crm.csv")))) == 0

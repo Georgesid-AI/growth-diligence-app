@@ -78,24 +78,28 @@ export function missingRows(results) {
 }
 
 export const ANOMALIES_NOT_COMPUTED = "Not computed: calculation error. See Missing Data.";
+export const NOT_APPLICABLE = "Not applicable";
 
 /** The dashboard's anomaly flags as { label, count, detail } rows, or null when the engine
- *  could not compute them (results.anomalies is null): a failure never reads as 0 anomalies. */
+ *  could not compute them (results.anomalies is null): a failure never reads as 0 anomalies.
+ *  A flag whose input is absent (no revenue lines, no CRM file) has count null: "Not applicable", never 0
+ *  (PR 4f; mirrors report_text.anomaly_rows in the backend). */
 export function anomalyFlags(results) {
   const a = results?.anomalies;
   if (!a) return null;
   const dates = a.date_order_from_data ?? [];
+  const revenue = (a.source?.row_numbers ?? []).length > 0;
+  const crm = Boolean(a.deals_source);
+  const flag = (label, count, detail, applies) => (applies ? { label, count, detail } : { label, count: null, detail: undefined });
   return [
-    { label: "Months with negative MRR", count: a.negative_mrr_months.length, detail: a.negative_mrr_months.join(", ") },
-    { label: "Customers with gaps > 2 months then resume", count: a.revenue_gap_then_resume.length,
-      detail: a.revenue_gap_then_resume.slice(0, 8).join(", ") },
-    { label: "Revenue lines missing customer ID", count: a.revenue_missing_customer_id.count },
-    { label: "Deals with close before created (excluded)", count: a.deals_close_before_created.excluded_count },
+    flag("Months with negative MRR", a.negative_mrr_months.length, a.negative_mrr_months.join(", "), revenue),
+    flag("Customers with gaps > 2 months then resume", a.revenue_gap_then_resume.length, a.revenue_gap_then_resume.slice(0, 8).join(", "), revenue),
+    flag("Revenue lines missing customer ID", a.revenue_missing_customer_id.count, undefined, revenue),
+    flag("Deals with close before created (excluded)", a.deals_close_before_created.excluded_count, undefined, crm),
     // Rows repeating a deal's ID, stage and dates, counted once (crm-dedup-clustering.md section 1). Results stored before the flag
     // existed carry none, and show no row rather than a zero that was never computed.
-    ...(a.deals_duplicate_id ? [{ label: "CRM rows sharing a deal ID", count: a.deals_duplicate_id.collapsed,
-      detail: `${fmtCount(a.deals_duplicate_id.distinct_ids)} distinct deal IDs` }] : []),
-    { label: "Date columns with day/month order set from the data", count: dates.length,
-      detail: dates.map((n) => `${n.field} (${n.dataset}): ${n.order}, ${fmtCount(n.rows)} rows`).join("; ") },
+    ...(a.deals_duplicate_id ? [flag("CRM rows sharing a deal ID", a.deals_duplicate_id.collapsed, `${fmtCount(a.deals_duplicate_id.distinct_ids)} distinct deal IDs`, crm)] : []),
+    flag("Date columns with day/month order set from the data", dates.length,
+      dates.map((n) => `${n.field} (${n.dataset}): ${n.order}, ${fmtCount(n.rows)} rows`).join("; "), revenue || crm),
   ];
 }

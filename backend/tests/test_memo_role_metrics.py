@@ -12,6 +12,8 @@ from test_role_engine import monthly_report, row, run, yearly_pnl  # noqa: E402
 
 from app import ic_memo as im  # noqa: E402
 from app import integrity as integrity_mod  # noqa: E402
+from app import report_text  # noqa: E402
+from app import role_engine  # noqa: E402
 from app import verdict as vd  # noqa: E402
 
 OLD_CLAIMS_PHRASES = ("claim questions open", "claim question open", "Deal thesis", "Draft from computed text", "Value at risk", "value at risk",
@@ -19,31 +21,41 @@ OLD_CLAIMS_PHRASES = ("claim questions open", "claim question open", "Deal thesi
                       "Contradicted", "Key gate", "Top 5")
 
 
-def reading_results():
-    """A monthly report (ARR, customers, churn, revenue), a yearly P&L with costs and a plan row: the file map of one synthetic audit."""
+DECK = [{"metric": "revenue", "period": "2025", "value": 1_500.0, "currency": "EUR", "actual_plan": "actual", "file": "deck.pdf", "page": 4,
+         "label": "Total revenue FY2025"},
+        {"metric": "revenue", "period": "2025", "value": 400.0, "currency": "EUR", "actual_plan": "actual", "file": "deck.pdf", "page": 4,
+         "label": "New customers"}]
+
+
+def reading_maps():
+    """A monthly report (ARR, customers, churn, revenue), a yearly P&L with costs and a plan row: the file maps of one synthetic audit."""
     jan_jun = [f"2026-{m:02d}" for m in range(1, 7)]
     mixed = row(9, "forecast", [110] * 18, [f"2025-{m:02d}" for m in range(1, 13)] + jan_jun, actual_plan="plan", plan=True)
-    files = monthly_report([mixed]) + yearly_pnl()
-    deck = [{"metric": "revenue", "period": "2025", "value": 1_500.0, "currency": "EUR", "actual_plan": "actual", "file": "deck.pdf", "page": 4,
-             "label": "Total revenue FY2025"},
-            {"metric": "revenue", "period": "2025", "value": 400.0, "currency": "EUR", "actual_plan": "actual", "file": "deck.pdf", "page": 4,
-             "label": "New customers"}]
-    return run(files, deck=deck)
+    return monthly_report([mixed]) + yearly_pnl()
 
 
-def build(results, **over):
+def reading_results():
+    return run(reading_maps(), deck=DECK)
+
+
+def build(results, maps=None, **over):
+    """The memo of a run as the server hands it over (OLD_CLAIMS off): the reasons and the requests written from the maps' role table, the files
+    the stored readings give. `maps` None reads no map (an empty role table)."""
+    table = role_engine.build_table(maps or [])
+    results = report_text.apply_reasons(results, table)
     integrity = integrity_mod.assess(results, 1, [])
     args = dict(audit={"company_name": "SynthCo", "target_arr": 1_000_000, "target_date": "2026-12-31", "as_of_month": "2026-06"},
                 results=results, rows=[], ver={"status": "ok", "outcome": None, "five": [], "top5": {"changed": False, "in_force": []}, "reasons": []},
-                key={"gates": [], "note": None}, gaps=vd.data_gaps(results, [], []), ic={"open_questions": 3}, blockers=[], narratives=[],
-                files=[], decks=[{"file": "deck.pdf"}], tables=[], today="2026-11-01", integrity=integrity, claims=False)
+                key={"gates": [], "note": None}, gaps=vd.data_gaps(results, [], [], table=table, old_claims=False), ic={"open_questions": 3},
+                blockers=[], narratives=[], files=report_text.read_files(table), decks=[{"file": "deck.pdf"}], tables=[], today="2026-11-01",
+                integrity=integrity, claims=False)
     args.update(over)
     return im.build_memo(**args)
 
 
 @pytest.fixture(scope="module")
 def text():
-    return build(reading_results())
+    return build(reading_results(), reading_maps())
 
 
 def test_with_old_claims_off_no_claims_text_appears_anywhere(text):
@@ -78,19 +90,20 @@ def test_files_reviewed_marks_the_pnl_as_covered_when_a_pnl_is_read_and_counts_t
     table = text.split("Files reviewed")[2] if text.count("Files reviewed") > 2 else text.split("Files reviewed")[-1]
     assert "| P&L and budget vs actuals | yes |" in table
     assert "Evidence categories covered: 2 of 7" in text, "the P&L and the decks"
-    none = reading_results()
-    none = {**none, "yearly_basis": None}
-    no_pnl = run(monthly_report())
-    assert "Evidence categories covered: 1 of 7" in build(no_pnl)
+    assert "| P&L and budget vs actuals | yes | pnl (P&L) |" in table, "the file is listed"
+    no_pnl = monthly_report()
+    out = build(run(no_pnl), no_pnl)
+    assert "Evidence categories covered: 1 of 7" in out, "the decks; a monthly report is a Monthly revenue or ARR report, not one of the seven"
+    assert "| P&L and budget vs actuals | no |" in out
 
 
 def test_data_requests_are_one_line_per_file():
     results = run(monthly_report())
-    text = build(results)
+    text = build(results, monthly_report())
     requests = text.split("Requests")[1].split("## Appendix C")[0].split("\n\n")[0]
     file_lines = [line for line in requests.splitlines() if line.startswith("- A file with")]
     assert len(file_lines) == 1, requests
-    assert "sales_marketing" in file_lines[0] and "cash" in file_lines[0]
+    assert "a sales and marketing row" in file_lines[0] and "a cash row" in file_lines[0]
 
 
 def test_the_narrative_could_not_be_generated_line_is_a_footnote(text):
@@ -125,7 +138,7 @@ def test_a_series_and_a_year_of_monthly_revenue_are_cited_as_ranges_in_the_memo(
     from test_role_engine import file_of, sheet
     months = [f"{2024 + i // 12}-{i % 12 + 1:02d}" for i in range(24)]
     files = [file_of("report", [sheet("Report", [row(19, "revenue", [100] * 12 + [150] * 12, months), row(20, "mrr", [10 + i for i in range(24)], months)])])]
-    appendix = appendix_c(build(run(files, as_of="2025-12")))
+    appendix = appendix_c(build(run(files, as_of="2025-12"), files))
     assert "Report!B20:Y20" in appendix, "the 24 months of the MRR row are one range"
     assert "Report!B19:M19" in appendix and "N19:Y19" in appendix, "a year of revenue is its first and last cell"
     assert "B20, C20" not in appendix
@@ -136,11 +149,11 @@ def test_the_old_empty_blocks_are_left_out_of_appendix_c():
               {"sheet": "CAC by Quarter", "rows": [["Quarter"], ["(P&L not provided)"]]},
               {"sheet": "Path to Plan", "rows": [["Metric", "Value"], ["Current customers", ""], ["Target ARR", ""]]},
               {"sheet": "Anomalies", "rows": [["Check", "Count"], ["Gaps", "2"]]}]
-    appendix = appendix_c(build(reading_results(), tables=tables))
+    appendix = appendix_c(build(reading_results(), reading_maps(), tables=tables))
     assert "P&L not provided" not in appendix and "CAC by Quarter" not in appendix
     assert "Path to Plan" not in appendix.replace("Plan to date", "")
     assert "Ending ARR (EUR)" not in appendix and "NRR overall" not in appendix, "a Headline row with no value"
-    assert "| Company | SynthCo |" in appendix, "a Headline row with a value stays"
+    assert "| Company | SynthCo |" not in appendix, "PR 4f: with OLD_CLAIMS off the Headline block is gone, the role tables hold the metrics"
     assert "| Gaps | 2 |" in appendix
 
 
@@ -158,7 +171,7 @@ def test_a_rounded_agreement_reads_agrees_rounded_with_its_note_and_a_deck_year_
             {"metric": "revenue", "period": "2026", "value": 1_500_000.0, "currency": "EUR", "actual_plan": "actual", "file": "deck.pdf", "page": 7,
              "label": "Total revenue FY2026", "precision": 0}]
     results = run(pnl, as_of="2026-12", deck=deck)
-    appendix = appendix_c(build(results))
+    appendix = appendix_c(build(results, pnl))
     recon = appendix.split("Revenue reconciliation")[1]
     assert "Agrees (rounded) (deck figure printed to the nearest hundred thousand)" in recon
     growth = appendix.split("Growth by year")[1].split("Plan to date")[0]

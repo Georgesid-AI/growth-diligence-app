@@ -26,7 +26,7 @@ import IntegrityCoverage from "@/components/IntegrityCoverage";
 import { MissingMetrics, PlanToDate, ReconciliationTable, RoleCards, YearlyPayback } from "@/components/RoleReport";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
-import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
+import { ANOMALIES_NOT_COMPUTED, NONE, NOT_APPLICABLE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
 import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel } from "@/lib/format";
 import { datesLine, evidenceToText } from "@/lib/periods";
 import { STALE_LABEL } from "@/lib/claimRegister";
@@ -603,7 +603,7 @@ export default function Dashboard() {
         <Card className="lg:col-span-4" testid="anomaly-flags" source={r.anomalies?.source} title="Anomaly Flags" hint="detected, not interpreted">
           <div className="space-y-2 text-sm">
             {flags
-              ? flags.map((f) => <Flag key={f.label} label={f.label} value={fmtCount(f.count)} detail={f.detail} />)
+              ? flags.map((f) => <Flag key={f.label} label={f.label} value={f.count == null ? NOT_APPLICABLE : fmtCount(f.count)} detail={f.detail} />)
               : <div className="text-slate-600" data-testid="anomalies-not-computed">{ANOMALIES_NOT_COMPUTED}</div>}
           </div>
         </Card>

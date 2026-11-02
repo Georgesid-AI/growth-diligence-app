@@ -7,6 +7,8 @@ import { fmtCount, fmtCurrency, fmtMonths, fmtPct } from "@/lib/format";
  * Every figure cites the cell or page it came from; a metric the map cannot give says in one line which row it needs, and the Data gaps table
  * carries the same line.
  */
+/** The fallback when the server sent no reason: the reason of a missing metric is written by the server from the stored map (PR 4f), never here. */
+export const NOT_COMPUTED = "not computed";
 export const NEEDS_MONTHLY_PNL = "needs a monthly P&L for quarterly payback";
 
 /** A stored role source as the Provenance hover reads it. */
@@ -61,7 +63,7 @@ export function RoleCards({ rm, ccy }) {
       <MetricCard id="growth_by_year" label="Growth by year" source={roleSource(last?.source)}
         value={last ? signedPct(last.growth) : "n/c"} qualifier={last ? `(${last.period} on the year before)` : undefined}
         sub={years.length > 1 ? years.slice(0, -1).map((y) => `${y.period} ${signedPct(y.growth)}`).join(" · ") : undefined}
-        note={last ? undefined : first(rm, "growth")?.reason || "needs a revenue row with two full years"}
+        note={last ? undefined : first(rm, "growth")?.reason || NOT_COMPUTED}
         caption={last?.deck_note ? `Revenue of the year against the year before (${last.deck_note})` : "Revenue of the year against the year before"} />
     </>
   );
@@ -71,7 +73,7 @@ export function RoleCards({ rm, ccy }) {
 export function PlanToDate({ rm, ccy }) {
   const p = rm?.plan_to_date;
   const entry = first(rm, "plan_to_date");
-  if (!p) return <Missing testid="plan-to-date-missing" text={entry?.reason || "needs a revenue row and a forecast row"} />;
+  if (!p) return <Missing testid="plan-to-date-missing" text={entry?.reason || NOT_COMPUTED} />;
   const over = p.variance >= 0;
   return (
     <div data-testid="plan-to-date">
@@ -102,7 +104,7 @@ export function YearlyPayback({ rm, yearly, ccy }) {
   return (
     <div data-testid="cac-yearly">
       <p className="text-xs text-slate-600 mb-2" data-testid="cac-needs-monthly">{NEEDS_MONTHLY_PNL}</p>
-      {years.length === 0 ? <Missing testid="cac-yearly-missing" text={reason?.reason || "needs a revenue row, a cost_of_revenue row and a sales_marketing row"} /> : (
+      {years.length === 0 ? <Missing testid="cac-yearly-missing" text={reason?.reason || NOT_COMPUTED} /> : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm" data-testid="cac-yearly-table">
             <thead>

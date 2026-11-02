@@ -283,7 +283,8 @@ def test_a_rating_with_a_missing_input_reads_not_rated_and_names_it():
     kw["results"] = bare
     growth = next(line for line in im.build_memo(**kw).split("\n") if line.startswith("| Growth engine |"))
     assert growth.split("|")[2].strip() == "not rated – data missing"
-    assert "not rated – data missing: NRR, gross revenue churn not computed (benchmark, not company data)." in growth
+    assert "not rated – data missing: NRR, gross revenue churn not computed." in growth
+    assert "benchmark, not company data" not in growth, "a line that is not rated states no benchmark (PR 4f)"
 
 
 def test_data_reliability_no_longer_says_no_pnl_to_reconcile_when_there_is_none():
@@ -374,7 +375,7 @@ def test_partial_coverage_is_noted_in_appendix_d_not_counted_as_half():
     table = memo().split("Files reviewed\n")[1].split("\n\n")[0]
     assert "budget vs actuals is not ingested" in table
     assert "the app does not check which quarters the decks cover" in table
-    assert table.count("| no |") == 3 and table.count("not ingested by the app") == 3
+    assert table.count("| no |") == 4 and table.count("not ingested by the app") == 3, "the 8th row, also reviewed, is not one of the seven"
 
 
 # --- value at risk, the appendices ------------------------------------------------------------------------------------------------------------
