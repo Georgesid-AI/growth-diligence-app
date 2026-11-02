@@ -257,9 +257,10 @@ _SCALE_ALONE = re.compile(
 # brackets ("Revenue (£'000)", "2026 (€'000)", "Revenue (thousands)"). The conventional table header (issue #50); a bare scale word inside a
 # sentence is never one.
 _SCALE_MARK_SHORT = r"k|mn|mm|m|bn|['’]?000s?"
+_SYMBOL_ALONE = r"(?:US\$|[£$€¥₹])"          # a code ("EUR k") is no mark in a labelled cell: as before
 _SCALE_LABELLED = re.compile(
-    r"(?i)^[^()]+?\s*(?:\(\s*(?:" + _CURRENCY_ALONE + r"\s*)?(?P<bracket>" + _SCALE_WORDS_ALONE + r")\s*\)"
-    r"|(?<![^\W\d_])" + _CURRENCY_ALONE + r"\s?(?P<mark>" + _SCALE_MARK_SHORT + r"))$")
+    r"(?i)^[^()]+?\s*(?:\(\s*(?:" + _SYMBOL_ALONE + r"\s*)?(?P<bracket>" + _SCALE_WORDS_ALONE + r")\s*\)"
+    r"|(?<![^\W\d_])" + _SYMBOL_ALONE + r"\s?(?P<mark>" + _SCALE_MARK_SHORT + r"))$")
 
 
 def scale_source(text: str) -> Optional[float]:
