@@ -1245,7 +1245,9 @@ async def list_deck_candidates(audit_id: str):
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
                    "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "images_unavailable": 1, "images_need_file": 1, "diagnostics": 1,
-                   "reading_since": 1, "read_finished_at": 1}
+                   "reading_since": 1, "read_finished_at": 1, "reread_needed": 1}
+    # Replies stored under an older normaliser are checked again from the stored reply on opening the audit: no model call (George, 2026-11-02).
+    await structures.renormalise_audit(db, audit_id)
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     for d in found:

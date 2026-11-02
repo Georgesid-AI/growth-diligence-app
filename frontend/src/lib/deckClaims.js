@@ -381,6 +381,7 @@ export const BLOCKED_STATUS = "blocked – model not permitted";
 export const BLOCKED_LINE = `AI read: ${BLOCKED_STATUS}`;
 export const IMAGES_NEED_FILE_LINE = "Images need the file: re-upload the deck to read pages with images";
 export const IMAGES_UNAVAILABLE_LINE = "page images unavailable for this file; text only";
+export const RE_READ_NEEDED_LINE = "Re-read needed";
 export const PROMPT_MISSING_LINE = "AI reading not run – deck_reading prompt missing in prompt store";
 export const CONSENT_OFF_LINE = "Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.";
 
@@ -438,6 +439,8 @@ export function deckRunLog(deck) {
   if (deck.ai_status === "blocked") return [BLOCKED_LINE];
   const lines = [deck.figure_pages != null && deck.pages ? deckReadLine(deck) : `AI reading: ${deck.ai_status === "reading" && deck.ai_message === "restarted" ? "restarted" : DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
   if (deck.skipped_pages?.length) lines.push(`Skipped pages ${deck.skipped_pages.join(", ")}: no numbers in the page text.`);
+  // A stored reading whose reply is gone cannot be checked again under the current normaliser (George, 2026-11-02): the next Run audit reads it again.
+  if (deck.reread_needed) lines.push(RE_READ_NEEDED_LINE);
   if (deck.images_need_file) lines.push(IMAGES_NEED_FILE_LINE);
   else if (deck.images_unavailable) lines.push(IMAGES_UNAVAILABLE_LINE);
   if (deck.ai_status !== "reading") for (const n of deck.unread_pages || []) lines.push(`page ${n} not read`);

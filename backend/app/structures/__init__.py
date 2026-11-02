@@ -220,6 +220,12 @@ async def store_candidate(db, row: Dict) -> None:
     await db[CANDIDATES_COLLECTION].update_one(key, {"$setOnInsert": {k: v for k, v in row.items() if k not in key}}, upsert=True)
 
 
+async def renormalise_audit(db, audit_id: str) -> Dict:
+    """Page replies stored under an older normaliser, checked again from the stored reply with no model call (pages.renormalise_audit)."""
+    from . import pages as page_pipeline
+    return await page_pipeline.renormalise_audit(db, audit_id)
+
+
 async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
     """Read one deck's structures with the model, or queue them; returns the deck's AI status.
 

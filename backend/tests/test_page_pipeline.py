@@ -358,3 +358,50 @@ def test_the_consistency_passes_bypass_the_cache_and_measure_the_model(monkeypat
     assert bypassed[0][1].claims == first[0][1].claims
 
 
+
+
+# ---------------------------------------------------------------------------
+# The normaliser version (George, 2026-11-02): replies stored under an older normaliser are checked again on opening the audit, no model call
+# ---------------------------------------------------------------------------
+def _read_once(monkeypatch, reply=REPLY):
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    db = _page_db(deck([TITLE, *LINES, PROSE]))
+    adapter = t.FakeAdapter(replies=[json.dumps(reply)])
+    asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    return db, adapter
+
+
+def test_a_stored_page_reply_carries_the_normaliser_version(monkeypatch):
+    from app.structures import checker
+    db, _ = _read_once(monkeypatch)
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert stored["normaliser_version"] == checker.NORMALISER_VERSION >= 1
+
+
+def test_a_reply_stored_under_an_older_normaliser_is_checked_again_on_opening_with_no_model_call(monkeypatch):
+    db, adapter = _read_once(monkeypatch)
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    stored["normaliser_version"] = 0                                    # an older normaliser read it ...
+    revenue = next(r for r in db[CANDIDATES_COLLECTION].docs if r["claim_type"] == "revenue")
+    revenue["value"] = 150000 * 10 ** 6                                 # ... and stored a figure a million times too large
+    done = asyncio.run(pipeline.renormalise_audit(db, AUDIT))
+    assert done == {"renormalised": 1, "re_read_needed": 0}
+    assert adapter.calls == 1, "no model call, and the prompt version is unchanged"
+    rows = sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"])
+    assert [r["value"] for r in rows if r["claim_type"] == "revenue"] == [150000] and len(rows) == 3
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    from app.structures import checker
+    assert stored["normaliser_version"] == checker.NORMALISER_VERSION
+    assert asyncio.run(pipeline.renormalise_audit(db, AUDIT)) == {"renormalised": 0, "re_read_needed": 0}, "a current reply is left as it is"
+
+
+def test_a_reading_with_no_stored_reply_is_marked_re_read_needed_and_read_again_on_the_next_run(monkeypatch):
+    db, adapter = _read_once(monkeypatch)
+    db[gateway.STRUCTURES_COLLECTION].docs.clear()                      # the raw reply is not stored
+    db[CANDIDATES_COLLECTION].docs[0]["normaliser_version"] = 0
+    done = asyncio.run(pipeline.renormalise_audit(db, AUDIT))
+    assert done == {"renormalised": 0, "re_read_needed": 1}
+    assert db[TEXT_COLLECTION].docs[0]["reread_needed"] is True
+    asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert adapter.calls == 2, "the next Run audit reads the page again"
+    assert not db[TEXT_COLLECTION].docs[0].get("reread_needed")

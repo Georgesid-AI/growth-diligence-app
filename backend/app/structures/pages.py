@@ -273,6 +273,142 @@ def _without_text(item: Dict) -> Dict:
     return out
 
 
+class RunState:
+    """What one deck's checked replies share while its rows are written: the rows already stored for the file, the cells they list, the next
+    place in the list, the ids written in this run and the Diagnostics lines (a page checked again replaces its lines)."""
+
+    def __init__(self, reviewed: List[Dict], diagnostics: List[Dict]):
+        from . import _python_cells
+        self.reviewed, self.known, self.order = reviewed, _python_cells(reviewed), len(reviewed)
+        self.diagnostics, self.fresh = diagnostics, set()
+
+
+async def apply_reply(db, audit_id: str, deck_id: str, deck: Dict, run: RunState, by_page: Dict, year_end: int, page_count: Optional[int],
+                      key: str, numbers: List[int], reply_claims: List[Dict]) -> Dict:
+    """Check the model's claims of one stored or new page reply against the pages' grids (Python only: no model call), write the rows and
+    store the checked items with the normaliser version. Returns the counts of the checks (matched, unmatched, dropped, periods_corrected,
+    flagged). The one path of a page read and of the checking again of a reply stored under an older normaliser (renormalise_audit)."""
+    from ..claim_matching import entered_by_python
+    from . import _cell_key, _python_cells, analyst_copy, rules_copy, store_candidate, value_match
+    claims_of = page_check.by_page(reply_claims)
+    checked_all, counts = [], {"matched": 0, "unmatched": 0, "dropped": 0, "periods_corrected": 0, "flagged": 0}
+    # A claim on a page the document does not have (the gateway checks every cited cell against the text sent, so this is a
+    # guard, not an expected path): one row with the model's values, flagged, never matched (checker rule 4).
+    rows = [(row_out_of_range(c, page, deck), page) for page, listed in claims_of.items() if page not in numbers
+            and checker.out_of_range(page, page_count) for c in listed]
+    diagnostics_new = []
+    for page in numbers:
+        grid = by_page[page]
+        checked = checker.check(grid, claims_of.get(page, []), year_end, checker.page_blocks(deck.get("blocks") or [], grid),
+                                deck["file"])
+        for k in counts:
+            counts[k] += checked[k]
+        checked_all += [{**c, "page": page} for c in checked["items"]]
+        for item in checked["items"]:
+            if item["drop"]:            # a derived figure, a launch date with no product, a quoted figure: no row, one Diagnostics line (George, 2026-10-26)
+                counts["dropped"] += 1
+                diagnostics_new.append({"page": page, "kind": item["drop"], "metric": item["metric"], "value": item.get("value"),
+                                        "period": item.get("period")})
+                continue
+            row, log = corrected_row(item, grid, deck, year_end, page)
+            rows.append((row, page))
+            diagnostics_new += log
+    counts["flagged"] += sum(1 for row, _ in rows if checker.review_flags(row["flags"]) and row["cell"] is None)
+    run.diagnostics = [d for d in run.diagnostics if d["page"] not in numbers] + diagnostics_new
+    # A page read again (Run audit, a new upload of the file): the rows an earlier run stored for this reply that nobody has touched
+    # (pending, origin "ai") are replaced by the rows checked now, so a row stored before a check existed does not outlive it
+    # (live bug, 2026-10-23: rows kept "unmatched" with no flags). A row the analyst approved, edited or rejected stays.
+    # Untouched means pending, or entered by Python on its own with no analyst action (claim_matching.entered_by_python: "auto", no
+    # edit, no Keep or reject); both are replaced. A row the analyst approved, edited or rejected keeps its values (PR 183).
+    from ..claim_matching import entered_by_python
+    stale = [c for c in run.reviewed if c.get("origin") == "ai" and (c.get("status") == "pending" or entered_by_python(c))
+             and c.get("structure_key") == key and c["id"] not in run.fresh]
+    stale_orders = sorted(c.get("order", 0) for c in stale)
+    for c in stale:
+        await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": c["id"]})
+        run.reviewed.remove(c)
+    if stale:
+        run.known = _python_cells(run.reviewed)
+    for candidate, page in rows:
+        if candidate["cell"] is not None and \
+                value_match(candidate["value"], candidate["value_high"], run.known.get(_cell_key(candidate), ())):
+            continue                    # this cell already lists the value, or a range holding it
+        twin = next((c for c in run.reviewed if claims.same_claim(c, candidate)), None)
+        if twin is not None:
+            if candidate["sources"][0] not in twin["sources"]:
+                twin["sources"] = list(twin["sources"]) + candidate["sources"]
+                await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]},
+                                                           {"$set": {"sources": twin["sources"]}})
+            # A flagged read folded into a row still to review keeps its flags there (review of PR 164, L3).
+            carried = [f for f in candidate["flags"] if f not in (twin.get("flags") or [])]
+            if carried and twin.get("status") == "pending":
+                twin["flags"] = list(twin.get("flags") or []) + carried
+                await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]}, {"$set": {"flags": twin["flags"]}})
+            continue
+        duplicate = rules_copy(run.reviewed, candidate)
+        if duplicate is None and analyst_copy(run.reviewed, candidate) is not None:
+            # The analyst already added this figure (M5): the claim is never replaced; the model's read is listed beside it, flagged.
+            candidate = {**candidate, "flags": candidate["flags"] + [checker.MATCHES_ANALYST]}
+        if duplicate is not None:
+            candidate = {**candidate, "sources": candidate["sources"] + [s for s in duplicate["sources"] if s not in candidate["sources"]]}
+            await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": duplicate["id"]})
+            run.reviewed.remove(duplicate)
+            row_order = duplicate.get("order", run.order + 1)
+        elif stale_orders:
+            row_order = stale_orders.pop(0)         # the replaced row's place in the list
+        else:
+            run.order = row_order = run.order + 1
+        row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
+               "id": str(uuid.uuid4()), "order": row_order, "status": "pending", "structure_key": key,
+               "normaliser_version": checker.NORMALISER_VERSION}
+        await store_candidate(db, row)
+        run.reviewed.append(row)
+        run.fresh.add(row["id"])
+    await gateway.record_verification(db, audit_id, key, [c["status"] for c in checked_all], counts["dropped"],
+                                      counts["periods_corrected"], stored_items(checked_all), normaliser_version=checker.NORMALISER_VERSION)
+    return counts
+
+
+async def renormalise_audit(db, audit_id: str) -> Dict:
+    """Check again, on opening the audit, every stored page reply that an older normaliser checked (George, 2026-11-02): the claims of the
+    stored reply (the model's JSON output, never the page text) go through the same Python check against the deck's stored pages, with no
+    model call and no change to the prompt version; the rows nobody has touched are replaced as on a new run, and the reply is stamped with the
+    current normaliser version. A row stored under an older version whose reply is not stored cannot be checked again: its deck is marked
+    `reread_needed` (the panel says "Re-read needed") and the next Run audit reads its pages again. Returns {"renormalised": replies checked
+    again, "re_read_needed": decks marked}. Cheap when nothing is stale: two reads."""
+    replies = await db[gateway.STRUCTURES_COLLECTION].find({"audit_id": audit_id, "type": PAGE_CLAIMS}, {"_id": 0}).to_list(100000)
+    rows = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "origin": "ai"}, {"_id": 0, "structure_key": 1, "deck_id": 1,
+                                                                                         "normaliser_version": 1}).to_list(100000)
+    current = checker.NORMALISER_VERSION
+    stale = [r for r in replies if (r.get("normaliser_version") or 0) < current and (r.get("output") or {}).get("claims") is not None]
+    stored = {r.get("key") for r in replies}
+    lost = {r.get("deck_id") for r in rows if r.get("structure_key") and r["structure_key"] not in stored
+            and (r.get("normaliser_version") or 0) < current and r.get("deck_id")}
+    done = 0
+    for deck_id in sorted({r.get("deck_id") for r in stale if r.get("deck_id")}):
+        deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
+                                                  {"_id": 0, "file": 1, "pages": 1, "blocks": 1, "layout": 1, "diagnostics": 1})
+        audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1})
+        if not deck:
+            continue
+        grids = page_grids_mod.page_grids(deck.get("blocks") or [], deck.get("layout"))
+        by_page = {page_grids_mod.page_number(g): g for g in grids}
+        page_count = deck.get("pages") or (max(by_page) if by_page else None)
+        reviewed = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "file": deck["file"]}, {"_id": 0}).to_list(100000)
+        run = RunState(reviewed, list(deck.get("diagnostics") or []))
+        for reply in (r for r in stale if r.get("deck_id") == deck_id):
+            numbers = [int(n) for n in reply.get("pages") or ([reply["page"]] if reply.get("page") else [])]
+            await apply_reply(db, audit_id, deck_id, deck, run, by_page, int((audit or {}).get("fiscal_year_end") or 12), page_count,
+                              reply["key"], numbers, reply["output"]["claims"])
+            done += 1
+        await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"diagnostics": run.diagnostics}})
+    for deck_id in lost:
+        await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"reread_needed": True}})
+    if done or lost:
+        logger.info("normaliser: run_id=%s replies checked again=%d decks to read again=%d", audit_id, done, len(lost))
+    return {"renormalised": done, "re_read_needed": len(lost)}
+
+
 async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
     """Read one deck page by page with the model and check every claim against its page; returns the deck's AI status (the
     words of process_deck). Unticked consent: no call. A deck never waits for a file (read-check-review.md section 12)."""
@@ -292,11 +428,10 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     by_page = {page_grids_mod.page_number(g): g for g in grids}
     page_count = deck.get("pages") or (max(by_page) if by_page else None)
     reviewed = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "file": deck["file"]}, {"_id": 0}).to_list(100000)
-    known = _python_cells(reviewed)
-    order = len(reviewed)
     reads, sent, stopped_message = [], [], None
-    diagnostics = list(deck.get("diagnostics") or [])      # Diagnostics lines of the pages read so far; a page read again replaces its lines
-    fresh = set()                       # ids of the rows this run wrote: a later page with the same text never replaces them
+    # Diagnostics lines of the pages read so far; a page read again replaces its lines. `fresh`: the ids of the rows this run wrote, so a later
+    # page with the same text never replaces them.
+    run = RunState(reviewed, list(deck.get("diagnostics") or []))
     # A run that follows one that left pages to retry asks only for those pages; any other run reads the whole deck (the cache serves
     # the pages already read).
     kept = [r for r in deck.get("page_reads") or [] if r.get("status") == "read"] if deck.get("retry_pages") else []
@@ -347,81 +482,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         if result.status == "read":
             if not result.cache_hit:
                 sent.append({"pages": numbers, "type": PAGE_CLAIMS, "at": datetime.now(timezone.utc).isoformat()})
-            claims_of = page_check.by_page(result.claims)
-            checked_all, counts = [], {"matched": 0, "unmatched": 0, "dropped": 0, "periods_corrected": 0, "flagged": 0}
-            # A claim on a page the document does not have (the gateway checks every cited cell against the text sent, so this is a
-            # guard, not an expected path): one row with the model's values, flagged, never matched (checker rule 4).
-            rows = [(row_out_of_range(c, page, deck), page) for page, listed in claims_of.items() if page not in numbers
-                    and checker.out_of_range(page, page_count) for c in listed]
-            diagnostics_new = []
-            for page in numbers:
-                grid = by_page[page]
-                checked = checker.check(grid, claims_of.get(page, []), year_end, checker.page_blocks(deck.get("blocks") or [], grid),
-                                        deck["file"])
-                for k in counts:
-                    counts[k] += checked[k]
-                checked_all += [{**c, "page": page} for c in checked["items"]]
-                for item in checked["items"]:
-                    if item["drop"]:            # a derived figure, a launch date with no product, a quoted figure: no row, one Diagnostics line (George, 2026-10-26)
-                        counts["dropped"] += 1
-                        diagnostics_new.append({"page": page, "kind": item["drop"], "metric": item["metric"], "value": item.get("value"),
-                                                "period": item.get("period")})
-                        continue
-                    row, log = corrected_row(item, grid, deck, year_end, page)
-                    rows.append((row, page))
-                    diagnostics_new += log
-            counts["flagged"] += sum(1 for row, _ in rows if checker.review_flags(row["flags"]) and row["cell"] is None)
-            diagnostics = [d for d in diagnostics if d["page"] not in numbers] + diagnostics_new
-            # A page read again (Run audit, a new upload of the file): the rows an earlier run stored for this reply that nobody has touched
-            # (pending, origin "ai") are replaced by the rows checked now, so a row stored before a check existed does not outlive it
-            # (live bug, 2026-10-23: rows kept "unmatched" with no flags). A row the analyst approved, edited or rejected stays.
-            # Untouched means pending, or entered by Python on its own with no analyst action (claim_matching.entered_by_python: "auto", no
-            # edit, no Keep or reject); both are replaced. A row the analyst approved, edited or rejected keeps its values (PR 183).
-            from ..claim_matching import entered_by_python
-            stale = [c for c in reviewed if c.get("origin") == "ai" and (c.get("status") == "pending" or entered_by_python(c))
-                     and c.get("structure_key") == result.key and c["id"] not in fresh]
-            stale_orders = sorted(c.get("order", 0) for c in stale)
-            for c in stale:
-                await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": c["id"]})
-                reviewed.remove(c)
-            if stale:
-                known = _python_cells(reviewed)
-            for candidate, page in rows:
-                if candidate["cell"] is not None and \
-                        value_match(candidate["value"], candidate["value_high"], known.get(_cell_key(candidate), ())):
-                    continue                    # this cell already lists the value, or a range holding it
-                twin = next((c for c in reviewed if claims.same_claim(c, candidate)), None)
-                if twin is not None:
-                    if candidate["sources"][0] not in twin["sources"]:
-                        twin["sources"] = list(twin["sources"]) + candidate["sources"]
-                        await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]},
-                                                                   {"$set": {"sources": twin["sources"]}})
-                    # A flagged read folded into a row still to review keeps its flags there (review of PR 164, L3).
-                    carried = [f for f in candidate["flags"] if f not in (twin.get("flags") or [])]
-                    if carried and twin.get("status") == "pending":
-                        twin["flags"] = list(twin.get("flags") or []) + carried
-                        await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]}, {"$set": {"flags": twin["flags"]}})
-                    continue
-                duplicate = rules_copy(reviewed, candidate)
-                if duplicate is None and analyst_copy(reviewed, candidate) is not None:
-                    # The analyst already added this figure (M5): the claim is never replaced; the model's read is listed beside it, flagged.
-                    candidate = {**candidate, "flags": candidate["flags"] + [checker.MATCHES_ANALYST]}
-                if duplicate is not None:
-                    candidate = {**candidate, "sources": candidate["sources"] + [s for s in duplicate["sources"] if s not in candidate["sources"]]}
-                    await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": duplicate["id"]})
-                    reviewed.remove(duplicate)
-                    row_order = duplicate.get("order", order + 1)
-                elif stale_orders:
-                    row_order = stale_orders.pop(0)         # the replaced row's place in the list
-                else:
-                    row_order = order = order + 1
-                row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
-                       "id": str(uuid.uuid4()), "order": row_order, "status": "pending", "structure_key": result.key}
-                await store_candidate(db, row)
-                reviewed.append(row)
-                fresh.add(row["id"])
-            await gateway.record_verification(db, audit_id, result.key, [c["status"] for c in checked_all], counts["dropped"],
-                                              counts["periods_corrected"], stored_items(checked_all))
+            counts = await apply_reply(db, audit_id, deck_id, deck, run, by_page, year_end, page_count, result.key, numbers, result.claims)
             entry.update(counts)
             logger.info("pages checked: run_id=%s deck_id=%s pages=%d matched=%d unmatched=%d dropped=%d flagged=%d", audit_id,
                         deck_id, len(numbers), counts["matched"], counts["unmatched"], counts["dropped"], counts["flagged"])
@@ -444,6 +505,6 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         "page_reads": kept + reads, "sent": list((previous or {}).get("sent") or []) + sent, "unread_pages": unread, "retry_pages": retry,
         "images_unavailable": bool(undrawn) or bool(kept and (previous or {}).get("images_unavailable")),     # a retry keeps the earlier pages' state
         "images_need_file": no_file or bool(kept and (previous or {}).get("images_need_file")),
-        "diagnostics": diagnostics}})
+        "diagnostics": run.diagnostics, "reread_needed": False}})
     return await _deck_status(db, audit_id, deck_id, overall, stopped_message or (gateway.PROMPT_MISSING_TEXT if overall == PROMPT_MISSING else
                                                                                 gateway.PAGE_READER_BLOCKED if overall == BLOCKED else None))

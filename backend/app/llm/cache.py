@@ -155,7 +155,7 @@ async def put_structure(db, audit_id: str, key: str, record: dict) -> None:
 
 
 async def set_structure_statuses(db, audit_id: str, key: str, statuses: list, dropped: int = 0,
-                                 periods_corrected: int = 0, items: Optional[dict] = None) -> None:
+                                 periods_corrected: int = 0, items: Optional[dict] = None, normaliser_version: Optional[int] = None) -> None:
     """The verifier status of each item, next to the output it checks, how many of its periods Python
     corrected (the output keeps the model's own periods) and, when given, the item list it was checked
     against, without raw text."""
@@ -163,6 +163,8 @@ async def set_structure_statuses(db, audit_id: str, key: str, statuses: list, dr
               "verified_at": datetime.now(timezone.utc).isoformat()}
     if items is not None:
         fields["items"] = items
+    if normaliser_version is not None:
+        fields["normaliser_version"] = int(normaliser_version)       # the version of the Python normaliser that checked the reply (checker.NORMALISER_VERSION)
     await db[STRUCTURES_COLLECTION].update_one({"audit_id": audit_id, "key": key}, {"$set": fields})
 
 
