@@ -64,32 +64,13 @@
   @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
 
   /* strip */
-  .strip { display: flex; flex-wrap: wrap; gap: 6px 28px; padding: 16px 0 6px; }
-  .strip div span { color: var(--muted); margin-right: 8px; }
-  .evidence { color: var(--muted); padding: 0 0 18px; border-bottom: 1px solid var(--line); }
-  .evidence b { color: var(--ok); font-weight: 600; }
 
-  /* review block */
-  .review { padding: 18px 0; border-bottom: 1px solid var(--line); }
-  .review h2 { font-size: 16px; font-weight: 600; margin: 0 0 8px; color: var(--warn); }
-  .review .matchline { margin-top: 10px; }
-  .qhead { margin: 12px 0 2px; font-weight: 600; font-size: 13px; color: var(--muted); }
-
-  /* file blocks */
-  .file > summary { color: var(--ink); margin: 0; }
-  .file > summary b { color: var(--link); font-weight: 500; margin-right: 6px; }
-  .file > summary small { color: var(--muted); font-size: 13px; }
-  .file .all { margin-top: 10px; }
-  .file { padding: 18px 0; border-bottom: 1px solid var(--line); }
-  .file h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; display: flex; gap: 12px; align-items: baseline; }
-  .file h2 small { color: var(--muted); font-weight: 400; font-size: 13px; }
-  .summary { font-family: var(--mono); font-size: 13px; color: var(--muted); }
-  .summary b { font-weight: 500; color: var(--ink); }
-  .anchors { margin: 10px 0 4px; display: grid; grid-template-columns: max-content 1fr max-content; gap: 4px 16px; align-items: baseline; }
+  /* settings */
+  .anchors { margin: 18px 0; display: grid; grid-template-columns: max-content 1fr max-content; gap: 4px 16px; align-items: baseline; }
   .anchors .k { color: var(--muted); }
-  details summary { cursor: pointer; color: var(--link); margin-top: 8px; list-style: none; }
-  details summary::-webkit-details-marker { display: none; }
-  details[open] summary { margin-bottom: 8px; }
+  .anchors .wide { grid-column: 1 / -1; }
+  .anchors .wide span { color: var(--muted); margin: 0 8px 0 0; }
+  .anchors .wide span:not(:first-child) { margin-left: 22px; }
 
   /* tables */
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -186,148 +167,21 @@
     <p class="line">The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and figures are checked by code against their cells. Files are read automatically. Nothing waits for your confirmation. The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training. Uploaded files are stored for this audit and deleted with it.</p>
   </div>
 
-  <section class="strip">
-    <div><span>Currency</span>EUR</div>
-    <div><span>Reporting period</span>Jan 2019 – May 2022</div>
-    <div><span>As-of month</span>May 2022 <a href="#">Change</a></div>
-    <div><span>FY end</span>December</div>
-  </section>
-  <p class="evidence">As-of month from revenue_2019-2022.xlsx: customers row 23 has values through AP (May 2022) and nothing after. <b>Matches source on column AP.</b></p>
-
-  <!-- review block: rows that carry a question first -->
-  <section class="review" id="review">
-    <h2>5 items need review: 1 doesn't match source, 4 need review</h2>
-    <table class="rows">
-      <colgroup><col style="width:16%"><col style="width:14%"><col style="width:12%"><col style="width:34%"><col style="width:14%"><col style="width:10%"></colgroup>
-      <thead><tr>
-        <th title="Doesn't match source: code opened the cited cell and the value differs. Needs review: no check was possible.">Status</th>
-        <th title="What the figure measures.">Metric</th>
-        <th class="num" title="The value the reader recorded.">Value</th>
-        <th title="Why the figure is listed here.">Why</th>
-        <th title="The file, sheet and cell, or deck page.">Source</th>
-        <th title="What you can do next.">Action</th>
-      </tr></thead>
-      <tbody>
-        <tr><td data-h="Status" style="color:var(--bad)">Doesn't match source</td><td data-h="Metric">ARR, Apr 2022</td><td data-h="Value" class="num">€447,223</td><td data-h="Why">Cell AO13 holds €398,736.</td><td data-h="Source" class="src"><a href="#"><b>AO13</b> · revenue_2019-2022.xlsx</a></td><td data-h="Action"><a href="#">Decide</a></td></tr>
-        <tr><td data-h="Status" style="color:var(--warn)">Needs review</td><td data-h="Metric">MRR, Jan 2021</td><td data-h="Value" class="num">€2,500</td><td data-h="Why">Page 8 chart has no text layer; figure read from the image.</td><td data-h="Source" class="src"><a href="#"><b>p8</b> · Board report 2021 and 2022 plan.pdf</a></td><td data-h="Action"></td></tr>
-        <tr><td data-h="Status" style="color:var(--warn)">Needs review</td><td data-h="Metric">MRR churn, Jan 2022</td><td data-h="Value" class="num">3%</td><td data-h="Why">Cell AL20 holds 0.03; unit or scale differs.</td><td data-h="Source" class="src"><a href="#"><b>AL20</b> · revenue_2019-2022.xlsx</a></td><td data-h="Action"></td></tr>
-        <tr><td data-h="Status" style="color:var(--warn)">Needs review</td><td data-h="Metric">Evidence, as-of month</td><td data-h="Value" class="num">—</td><td data-h="Why">Describes the layout, not a value; no cell to open.</td><td data-h="Source" class="src"><a href="#"><b>sheet</b> · revenue_2019-2022.xlsx</a></td><td data-h="Action"></td></tr>
-        <tr><td data-h="Status" style="color:var(--warn)">Needs review</td><td data-h="Metric">Pipeline, Client-04</td><td data-h="Value" class="num">€918,669</td><td data-h="Why">Depends on a name that was masked before reading.</td><td data-h="Source" class="src"><a href="#"><b>p16</b> · Board report 2021 and 2022 plan.pdf</a></td><td data-h="Action"></td></tr>
-      </tbody>
-    </table>
-    <p class="matchline"><b style="color:var(--ok);font-weight:600">175 figures match source.</b> <a href="#matches">Show them in Check results</a></p>
-  </section>
-
-  <!-- file 1: monthly revenue report -->
-  <details class="file">
-    <summary><b>Review how data was interpreted</b> revenue_2019-2022.xlsx <small>61 KB</small> · 48 month columns · 41 rows mapped · 37 match source · 0 don't match source · 1 needs review</summary>
-    <p class="summary">0 personal items removed · 0 company names coded · actual to <b>May 2022</b></p>
-    <div class="anchors">
-      <span class="k">As-of month</span><span>May 2022 — customers row 23 ends at AP; recognised revenue from AQ equals the new sales row.</span><a href="#">Change</a>
-      <span class="k">Revenue row</span><span>Row 11, Recognised revenue, monthly</span><a href="#">Change</a>
-      <span class="k">Actual / plan</span><span>Actual to column AP, plan from AQ</span><a href="#">Change</a>
-    </div>
-    <p class="qhead">Lines with a question</p>
-    <table class="rows">
-      <colgroup><col style="width:34%"><col style="width:16%"><col style="width:34%"><col style="width:16%"></colgroup>
-      <thead><tr><th>Line</th><th>Interpreted as</th><th>Question</th><th></th></tr></thead>
-      <tbody>
-        <tr><td data-h="Line">MRR growth % rate</td><td data-h="Interpreted as">growth rate</td><td data-h="Question">Growth of which line? Assumed row 13 (ARR).</td><td data-h="Change"><a href="#">Change</a></td></tr>
-      </tbody>
-    </table>
-    <details class="all">
-      <summary>Show all lines</summary>
-      <table class="rows">
-            <colgroup><col style="width:34%"><col style="width:16%"><col style="width:14%"><col style="width:16%"><col style="width:20%"></colgroup>
-            <thead><tr>
-              <th title="The row label as it stands in the file, in file order.">Line</th>
-              <th title="What the whole row was interpreted as: revenue, bookings, ARR, MRR, churn rate, customers, forecast, variance, other.">Interpreted as</th>
-              <th title="How the value accumulates: monthly, quarterly, yearly, cumulative to date, last 12 months, or a rate.">Basis</th>
-              <th title="Whether the row holds actual figures, plan figures, or both with a boundary column.">Actual / plan</th>
-              <th title="The cells the values occupy. Click to open the sheet there.">Cells</th>
-            </tr></thead>
-            <tbody>
-              <tr><td data-h="Line">New sales (annual contract value)</td><td data-h="Interpreted as">bookings</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actuals through column AP, plan from AQ</td><td data-h="Cells" class="src"><a href="#"><b>B4:AW4</b></a></td></tr>
-              <tr><td data-h="Line">Recognised revenue</td><td data-h="Interpreted as">revenue</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actuals through column AP, plan from AQ</td><td data-h="Cells" class="src"><a href="#"><b>B11:AW11</b></a></td></tr>
-              <tr><td data-h="Line">ARR (current year)</td><td data-h="Interpreted as">ARR</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actuals through column AP, plan from AQ</td><td data-h="Cells" class="src"><a href="#"><b>B13:AW13</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">MRR from annual subscriptions</td><td data-h="Interpreted as">MRR, part of row 13</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Cells" class="src"><a href="#"><b>AL14:AP14</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">MRR from monthly subscriptions</td><td data-h="Interpreted as">MRR, part of row 13</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Cells" class="src"><a href="#"><b>AL15:AP15</b></a></td></tr>
-              <tr><td data-h="Line">MRR growth % rate</td><td data-h="Interpreted as">growth rate</td><td data-h="Basis">rate</td><td data-h="Actual / plan">actuals through column AP, plan from AQ</td><td data-h="Cells" class="src"><a href="#"><b>X18:AW18</b></a></td></tr>
-              <tr><td data-h="Line">MRR churn rate</td><td data-h="Interpreted as">churn rate</td><td data-h="Basis">rate</td><td data-h="Actual / plan">actual</td><td data-h="Cells" class="src"><a href="#"><b>AH20:AP20</b></a></td></tr>
-              <tr><td data-h="Line">Total clients achieved (lifetime)</td><td data-h="Interpreted as">customers</td><td data-h="Basis">monthly</td><td data-h="Actual / plan">actual</td><td data-h="Cells" class="src"><a href="#"><b>B23:AP23</b></a></td></tr>
-              <tr><td data-h="Line">Forecast: recognised revenue (current year)</td><td data-h="Interpreted as">forecast</td><td data-h="Basis">cumulative to date</td><td data-h="Actual / plan">plan</td><td data-h="Cells" class="src"><a href="#"><b>R30:AW30</b></a></td></tr>
-              <tr><td data-h="Line">Total recognised revenue (current year)</td><td data-h="Interpreted as">revenue</td><td data-h="Basis">cumulative to date</td><td data-h="Actual / plan">actuals through column AP, plan from AQ</td><td data-h="Cells" class="src"><a href="#"><b>B39:AW39</b></a></td></tr>
-              <tr><td data-h="Line">Recognised revenue in last 12 months</td><td data-h="Interpreted as">revenue</td><td data-h="Basis">last 12 months</td><td data-h="Actual / plan">actuals through column AP, plan from AQ</td><td data-h="Cells" class="src"><a href="#"><b>N40:AW40</b></a></td></tr>
-            </tbody>
-          </table>
-    </details>
-  </details>
-
-  <!-- file 2: yearly P&L -->
-  <details class="file">
-    <summary><b>Review how data was interpreted</b> pnl.xlsx <small>88 KB</small> · 7 year columns · 38 rows mapped · 29 match source · 0 don't match source · 0 need review</summary>
-    <p class="summary">0 personal items removed · 0 company names coded · actual to <b>FY 2021</b></p>
-    <div class="anchors">
-      <span class="k">Last actual</span><span>FY 2021 — columns E to H are headed forecast; D holds the last actual year.</span><a href="#">Change</a>
-      <span class="k">Revenue row</span><span>Row 4, Revenue (recognised), yearly</span><a href="#">Change</a>
-      <span class="k">Actual / plan</span><span>Actual to column D, plan from E</span><a href="#">Change</a>
-    </div>
-    <p class="qhead">Lines with a question</p>
-    <table class="rows">
-      <colgroup><col style="width:34%"><col style="width:16%"><col style="width:34%"><col style="width:16%"></colgroup>
-      <thead><tr><th>Line</th><th>Interpreted as</th><th>Question</th><th></th></tr></thead>
-      <tbody>
-        <tr><td data-h="Line">Net income</td><td data-h="Interpreted as">other</td><td data-h="Question">Not recognised as a profit line. Confirm or change.</td><td data-h="Change"><a href="#">Change</a></td></tr>
-      </tbody>
-    </table>
-    <details class="all">
-      <summary>Show all lines</summary>
-      <table class="rows">
-            <colgroup><col style="width:34%"><col style="width:16%"><col style="width:14%"><col style="width:16%"><col style="width:20%"></colgroup>
-            <thead><tr>
-              <th title="The row label as it stands in the file, in file order. A rate row is shown under the line it refers to.">Line</th>
-              <th title="What the whole row was interpreted as.">Interpreted as</th>
-              <th title="How the value accumulates.">Basis</th>
-              <th title="Actual, plan, or both with a boundary column.">Actual / plan</th>
-              <th title="The cells the values occupy.">Cells</th>
-            </tr></thead>
-            <tbody>
-              <tr><td data-h="Line">Revenue (recognised)</td><td data-h="Interpreted as">revenue</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B4:H4</b></a></td></tr>
-              <tr class="sub moved"><td data-h="Line">revenue growth rate</td><td data-h="Interpreted as">growth rate of row 4</td><td data-h="Basis">rate</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>C3:H3</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Cloud video processing credit</td><td data-h="Interpreted as">revenue, part of row 4</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B5:H5</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Analytical suite subscriptions</td><td data-h="Interpreted as">revenue, part of row 4</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B6:H6</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Real-time monitoring subscriptions</td><td data-h="Interpreted as">revenue, part of row 4</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B7:H7</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Custom AI modules</td><td data-h="Interpreted as">revenue, part of row 4</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B8:H8</b></a></td></tr>
-              <tr><td data-h="Line">Cost of goods sold</td><td data-h="Interpreted as">cost of revenue</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B10:H10</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Cloud processing and database</td><td data-h="Interpreted as">cost of revenue, part of row 10</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B11:H11</b></a></td></tr>
-              <tr><td data-h="Line">Gross margin (revenue − CoGS)</td><td data-h="Interpreted as">gross margin</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B13:H13</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Gross margin as % of revenue</td><td data-h="Interpreted as">margin rate of row 13</td><td data-h="Basis">rate</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B14:H14</b></a></td></tr>
-              <tr><td data-h="Line">OPEX total</td><td data-h="Interpreted as">opex</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B16:H16</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">OPEX as % of revenue</td><td data-h="Interpreted as">rate of row 16</td><td data-h="Basis">rate</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B17:H17</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Research &amp; development</td><td data-h="Interpreted as">R&amp;D, part of row 16</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B18:H18</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Sales</td><td data-h="Interpreted as">sales &amp; marketing, part of row 16</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B20:H20</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">Marketing</td><td data-h="Interpreted as">sales &amp; marketing, part of row 16</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B23:H23</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">General &amp; administration</td><td data-h="Interpreted as">G&amp;A, part of row 16</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B28:H28</b></a></td></tr>
-              <tr><td data-h="Line">EBITDA</td><td data-h="Interpreted as">EBITDA</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B34:H34</b></a></td></tr>
-              <tr class="sub"><td data-h="Line">EBITDA as % of revenue</td><td data-h="Interpreted as">rate of row 34</td><td data-h="Basis">rate</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B35:H35</b></a></td></tr>
-              <tr><td data-h="Line">Net income</td><td data-h="Interpreted as">other</td><td data-h="Basis">yearly</td><td data-h="Actual / plan">actuals through column D, plan from E</td><td data-h="Cells" class="src"><a href="#"><b>B43:H43</b></a></td></tr>
-            </tbody>
-          </table>
-    </details>
-  </details>
-
-  <!-- file 3: deck -->
-  <details class="file">
-    <summary><b>Review how data was interpreted</b> Board report 2021 and 2022 plan.pdf <small>20 pages</small> · 16 pages processed · 112 figures read · 109 match source · 0 don't match source · 3 need review</summary>
-    <p class="summary">4 pages skipped (no digits in their text: 1, 2, 11, 18) · 1 personal item removed · 17 company names coded</p>
-    <p class="muted" style="margin-top:6px">No line carries a question. The 3 figures that need review (charts without text) are listed above.</p>
-  </details>
-
   <!-- results -->
   <section class="results">
 
     <h1 class="section">Check results</h1>
     <p class="lead">Every figure the model read, after code opened its cell or page and compared the value. Three tables: Matches source, Doesn't match source, Needs review.</p>
+
+    <div class="anchors">
+      <p class="wide"><span>Currency</span>EUR<span>Reporting period</span>Jan 2019 – May 2022<span>FY end</span>December</p>
+      <span class="k">As-of month</span><span>May 2022 — customers row 23 ends at AP; recognised revenue from AQ equals the new sales row.</span><a href="#">Change</a>
+      <span class="k">Revenue row</span><span>Row 11, Recognised revenue, monthly (revenue_2019-2022.xlsx)</span><a href="#">Change</a>
+      <span class="k">Actual / plan</span><span>actual to column AP, plan from AQ (revenue_2019-2022.xlsx)</span><a href="#">Change</a>
+      <span class="k">Last actual</span><span>FY 2021 — columns E to H are headed forecast; D holds the last actual year (pnl.xlsx)</span><a href="#">Change</a>
+      <span class="k">Revenue row</span><span>Row 4, Revenue (recognised), yearly (pnl.xlsx)</span><a href="#">Change</a>
+      <span class="k">Actual / plan</span><span>actual to column D, plan from E (pnl.xlsx)</span><a href="#">Change</a>
+    </div>
     <nav class="tabs" aria-label="Files">
       <a href="#" class="on">All <span>175</span></a>
       <a href="#">revenue_2019-2022.xlsx <span>37</span></a>
