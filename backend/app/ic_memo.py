@@ -331,6 +331,14 @@ class Notes:
         parts = [analysis, key, s.get("file"), s.get("sheet"), s.get("rows"), rule or s.get("rule")]
         return self.add(" · ".join(str(p) for p in parts if p))
 
+    def anomaly_flags(self, anomalies: Optional[dict]) -> str:
+        """The footnote of the anomaly flags: their source, or, when no revenue lines and no CRM deals were read, the flags and that sentence, with no
+        file or sheet name (a source of "no rows" names nothing that was read)."""
+        scope = report_text.anomaly_scope(anomalies)
+        if not (scope["revenue"] or scope["crm"]):
+            return self.add("Anomaly Flags · anomalies · no revenue lines or CRM deals read")
+        return self.source("Anomaly Flags", "anomalies", (anomalies or {}).get("source"))
+
     def register(self, ranks: Iterable[int] = ()) -> str:
         ranks = sorted(ranks)
         return self.add("claim register" + (", " + ", ".join(f"#{r}" for r in ranks) if ranks else ""))
@@ -613,7 +621,7 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
     out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation', 'role_metrics.reconciliation')}"
             for r in recon if r["status"] == "agrees_rounded"]
     anomalies = [a for a in report_text.anomaly_rows(results.get("anomalies")) if a["count"]]
-    out += [f"{a['label']}: {fmt.fmt_count(a['count'])}{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
+    out += [f"{a['label']}: {fmt.fmt_count(a['count'])}{notes.anomaly_flags(results.get('anomalies'))}"
             for a in anomalies]
     # One entry per finding: an integrity check already told by a reconciliation line or an anomaly line is not told again
     covered = {integrity_mod.RECONCILIATION: bool(reconciled), integrity_mod.GAPS: any(a["key"] in GAP_FLAGS for a in anomalies)}
@@ -738,7 +746,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         counted = integrity_mod._role_reconciliation(results) if years else None
         recon = f"Revenue reconciliation: {counted['finding']}{notes.source('Revenue reconciliation', 'role_metrics.reconciliation', {'rows': counted['source']})}" \
             if counted else None
-    anomalies = (f"{flags} anomaly flags{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
+    anomalies = (f"{flags} anomaly flags{notes.anomaly_flags(results.get('anomalies'))}"
                  if flags is not None else NO_FLAGS_APPLY if results.get("anomalies") else "anomaly flags not computed")
     # integrity-coverage.md section 4: the conclusion and the coverage head the row; the A2 narrative's verdict is never printed here.
     # The rating stays the analyst's.
@@ -858,7 +866,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         app += [title, _table(header, body), ""]
     for t in memo_tables(tables, claims):
         block = SHEET_BLOCKS.get(t["sheet"], ())
-        cite = "".join(notes.source(t["sheet"], b, (results.get(b) or {}).get("source")) for b in block if (results.get(b) or {}).get("source"))
+        cite = "".join(notes.anomaly_flags(results.get(b)) if b == "anomalies" else notes.source(t["sheet"], b, (results.get(b) or {}).get("source"))
+                       for b in block if (results.get(b) or {}).get("source"))
         width = max(len(r) for r in t["rows"])
         rows_ = [r + [""] * (width - len(r)) for r in t["rows"]]
         app += [f"{t['sheet']}{cite}", _table(rows_[0], rows_[1:]), ""]

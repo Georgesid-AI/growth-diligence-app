@@ -1,0 +1,6 @@
+1. 2026-11-02, claude/happy-fermi-3t40p9 (PR 4f fix: Appendix D on a live audit, Anomalies footnote).
+2. Deleted: the second pass in server._memo_files that listed read files apart from the file records (and its `skip` of already-listed names).
+3. Decided: one list (report_text.memo_files) feeds both "Files reviewed" and Appendix D; file records first, joined to the reading's role table by file hash (name as fallback); the role table now carries file_hash. The Anomalies footnote says "no revenue lines or CRM deals read" with no file or sheet when no revenue lines or deals were read.
+4. Slow or unclear: the file record of a live audit carries dtype "file" and no P&L, revenue, customer or CRM type; the type exists only as what the reading maps. Customer-level and CRM files cannot be told apart on a live record.
+5. Root cause: `_memo_files` skipped every read file already present as a file record, and the record has no kind, so the kinds were dropped; tests built the list from readings alone and never from records. Prevented by the new test built from records (dtype "file", hash, no kind) and by one list for count and table.
+6. Process change: build memo and report fixtures from the records the server stores, not from the reader's output.
