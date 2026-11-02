@@ -281,3 +281,50 @@ def test_an_old_xls_workbook_and_a_file_that_is_not_a_sheet_are_refused_with_the
     assert r.status_code == 400 and r.json()["detail"] == "Only .xlsx and .csv files are supported"
     assert flow.db["datasets"].docs == [] and flow.state["adapter"].sheet_calls == 0
     assert flow.db["audits"].docs[0]["usage"]["files"] == {"uploaded": {}, "rejected": {"xls": 1, "txt": 1}}
+
+
+# --- the Upload page's per-file stage (docs/specs/chat-upload.md section 5): names and counts only ---
+
+def test_the_stored_file_carries_the_readers_stage_and_ends_done_with_its_counts(flow, monkeypatch):
+    seen = []
+    real = server._stage_writer
+
+    def spy(audit_id, digest):
+        write = real(audit_id, digest)
+
+        async def traced(name, **counts):
+            seen.append((name, counts.get("checked"), counts.get("total")))
+            await write(name, **counts)
+        return traced
+
+    monkeypatch.setattr(server, "_stage_writer", spy)
+    assert upload(flow, MONTHLY, monthly()).status_code == 200
+    names = [n for n, _, _ in seen]
+    assert names[0] == "removing_personal_data" and names.index("reading_the_sheet") < names.index("checking_cells")
+    checking = [(c, t_) for n, c, t_ in seen if n == "checking_cells"]
+    assert checking[0][0] == 0 and checking[-1][0] == checking[-1][1] > 0, "n of m ends at m of m"
+    view = flow.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"][0]
+    assert view["read_state"] == "done" and view["read_stage"] is None and view["read_elapsed"] >= 0
+    assert view["read_total"] == view["read_checked"] > 0 and view["read_matched"] >= 1 and view["read_items"] >= view["read_matched"]
+
+
+def test_a_file_the_reader_could_not_read_ends_failed_not_reading(flow):
+    flow.state["adapter"] = Router(None)
+    assert upload(flow, MONTHLY, monthly()).status_code == 200
+    view = flow.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"][0]
+    assert view["read_state"] == "failed" and view["read_stage"] is None
+
+
+def test_a_file_stored_without_consent_has_no_stage(flow):
+    flow.db["audits"].docs[0]["structure_reading_consent"] = False
+    upload(flow, MONTHLY, monthly())
+    view = flow.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"][0]
+    assert "read_state" not in view
+
+
+def test_the_deck_list_carries_the_seconds_the_page_read_has_run(flow):
+    flow.db["deck_text"].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "deck.pdf", "format": "pdf", "page_unit": "page", "pages": 3,
+                                      "uploaded_at": "2026-11-02T10:00:00+00:00", "reading_since": "2026-11-02T10:00:10+00:00",
+                                      "read_finished_at": "2026-11-02T10:01:22+00:00", "ai_status": "read"})
+    deck = flow.get(f"/api/audits/{AUDIT}/decks").json()["decks"][0]
+    assert deck["read_elapsed"] == 72 and "reading_since" not in deck and "read_finished_at" not in deck

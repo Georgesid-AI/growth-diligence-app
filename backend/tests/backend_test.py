@@ -112,9 +112,21 @@ SAMPLES = {
 }
 
 
+class _NoConsentSession(requests.Session):
+    """The server creates every audit with AI reading on (George, 2026-11-02) and ignores the payload's value. An integration run must still
+    never send anything to a model provider, so an audit created with ENGAGEMENT is unticked at once through the update route."""
+
+    def post(self, url, *args, **kwargs):
+        r = super().post(url, *args, **kwargs)
+        body = kwargs.get("json") or {}
+        if url.endswith("/audits") and r.status_code == 200 and body.get("structure_reading_consent") is False:
+            super().put(f"{url}/{r.json()['id']}", json={"structure_reading_consent": False}, timeout=30)
+        return r
+
+
 @pytest.fixture(scope="module")
 def session():
-    return requests.Session()
+    return _NoConsentSession()
 
 
 # --- Demo seeded audits ---

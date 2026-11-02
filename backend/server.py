@@ -295,7 +295,7 @@ class AuditCreate(BaseModel):
     # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
     # that ends in 2025; with December it is the calendar year.
     fiscal_year_end: int = Field(default=12, ge=1, le=12)
-    structure_reading_consent: bool = True
+    structure_reading_consent: bool = True      # accepted for older callers and ignored: every audit is created with consent (create_audit)
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
@@ -381,8 +381,10 @@ async def create_audit(payload: AuditCreate, request: Request):
         "as_of_month": payload.as_of_month,
         "analysis_date": payload.analysis_date,
         "fiscal_year_end": payload.fiscal_year_end,
-        "structure_reading_consent": payload.structure_reading_consent,
-        "consent_log": [_consent_entry(payload.structure_reading_consent)],
+        # Every audit starts with AI reading on (George, 2026-11-02): the Upload page has no tick box and uploading a file is the consent. The
+        # create payload's value is ignored; the consent checks below stay in place and the update route still honours an explicit false.
+        "structure_reading_consent": True,
+        "consent_log": [_consent_entry(True)],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": "draft",
         "results": None,
@@ -797,7 +799,8 @@ async def _ingest(audit_id: str, upload: UploadFile, background: BackgroundTasks
     await allowance_mod.record_for_audit(db, audit_id, files=1)
     await _queue_workbook_read(a, audit_id, sheets, digest, filename, background)
     logger.info("upload: run_id=%s sheets=%d", audit_id, len(sheets))
-    return {**_file_view(doc), "status": "ok"}
+    stored = await db.datasets.find_one({"audit_id": audit_id, "file_hash": digest}, {"_id": 0, "rows": 0, "recognition_sheets": 0})
+    return {**_file_view(stored or doc), "status": "ok"}
 
 
 async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filename: str) -> None:
@@ -808,8 +811,9 @@ async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filena
         a = await db.audits.find_one({"id": audit_id})
         if not a:
             return
-        doc = await sheet_reader.read_file(db, a, sheets, digest, filename, _fiscal_year_end(a))
+        doc = await sheet_reader.read_file(db, a, sheets, digest, filename, _fiscal_year_end(a), on_stage=_stage_writer(audit_id, digest))
         status = doc.get("status", "not_read")
+        await _finish_read(audit_id, digest, status == "read")
         await _usage_update(audit_id, lambda u: u["steps"].setdefault("sheet_reading", {}).__setitem__(
             status, u["steps"]["sheet_reading"].get(status, 0) + 1))
         await _refresh_as_of(audit_id)
@@ -817,8 +821,27 @@ async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filena
         logger.info("sheet reading: run_id=%s status=%s month=%s", audit_id, status, doc.get("month") or "-")
     except Exception as exc:
         logger.error("sheet reading failed: run_id=%s error=%s", audit_id, type(exc).__name__)
+        await _finish_read(audit_id, digest, False)
     finally:
         await db.audits.update_one({"id": audit_id}, {"$inc": {"sheet_reads_pending": -1}})
+
+
+def _stage_writer(audit_id: str, digest: str):
+    """The Upload page's per-file stage (chat-upload.md section 5): names and counts only, written on the stored file as the reader moves."""
+    async def write(name: str, **counts) -> None:
+        change = {"read_stage": name}
+        if name == "checking_cells":
+            change.update({f"read_{k}": v for k, v in counts.items()})
+            if counts.get("checked") == 0:
+                change["read_checking_at"] = usage_mod.now()
+        await db.datasets.update_one({"audit_id": audit_id, "file_hash": digest}, {"$set": change})
+    return write
+
+
+async def _finish_read(audit_id: str, digest: str, ok: bool) -> None:
+    """The file's reading ended: "done" when the reader returned a reading, else "failed" (the upload stands, rule 20)."""
+    await db.datasets.update_one({"audit_id": audit_id, "file_hash": digest},
+                                 {"$set": {"read_state": "done" if ok else "failed", "read_finished_at": usage_mod.now()}, "$unset": {"read_stage": ""}})
 
 
 async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str, filename: str,
@@ -827,6 +850,9 @@ async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str
     if a.get("structure_reading_consent") is not True:
         return
     await db.audits.update_one({"id": audit_id}, {"$inc": {"sheet_reads_pending": 1}})
+    await db.datasets.update_one({"audit_id": audit_id, "file_hash": digest},
+                                 {"$set": {"read_state": "reading", "read_stage": "removing_personal_data", "read_started_at": usage_mod.now()},
+                                  "$unset": {"read_finished_at": "", "read_checking_at": "", "read_checked": "", "read_total": "", "read_matched": "", "read_items": ""}})
     if background is None:
         await _read_workbook_safely(audit_id, sheets, digest, filename)
     else:
@@ -847,9 +873,26 @@ FILE_DTYPE = "file"       # every stored spreadsheet is one file: its type is th
 
 def _file_view(ds: dict) -> dict:
     """What the upload page shows for one stored file: its name and size. What was read from it is the reading's (ReadingScreen)."""
-    return {"dtype": FILE_DTYPE, "file": ds.get("file"), "file_hash": ds.get("file_hash"), "size_bytes": ds.get("size_bytes"),
+    view = {"dtype": FILE_DTYPE, "file": ds.get("file"), "file_hash": ds.get("file_hash"), "size_bytes": ds.get("size_bytes"),
             "ext": ds.get("ext") or usage_mod.extension_of(ds.get("file") or ""), "row_count": ds.get("row_count"),
             "sheets": ds.get("sheets"), "uploaded_at": ds.get("uploaded_at")}
+    if ds.get("read_state"):
+        # The reader's stage (names and counts), and the seconds it has run, counted on the server's clock so the page needs no clock of its own.
+        end = _parse_time(ds.get("read_finished_at")) or datetime.now(timezone.utc)
+        start, checking = _parse_time(ds.get("read_started_at")), _parse_time(ds.get("read_checking_at"))
+        view.update({"read_state": ds["read_state"], "read_stage": ds.get("read_stage"), "read_checked": ds.get("read_checked"),
+                     "read_total": ds.get("read_total"), "read_matched": ds.get("read_matched"), "read_items": ds.get("read_items"),
+                     "read_elapsed": max(0, int((end - start).total_seconds())) if start else None,
+                     "read_checking_elapsed": max(0, int((end - checking).total_seconds())) if checking else None})
+    return view
+
+
+def _parse_time(value):
+    try:
+        parsed = datetime.fromisoformat(value) if value else None
+    except (TypeError, ValueError):
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed and parsed.tzinfo is None else parsed
 
 
 
@@ -1201,7 +1244,8 @@ async def list_deck_candidates(audit_id: str):
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
-                   "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "images_unavailable": 1, "images_need_file": 1, "diagnostics": 1}
+                   "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "images_unavailable": 1, "images_need_file": 1, "diagnostics": 1,
+                   "reading_since": 1, "read_finished_at": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     for d in found:
@@ -1214,6 +1258,9 @@ async def list_deck_candidates(audit_id: str):
         # What masking took out of the page text sent (George, 2026-10-29, review of PR 204): counts only.
         d["personal_removed"] = sum((r.get("masked") or {}).get("personal", 0) for r in reads)
         d["names_replaced"] = sum((r.get("masked") or {}).get("names", 0) for r in reads)
+        # Seconds the read has run (to now while it reads, else to its end), on the server's clock: the Upload page's "Elapsed m:ss".
+        began, ended = _parse_time(d.pop("reading_since", None) or d.get("uploaded_at")), _parse_time(d.pop("read_finished_at", None))
+        d["read_elapsed"] = max(0, int(((ended or datetime.now(timezone.utc)) - began).total_seconds())) if began else None
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000))
     # The claims Python enters on its own read as approved ("auto"), the ones a check asks about as pending (simplified-flow.md section 2).

@@ -47,7 +47,7 @@ export default function AuditHub() {
         target_date: null,
         as_of_month: null,
         fiscal_year_end: DEFAULT_FISCAL_YEAR_END,
-        // New audits start with AI reading on (logged as the first consent entry); it is changed on the Upload page.
+        // Every audit starts with AI reading on (logged as the first consent entry); the server sets it whatever this says, and the Upload page has no tick box.
         structure_reading_consent: true,
       });
       toast.success("Audit created");

@@ -5,13 +5,12 @@
 import { PLACEHOLDER, fmtCount, fmtCurrency, fmtPct } from "./format";
 import { monthName } from "./periods";
 
-export const EXPLAINER = "The model reads each file in full. Names, contact details and ID numbers are removed first; client names are replaced by codes that exist only in this audit. Code checks every figure against its cell.";
 
 /** Hover text on every heading (section 11.3 and the mockup): a table cannot be drawn without it, and a test walks every table for it. */
 export const HOVERS = {
   lines: {
     Line: "The row label as it stands in the file, in file order. A rate row is shown under the line it refers to.",
-    "Read as": "What the whole row was read as: revenue, bookings, ARR, MRR, churn rate, customers, forecast, variance, other.",
+    "Interpreted as": "What the whole row was interpreted as: revenue, bookings, ARR, MRR, churn rate, customers, forecast, variance, other.",
     Basis: "How the value accumulates: monthly, quarterly, yearly, cumulative to date, last 12 months, or a rate.",
     "Actual / plan": "Whether the row holds actual figures, plan figures, or both with a boundary column.",
     Cells: "The cells the values occupy. Click to open the sheet there.",
@@ -23,7 +22,7 @@ export const HOVERS = {
     Label: "The label printed with the figure in the file or on the deck page, as the reader took it.",
     Basis: "How the value accumulates: monthly, quarterly, yearly, cumulative to date, or last 12 months.",
     "Actual / plan": "Whether the cell sits before or after the file's last actual month.",
-    Row: "What the whole row or table was read as: revenue, bookings, ARR, churn rate, customers, forecast, variance, other.",
+    Row: "What the whole row or table was interpreted as: revenue, bookings, ARR, churn rate, customers, forecast, variance, other.",
     Source: "The file, sheet and cell, or the deck page, the figure was read from. Click to see the cell.",
   },
   rejected: {
@@ -60,12 +59,12 @@ export const FIGURE_HOVERS = {
   Period: "The month, quarter or year it belongs to; a dash when the figure's own line or column names none.",
   Label: "The label printed with the figure on the page, as the reader took it.",
   Page: "The deck page the figure was read from.",
-  Outcome: "Confirmed, Rejected or Cannot check, after code compared the value with the page text.",
+  Outcome: "Matches source, Doesn't match source or Needs review, after code compared the value with the page text.",
 };
 export const FIGURE_WIDTHS = [22, 14, 14, 26, 8, 16];
 
 export const NUMERIC = { lines: [], confirmed: ["Value"], rejected: ["Reading says", "Cell holds"], cannot_check: ["Value"] };
-export const TITLES = { confirmed: "Confirmed", rejected: "Rejected", cannot_check: "Cannot check" };
+export const TITLES = { confirmed: "Matches source", rejected: "Doesn't match source", cannot_check: "Needs review" };
 
 /** "2022-05" -> "May 2022"; "2024-Q1" -> "Q1 2024"; "2024" -> "FY 2024"; anything else as it is; none -> "—". */
 export function periodLabel(period) {
@@ -117,9 +116,9 @@ export function sheetSummary(s) {
     [
       { text: plural(s.period_columns ?? 0, `${grain} column`, `${grain} columns`) },
       { text: plural(s.rows_mapped ?? 0, "row mapped", "rows mapped") },
-      { bold: fmtCount(s.confirmed), text: ` ${s.confirmed === 1 ? "figure" : "figures"} confirmed` },
-      { text: `${fmtCount(s.rejected)} rejected` },
-      { text: `${fmtCount(s.cannot_check)} cannot check` },
+      { bold: fmtCount(s.confirmed), text: ` ${s.confirmed === 1 ? "figure matches" : "figures match"} source` },
+      { text: `${fmtCount(s.rejected)} ${s.rejected === 1 ? "doesn't" : "don't"} match source` },
+      { text: `${fmtCount(s.cannot_check)} ${s.cannot_check === 1 ? "needs" : "need"} review` },
       { text: "actual to ", bold: lastActualText(s.last_actual, s.granularity) },
     ],
     [...maskingLine(s), { text: plural(s.row_labels_coded ?? 0, "row label coded", "row labels coded") }],
@@ -131,7 +130,7 @@ export function deckSummary(s, figures) {
   const pages = s.pages ?? 0;
   const skipped = s.skipped_pages || [];
   const read = Math.max(pages - skipped.length, 0);
-  const first = [{ text: plural(pages, "page", "pages") }, { text: `${plural(read, "page", "pages")} read` }];
+  const first = [{ text: plural(pages, "page", "pages") }, { text: `${plural(read, "page", "pages")} processed` }];
   if (skipped.length) {
     first.push({ text: `${plural(skipped.length, "page", "pages")} skipped (no digits in ${skipped.length === 1 ? "its" : "their"} text: ${skipped.join(", ")})` });
   }
@@ -140,15 +139,15 @@ export function deckSummary(s, figures) {
     first,
     [
       { bold: fmtCount(f.read), text: ` ${f.read === 1 ? "figure" : "figures"} read` },
-      { bold: fmtCount(s.confirmed), text: " confirmed on the page they cite" },
-      { text: `${fmtCount(s.rejected)} rejected` },
-      { text: `${fmtCount(s.cannot_check)} cannot check${s.cannot_check ? " (charts without text)" : ""}` },
+      { bold: fmtCount(s.confirmed), text: " match the page they cite" },
+      { text: `${fmtCount(s.rejected)} ${s.rejected === 1 ? "doesn't" : "don't"} match source` },
+      { text: `${fmtCount(s.cannot_check)} ${s.cannot_check === 1 ? "needs" : "need"} review${s.cannot_check ? " (charts without text)" : ""}` },
     ],
     maskingLine(s),
   ];
 }
 
-export const OUTCOME_LABELS = { confirmed: "Confirmed", rejected: "Rejected", cannot_check: "Cannot check" };
+export const OUTCOME_LABELS = TITLES;
 
 /** The "Confirmed on column AP" part of the evidence line, and the text before it: the evidence as the reader wrote it, less its checked column. */
 export function splitEvidence(line) {
@@ -163,3 +162,13 @@ export function cardTitle(card) {
 }
 
 export const ACTION_LABELS = { use_cell: "Use the cell", use_reader: "Use the reader", type_value: "Type a value" };
+
+const colNumber = (letters) => [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+const colLetters = (n) => { let out = ""; for (let k = n; k > 0; k = Math.floor((k - 1) / 26)) out = String.fromCharCode(65 + ((k - 1) % 26)) + out; return out; };
+
+/** The Actual / plan cell of a line: the reading's "mixed, boundary D" is shown as "actuals through column D, plan from E" (the column after). */
+export function actualPlanText(value) {
+  const m = /^mixed, boundary ([A-Z]+)$/.exec(value || "");
+  const next = m ? colNumber(m[1]) + 1 : 0;
+  return m ? `actuals through column ${m[1]}, plan from ${colLetters(next)}` : value;
+}

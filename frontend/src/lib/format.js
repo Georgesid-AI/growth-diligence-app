@@ -81,6 +81,13 @@ export const fmtPercentPoints = (v) => (missing(v) ? PLACEHOLDER : `${displayNum
 export const fmtPoints = (v) => (missing(v) ? PLACEHOLDER : `${Number(v) > 0 ? "+" : ""}${displayNumber(Number((Number(v) * 100).toPrecision(12)))} pts`);
 /** A byte size: "61 KB", "1.2 MB". */
 export const fmtBytes = (n) => (missing(n) ? PLACEHOLDER : Number(n) < 1024 * 1024 ? `${displayNumber(Number(n) / 1024)} KB` : `${displayNumber(Number(n) / 1024 / 1024)} MB`);
+/** A running or finished time as m:ss ("0:38", "12:05"): whole seconds, the minutes grouped by the one rule. */
+export const fmtElapsed = (seconds) => {
+  if (missing(seconds)) return PLACEHOLDER;
+  const total = Math.max(0, Math.floor(Number(seconds)));
+  const secs = total % 60;
+  return `${group(Math.floor(total / 60))}:${secs < 10 ? "0" : ""}${secs}`;
+};
 /** The owner pages' costs: USD, to the cent below 10 (a cost of 0.03 is not "0"); every other number there goes through the rule. */
 export const fmtUsd = (v) => (missing(v) ? PLACEHOLDER : `USD ${Math.abs(Number(v)) >= 10 ? displayNumber(v) : roundHalfUp(v, 2).toFixed(2)}`);
 

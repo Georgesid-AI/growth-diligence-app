@@ -3,7 +3,7 @@ import { decideCard, getCell, getDeckPage } from "@/lib/api";
 import {
   ACTION_LABELS, HOVERS, NUMERIC, TITLES, WIDTHS, actualPlanLabel, basisLabel, cardTitle, periodLabel, sourceParts, valueText,
 } from "@/lib/readingView";
-import { PLACEHOLDER } from "@/lib/format";
+import { PLACEHOLDER, fmtCount } from "@/lib/format";
 
 /**
  * The three result tables across all files and the cards (docs/design/read-check-review.md sections 7.4 and 11.3; docs/design/audit-page-mockup.html).
@@ -168,7 +168,7 @@ export default function ReadingResults({ data, auditId, confirmedOpen, setConfir
   const open = data.cards.filter((c) => c.status === "open");
   const section = (kind, tone, children) => (
     <>
-      <h2 className={tone} data-testid={`heading-${kind}`}>{TITLES[kind]} <span className="n">· {data.counts[kind]}</span></h2>
+      <h2 className={tone} data-testid={`heading-${kind}`}>{TITLES[kind]} <span className="n">· {fmtCount(data.counts[kind])}</span></h2>
       {children}
     </>
   );

@@ -6,8 +6,8 @@ import MappingWizard from "./MappingWizard";
 import { RunToMapping } from "@/App";
 import * as api from "@/lib/api";
 
-// Run audit on the Upload & Mapping page (docs/specs/chat-upload.md section 24): the button and its stages sit below the set-up
-// section and above the mapping; Map stays, Calculate is gone and Run audit is the only way to calculate.
+// Run audit on the Upload & Mapping page (docs/specs/chat-upload.md sections 5 and 24): the run card sits under the two upload cards; files are
+// uploaded the moment they are picked, so a run sends none; Run audit is the only way to calculate.
 const mockNavigate = jest.fn();
 let mockLocation = { pathname: "/audit/a1/mapping" };
 jest.mock("@/lib/api", () => ({
@@ -24,9 +24,8 @@ jest.mock("react-router-dom", () => ({
   Link: ({ to, children, ...rest }) => <a href={to} {...rest}>{children}</a>,
 }), { virtual: true });
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
-jest.mock("@/components/AuditSetup", () => ({ __esModule: true, ConsentBlock: () => null, AssumptionsSetup: () => <div data-testid="audit-setup" />, ParkedBlocks: () => null }));
-jest.mock("@/components/DeckPanel", () => () => <div data-testid="deck-panel" />);
-jest.mock("@/components/ReadingScreen", () => ({ __esModule: true, default: () => <div data-testid="reading-screen" />, ReadingTop: ({ host }) => <div data-testid="reading-top">{host}</div> }));
+jest.mock("@/components/AuditSetup", () => ({ __esModule: true, AssumptionsSetup: () => <div data-testid="audit-setup" />, ParkedBlocks: () => null }));
+jest.mock("@/components/ReadingScreen", () => ({ __esModule: true, default: () => <div data-testid="reading-screen" /> }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const AUDIT = { id: "a1", company_name: "TestCo", reporting_currency: "EUR", target_arr: 1000000, as_of_month: null, structure_reading_consent: true };
@@ -50,7 +49,7 @@ beforeEach(() => {
   api.getReview.mockResolvedValue({ computed: false });
   api.getDecks.mockResolvedValue({ decks: [], candidates: [] });
 });
-afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); });
+afterEach(async () => { if (root) { await act(async () => { root.unmount(); }); host.remove(); root = undefined; } });
 
 async function mount(strict = false) {
   host = document.createElement("div");
@@ -59,152 +58,98 @@ async function mount(strict = false) {
   await act(async () => { root.render(strict ? <React.StrictMode><MappingWizard /></React.StrictMode> : <MappingWizard />); });
   await act(async () => { await Promise.resolve(); });
 }
-const attach = async (...names) => {
-  const files = names.map((n) => new File(["x"], n));
-  await act(async () => {
-    const input = q("chat-file-input");
-    Object.defineProperty(input, "files", { value: files, configurable: true });
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-};
 const press = async (id) => { await act(async () => { q(id).click(); }); await act(async () => { await Promise.resolve(); }); };
 const follows = (a, b) => !!(q(a).compareDocumentPosition(q(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
-
-test("Run audit and its stages sit under the assumptions strip, below the Board deck box and the mapped files; Map stays and there is no Calculate button", async () => {
-  await mount();
-  expect(document.body.querySelectorAll('[data-testid="run-audit"]')).toHaveLength(1);
-  expect(q("run-audit").textContent).toBe("Run audit");
-  expect(follows("chat-drop-zone", "deck-panel")).toBe(true);
-  expect(follows("deck-panel", "chat-messages")).toBe(true);
-  expect(follows("upload-chat", "fx-settings")).toBe(true);
-  expect(follows("run-audit-panel", "fx-settings")).toBe(true);        // the set-up lives under More settings, below Run audit
-  expect(follows("fx-settings", "audit-setup")).toBe(true);
-  expect(q("chat-map")).not.toBeNull();
-  expect(q("chat-calculate")).toBeNull();
-  expect(q("compute-button")).toBeNull();
-  expect(document.body.textContent).not.toMatch(/\bCalculate\b/);
-  expect(q("upload-chat").textContent).not.toMatch(/Files already uploaded/);
-  expect([...q("run-stages").querySelectorAll("li")].map((li) => li.getAttribute("data-testid"))).toEqual(["stage-mapping", "stage-engine", "stage-claims"]);
-  expect(q("stage-mapping").textContent).toContain("Reading files");
-  expect(q("run-stages").textContent).not.toContain("File mapping");
-  expect(q("stage-engine").textContent).toContain("Engine calculations");
-  expect(q("stage-claims").textContent).toContain("Claim extraction from decks");
-});
 
 test("the old /audit/:id/run link redirects to Upload & Mapping", () => {
   const html = renderToStaticMarkup(<RunToMapping />);
   expect(html).toContain('data-to="/audit/a1/mapping"');
 });
 
-test("one press sends the attached spreadsheets, runs the three stages in order and opens the Audit page", async () => {
+const FILE = () => VIEW("revenue", { file_hash: "h1", read_state: "done", read_elapsed: 5 });
+const DECK = { deck_id: "d1", file: "board.pptx", pages: 12, page_unit: "slide", uploaded_at: "2026-10-02T08:00:00+00:00", ai_status: "read", figure_pages: 4, read_elapsed: 9 };
+const stored = () => api.getDatasets.mockResolvedValue([FILE()]);
+const tones = () => ["reading", "checking", "calculating"].map((k) => q(`step-${k}`).getAttribute("data-tone"));
+
+test("one press runs the three stages in order, sends no file (they went up when picked) and opens the Audit page", async () => {
   const order = [];
-  api.uploadChatFile.mockImplementation(async (id, f) => { order.push(`upload:${f.name}`); return { status: "ok" }; });
+  stored();
   api.runStage.mockImplementation(async (id, key) => { order.push(`stage:${key}`); return { stage: key, status: "done" }; });
   await mount();
-  await attach("revenue.csv");
-  expect(q("chat-messages").textContent).toContain("revenue.csv");
   await press("run-audit");
-  expect(order).toEqual(["upload:revenue.csv", "stage:mapping", "stage:engine", "stage:claims"]);
+  expect(order).toEqual(["stage:engine", "stage:claims"]);          // the file is stored and read: the run starts at the first stage not done
+  expect(api.uploadChatFile).not.toHaveBeenCalled();
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
-test("no stage waits for the analyst: a run that is done opens the Audit page", async () => {
-  api.runStage.mockResolvedValue({ stage: "mapping", status: "done" });
+test("a run with nothing stored starts at the mapping stage, as before", async () => {
+  api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" }));
   await mount();
-  await attach("revenue.csv");
   await press("run-audit");
-  expect(api.runStage).toHaveBeenCalledTimes(3);
+  expect(api.runStage.mock.calls.map((c) => c[1])).toEqual(["mapping", "engine", "claims"]);
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
-test("a failed stage says what to do and Retry stage carries on from it without sending the files again", async () => {
+test("a failed stage says what to do and Retry stage carries on from it", async () => {
   let fail = true;
+  stored();
   api.runStage.mockImplementation(async (id, key) => (key === "engine" && fail
     ? { stage: key, status: "failed", message: "The calculations could not be completed. Check the mapping on the review screen, then retry this stage." }
     : { stage: key, status: "done" }));
   await mount();
-  await attach("revenue.csv");
   await press("run-audit");
-  expect(q("stage-mapping").getAttribute("data-status")).toBe("done");
   expect(q("stage-engine").getAttribute("data-status")).toBe("failed");
   expect(q("stage-engine-message").textContent).toContain("could not be completed");
-  expect(q("stage-claims").getAttribute("data-status")).toBe("idle");
+  expect(tones()).toEqual(["done", "done", "bad"]);
   expect(mockNavigate).not.toHaveBeenCalled();
   fail = false;
-  api.uploadChatFile.mockClear();
   await press("retry-engine");
   expect(api.uploadChatFile).not.toHaveBeenCalled();
-  expect(q("stage-engine").getAttribute("data-status")).toBe("done");
+  expect(q("stage-engine")).toBeNull();
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
-});
-
-test("a file the run sent is no longer attached: the box reads the stored files again", async () => {
-  api.runStage.mockImplementation(async (id, key) => (key === "engine" ? { stage: key, status: "failed", message: "x" } : { stage: key, status: "done" }));
-  await mount();
-  await attach("revenue.csv");
-  expect(q("unstage-revenue.csv")).not.toBeNull();
-  api.getDatasets.mockResolvedValue([VIEW("revenue")]);
-  await press("run-audit");
-  expect(q("unstage-revenue.csv")).toBeNull();
-  expect(q("upload-chat").textContent).toContain("revenue.csv");
 });
 
 test("under React.StrictMode the stage updates still land (alive ref is re-armed on the second mount)", async () => {
-  api.runStage.mockResolvedValue({ stage: "mapping", status: "done" });
+  stored();
+  api.runStage.mockResolvedValue({ stage: "engine", status: "done" });
   await mount(true);
-  await attach("revenue.csv");
   await press("run-audit");
-  expect(q("stage-mapping").getAttribute("data-status")).toBe("done");
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
-const DECK = { deck_id: "d1", file: "board.pptx", pages: 12, page_unit: "slide", uploaded_at: "2026-10-02T08:00:00+00:00" };
-const stageOf = () => ["mapping", "engine", "claims"].map((k) => q(`stage-${k}`).getAttribute("data-status"));
-
-test("a new audit shows every stage as not started", async () => {
+test("a new audit shows no file and every step as not started", async () => {
   await mount();
-  expect(stageOf()).toEqual(["idle", "idle", "idle"]);
-  expect(q("stage-mapping-status").textContent).toBe("Not started");
+  expect(tones()).toEqual(["wait", "wait", "wait"]);
+  expect(q("step-calculating-second").textContent).toBe("not started");
 });
 
-test("a finished audit shows each stage done on load, never Not started", async () => {
-  api.getDatasets.mockResolvedValue([VIEW("revenue")]);
+test("a finished audit shows the calculating step done on load, never not started", async () => {
+  stored();
   api.getReview.mockResolvedValue({ computed: true });
   api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", status: "approved" }] });
   await mount();
-  expect(stageOf()).toEqual(["done", "done", "done"]);
-  expect(q("stage-claims-status").textContent).toBe("Done");
+  expect(tones()).toEqual(["done", "done", "done"]);
+  expect(q("step-calculating-second").textContent).toBe("Done");
 });
 
-test("columns or claims still open show nothing as needing review: the stage not reached stays not started", async () => {
-  api.getDatasets.mockResolvedValue([VIEW("revenue", { pending: 2 })]);
-  api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", status: "pending" }] });
+test("a stale engine shows calculating as not started on load, not Done", async () => {
+  stored();
+  api.getReview.mockResolvedValue({ computed: true, engine_stale: true });
+  api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", status: "approved" }] });
   await mount();
-  expect(stageOf()).toEqual(["done", "idle", "done"]);
-  expect(document.body.textContent).not.toContain("Needs your review");
+  expect(tones()).toEqual(["done", "done", "wait"]);
 });
 
-test("a deck is not attached in the box (the deck panel takes it) and a file removed before the run is not sent", async () => {
-  api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" }));
-  await mount();
-  await attach("board.pptx", "revenue.csv", "pnl.csv");
-  expect(q("chat-messages").textContent).toContain("board.pptx");
-  expect(q("unstage-board.pptx")).toBeNull();
-  await act(async () => { q("unstage-pnl.csv").click(); });
-  await press("run-audit");
-  expect(api.uploadChatFile.mock.calls.map((c) => c[1].name)).toEqual(["revenue.csv"]);
-  expect(api.uploadDeck).not.toHaveBeenCalled();
-});
-
-test("while a run is in progress Map waits, and Run audit waits while a file is being read", async () => {
+test("while a run is in progress Run audit waits, and the calculating step runs with its elapsed time", async () => {
   let release;
-  api.runStage.mockImplementation(() => new Promise((resolve) => { release = () => { api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" })); resolve({ stage: "mapping", status: "done" }); }; }));
+  stored();
+  api.runStage.mockImplementation((id, key) => new Promise((resolve) => { release = () => { api.runStage.mockImplementation(async (i, k) => ({ stage: k, status: "done" })); resolve({ stage: key, status: "done" }); }; }));
   await mount();
-  await attach("revenue.csv");
   await act(async () => { q("run-audit").click(); });
   await act(async () => { await Promise.resolve(); });
   expect(q("run-audit").disabled).toBe(true);
-  expect(q("chat-map").disabled).toBe(true);
+  expect(q("step-calculating").getAttribute("data-tone")).toBe("run");
+  expect(q("step-calculating-second").textContent).toBe("Elapsed 0:00");
   await act(async () => { release(); });
   for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
@@ -214,39 +159,23 @@ test("while a run is in progress Map waits, and Run audit waits while a file is 
 
 const ranStages = () => api.runStage.mock.calls.map((c) => c[1]);
 const allDone = () => {
-  api.getDatasets.mockResolvedValue([VIEW("revenue")]);
+  stored();
   api.getReview.mockResolvedValue({ computed: true, engine_stale: false });
   api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", status: "approved" }] });
   api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" }));
 };
 
-test("with the mapping done and the engine not, Run audit starts at the engine and does not map again", async () => {
-  api.getDatasets.mockResolvedValue([VIEW("revenue")]);
-  api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" }));
-  await mount();
-  await press("run-audit");
-  expect(ranStages()).toEqual(["engine", "claims"]);
-  expect(api.uploadChatFile).not.toHaveBeenCalled();
-});
-
 test("a mapping confirmed or corrected after the last calculation makes the engine stage not done: Run audit calculates again", async () => {
   allDone();
   await mount();
-  expect(stageOf()).toEqual(["done", "done", "done"]);
-  api.getReview.mockResolvedValue({ computed: true, engine_stale: true });          // the analyst confirmed a column since
+  expect(tones()).toEqual(["done", "done", "done"]);
+  api.getReview.mockResolvedValue({ computed: true, engine_stale: true });          // the analyst changed a layout input since
   await press("run-audit");
   expect(ranStages()).toEqual(["engine", "claims"]);
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
-test("the engine of a stale audit shows as not done on load, not Done", async () => {
-  allDone();
-  api.getReview.mockResolvedValue({ computed: true, engine_stale: true });
-  await mount();
-  expect(stageOf()).toEqual(["done", "idle", "done"]);
-});
-
-test("a second Run audit with nothing new sends no file and reads no deck again: the decks already read are served from the cache", async () => {
+test("a second Run audit with nothing new sends no file and reads no deck again", async () => {
   allDone();
   await mount();
   await press("run-audit");
@@ -256,54 +185,13 @@ test("a second Run audit with nothing new sends no file and reads no deck again:
   expect(api.uploadChatFile).not.toHaveBeenCalled();
 });
 
-test("a file attached after a finished run goes through the mapping stage first, then the rest", async () => {
-  allDone();
+test("the audit list opened this page because the audit could not run: one line says what is missing", async () => {
+  mockLocation = { pathname: "/audit/a1/mapping", state: { missing: "The audit cannot run yet. Missing: a mapped file." } };
   await mount();
-  await attach("revenue.csv");
-  await press("run-audit");
-  expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
-  expect(ranStages()).toEqual(["mapping", "engine", "claims"]);
+  expect(q("run-missing-line").textContent).toBe("The audit cannot run yet. Missing: a mapped file.");
 });
 
-describe("a second Run audit button at the top of the page, and both a little larger (George, 2026-10-27)", () => {
-  test("the page has Run audit at the top, above the set-up section, and the one at the bottom; the two are the only ones", async () => {
-    await mount();
-    expect(q("run-audit-top").textContent).toBe("Run audit");
-    expect(q("run-audit").textContent).toBe("Run audit");
-    expect(document.body.querySelectorAll("button[data-testid^='run-audit']")).toHaveLength(2);
-    expect(follows("run-audit-top", "audit-setup")).toBe(true);
-    expect(follows("deck-panel", "run-audit")).toBe(true);
-  });
-  test("both are larger than the standard button (h-9 px-4 text-sm)", async () => {
-    await mount();
-    ["run-audit-top", "run-audit"].forEach((id) => {
-      const tokens = q(id).className.split(/\s+/);
-      expect(tokens).toEqual(expect.arrayContaining(["h-11", "px-6", "text-base"]));
-      expect(tokens).not.toContain("h-9");
-      expect(tokens).not.toContain("text-sm");
-    });
-  });
-  test("the top button makes the same run as the bottom one, and one run holds both", async () => {
-    const order = [];
-    let release;
-    api.runStage.mockImplementation((id, key) => new Promise((resolve) => { order.push(`stage:${key}`); if (key === "mapping") release = () => resolve({ stage: key, status: "done" }); else resolve({ stage: key, status: "done" }); }));
-    await mount();
-    await press("run-audit-top");
-    expect(order).toEqual(["stage:mapping"]);
-    expect(q("run-audit-top").disabled).toBe(true);
-    expect(q("run-audit").disabled).toBe(true);
-    await act(async () => { release(); });
-    await act(async () => { await Promise.resolve(); });
-    expect(order).toEqual(["stage:mapping", "stage:engine", "stage:claims"]);
-    expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
-  });
-  test("the audit list opened this page because the audit could not run: one line says what is missing", async () => {
-    mockLocation = { pathname: "/audit/a1/mapping", state: { missing: "The audit cannot run yet. Missing: a mapped file." } };
-    await mount();
-    expect(q("run-missing-line").textContent).toBe("The audit cannot run yet. Missing: a mapped file.");
-  });
-  test("a visit with no such line shows none", async () => {
-    await mount();
-    expect(q("run-missing-line")).toBeNull();
-  });
+test("a visit with no such line shows none", async () => {
+  await mount();
+  expect(q("run-missing-line")).toBeNull();
 });
