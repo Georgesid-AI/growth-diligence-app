@@ -1,4 +1,4 @@
 {
   "flags": ["cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell", "source ambiguous, noted"],
-  "patterns": ["^year label below: \\d{4}$"]
+  "patterns": ["^year label below: \\d{4}$", "^scale from r[1-9]\\d*c[1-9]\\d*$"]
 }

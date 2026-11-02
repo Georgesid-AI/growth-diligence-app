@@ -152,6 +152,14 @@ _CURRENCY_UNITS = frozenset(code for code in page_check.CURRENCY_SYMBOLS) | {pag
 _TIME_UNITS = ("days", "months", "years")
 
 
+SCALE_FROM = "scale from"        # the flag is "scale from r1c1": a cell id, never a line of the page
+SCALE_FROM_FLAG = re.compile(rf"{SCALE_FROM} r[1-9]\d*c[1-9]\d*")
+
+
+def scale_from_flag(cell: str) -> str:
+    return f"{SCALE_FROM} {cell}"
+
+
 def year_label_flag(year) -> str:
     return f"{YEAR_LABEL_BELOW}: {year}"
 
@@ -316,6 +324,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
     for claim, item in zip(kept, checked["items"]):
         cell = by_id[item["value_cell"]]            # the cell the value was found in: the cited one, or another (cell tolerance)
         flags = [CELL_CORRECTED] if item.get("cell_corrected") else []
+        if item.get("scale_from"):
+            flags.append(scale_from_flag(item["scale_from"]))        # informational: the analyst sees where the scale came from
         if not item["checks"]["value"] and not value_on_page(listed, claim, furniture):
             if claim.get("value") is not None or not claim.get("period"):
                 flags.append(VALUE_NOT_ON_PAGE)

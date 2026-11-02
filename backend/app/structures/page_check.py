@@ -542,6 +542,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
                "checks": _checks(value_ok, unit_ok, period_ok, label_ok, corrected, values, heading)}
         if corrected:
             out["model_period"] = claim.get("period")
+        if value_ok and item and item.get("scale_from"):
+            out["scale_from"] = item["scale_from"]        # a scale mark in another cell was applied to the figure (items.list_items)
         if model_cell is not None:
             out["cell_corrected"], out["model_cell"] = True, _id(model_cell)
         if lay.measured or notes["flags"]:

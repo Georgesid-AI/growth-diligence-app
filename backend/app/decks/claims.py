@@ -200,8 +200,12 @@ INFORMATIONAL_FLAGS = ("cell corrected", "currency assumed", "unit assumed", "pe
 INFORMATIONAL_YEAR_LABEL = re.compile(r"year label below: \d{4}")
 
 
+# "scale from r1c1" (George, 2026-11-02): a scale mark in another cell was applied to the figure; a note, the claim stays in the main list.
+INFORMATIONAL_SCALE_FROM = re.compile(r"scale from r[1-9]\d*c[1-9]\d*")
+
+
 def is_informational(flag) -> bool:
-    return flag in INFORMATIONAL_FLAGS or bool(INFORMATIONAL_YEAR_LABEL.fullmatch(flag or ""))
+    return flag in INFORMATIONAL_FLAGS or bool(INFORMATIONAL_YEAR_LABEL.fullmatch(flag or "")) or bool(INFORMATIONAL_SCALE_FROM.fullmatch(flag or ""))
 
 
 def review_flags(flags) -> list:

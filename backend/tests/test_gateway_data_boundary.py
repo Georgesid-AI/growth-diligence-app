@@ -3213,6 +3213,10 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
              "basis": "scenario", "scenario": "best", "value_cell": "r2c1", "label_cell": "r1c1", "period_cell": None}
     item, = checker.check(grid, [claim], 12)["items"]
     assert set(item["flags"]) <= set(checker.FLAGS) and item["basis"] in schemas.PAGE_BASES and item["scenario"] in schemas.PAGE_SCENARIOS
+    assert checker.SCALE_FROM_FLAG.fullmatch(checker.scale_from_flag("r1c1")) and not checker.SCALE_FROM_FLAG.fullmatch("scale from Revenue (£m)"), \
+        "the scale note names a cell id, never a line of the page"
+    from app import deck_figures as _figures
+    assert _figures.R_SCALE_DIFFERS == "scale differs from page", "a closed reason: no page text, no figure"
     assert checker.YEAR_LABEL_FLAG.fullmatch(checker.year_label_flag("2022")) and not checker.YEAR_LABEL_FLAG.fullmatch("year label below: Q3 2022"), \
         "the one flag with a part of the page: a four-digit year label, never a line"
     text = json.dumps(item)
