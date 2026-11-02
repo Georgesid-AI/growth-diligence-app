@@ -52,7 +52,7 @@
   .rm { font-size: 13px; }
   .runrow { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .runrow p { max-width: 70ch; }
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .steps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
   .step { display: grid; grid-template-columns: 22px 1fr; gap: 0 10px; padding: 10px 12px; border-radius: 6px; }
   .step svg { grid-row: 1; margin-top: 1px; }
   .step b { grid-column: 2; font-weight: 600; }
@@ -69,8 +69,12 @@
   .block h3 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
   .block .muted { margin: 0 0 8px; }
   .block .k { color: var(--muted); }
-  .pair .k { margin-right: 14px; }
-  .pair .k.gapl { margin-left: 40px; }
+  .topnav { display: flex; gap: 8px; margin: 0 0 14px; }
+  .topnav a { display: inline-flex; align-items: center; height: 38px; padding: 0 18px; border-radius: 6px; font: 600 15px var(--sans); color: var(--ink); text-decoration: none; }
+  .topnav a.all { border: 1px solid var(--line); margin-right: 8px; }  /* gap to Upload = twice the gap between the tabs */
+  .setting { margin: 2px 0; }
+  .setting .k { margin-right: 14px; }
+  .setting a { margin-left: 14px; }
   .anchors { margin: 0; display: grid; grid-template-columns: max-content 1fr max-content; gap: 6px 24px; align-items: baseline; }
 
   /* tables */
@@ -118,10 +122,20 @@
 <body>
 <main>
 
+  <nav class="topnav"><a href="#" class="all">All audits</a><a href="#">Upload</a><a href="#">Audit</a><a href="#">Diagnostics</a></nav>
+
   <header class="head">
     <h1>Company: Tc · EUR</h1>
-    <p>Files are read by an AI model (Anthropic API, not used for training). Personal data is removed and company names are coded before sending. Page images are sent without changes. Uploading a file counts as consent. <a href="#processing">How your files are processed</a></p>
+    <p>Files are processed automatically using Anthropic's AI API and are not used for model training. Some identifying information is removed or replaced with codes, but names in free text and information visible in PDF deck images are sent unchanged. Processing starts on upload. By uploading, you consent to the processing described here. <a href="#processing">How your files are processed</a></p>
   </header>
+
+  <div id="processing" class="panel" style="display:none">
+    <h2>How your files are processed</h2>
+    <p class="line"><b>Privacy protections and their limits:</b> Email addresses, phone numbers and ID numbers are removed from spreadsheet data and extracted deck text before they are sent to Anthropic. Selected spreadsheet fields containing people's names are withheld, and certain known company and client names are replaced with audit-specific codes. Other labels and figures are sent unchanged. These protections do not identify names written in free text. Names in free text are sent as written. PDF deck images are not masked, so any personal or company information visible on those pages is also sent. Do not rely on automatic masking to remove all sensitive information. <!-- when PROVIDER_ZDR is on: "Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training." --></p>
+    <p class="line"><b>What is sent to the AI:</b> Spreadsheet contents – including sheet names, headers, row labels and figures – are sent after the masking described above. For decks, text from every page containing a figure is sent. For PDF decks, an image of each of those pages is also sent.</p>
+    <p class="line"><b>Accuracy checks:</b> Extracted figures are checked against their original source and reviewed for reading errors. Figures that do not match are marked "Doesn't match source" and listed for review. These checks do not guarantee that every error will be detected. AI-written commentary uses only calculated results.</p>
+    <p class="line"><b>Processing and storage:</b> Processing starts automatically when you upload, without a separate confirmation step. Uploaded files are stored for this audit and deleted when the audit is deleted. A file's reading is kept so that uploading the same file again does not re-read it; it is deleted with the last audit that uses it.</p>
+  </div>
 
   <section class="panel">
     <div class="ph"><h2>Financial data</h2><button class="btn up"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 11V2.5M4.5 6 8 2.5 11.5 6M2.5 11v2.5h11V11"/></svg>Upload</button></div>
@@ -154,19 +168,11 @@
     </div>
     <!-- ready state: button enabled, line reads "Ready: 2 data files and 1 deck processed." -->
     <div class="steps">
-      <div class="step run"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="9" r="7.5"/><path d="M9 4.8V9l3 1.8"/></svg><b>Reading files</b><span><span class="t" data-count="38" data-prefix="Elapsed ">Elapsed 0:38</span> · 2 of 3 files read</span></div>
-      <div class="step wait"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="7.5"/></svg><b>Checking figures</b><span>waits for reading</span></div>
+      <div class="step run"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="9" r="7.5"/><path d="M9 4.8V9l3 1.8"/></svg><b>Reading and checking files</b><span><span class="t" data-count="38" data-prefix="Elapsed ">Elapsed 0:38</span> · 2 of 3 files read</span></div>
       <div class="step wait"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="7.5"/></svg><b>Calculating results</b><span>not started</span></div>
     </div>
-    <!-- done step: class "step done" with the tick icon; running with figures: "Elapsed 0:38 · 112 of 185 match"; finished: the frozen time only, "0:38" -->
+    <!-- done states: "Reading and checking files": class "step done" with the tick icon and "2:03 · 4 files processed" (time from the first upload to the last file processed); "Calculating results": "Done 0:04"; running: "Elapsed 0:38" -->
   </section>
-
-  <div id="processing" class="panel" style="display:none">
-    <h2>How your files are processed</h2>
-    <p class="line">Before anything is sent, names, contact details and ID numbers are removed, and client and company names are replaced by codes that exist only in this audit. Figures and labels are sent as they are. Deck pages are also sent as an image of the page, which is not masked. Narratives use AI on computed results.</p>
-    <p class="line">Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.</p>
-    <p class="line">The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and figures are checked by code against their cells. Files are read automatically. Nothing waits for your confirmation. The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training. Uploaded files are stored for this audit and deleted with it.</p>
-  </div>
 
   <!-- results -->
   <section class="results">
@@ -177,14 +183,15 @@
     <div class="block">
       <h3>Audit settings</h3>
       <p class="muted">Set for this audit, not read from the files.</p>
-      <p class="pair"><span class="k">Currency</span>EUR<span class="k gapl">Fiscal year-end</span>December</p>
+      <p class="setting"><span class="k">Reporting currency:</span>EUR<a href="#">Change</a></p>
+      <p class="setting"><span class="k">Fiscal year-end:</span>December<a href="#">Change</a></p>
     </div>
 
     <div class="block">
       <h3>Detected layout and calculation inputs</h3>
-      <p class="muted">How each file is structured and which rows and periods will be used in calculations. Review and change if needed.</p>
+      <p class="muted">This block shows only the inputs that decide periods and the main revenue row. Every other mapped row (ARR, MRR, customers, churn, S&amp;M, costs) is used by its role and listed on each file's tab under "Show all lines". Review and change if needed.</p>
       <div class="anchors">
-        <span class="k">Reporting period</span><span>Jan 2019 – May 2022</span><span></span>
+        <span class="k">Actual data</span><span>Jan 2019 – May 2022 (41 months)</span><span></span>
         <span class="k">As-of month</span><span>May 2022 — customers row 23 ends at AP; recognised revenue from AQ equals the new sales row.</span><a href="#">Change</a>
         <span class="k">Revenue row</span><span>Row 11, Recognised revenue, monthly (revenue_2019-2022.xlsx)</span><a href="#">Change</a>
         <span class="k">Actual / plan</span><span>actual to column AP, plan from AQ (revenue_2019-2022.xlsx)</span><a href="#">Change</a>

@@ -58,11 +58,15 @@ describe("the header and the explainer", () => {
   test("the explainer sentence is the mockup's, followed by the link that opens the full text", async () => {
     await mount();
     expect(q("reading-explainer").textContent).toBe(
-      "Files are read by an AI model (Anthropic API, not used for training). Personal data is removed and company names are coded before sending. Page images are sent without changes. Uploading a file counts as consent. How your files are processed");
+      "Files are processed automatically using Anthropic's AI API and are not used for model training. Some identifying information is removed or replaced with codes, but names in free text and information visible in PDF deck images are sent unchanged. Processing starts on upload. By uploading, you consent to the processing described here. How your files are processed");
     expect(q("processing-text")).toBeNull();
     await act(async () => { q("processing-link").click(); });
     expect(q("processing-text").querySelector("h2").textContent).toBe("How your files are processed");
-    expect(q("processing-text").querySelectorAll("p")).toHaveLength(3);
+    expect(q("processing-text").querySelectorAll("p")).toHaveLength(4);
+    expect([...q("processing-text").querySelectorAll("p b")].map((b) => b.textContent)).toEqual(
+      ["Privacy protections and their limits:", "What is sent to the AI:", "Accuracy checks:", "Processing and storage:"]);
+    expect(follows("upload-header", "processing-text")).toBe(true);
+    expect(follows("processing-text", "sheet-card")).toBe(true);        // opens under the link, above the Financial data card
     await act(async () => { q("processing-link").click(); });
     expect(q("processing-text")).toBeNull();
   });
@@ -72,8 +76,9 @@ describe("the header and the explainer", () => {
     await act(async () => { q("processing-link").click(); });
     const text = q("processing-text").textContent;
     expect(text.includes("Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training.")).toBe(shown);
-    expect(text.includes("Deck pages are sent to Anthropic's API for reading and are not used for training.")).toBe(!shown);
-    expect(text).toContain("Files are read automatically. Nothing waits for your confirmation.");
+    expect(q("processing-text").querySelector("p").textContent.endsWith("Nothing is retained after the reply and nothing is used for training.")).toBe(shown);   // appended to the first paragraph
+    expect(text).not.toContain("Deck pages are sent to Anthropic's API for reading");
+    expect(text).toContain("Processing starts automatically when you upload, without a separate confirmation step.");
   });
 });
 
@@ -268,31 +273,29 @@ describe("the run card", () => {
     expect(q("run-readiness").textContent).toBe("Ready: 2 data files and 0 decks processed.");
   });
 
-  test("three steps, in the mockup's states and second lines: reading runs, checking waits for reading, calculating has not started", async () => {
+  test("two steps, in the mockup's states and second lines: reading and checking runs, calculating has not started", async () => {
     await mount({ sheets: [SHEET(), reading], decks: [DECK()] });
     expect(all("run-steps").length).toBe(1);
-    expect(["reading", "checking", "calculating"].map((k) => q(`step-${k}`).querySelector("b").textContent)).toEqual(["Reading files", "Checking figures", "Calculating results"]);
-    expect(["reading", "checking", "calculating"].map((k) => q(`step-${k}`).getAttribute("data-tone"))).toEqual(["run", "wait", "wait"]);
+    expect(["reading", "calculating"].map((k) => q(`step-${k}`).querySelector("b").textContent)).toEqual(["Reading and checking files", "Calculating results"]);
+    expect(["reading", "calculating"].map((k) => q(`step-${k}`).getAttribute("data-tone"))).toEqual(["run", "wait"]);
     expect(q("step-reading-second").textContent).toBe("Elapsed 0:38 · 2 of 3 files read");
-    expect(q("step-checking-second").textContent).toBe("waits for reading");
     expect(q("step-calculating-second").textContent).toBe("not started");
+    expect(q("step-checking")).toBeNull();
+    expect(document.body.textContent).not.toContain("Checking figures");
   });
 
-  test("checking figures runs with its own time and the figures that match, then shows the frozen time; reading shows its frozen time", async () => {
-    const checking = SHEET({ file_hash: "h2", read_state: "reading", read_stage: "checking_cells", read_elapsed: 40, read_checking_elapsed: 9, read_checked: 185, read_total: 185, read_matched: 112, read_items: 185 });
-    await mount({ sheets: [checking] });
-    expect(q("step-checking").getAttribute("data-tone")).toBe("run");
-    expect(q("step-checking-second").textContent).toBe("Elapsed 0:09 · 112 of 185 match");
+  test("when every file is processed reading shows its time and the file count; with no upload seen it is the longest file time", async () => {
+    await mount({ sheets: [SHEET(), SHEET({ file_hash: "h2", file: "b.xlsx", read_elapsed: 123 })], decks: [DECK(), DECK({ deck_id: "d2" })] });
+    expect(q("step-reading").getAttribute("data-tone")).toBe("done");
+    expect(q("step-reading-second").textContent).toBe("2:03 · 4 files processed");
     await act(async () => { root.unmount(); }); host.remove();
     await mount({ sheets: [SHEET()] });
-    expect(["reading", "checking", "calculating"].map((k) => q(`step-${k}`).getAttribute("data-tone"))).toEqual(["done", "done", "wait"]);
-    expect(q("step-reading-second").textContent).toBe("1:47");
-    expect(q("step-checking-second").textContent).toBe("0:02");
+    expect(q("step-reading-second").textContent).toBe("1:47 · 1 file processed");
   });
 
   test("with no file every step has not started", async () => {
     await mount();
-    expect(["reading", "checking", "calculating"].map((k) => q(`step-${k}-second`).textContent)).toEqual(["not started", "not started", "not started"]);
+    expect(["reading", "calculating"].map((k) => q(`step-${k}-second`).textContent)).toEqual(["not started", "not started"]);
     expect(q("run-readiness").textContent).toBe("The audit cannot run yet. Missing: a file.");
   });
 });

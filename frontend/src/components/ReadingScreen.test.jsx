@@ -87,26 +87,40 @@ afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(
 const tab = async (n) => { await act(async () => { all("tab-file")[n].click(); }); };
 
 describe("the two blocks under the Check results sentence", () => {
-  test("Audit settings: the currency and the fiscal year-end, set for this audit and not read from the files", async () => {
+  test("Audit settings: Reporting currency and Fiscal year-end on two lines, each with Change that opens an inline select and saves", async () => {
     await show();
     expect(q("audit-settings").querySelector("h3").textContent).toBe("Audit settings");
     expect(q("audit-settings").querySelector(".muted").textContent).toBe("Set for this audit, not read from the files.");
-    expect(q("audit-settings").querySelector(".pair").textContent).toBe("CurrencyEURFiscal year-endDecember");
+    expect([...q("audit-settings").querySelectorAll(".setting")].map((l) => l.textContent)).toEqual(["Reporting currency:EURChange", "Fiscal year-end:DecemberChange"]);
+    expect(q("audit-settings").textContent).not.toContain("Currency EUR");
+    api.updateAudit.mockResolvedValue({});
+    await act(async () => { q("setting-fy-change").click(); });
+    expect(q("setting-fy-select")).not.toBeNull();
+    expect(q("setting-currency-select")).toBeNull();
+    await act(async () => {
+      const sel = q("setting-fy-select");
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "3");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(api.updateAudit).toHaveBeenCalledWith("a1", { fiscal_year_end: 3 });
+    await act(async () => { q("setting-currency-change").click(); });
+    expect(q("setting-currency-select")).not.toBeNull();
     const follows = (a, b) => q(a).compareDocumentPosition(q(b)) & Node.DOCUMENT_POSITION_FOLLOWING;
     expect(follows("results-lead", "audit-settings")).toBeTruthy();
     expect(follows("audit-settings", "detected-layout")).toBeTruthy();
     expect(follows("detected-layout", "file-tabs")).toBeTruthy();
   });
 
-  test("Detected layout: the period, the as-of month with its evidence and Confirmed on in bold, the revenue row and the boundary, each with Change", async () => {
+  test("Detected layout: Actual data, the as-of month with its evidence and Confirmed on in plain text, the revenue row and the boundary, each with Change", async () => {
     await show();
     const block = q("detected-layout");
     expect(block.querySelector("h3").textContent).toBe("Detected layout and calculation inputs");
-    expect(block.querySelector(".muted").textContent).toBe("How each file is structured and which rows and periods will be used in calculations. Review and change if needed.");
-    expect([...block.querySelectorAll(".anchors .k")].map((k) => k.textContent)).toEqual(["Reporting period", "As-of month", "Revenue row", "Actual / plan"]);
-    expect(q("assumption-period").textContent).toBe("Jan 2019 – May 2022");
+    expect(block.querySelector(".muted").textContent).toBe("This block shows only the inputs that decide periods and the main revenue row. Every other mapped row (ARR, MRR, customers, churn, S&M, costs) is used by its role and listed on each file's tab under \"Show all lines\". Review and change if needed.");
+    expect([...block.querySelectorAll(".anchors .k")].map((k) => k.textContent)).toEqual(["Actual data", "As-of month", "Revenue row", "Actual / plan"]);
+    expect(q("assumption-period").textContent).toBe("Jan 2019 – May 2022 (41 months)");
     expect(q("assumption-as-of").textContent).toBe("May 2022 — Detected from revenue.xlsx: customers row 23 stops at AP Confirmed on column AP.");
-    expect(q("assumption-as-of-evidence").querySelector("b").textContent).toBe("Confirmed on column AP.");
+    expect(q("assumption-as-of-evidence").querySelector("b")).toBeNull();
+    expect(q("assumption-as-of-evidence").textContent).toContain("Confirmed on column AP.");
     expect(q("anchor-revenue").textContent).toBe("Row 11, Recognised revenue, monthly (revenue.xlsx)");
     expect(q("anchor-boundary").textContent).toBe("actual to column AP, plan from AQ (revenue.xlsx)");
     expect([...block.querySelectorAll(".anchors a")].map((a) => a.textContent)).toEqual(["Change", "Change", "Change"]);
@@ -120,16 +134,19 @@ describe("the two blocks under the Check results sentence", () => {
       lines: [{ sheet: "P&L", lines: [] }] };
     await show({ ...REGISTER, files: [REGISTER.files[0], pnl, REGISTER.files[1]] });
     const labels = [...q("detected-layout").querySelectorAll(".anchors .k")].map((k) => k.textContent);
-    expect(labels).toEqual(["Reporting period", "As-of month", "Revenue row", "Actual / plan", "Last actual", "Revenue row", "Actual / plan"]);
+    expect(labels).toEqual(["Actual data", "As-of month", "Revenue row", "Actual / plan", "Last actual", "Revenue row", "Actual / plan"]);
     expect(all("anchor-as-of")).toHaveLength(1);
     expect(q("anchor-as-of").textContent).toBe("FY 2021 — columns E to H are headed forecast; D holds the last actual year (pnl.xlsx)");
     expect(all("anchor-boundary")[1].textContent).toBe("actual to column D, plan from E (pnl.xlsx)");
     expect([...q("detected-layout").querySelectorAll(".anchors a")]).toHaveLength(6);
   });
 
-  test("the reporting period reads the first and last actual month across the files, and is never a dash while an as-of month exists", async () => {
+  test("Actual data runs from the first month with revenue to the as-of month, months counted inclusively, and is never a dash while an as-of month exists", async () => {
     await show({ ...REGISTER, period: { first: "2019-01", last: "2022-05" } }, { ...AUDIT, datasets: {} });
-    expect(q("assumption-period").textContent).toBe("Jan 2019 – May 2022");
+    expect(q("assumption-period").textContent).toBe("Jan 2019 – May 2022 (41 months)");
+    await act(async () => { root.unmount(); }); host.remove();
+    await show({ ...REGISTER, period: { first: "2022-05", last: "2022-05" } }, { ...AUDIT, datasets: {} });
+    expect(q("assumption-period").textContent).toBe("May 2022 – May 2022 (1 month)");
     await act(async () => { root.unmount(); }); host.remove();
     await show(REGISTER, { ...AUDIT, datasets: {} });
     expect(q("assumption-period").textContent).toBe("May 2022");

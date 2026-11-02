@@ -1,10 +1,10 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { LayoutList, Terminal } from "lucide-react";
-import { fmtCurrency } from "@/lib/format";
-import { STALE_LABEL } from "@/lib/deckClaims";
-import { evidenceToText } from "@/lib/periods";
 import BlockerBanner from "@/components/BlockerBanner";
 import AllowanceBanner from "@/components/AllowanceBanner";
+
+// The four buttons of an open audit: the height of the Run audit button (10px above and below a 15px line), 15px text.
+const NAV_BTN = "inline-flex items-center gap-1.5 h-[38px] px-[18px] rounded-md text-[15px] font-semibold transition-colors";
 
 export function Layout({ audit, children }) {
   const nav = useNavigate();
@@ -42,19 +42,17 @@ export function Layout({ audit, children }) {
                 </div>
               </div>
             </button>
-            {id && (
+          </div>
+
+          {id && (
+            <nav className="flex items-center gap-2">
               <button
                 data-testid="nav-all-audits"
                 onClick={() => nav("/")}
-                className="inline-flex items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900"
+                className={`${NAV_BTN} mr-2 border border-[#E5E7EB] text-slate-700 hover:bg-slate-50 hover:text-slate-900`}
               >
-                <LayoutList className="h-3.5 w-3.5" /> All audits
+                <LayoutList className="h-4 w-4" /> All audits
               </button>
-            )}
-          </div>
-
-          {tabs.length > 0 && (
-            <nav className="hidden md:flex items-center gap-1">
               {tabs.map((t) => {
                 const active = loc.pathname === t.to;
                 return (
@@ -62,9 +60,7 @@ export function Layout({ audit, children }) {
                     key={t.key}
                     data-testid={t.testid}
                     onClick={() => nav(t.to)}
-                    className={`px-3.5 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                      active ? "bg-sky-50 text-slate-900" : "text-slate-600 hover:text-slate-800 hover:bg-slate-50"
-                    }`}
+                    className={`${NAV_BTN} ${active ? "bg-sky-50 text-slate-900" : "text-slate-600 hover:text-slate-800 hover:bg-slate-50"}`}
                   >
                     {t.label}
                   </button>
@@ -77,11 +73,6 @@ export function Layout({ audit, children }) {
               {audit && (
                 <div className="hidden sm:block text-right">
                   <div className="text-xs font-medium text-slate-800 truncate max-w-[220px]">{audit.company_name}</div>
-                  <div className="text-[10px] font-mono text-slate-500" data-testid="header-target-line">
-                    {audit.reporting_currency} · {Number(audit.target_arr) ? `target ${fmtCurrency(audit.target_arr, audit.reporting_currency)} ARR` : "target not set"}
-                    {/* the data's own end, never the as-of setting (docs/specs/dates-and-periods.md section 2) */}
-                    {audit.results_stale ? ` · ${STALE_LABEL}` : audit.results?.source_period ? ` · evidence to ${evidenceToText(audit.results)}` : ""}
-                  </div>
                 </div>
               )}
           </div>

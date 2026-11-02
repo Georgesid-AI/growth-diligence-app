@@ -108,13 +108,11 @@ test("an audit deleted while its banner is up: the 404 is caught, the banner cle
   expect(api.getBlockers.mock.calls.length).toBe(calls);
 });
 
-test.each([0, null, undefined])("the header reads 'target not set' when Target ARR is %p, and the figure once it is set", async (value) => {
+test("the header has no line under the company name: no currency, no target, no evidence month, no stale text", async () => {
   api.getBlockers.mockResolvedValue([]);
-  await mount({ ...AUDIT, target_arr: value });
-  expect(q("header-target-line").textContent).toBe("EUR · target not set");
-  await act(async () => { root.unmount(); }); host.remove();
-  await mount(AUDIT);
-  expect(q("header-target-line").textContent).toMatch(/^EUR · target .*1,?000,?000.* ARR$/);
+  await mount({ ...AUDIT, results_stale: true });
+  expect(q("header-target-line")).toBeNull();
+  expect(document.body.textContent).not.toMatch(/target not set|evidence to|Stale – re-run audit · /);
 });
 
 test("an open audit has three tabs in this order, no Review tab, no Details menu and no Run audit tab", async () => {
@@ -122,7 +120,7 @@ test("an open audit has three tabs in this order, no Review tab, no Details menu
   await mount(AUDIT);
   expect(["nav-tab-mapping-wizard", "nav-tab-audit", "nav-tab-missing-data"].map((id) => q(id).textContent))
     .toEqual(["Upload", "Audit", "Diagnostics"]);
-  expect([...q("nav-tab-audit").parentElement.children].map((b) => b.textContent)).toEqual(["Upload", "Audit", "Diagnostics"]);
+  expect([...q("nav-tab-audit").parentElement.children].map((b) => b.textContent.trim())).toEqual(["All audits", "Upload", "Audit", "Diagnostics"]);
   expect(q("nav-tab-review")).toBeNull();
   expect(q("nav-details")).toBeNull();
   expect(q("details-menu")).toBeNull();
@@ -142,12 +140,18 @@ test.each([
   expect(mockNavigate).toHaveBeenCalledWith(path);
 });
 
-test("an audit page has an All audits button next to the app name, and both open the Audit Hub", async () => {
+test("All audits sits with the three tabs, set apart from Upload by a gap twice the tabs' gap; all four buttons are the Run audit height with 15px text; both it and the app name open the Audit Hub", async () => {
   api.getBlockers.mockResolvedValue([]);
   mockNavigate.mockClear();
   await mount(AUDIT);
   expect(q("nav-all-audits").textContent.trim()).toBe("All audits");
-  expect(q("nav-all-audits").parentElement).toBe(q("nav-tab-audit-list").parentElement);
+  expect(q("nav-all-audits").parentElement).toBe(q("nav-tab-audit").parentElement);
+  expect(q("nav-all-audits").parentElement.className).toContain("gap-2");
+  expect(q("nav-all-audits").className).toContain("mr-2");       // gap-2 + mr-2 = twice the gap between the tabs
+  for (const id of ["nav-all-audits", "nav-tab-mapping-wizard", "nav-tab-audit", "nav-tab-missing-data"]) {
+    expect(q(id).className).toContain("h-[38px]");
+    expect(q(id).className).toContain("text-[15px]");
+  }
   await act(async () => { q("nav-all-audits").click(); });
   await act(async () => { q("nav-tab-audit-list").click(); });
   expect(mockNavigate.mock.calls).toEqual([["/"], ["/"]]);
@@ -165,7 +169,6 @@ test("the header has no Heuristics badge", async () => {
   api.getAllowance.mockResolvedValue({ state: "ok", percent: 0 });
   await mount(AUDIT);
   expect(document.body.textContent.toLowerCase()).not.toContain("heuristics");
-  expect(q("header-target-line")).not.toBeNull();
 });
 
 test("the allowance line sits under the header on an audit screen and the blockers stay apart from it", async () => {
@@ -175,13 +178,6 @@ test("the allowance line sits under the header on an audit screen and the blocke
   expect(q("allowance-warn").closest("header")).toBeNull();
   expect(q("blocker-banner").contains(q("allowance-warn"))).toBe(false);
   expect(q("blocker-banner").querySelectorAll("li").length).toBe(1);
-});
-
-test("the header reads Stale – re-run audit where evidence to <month> would stand when the results are stale, and never a month from them", async () => {
-  api.getBlockers.mockResolvedValue([]);
-  await mount({ ...AUDIT, results: null, results_stale: true });
-  expect(q("header-target-line").textContent).toContain("Stale – re-run audit");
-  expect(q("header-target-line").textContent).not.toContain("evidence to");
 });
 
 test("while results are stale the banner is the one line the server sends, Stale – re-run audit", async () => {
