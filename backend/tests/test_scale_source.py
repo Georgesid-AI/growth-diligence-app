@@ -9,7 +9,7 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
-from app.structures import checker, items, page_check, verify  # noqa: E402
+from app.structures import checker, page_check, verify  # noqa: E402
 from test_page_check import claim, grid, line  # noqa: E402
 
 

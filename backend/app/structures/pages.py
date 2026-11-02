@@ -320,7 +320,6 @@ async def apply_reply(db, audit_id: str, deck_id: str, deck: Dict, run: RunState
     # (live bug, 2026-10-23: rows kept "unmatched" with no flags). A row the analyst approved, edited or rejected stays.
     # Untouched means pending, or entered by Python on its own with no analyst action (claim_matching.entered_by_python: "auto", no
     # edit, no Keep or reject); both are replaced. A row the analyst approved, edited or rejected keeps its values (PR 183).
-    from ..claim_matching import entered_by_python
     stale = [c for c in run.reviewed if c.get("origin") == "ai" and (c.get("status") == "pending" or entered_by_python(c))
              and c.get("structure_key") == key and c["id"] not in run.fresh]
     stale_orders = sorted(c.get("order", 0) for c in stale)
