@@ -24,6 +24,15 @@ from .structures import reading_input
 READ_SECONDS = gateway.SHEET_READING_TIMEOUT_SECONDS + 30
 
 
+async def _no_stage(name: str, **counts) -> None:
+    return None
+
+
+def _cited(file_map: Dict) -> int:
+    """How many rows and figures a map cites: the "m" of "n of m figures checked"."""
+    return sum(len(s.get("rows") or []) for s in file_map.get("sheets") or []) + len(file_map.get("figures") or [])
+
+
 def _group(items: List[Dict]) -> Dict[str, List[Dict]]:
     out: Dict[str, List[Dict]] = {}
     for item in items:
@@ -37,27 +46,37 @@ def _worst(items: List[Dict]) -> Dict:
     return next((i for i in items if i["outcome"] == checks.REJECTED), items[0])
 
 
-async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fiscal_year_end: int = 12, adapter=None, capture: Optional[Dict] = None) -> Dict:
+async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fiscal_year_end: int = 12, adapter=None, capture: Optional[Dict] = None,
+                    on_stage=None) -> Dict:
     """Read, check and re-read one workbook for one audit. Returns the stored outcome:
 
         {"status": "read", "file", "file_hash", "reading_key", "prompt_version", "model", "cache_hit", "masked": {...}, "counts": {...},
          "items": [...], "rereads": [...], "month": "YYYY-MM" or None, "evidence": text or None, "months": [per sheet]}
 
     or {"status": <gateway status or "none">, "reason": message} when nothing was read: no recognised sheet ("none"), no consent, no model,
-    no prompt, a file over the limit, a reply that did not validate."""
+    no prompt, a file over the limit, a reply that did not validate.
+
+    `on_stage(name, **counts)` is told where the file stands, for the Upload page's stage tag: "removing_personal_data", then "reading_the_sheet"
+    (the gateway calls it once the payload is masked), then "checking_cells" with `checked` and `total` (rows and figures the map cites) and,
+    once the pass is done, `matched`. It carries names and counts only."""
     audit_id = audit["id"]
+    stage = on_stage or _no_stage
     text = reading_input.reading_text(sheets)
     if text is None:
         return {"status": "none", "reason": "No sheet with period columns to read."}
+    await stage("removing_personal_data")
     try:
         first = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter,
-                                                           fiscal_year_end=fiscal_year_end), READ_SECONDS)
+                                                           fiscal_year_end=fiscal_year_end, on_stage=stage), READ_SECONDS)
     except asyncio.TimeoutError:
         return {"status": "not_read", "reason": gateway.NOT_READ}
     if first.status != "read" or not first.file_map:
         return {"status": first.status, "reason": first.reason or gateway.NOT_READ}
     cells = checks.Cells(first.payload)
+    total = _cited(first.file_map)
+    await stage("checking_cells", checked=0, total=total)
     before = checks.check_map(cells, first.file_map, fiscal_year_end)
+    await stage("checking_cells", checked=total, total=total, matched=before["counts"].get(checks.CONFIRMED, 0), items=len(before["items"]))
     final, rereads, merged = before, [], first.file_map
     keys = checks.reread_keys(before["items"])
     if keys:
@@ -68,7 +87,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
         try:
             second = await asyncio.wait_for(
                 gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask,
-                                       reread_of=first.reading_key), READ_SECONDS)
+                                       reread_of=first.reading_key, on_stage=stage), READ_SECONDS)
             if second.status != "read" or second.file_map is None:
                 failure = second.reason or second.status
         except asyncio.TimeoutError:
@@ -78,6 +97,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
         if failure is None:
             merged = checks.merge_reread(first.file_map, second.file_map, keys)
             final = checks.check_map(cells, merged, fiscal_year_end)
+            await stage("checking_cells", checked=total, total=total, matched=final["counts"].get(checks.CONFIRMED, 0), items=len(final["items"]))
             after = _group(final["items"])
             for entry in ask:
                 key = entry["item"]

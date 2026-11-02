@@ -327,6 +327,9 @@ async def _deck_status(db, audit_id: str, deck_id: str, status: str, message: Op
     if status == "reading":
         change["$unset"] = {"read_progress": ""}        # a new read starts at "queued", not at the page the last one reached
         change["$set"]["reading_since"] = datetime.now(timezone.utc).isoformat()
+        change["$unset"]["read_finished_at"] = ""
+    else:
+        change["$set"]["read_finished_at"] = datetime.now(timezone.utc).isoformat()       # the Upload page freezes the deck's elapsed time here
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, change)
     return status
 

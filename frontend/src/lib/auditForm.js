@@ -66,7 +66,6 @@ export const DEFAULT_FISCAL_YEAR_END = 12;
 
 // AI-assisted reading (docs/specs/chat-upload.md section 23): one checkbox per audit, ticked by default at creation, in the
 // set-up section at the top of the Upload page. Word for word from the spec.
-export const CONSENT_LABEL = "Use AI to read spreadsheets and deck pages. Before anything is sent, names, contact details and ID numbers are removed, and client and company names are replaced by codes that exist only in this audit. Figures and labels are sent as they are. Deck pages are also sent as an image of the page, which is not masked. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.";
 export const VERIFIED_LINE = "Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.";
 
 // The text above the name field of the creation dialog (chat-upload.md section 23), word for word.
@@ -161,7 +160,6 @@ export function asOfWarning(asOf, revenueLast) {
 export const SETUP_LABELS = {
   reporting_currency: "Reporting currency", target_arr: "Target ARR", target_date: "Target date", as_of_month: "As-of month",
   fiscal_year_end: "Fiscal year-end", first_quarterly_review: "First quarterly review date",
-  structure_reading_consent: "AI reading",
 };
 export const REPORTING_CURRENCIES = ["EUR", "USD", "GBP", "JPY"];
 

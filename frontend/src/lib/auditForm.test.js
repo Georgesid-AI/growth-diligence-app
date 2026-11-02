@@ -1,4 +1,4 @@
-import { isIsoDate, asOfInputValue, parseMonthYear, asOfSourceText, asOfEvidenceLine, asOfStripText, asOfDisplay, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_LABEL, VERIFIED_LINE, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS,
+import { isIsoDate, asOfInputValue, parseMonthYear, asOfSourceText, asOfEvidenceLine, asOfStripText, asOfDisplay, targetDateError, plainNumber, groupThousands, storedNumberInput, VERIFIED_LINE, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS,
   requiredFieldError, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfWarning, revenueLastMonth } from "./auditForm";
 
 // The reported case: target 31/12/2027, as-of 30/06/2026, as the date inputs deliver them.
@@ -63,8 +63,7 @@ test("Target ARR never keeps a leading zero; a stored 0 or an empty value shows 
 });
 
 // docs/specs/chat-upload.md section 23, word for word.
-test("the consent label, the verification line and the dialog text are the spec's words", () => {
-  expect(CONSENT_LABEL).toBe("Use AI to read spreadsheets and deck pages. Before anything is sent, names, contact details and ID numbers are removed, and client and company names are replaced by codes that exist only in this audit. Figures and labels are sent as they are. Deck pages are also sent as an image of the page, which is not masked. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.");
+test("the verification line and the dialog text are the spec's words", () => {
   expect(VERIFIED_LINE).toBe("Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.");
   expect(NEW_AUDIT_TITLE).toBe("Create a new audit");
   expect(NEW_AUDIT_PARAGRAPHS).toEqual([

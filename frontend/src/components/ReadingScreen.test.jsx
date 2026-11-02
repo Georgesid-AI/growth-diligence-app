@@ -1,9 +1,9 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
-import ReadingScreen, { ReadingTop } from "./ReadingScreen";
+import ReadingScreen from "./ReadingScreen";
 import * as api from "@/lib/api";
-import { HOVERS, WIDTHS } from "@/lib/readingView";
+import { HOVERS, WIDTHS, actualPlanText } from "@/lib/readingView";
 import fs from "fs";
 import path from "path";
 
@@ -84,69 +84,105 @@ async function show(register = REGISTER, audit = AUDIT) {
 }
 afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); jest.clearAllMocks(); });
 
-describe("the strip and the file blocks", () => {
-  test("the strip has the currency, the period, the as-of month with Change and the FY end; the evidence line has Confirmed on in green", async () => {
+const tab = async (n) => { await act(async () => { all("tab-file")[n].click(); }); };
+
+describe("the two blocks under the Check results sentence", () => {
+  test("Audit settings: the currency and the fiscal year-end, set for this audit and not read from the files", async () => {
     await show();
-    expect(q("assumption-currency").textContent).toBe("CurrencyEUR");
-    expect(q("assumption-period").textContent).toBe("Reporting periodJan 2019 – May 2022");
-    expect(q("assumption-as-of").textContent).toBe("As-of monthMay 2022 Change");
-    expect(q("assumption-fy-end").textContent).toBe("FY endDecember");
-    expect(q("assumption-as-of-evidence").textContent).toContain("Confirmed on column AP.");
+    expect(q("audit-settings").querySelector("h3").textContent).toBe("Audit settings");
+    expect(q("audit-settings").querySelector(".muted").textContent).toBe("Set for this audit, not read from the files.");
+    expect(q("audit-settings").querySelector(".pair").textContent).toBe("CurrencyEURFiscal year-endDecember");
+    const follows = (a, b) => q(a).compareDocumentPosition(q(b)) & Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(follows("results-lead", "audit-settings")).toBeTruthy();
+    expect(follows("audit-settings", "detected-layout")).toBeTruthy();
+    expect(follows("detected-layout", "file-tabs")).toBeTruthy();
+  });
+
+  test("Detected layout: the period, the as-of month with its evidence and Confirmed on in bold, the revenue row and the boundary, each with Change", async () => {
+    await show();
+    const block = q("detected-layout");
+    expect(block.querySelector("h3").textContent).toBe("Detected layout and calculation inputs");
+    expect(block.querySelector(".muted").textContent).toBe("How each file is structured and which rows and periods will be used in calculations. Review and change if needed.");
+    expect([...block.querySelectorAll(".anchors .k")].map((k) => k.textContent)).toEqual(["Reporting period", "As-of month", "Revenue row", "Actual / plan"]);
+    expect(q("assumption-period").textContent).toBe("Jan 2019 – May 2022");
+    expect(q("assumption-as-of").textContent).toBe("May 2022 — Detected from revenue.xlsx: customers row 23 stops at AP Confirmed on column AP.");
     expect(q("assumption-as-of-evidence").querySelector("b").textContent).toBe("Confirmed on column AP.");
+    expect(q("anchor-revenue").textContent).toBe("Row 11, Recognised revenue, monthly (revenue.xlsx)");
+    expect(q("anchor-boundary").textContent).toBe("actual to column AP, plan from AQ (revenue.xlsx)");
+    expect([...block.querySelectorAll(".anchors a")].map((a) => a.textContent)).toEqual(["Change", "Change", "Change"]);
+  });
+
+  test("a file that did not set the as-of month gets a Last actual row with its cue; the file that did has none", async () => {
+    const pnl = { kind: "sheet", file: "pnl.xlsx", file_hash: "h2", size: 2048,
+      summary: { period_columns: 8, rows_mapped: 6, last_actual: "2021-12", granularity: "yearly", confirmed: 2, rejected: 0, cannot_check: 0 },
+      anchors: { as_of: { month: "2021-12", evidence: "columns E to H are headed forecast; D holds the last actual year (confirmed on sheet P&L, column D)" },
+                 revenue_row: { sheet: "P&L", row: 4, label: "Revenue (recognised)", basis: "yearly" }, actual_plan: { sheet: "P&L", last_actual: "D", plan_from: "E" } },
+      lines: [{ sheet: "P&L", lines: [] }] };
+    await show({ ...REGISTER, files: [REGISTER.files[0], pnl, REGISTER.files[1]] });
+    const labels = [...q("detected-layout").querySelectorAll(".anchors .k")].map((k) => k.textContent);
+    expect(labels).toEqual(["Reporting period", "As-of month", "Revenue row", "Actual / plan", "Last actual", "Revenue row", "Actual / plan"]);
+    expect(all("anchor-as-of")).toHaveLength(1);
+    expect(q("anchor-as-of").textContent).toBe("FY 2021 — columns E to H are headed forecast; D holds the last actual year (pnl.xlsx)");
+    expect(all("anchor-boundary")[1].textContent).toBe("actual to column D, plan from E (pnl.xlsx)");
+    expect([...q("detected-layout").querySelectorAll(".anchors a")]).toHaveLength(6);
   });
 
   test("the reporting period reads the first and last actual month across the files, and is never a dash while an as-of month exists", async () => {
     await show({ ...REGISTER, period: { first: "2019-01", last: "2022-05" } }, { ...AUDIT, datasets: {} });
-    expect(q("assumption-period").textContent).toBe("Reporting periodJan 2019 – May 2022");
+    expect(q("assumption-period").textContent).toBe("Jan 2019 – May 2022");
     await act(async () => { root.unmount(); }); host.remove();
     await show(REGISTER, { ...AUDIT, datasets: {} });
-    expect(q("assumption-period").textContent).toBe("Reporting periodMay 2022");
+    expect(q("assumption-period").textContent).toBe("May 2022");
+  });
+
+  test("nothing sits between the sentence and the tabs but the two blocks, and no per-file block shows on the All tab", async () => {
+    await show();
+    expect(q("assumptions-strip")).toBeNull();
+    expect(all("file-block")).toHaveLength(0);
+    expect(document.body.querySelector(".reading h2")?.getAttribute("data-testid")).toBe("heading-confirmed");
   });
 
   test("a row-level check outcome is a note on its row in the lines table; a file-level one is a note under the summary", async () => {
     const files = REGISTER.files.map((f, i) => (i ? f : { ...f, notes: [{ name: "Period columns", outcome: "cannot_check", reason: "header unclear" }],
       lines: [{ sheet: "Sales", lines: [line(11, "Recognised revenue", { note: "segment row without its total row" })] }] }));
     await show({ ...REGISTER, files });
+    await tab(0);
     expect(q("line-11").querySelector('[data-testid="line-note"]').textContent).toContain("segment row without its total row");
     expect(q("file-note").textContent).toBe("Period columns: header unclear");
   });
 
-  test("a spreadsheet block reads in the mockup's words: the number first, the masking counts on a line of their own, Last actual and not As-of month", async () => {
+  test("a spreadsheet's tab reads in the mockup's words: the number first, the masking counts on a line of their own, Processed and Matches source", async () => {
     await show();
-    const [sheet, deck] = all("file-block");
-    expect(sheet.querySelector("h2").textContent).toBe("revenue.xlsx 60 KB");
+    await tab(0);
+    const sheet = q("file-block");
     expect([...sheet.querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
-      "48 month columns · 41 rows mapped · 37 figures confirmed · 1 rejected · 1 cannot check · actual to May 2022",
+      "48 month columns · 41 rows mapped · 37 figures match source · 1 doesn't match source · 1 needs review · actual to May 2022",
       "0 personal items removed · 0 company names coded · 0 row labels coded"]);
     expect(sheet.querySelector('[data-testid="file-summary"] b').textContent).toBe("37");
-    expect(sheet.querySelector(".anchors .k").textContent).toBe("Last actual");
-    expect(sheet.querySelector(".anchors").textContent).not.toContain("As-of month");
-    expect(sheet.querySelector('[data-testid="anchor-as-of"]').textContent).toMatch(/^May 2022 — /);
-    expect(sheet.querySelector('[data-testid="anchor-revenue"]').textContent).toBe("Row 11, Recognised revenue, monthly");
-    expect(sheet.querySelector('[data-testid="anchor-boundary"]').textContent).toBe("Actual to column AP, plan from AQ");
-    expect([...sheet.querySelectorAll(".anchors a")].map((a) => a.textContent)).toEqual(["Change", "Change", "Change"]);
     expect(sheet.querySelector("summary").textContent).toBe("Show all lines");
-    expect([...deck.querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
-      "20 pages · 17 pages read · 3 pages skipped (no digits in their text: 1, 2, 7)",
-      "112 figures read · 15 confirmed on the page they cite · 0 rejected · 3 cannot check (charts without text)",
+    await act(async () => { q("tab-all").click(); });
+    await tab(1);
+    expect([...q("file-block").querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
+      "20 pages · 17 pages processed · 3 pages skipped (no digits in their text: 1, 2, 7)",
+      "112 figures read · 15 match the page they cite · 0 don't match source · 3 need review (charts without text)",
       "1 personal item removed · 17 company names coded"]);
-    expect([...deck.querySelectorAll('[data-testid="file-summary"]')[1].querySelectorAll("b")].map((b) => b.textContent)).toEqual(["112", "15"]);
-    expect(deck.querySelector('[data-testid="anchor-figures"]')).toBeNull();
-    expect(q("deck-show-all")).toBeNull();
+    expect([...q("file-block").querySelectorAll('[data-testid="file-summary"]')[1].querySelectorAll("b")].map((b) => b.textContent)).toEqual(["112", "15"]);
   });
 
   test("page and pages, its and their: one skipped page reads in the singular", async () => {
     const files = REGISTER.files.map((f) => (f.kind === "deck" ? { ...f, pages: 1, summary: { ...f.summary, pages: 1, skipped_pages: [1], confirmed: 0, cannot_check: 0, personal_removed: 0, company_coded: 1 },
       anchors: { figures: { read: 1, found_on_page: 0, from_image: 0 } } } : f));
     await show({ ...REGISTER, files });
-    expect([...all("file-block")[1].querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
-      "1 page · 0 pages read · 1 page skipped (no digits in its text: 1)",
-      "1 figure read · 0 confirmed on the page they cite · 0 rejected · 0 cannot check",
+    await tab(1);
+    expect([...q("file-block").querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
+      "1 page · 0 pages processed · 1 page skipped (no digits in its text: 1)",
+      "1 figure read · 0 match the page they cite · 0 don't match source · 0 need review",
       "0 personal items removed · 1 company name coded"]);
   });
 
   test("the lines table sits in the details box, in file order; a rate row is directly under its line with the note; part rows are indented", async () => {
     await show();
+    await tab(0);
     const details = q("lines-details");
     expect(details.open).toBe(false);
     const rows = [...details.querySelectorAll("tbody tr")];
@@ -161,9 +197,17 @@ describe("the strip and the file blocks", () => {
     expect(rows[3].querySelector("td").style.paddingLeft).toBe("42px");
     expect(rows[2].querySelector("td").style.paddingLeft).toBe("");
     expect(rows[0].className).toBe("");
-    expect([...details.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Line", "Read as", "Basis", "Actual / plan", "Cells"]);
+    expect([...details.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Line", "Interpreted as", "Basis", "Actual / plan", "Cells"]);
     await act(async () => { details.querySelector("summary").click(); });
     expect(q("lines-details").querySelector("summary").textContent).toBe("Hide all lines");
+  });
+
+  test("mixed, boundary D is shown as actuals through column D, plan from E; the column after Z is AA", () => {
+    expect(actualPlanText("mixed, boundary D")).toBe("actuals through column D, plan from E");
+    expect(actualPlanText("mixed, boundary Z")).toBe("actuals through column Z, plan from AA");
+    expect(actualPlanText("mixed, boundary AP")).toBe("actuals through column AP, plan from AQ");
+    expect(actualPlanText("actual")).toBe("actual");
+    expect(actualPlanText(null)).toBeNull();
   });
 
   test("Change on the revenue row sends the row to the server", async () => {
@@ -184,19 +228,19 @@ describe("the Check results section", () => {
   test("a heading with a lead sentence, a tab row with All and one tab per file with its figure count, and the note under it", async () => {
     await show();
     expect(q("results-heading").textContent).toBe("Check results");
-    expect(q("results-lead").textContent).toBe("Every figure the model read, after code opened its cell or page and compared the value. Three tables: Confirmed, Rejected, Cannot check.");
+    expect(q("results-lead").textContent).toBe("Every figure the model read, after code opened its cell or page and compared the value. Three tables: Matches source, Doesn't match source, Needs review.");
     expect([q("tab-all"), ...all("tab-file")].map((a) => a.textContent)).toEqual(["All 52", "revenue.xlsx 37", "Board report.pdf 15"]);
     expect(q("tab-all").className).toBe("on");
-    expect(q("tab-note").textContent).toBe("Each tab shows the Confirmed, Rejected and Cannot check results for one file. For decks, it also lists every figure read from the deck, with its page number and outcome.");
+    expect(q("tab-note").textContent).toBe("Each tab shows the Matches source, Doesn't match source and Needs review results for one file. For decks, it also lists every figure read from the deck, with its page number and outcome.");
     const css = fs.readFileSync(path.resolve(__dirname, "../App.css"), "utf8");
     expect(css).toMatch(/h1\.section \{[^}]*border-top: 2px solid var\(--ink\)/);
   });
 
-  test("All shows the strip, every file's block and the three tables across files", async () => {
+  test("All shows the two blocks and the three tables across files", async () => {
     await show();
-    expect(q("assumptions-strip")).not.toBeNull();
-    expect(all("file-block")).toHaveLength(2);
-    expect(q("heading-confirmed").textContent).toBe("Confirmed · 2");
+    expect(q("audit-settings")).not.toBeNull();
+    expect(q("detected-layout")).not.toBeNull();
+    expect(q("heading-confirmed").textContent).toBe("Matches source · 2");
     expect(q("deck-figures")).toBeNull();
   });
 
@@ -204,11 +248,9 @@ describe("the Check results section", () => {
     await show();
     await act(async () => { all("tab-file")[0].click(); });
     expect(all("file-block")).toHaveLength(1);
-    expect(q("file-block").querySelector("h2").textContent).toContain("revenue.xlsx");
-    expect(q("assumptions-strip")).toBeNull();
-    expect(q("heading-confirmed").textContent).toBe("Confirmed · 1");
-    expect(q("heading-rejected").textContent).toBe("Rejected · 1");
-    expect(q("heading-cannot_check").textContent).toBe("Cannot check · 0");
+    expect(q("heading-confirmed").textContent).toBe("Matches source · 1");
+    expect(q("heading-rejected").textContent).toBe("Doesn't match source · 1");
+    expect(q("heading-cannot_check").textContent).toBe("Needs review · 0");
     expect(all("card-citation_failed_twice")).toHaveLength(1);
     expect(q("deck-figures")).toBeNull();
     expect(q("tab-all").className).toBe("");
@@ -224,24 +266,24 @@ describe("the Check results section", () => {
     expect([...box.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Metric", "Value", "Period", "Label", "Page", "Outcome"]);
     for (const th of box.querySelectorAll("th")) expect(th.getAttribute("title")).toBeTruthy();
     expect(all("deck-figure").map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent))).toEqual([
-      ["arr", "4.5%", "FY 2021", "Closing ARR", "3", "Confirmed"], ["mrr", "2,500 EUR", "—", "—", "8", "Cannot check"]]);
+      ["arr", "4.5%", "FY 2021", "Closing ARR", "3", "Matches source"], ["mrr", "2,500 EUR", "—", "—", "8", "Needs review"]]);
     expect(box.className).toBe("box");
-    expect(q("heading-confirmed").textContent).toBe("Confirmed · 1");
-    expect(q("heading-cannot_check").textContent).toBe("Cannot check · 1");
-    expect(q("heading-rejected").textContent).toBe("Rejected · 0");
+    expect(q("heading-confirmed").textContent).toBe("Matches source · 1");
+    expect(q("heading-cannot_check").textContent).toBe("Needs review · 1");
+    expect(q("heading-rejected").textContent).toBe("Doesn't match source · 0");
     expect(all("card-citation_failed_twice")).toHaveLength(0);
     await act(async () => { q("tab-all").click(); });
-    expect(all("file-block")).toHaveLength(2);
+    expect(all("file-block")).toHaveLength(0);
   });
 });
 
 describe("the three result tables", () => {
-  test("Confirmed starts collapsed behind its count; Rejected and Cannot check show every row", async () => {
+  test("Matches source starts collapsed behind its count; Doesn't match source and Needs review show every row", async () => {
     await show();
     expect(q("confirmed-details").open).toBe(false);
-    expect(q("heading-confirmed").textContent).toBe("Confirmed · 2");
-    expect(q("heading-rejected").textContent).toBe("Rejected · 1");
-    expect(q("heading-cannot_check").textContent).toBe("Cannot check · 1");
+    expect(q("heading-confirmed").textContent).toBe("Matches source · 2");
+    expect(q("heading-rejected").textContent).toBe("Doesn't match source · 1");
+    expect(q("heading-cannot_check").textContent).toBe("Needs review · 1");
     expect(all("row-rejected")).toHaveLength(1);
     expect(all("row-cannot_check")).toHaveLength(1);
     expect(q("confirmed-details").querySelector("summary").textContent).toBe("Show");
@@ -249,7 +291,7 @@ describe("the three result tables", () => {
     expect(q("confirmed-details").open).toBe(true);
   });
 
-  test("a figure the analyst set on a card is Confirmed, marked set by analyst with its date and the hover text", async () => {
+  test("a figure the analyst set on a card matches source, marked set by analyst with its date and the hover text", async () => {
     await show();
     const marks = all("set-by-analyst");
     expect(marks).toHaveLength(1);
@@ -260,10 +302,16 @@ describe("the three result tables", () => {
 
   test("every heading of every table has hover text", async () => {
     await show();
+    const kinds = ["confirmed", "rejected", "cannot_check"];
     const heads = [...document.body.querySelectorAll("th")];
-    expect(heads.length).toBe(Object.values(HOVERS).reduce((n, h) => n + Object.keys(h).length, 0));          // the lines table and the three result tables
+    expect(heads.length).toBe(kinds.reduce((n, k) => n + Object.keys(HOVERS[k]).length, 0));
     for (const th of heads) expect(th.getAttribute("title")).toBeTruthy();
-    for (const kind of Object.keys(HOVERS)) for (const [name, text] of Object.entries(HOVERS[kind])) expect(`${kind}.${name}`.length && text.length).toBeGreaterThan(10);
+    await tab(0);
+    const lines = [...q("lines-details").querySelectorAll("th")];
+    expect(lines.length).toBe(Object.keys(HOVERS.lines).length);
+    for (const th of lines) expect(th.getAttribute("title")).toBeTruthy();
+    for (const kind of Object.keys(HOVERS)) for (const text of Object.values(HOVERS[kind])) expect(text.length).toBeGreaterThan(10);
+    expect(HOVERS.confirmed.Row).toBe("What the whole row or table was interpreted as: revenue, bookings, ARR, churn rate, customers, forecast, variance, other.");
   });
 
   test("column order, widths, right-aligned numbers, and Source last with the cell first", async () => {
@@ -359,21 +407,7 @@ describe("the cards", () => {
     await show({ ...REGISTER, tables: { ...REGISTER.tables, rejected: [] }, counts: { ...REGISTER.counts, rejected: 0 }, cards: [] });
     expect(all("card-citation_failed_twice")).toHaveLength(0);
     expect(document.body.querySelector(".card")).toBeNull();
-    expect(q("heading-rejected").textContent).toBe("Rejected · 0");
-  });
-});
-
-describe("the top of the page", () => {
-  test("one sentence, the AI-reading tick, and no Why this step matters", async () => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => { root.render(<ReadingTop audit={{ ...AUDIT, structure_reading_consent: true }} setAudit={() => {}} host={<button data-testid="run">Run audit</button>} />); });
-    expect(q("reading-explainer").textContent).toMatch(/^The model reads each file in full\./);
-    expect(q("setup-consent-checkbox").checked).toBe(true);
-    expect(q("setup-consent-tick-label").textContent).toBe("AI reading");
-    expect(q("run").textContent).toBe("Run audit");
-    expect(document.body.textContent).not.toContain("Why this step matters");
+    expect(q("heading-rejected").textContent).toBe("Doesn't match source · 0");
   });
 });
 

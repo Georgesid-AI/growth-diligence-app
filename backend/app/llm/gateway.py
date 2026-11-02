@@ -2053,7 +2053,7 @@ async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
-    fiscal_year_end: int = 12, reread_of: Optional[Any] = None,
+    fiscal_year_end: int = 12, reread_of: Optional[Any] = None, on_stage=None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2130,6 +2130,8 @@ async def read_structure(
     if problem:
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
         return _structure_result("refused", structure_type, f"refused: {problem}")
+    if on_stage is not None and structure_type == SHEET_READING:
+        await on_stage("reading_the_sheet")            # the payload is masked and passed the checks: what follows is the reading (the Upload page's stage tag)
     model = STRUCTURE_MODEL
     if structure_type == PAGE_CLAIMS:
         blocked = page_reader_problem()

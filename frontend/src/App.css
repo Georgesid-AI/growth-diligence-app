@@ -1,11 +1,8 @@
 .App { min-height: 100vh; }
 
 /* The reading screen (docs/design/audit-page-mockup.html): the mockup's rules, scoped to the screen. Desktop only: there is no narrow-screen layout. */
-.reading-top, .reading { --ink: #1a1a1a; --muted: #5f6368; --line: #e3e5e8; --soft: #f6f7f8; --link: #1f5fbf; --ok: #1f7a3a; --warn: #b4540a; --bad: #b3261e;
+.reading { --ink: #1a1a1a; --muted: #5f6368; --line: #e3e5e8; --soft: #f6f7f8; --link: #1f5fbf; --ok: #1f7a3a; --warn: #b4540a; --bad: #b3261e;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); font-size: 15px; line-height: 1.45; }
-.reading-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
-.reading-top p { max-width: 70ch; color: var(--muted); margin: 0; }
-.reading-top label { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; }
 .reading a { color: var(--link); text-decoration: none; cursor: pointer; }
 .reading a:hover { text-decoration: underline; }
 .reading p { margin: 0; }
@@ -13,8 +10,6 @@
 .reading .bad { color: var(--bad); }
 .reading .btn { background: var(--link); color: #fff; border: 0; border-radius: 6px; padding: 10px 18px; font: 600 15px inherit; cursor: pointer; white-space: nowrap; }
 .reading .btn.quiet { background: #fff; color: var(--ink); border: 1px solid var(--line); font-weight: 500; padding: 6px 12px; }
-.reading .strip { display: flex; flex-wrap: wrap; gap: 6px 28px; padding: 16px 0 6px; }
-.reading .strip div span { color: var(--muted); margin-right: 8px; }
 .reading .evidence { color: var(--muted); padding: 0 0 18px; border-bottom: 1px solid var(--line); }
 .reading .evidence b { color: var(--ok); font-weight: 600; }
 .reading .file { padding: 18px 0; border-bottom: 1px solid var(--line); }
@@ -64,3 +59,59 @@
 .reading .card .two div { background: var(--soft); border-radius: 4px; padding: 10px 12px; }
 .reading .card .two b { display: block; margin-bottom: 4px; }
 .reading .card .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* The Upload page's top (docs/design/audit-page-mockup.html): header, the two file cards, the run card. Desktop only: there is no narrow-screen layout. */
+.upload-page { --ink: #1a1a1a; --muted: #5f6368; --line: #e3e5e8; --soft: #f6f7f8; --link: #1f5fbf; --ok: #1f7a3a; --bad: #b3261e;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); font-size: 15px; line-height: 1.45; }
+.upload-page a { color: var(--link); text-decoration: none; cursor: pointer; }
+.upload-page a:hover { text-decoration: underline; }
+.upload-page p { margin: 0; }
+.upload-page .head { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.upload-page .head h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+.upload-page .head p { max-width: 70ch; color: var(--muted); }
+.upload-page .btn { background: var(--link); color: #fff; border: 0; border-radius: 6px; padding: 10px 18px; font: 600 15px inherit; cursor: pointer; white-space: nowrap; }
+.upload-page .btn.quiet { background: #fff; color: var(--ink); border: 1px solid var(--line); font-weight: 500; padding: 6px 12px; }
+.upload-page .btn.up { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font-size: 14px; }
+.upload-page .btn:disabled { background: #c9ccd1; color: #fff; cursor: not-allowed; }
+.upload-page .panel { border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; margin: 16px 0 0; }
+.upload-page .panel .ph { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.upload-page .panel h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.upload-page .line { max-width: 70ch; margin: 4px 0 0; }
+.upload-page .line.muted, .upload-page .muted { color: var(--muted); font-size: 13px; }
+.upload-page .bad { color: var(--bad); }
+.upload-page .drop { border: 1px dashed #b9bdc3; border-radius: 6px; padding: 18px; margin-top: 12px; text-align: center; color: var(--muted); }
+.upload-page .drop.over { border-color: var(--link); background: #e8f0fb; }
+.upload-page .files { list-style: none; margin: 12px 0 0; padding: 0; }
+.upload-page .files li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto auto; gap: 4px 14px; align-items: center; padding: 9px 0; border-top: 1px solid var(--soft); }
+.upload-page .files li:first-child { border-top: 0; }
+.upload-page .files .fn { overflow-wrap: anywhere; }
+.upload-page .files .sub { grid-column: 2 / 3; margin: -2px 0 0; }
+.upload-page .files .sum { grid-column: 2 / -1; margin: -2px 0 0; }
+.upload-page .files .summary { color: var(--muted); font-size: 13px; }
+.upload-page .tag { font-size: 12.5px; padding: 2px 9px; border-radius: 10px; white-space: nowrap; background: #e8f0fb; color: var(--link); }
+.upload-page .tag.done { background: #e6f3ea; color: var(--ok); }
+.upload-page .tag.bad { background: #fbeaea; color: var(--bad); }
+.upload-page .time { font-family: var(--mono); font-size: 13px; color: var(--muted); min-width: 3.2em; text-align: right; white-space: nowrap; }
+.upload-page .rm { font-size: 13px; }
+.upload-page .deckline { margin: 8px 0 0; }
+.upload-page .runrow { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.upload-page .runrow p { max-width: 70ch; }
+.upload-page .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+.upload-page .step { display: grid; grid-template-columns: 22px 1fr; gap: 0 10px; padding: 10px 12px; border-radius: 6px; }
+.upload-page .step svg { grid-row: 1; margin-top: 1px; }
+.upload-page .step b { grid-column: 2; font-weight: 600; }
+.upload-page .step span { grid-column: 2; font-size: 13px; }
+.upload-page .step.done { background: #e6f3ea; color: var(--ok); }
+.upload-page .step.run { background: #e8f0fb; color: var(--link); }
+.upload-page .step.wait { background: var(--soft); color: var(--muted); }
+.upload-page .step.bad { background: #fbeaea; color: var(--bad); }
+.upload-page .step span.t { font-family: var(--mono); }
+.upload-page .stage-failed { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+
+/* The two blocks under the Check results sentence. */
+.reading .block { margin: 22px 0; }
+.reading .block h3 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+.reading .block .muted { margin: 0 0 8px; font-size: 13px; }
+.reading .block .k { color: var(--muted); }
+.reading .pair .k { margin-right: 14px; }
+.reading .pair .k.gapl { margin-left: 40px; }

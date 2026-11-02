@@ -3,40 +3,29 @@ import { useLocation, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Loader2, Plus, X } from "lucide-react";
 import { Layout } from "@/components/Layout";
-import DeckPanel from "@/components/DeckPanel";
-import { ConsentBlock, AssumptionsSetup, ParkedBlocks } from "@/components/AuditSetup";
-import UploadChat from "@/components/UploadChat";
-import RunAuditPanel from "@/components/RunAuditPanel";
-import ReadingScreen, { ReadingTop } from "@/components/ReadingScreen";
+import { AssumptionsSetup, ParkedBlocks } from "@/components/AuditSetup";
+import UploadSection from "@/components/UploadSection";
+import ReadingScreen from "@/components/ReadingScreen";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
-import { getAudit, reportUsage, saveFx } from "@/lib/api";
+import { getAudit, saveFx } from "@/lib/api";
 import { asOfInputValue } from "@/lib/auditForm";
-import { mapState } from "@/lib/chatUpload";
-import { splitFiles } from "@/lib/runAudit";
 
 export default function MappingWizard() {
   const { id } = useParams();
   const missing = useLocation()?.state?.missing;        // the audit list sent the analyst here: one line saying what stopped the run
-  const [topHost, setTopHost] = useState(null);       // the top of the page, where the second Run audit button is drawn
   const [audit, setAudit] = useState(null);
-  const [views, setViews] = useState([]);
   const [asOf, setAsOf] = useState("");
-  const [mapping, setMapping] = useState(false);        // Map is reading files: Run audit waits
-  const [attached, setAttached] = useState(0);        // files attached in the chat and not read yet
-  const [fxVersion, setFxVersion] = useState(0);      // bumped when a rate is saved: the deck panel reloads
-  const [running, setRunning] = useState(false);      // Run audit is in progress: Map waits (and it waits for Map)
-  const [leftover, setLeftover] = useState(null);     // the attached files the last run did not send; the box keeps only those
-  const pick = useRef({ data: [], decks: [] });       // the files attached in the box, for Run audit
-  const attach = useCallback((files) => { pick.current = splitFiles(files); }, []);
+  const [fxVersion, setFxVersion] = useState(0);      // bumped when a rate is saved: the results load again
+  const [running, setRunning] = useState(false);      // Run audit is in progress
 
   const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }), [id]);
-  useEffect(() => { load(); reportUsage(id, { screen: "mapping" }); }, [load, id]);
+  useEffect(() => { load(); }, [load]);
 
-  // Map is on whenever a file is attached or loaded.
-  const [readKey, setReadKey] = useState(0);        // bumped when a read or a run ends: the reading screen loads again
-  useEffect(() => { if (!mapping && !running) setReadKey((k) => k + 1); }, [mapping, running, views.length]);
+  const [readKey, setReadKey] = useState(0);        // bumped when a file is stored, a read or a run ends: the reading screen loads again
+  useEffect(() => { if (!running) setReadKey((k) => k + 1); }, [running]);
+  const changed = useCallback(() => { setReadKey((k) => k + 1); load(); }, [load]);
   // The sheet reader runs after the upload's response (read-check-review.md section 3): follow the audit while it works.
   useEffect(() => {
     if (!audit || !(audit.sheet_reads_pending > 0)) return undefined;
@@ -50,8 +39,6 @@ export default function MappingWizard() {
     if (wasPending.current && !pending) window.dispatchEvent(new Event(BLOCKERS_CHANGED));
     wasPending.current = pending;
   }, [audit]);
-  const busy = mapping || running;
-  const map = mapState({ attached, loaded: views.length, busy });
 
   if (!audit) {
     return <Layout audit={audit}><div className="flex justify-center py-32 text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div></Layout>;
@@ -59,16 +46,11 @@ export default function MappingWizard() {
 
   return (
     <Layout audit={audit}>
-      <ReadingTop audit={audit} setAudit={setAudit} host={<div ref={setTopHost} data-testid="run-audit-top-host" />} />
       {missing && <p role="status" className="mb-4 text-sm text-amber-800" data-testid="run-missing-line">{missing}</p>}
 
-      <UploadChat audit={audit} onViews={setViews} onStaged={setAttached} onMapping={setMapping}
-        onFiles={attach} leftover={leftover} mapButton={map}
-        deck={<div className="px-5 pt-4"><DeckPanel auditId={audit.id} reloadKey={fxVersion} compact /></div>} />
+      <UploadSection audit={audit} onChanged={changed} onRunning={setRunning} />
 
       <ReadingScreen audit={audit} setAudit={setAudit} reloadKey={readKey + fxVersion} />
-
-      <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={mapping} topHost={topHost} />
 
       <details className="mt-5" data-testid="more-settings">
         <summary className="cursor-pointer text-sm text-sky-700">More settings</summary>

@@ -1201,8 +1201,9 @@ def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_wit
     client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})      # no change: no entry
     stored = next(a for a in db["audits"].docs if a["id"] == created["id"])
     assert [e["value"] for e in stored["consent_log"]] == [True, False] and all(e["at"] for e in stored["consent_log"])
-    unticked = client.post("/api/audits", json={**NEW_AUDIT, "structure_reading_consent": False}).json()
-    assert unticked["structure_reading_consent"] is False and [e["value"] for e in unticked["consent_log"]] == [False]
+    # Every audit is created with consent, whatever the body says (George, 2026-11-02); only the update route unticks.
+    forced = client.post("/api/audits", json={**NEW_AUDIT, "structure_reading_consent": False}).json()
+    assert forced["structure_reading_consent"] is True and [e["value"] for e in forced["consent_log"]] == [True]
 
 
 def test_audit_creation_needs_a_company_name_alone_and_ignores_a_client_name_in_the_body(monkeypatch):

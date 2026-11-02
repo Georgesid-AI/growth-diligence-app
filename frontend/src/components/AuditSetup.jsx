@@ -5,9 +5,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import DateField from "@/components/DateField";
 import { getAudit, updateAudit } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
-import { s2Explainer, S3_EXPLAINER_NO_CONSENT } from "@/lib/chatUpload";
 import {
-  CONSENT_LABEL, VERIFIED_LINE, DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfInputValue, asOfDisplay, asOfStripText, parseMonthYear, asOfWarning, revenueLastMonth, groupThousands, plainNumber, storedNumberInput,
+  DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfInputValue, asOfDisplay, asOfStripText, parseMonthYear, asOfWarning, revenueLastMonth, groupThousands, plainNumber, storedNumberInput,
   targetDateError,
 } from "@/lib/auditForm";
 
@@ -33,29 +32,6 @@ function useSave(audit, setAudit) {
       return false;
     }
   };
-}
-
-/**
- * The top of the Upload page (docs/specs/chat-upload.md section 23): the consent text, the AI reading tick under it, then the
- * mapping text (S2 with the deck sentence the server's PROVIDER_ZDR flag picks, or S3 when the tick is off).
- */
-export function ConsentBlock({ audit, setAudit }) {
-  const save = useSave(audit, setAudit);
-  const consent = audit.structure_reading_consent === true;
-  return (
-    <section data-testid="consent-block" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-5">
-      <p className="text-xs text-slate-800" data-testid="setup-consent-label">{CONSENT_LABEL}</p>
-      <p className="mt-2 text-xs text-slate-800" data-testid="setup-verified-line">{VERIFIED_LINE}</p>
-      <label className="mt-3 flex items-center gap-2 text-xs text-slate-800">
-        <input type="checkbox" data-testid="setup-consent-checkbox" checked={consent}
-          onChange={(e) => save("structure_reading_consent", { structure_reading_consent: e.target.checked })} />
-        <span data-testid="setup-consent-tick-label">{SETUP_LABELS.structure_reading_consent}</span>
-      </label>
-      <p data-testid="chat-explainer" className="mt-4 text-xs text-slate-600">
-        {consent ? s2Explainer(audit.provider_zdr === true) : S3_EXPLAINER_NO_CONSENT}
-      </p>
-    </section>
-  );
 }
 
 /**

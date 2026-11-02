@@ -3,18 +3,16 @@ import { createRoot } from "react-dom/client";
 
 import MappingWizard from "./MappingWizard";
 import * as api from "@/lib/api";
-import { S4_DROP_ZONE_BOLD, S7_REFUSED, S7B_XLS_REFUSED, S_UPLOAD_RETRY } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
-  getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), reportUsage: jest.fn(),
+  getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), reportUsage: jest.fn(), removeDeck: jest.fn(),
   getReview: jest.fn(), getDecks: jest.fn(), runStage: jest.fn(), uploadDeck: jest.fn(), getReading: jest.fn(),
   saveFx: jest.fn(), computeAudit: jest.fn(), updateAudit: jest.fn(), putIcInputs: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn(), useLocation: () => ({ pathname: "/audit/a1/mapping" }) }), { virtual: true });
 jest.mock("@/components/Layout", () => ({ Layout: ({ audit, children }) => <div><span data-testid="header-target">{audit ? String(audit.target_arr) : ""}</span>{children}</div> }));
-jest.mock("@/components/DeckPanel", () => ({ reloadKey = 0 }) => <div data-testid="deck-panel" data-reload={reloadKey} />);
-jest.mock("@/components/ReadingScreen", () => ({ __esModule: true, default: () => <div data-testid="reading-screen" />, ReadingTop: ({ host }) => <div data-testid="reading-top">{host}</div> }));
+jest.mock("@/components/ReadingScreen", () => ({ __esModule: true, default: ({ reloadKey = 0 }) => <div data-testid="reading-screen" data-reload={reloadKey} /> }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,21 +70,21 @@ describe("the FX settings", () => {
     expect(q("fx-settings").textContent).toContain("1 USD = 0.9 EUR");
   });
 
-  test("a saved rate makes the deck panel read the claims again; a refused save does not", async () => {
+  test("a saved rate makes the results load again; a refused save does not", async () => {
     api.saveFx.mockResolvedValue({ fx: { USD: 0.9 } });
     await mount();
-    expect(q("deck-panel").getAttribute("data-reload")).toBe("0");
+    const before = Number(q("reading-screen").getAttribute("data-reload"));
     await change(q("fx-ccy-input"), "usd");
     await change(q("fx-rate-input"), "0.9");
     await click([...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add")));
     await flush();
-    expect(q("deck-panel").getAttribute("data-reload")).toBe("1");
+    expect(Number(q("reading-screen").getAttribute("data-reload"))).toBe(before + 1);
     api.saveFx.mockRejectedValue(new Error("x"));
     await change(q("fx-ccy-input"), "gbp");
     await change(q("fx-rate-input"), "1.14");
     await click([...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add")));
     await flush();
-    expect(q("deck-panel").getAttribute("data-reload")).toBe("1");
+    expect(Number(q("reading-screen").getAttribute("data-reload"))).toBe(before + 1);
   });
 
   test("a rate that cannot be saved is taken back and says so", async () => {
@@ -102,120 +100,6 @@ describe("the FX settings", () => {
   });
 });
 
-describe("the upload list (read-check-review.md section 11.1)", () => {
-  test("a dropped file is only attached: nothing is sent, the box stays usable, and Map sends the files in drop order without computing", async () => {
-    api.uploadChatFile.mockImplementation(async (id, f) => FILE({ file: f.name }));
-    api.getDatasets.mockResolvedValue([FILE({ file: "a.csv" }), FILE({ file: "b.csv", file_hash: "h2" })]);
-    await mount();
-    await pick([file("a.csv")]);
-    expect(api.uploadChatFile).not.toHaveBeenCalled();
-    expect(q("attachment-note").textContent).toBe("attached – not read yet");
-    expect(q("chat-drop-zone")).not.toBeNull();             // the upload box stays after a drop
-    expect(q("chat-drop-zone").textContent).toContain(S4_DROP_ZONE_BOLD);
-    expect(q("chat-drop-zone").textContent).toBe("Drop files here or use the paperclip. .xlsx or .csv only. A monthly revenue or ARR report is required; a P&L, revenue by customer and a CRM export add more metrics.");
-    expect(q("chat-drop-zone").querySelector("strong").textContent).toBe(".xlsx or .csv only");
-    expect(q("run-audit-panel").querySelector("p").textContent).toBe("Files are read automatically. Nothing waits for your confirmation.");
-    expect(document.body.textContent).not.toContain("Attach the files in the box above");
-    await pick([file("b.csv")]);
-    expect(all("chat-analyst-bubble").length).toBe(2);
-    await act(async () => { q("chat-map").click(); });
-    await flush();
-    expect(api.uploadChatFile.mock.calls.map((c) => c[1].name)).toEqual(["a.csv", "b.csv"]);
-    expect(api.uploadChatFile.mock.calls.every((c) => c.length === 2)).toBe(true);        // the file and nothing else: no type, no replace
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect(api.computeAudit).not.toHaveBeenCalled();         // Map never computes
-    expect(all("attachment-note").length).toBe(0);
-  });
-
-  test("an attachment can be taken off before Map", async () => {
-    await mount();
-    await pick([file("a.csv")]);
-    await click(q("unstage-a.csv"));
-    expect(all("chat-analyst-bubble").length).toBe(0);
-    expect(q("chat-map").disabled).toBe(true);
-    expect(api.uploadChatFile).not.toHaveBeenCalled();
-  });
-
-  test("Map is only on with a file attached or loaded", async () => {
-    await mount();
-    expect(q("chat-map").disabled).toBe(true);
-    await pick([file("a.csv")]);
-    expect(q("chat-map").disabled).toBe(false);
-  });
-
-  test("a stored file is listed on reload by its name; nothing asks for its type or its columns", async () => {
-    await mount({ datasets: [FILE()] });
-    await flush();
-    expect(all("chat-analyst-bubble").length).toBe(1);
-    expect(q("chat-analyst-bubble").textContent).toContain("rev.csv");
-    for (const id of ["chat-system-revenue", "chat-unknown", "chat-replace", "status-revenue", "mapping-table", "type-line", "confirm-all"]) expect(q(id)).toBeNull();
-    expect(document.body.textContent).not.toMatch(/Confirm all|Confidence|wait for your decision|Older mapping/);
-  });
-
-  test("anything but xlsx or csv is refused in the browser and counted by extension; an old .xls says how to save it", async () => {
-    await mount();
-    await pick([file("deck.pptx")]);
-    expect(document.body.textContent).toContain(S7_REFUSED);
-    expect(api.reportUsage).toHaveBeenCalledWith("a1", { rejected_extension: "pptx" });
-    await pick([file("old.xls")]);
-    expect(document.body.textContent).toContain(S7B_XLS_REFUSED);
-    expect(api.uploadChatFile).not.toHaveBeenCalled();
-  });
-
-  test("a read that gets no answer puts the file back as attached; Map sends it again", async () => {
-    api.uploadChatFile.mockRejectedValueOnce(new Error("timeout")).mockResolvedValue(FILE({ file: "a.csv" }));
-    await mount();
-    await pick([file("a.csv")]);
-    await act(async () => { q("chat-map").click(); });
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect(document.body.textContent).toContain(S_UPLOAD_RETRY);
-    expect(q("attachment-note")).not.toBeNull();
-    await act(async () => { q("chat-map").click(); });
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect(api.uploadChatFile).toHaveBeenCalledTimes(2);
-    expect(q("attachment-note")).toBeNull();
-  });
-
-  test("a refusal from the server shows its words", async () => {
-    api.uploadChatFile.mockRejectedValue({ response: { status: 413, data: { detail: "This file is too large to keep." } } });
-    await mount();
-    await pick([file("a.csv")]);
-    await act(async () => { q("chat-map").click(); });
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect(document.body.textContent).toContain("This file is too large to keep.");
-  });
-
-  test("Map sets the flag that releases the banner, and refreshes it once after the last file", async () => {
-    const { calculatePressed } = require("@/lib/chatUpload");
-    window.sessionStorage.clear();
-    api.uploadChatFile.mockImplementation(async (id, f) => FILE({ file: f.name }));
-    const seen = jest.fn();
-    window.addEventListener("blockers:changed", seen);
-    await mount();
-    expect(calculatePressed("a1")).toBe(false);
-    await pick([file("a.csv"), file("b.csv")]);
-    await act(async () => { q("chat-map").click(); });
-    for (let i = 0; i < 6; i += 1) await flush();
-    window.removeEventListener("blockers:changed", seen);
-    expect(calculatePressed("a1")).toBe(true);
-    expect(seen).toHaveBeenCalledTimes(1);
-    window.sessionStorage.clear();
-  });
-
-  test("while files are being sent Map is off and nothing is sent twice", async () => {
-    let release;
-    api.uploadChatFile.mockImplementation((id, f) => new Promise((resolve) => { release = () => resolve(FILE({ file: f.name })); }));
-    await mount();
-    await pick([file("a.csv")]);
-    await act(async () => { q("chat-map").click(); });
-    await act(async () => { q("chat-map").click(); });
-    expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
-    await act(async () => { release(); });
-    for (let i = 0; i < 4; i += 1) await flush();
-    expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("the page no longer holds the older mapping (read-check-review.md section 12)", () => {
   test("?view=legacy brings nothing back: no mapping block, no type picker, no revenue-row picker, no Confirm all", async () => {
     window.history.pushState({}, "", "/?view=legacy");
@@ -225,5 +109,47 @@ describe("the page no longer holds the older mapping (read-check-review.md secti
     for (const id of ["revenue-settings", "billing-terms-section", "mapping-table", "type-line", "revenue-row-picker", "confirm-all", "older-mapping-waits"]) expect(q(id)).toBeNull();
     expect(document.body.textContent).not.toMatch(/Older mapping|Lines wait for your decision|Columns wait|Needs your review/);
     window.history.pushState({}, "", "/");
+  });
+});
+
+
+describe("the Upload page, top to bottom (docs/design/audit-page-mockup.html)", () => {
+  const follows = (a, b) => !!(q(a).compareDocumentPosition(q(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  test("header, the two cards, the run card, Check results, then More settings; nothing else between the run card and Check results", async () => {
+    await mount({ datasets: [FILE()] });
+    await flush();
+    expect(q("upload-company").textContent).toBe("Company: Target · EUR");
+    for (const [a, b] of [["upload-header", "sheet-card"], ["sheet-card", "deck-card"], ["deck-card", "run-audit-panel"], ["run-audit-panel", "reading-screen"], ["reading-screen", "more-settings"]]) {
+      expect(follows(a, b)).toBe(true);
+    }
+    expect(q("upload-page").lastElementChild).toBe(q("run-audit-panel"));          // the processing text stays closed until its link is pressed
+    expect(q("upload-page").nextElementSibling).toBe(q("reading-screen"));
+    expect(q("setup-consent-checkbox")).toBeNull();
+    expect(document.body.querySelectorAll("button[data-testid^='run-audit']")).toHaveLength(1);
+  });
+
+  test("a stored file is listed on reload by its name; nothing asks for its type or its columns", async () => {
+    await mount({ datasets: [FILE({ file: "rev.csv" })] });
+    await flush();
+    expect(q("sheet-file").querySelector('[data-testid="file-name"]').textContent).toBe("rev.csv");
+    expect(document.body.textContent).not.toMatch(/Which type|Needs your review|Columns wait/);
+  });
+});
+
+describe("the page follows the background reading", () => {
+  test("when background reading finishes the blockers are read again, with no page reload", async () => {
+    jest.useFakeTimers();
+    const { BLOCKERS_CHANGED } = require("@/components/BlockerBanner");
+    const fired = jest.fn();
+    window.addEventListener(BLOCKERS_CHANGED, fired);
+    api.getAudit.mockResolvedValueOnce({ ...AUDIT, sheet_reads_pending: 1 }).mockResolvedValue(AUDIT);
+    await mount();
+    expect(fired).not.toHaveBeenCalled();
+    await act(async () => { jest.advanceTimersByTime(3100); });
+    await act(async () => { await Promise.resolve(); });
+    expect(fired).toHaveBeenCalledTimes(1);
+    window.removeEventListener(BLOCKERS_CHANGED, fired);
+    jest.useRealTimers();
   });
 });

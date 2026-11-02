@@ -1,30 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { Check, Circle, Loader2, AlertTriangle } from "lucide-react";
+import { AlertTriangle, Check, Clock, Circle } from "lucide-react";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
-import { Button } from "@/components/ui/button";
 import * as apiModule from "@/lib/api";
 import { getDatasets, getDecks, getReview } from "@/lib/api";
-import { S_RUN_LINE, setCalculatePressed } from "@/lib/chatUpload";
-import { RETRY_LABEL, RUN_BUTTON_CLASS, RUN_LABEL, STAGES, STAGE_STATUS_TEXT, firstStageNotDone, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
+import { setCalculatePressed } from "@/lib/chatUpload";
+import { RETRY_LABEL, RUN_LABEL, STAGES, firstStageNotDone, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
+import { readiness, steps } from "@/lib/uploadView";
 
 /**
- * Run audit, on the Upload & Mapping page (docs/specs/chat-upload.md section 24): one button, then the files attached in the
- * page's box are mapped, the metrics calculated and the deck claims read, in that order; the Audit page opens when the run is
- * done or waits for the analyst. It is the only way to calculate: it carries on from the first stage that is not done, and the
- * engine counts as not done when a mapping was confirmed or corrected after the last calculation. Each stage shows its progress; one that fails says what to do and has a Retry stage button.
- * On load each stage shows what the audit already holds (stagesFromState).
- *
- * `pick` is a ref to {data, decks}, the attached files not yet sent; `onRan(leftover)` hands back the ones the run did not send;
- * `onRunning(bool)` lets the page hold Map while a run is in progress; `blocked` holds this button while it runs.
- * `topHost` is an element at the top of the page: a second Run audit button is drawn into it (George, 2026-10-27); it and the one below share this
- * panel's run, so they are one run and one state.
+ * The run card (docs/design/audit-page-mockup.html): Run audit, the line beside it saying what it waits for, and the three steps - Reading files,
+ * Checking figures, Calculating results. The first two follow the files the cards list (lib/uploadView.js); the third follows the run's own stages
+ * (lib/runAudit.js). Run audit is held while any file is being read. Files are sent the moment they are picked, so a run sends none: it calculates
+ * from what the audit holds, from the first stage that is not done, and the Audit page opens when it is done. A stage that fails says what to do and
+ * has a Retry stage button.
  */
-export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked = false, topHost = null }) {
+export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = Date.now(), onRunning }) {
   const nav = useNavigate();
   const [stages, setStages] = useState(idleStages());
   const [running, setRunning] = useState(false);
+  const [clock, setClock] = useState({ start: null, end: null, tick: Date.now() });
   const started = useRef(false);                      // a run began: the stored state no longer sets the stages
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -39,70 +34,75 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
     readState().then((read) => { if (alive.current && !started.current) setStages(read); });
   }, [readState]);
 
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(() => setClock((c) => ({ ...c, tick: Date.now() })), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+
   const update = useCallback((key, result) => { if (alive.current) setStages((s) => ({ ...s, [key]: result })); }, []);
   const start = useCallback(async (stage) => {
     if (running) return;
     setRunning(true);
     onRunning?.(true);
     started.current = true;
+    setClock({ start: Date.now(), end: null, tick: Date.now() });
     // Run audit asks the audit where it stands now (a mapping may have been confirmed since the last run) and carries on from there.
     let from = stage;
     if (!from) {
       const read = await readState();
-      from = firstStageNotDone(read, pick.current);
+      from = firstStageNotDone(read);
       if (alive.current) setStages(read);
     }
-    setCalculatePressed(auditId);                  // the "revenue file missing" blocker shows from the first run, as after Map
-    const out = await runAudit({ api: apiModule, auditId, pick: pick.current, from, onUpdate: update });
+    setCalculatePressed(auditId);                  // the "revenue file missing" blocker shows from the first run
+    const out = await runAudit({ api: apiModule, auditId, from, onUpdate: update });
     window.dispatchEvent(new Event(BLOCKERS_CHANGED));
     onRunning?.(false);
     if (!alive.current) return;
     setRunning(false);
-    onRan?.([...pick.current.data, ...pick.current.decks]);
+    setClock((c) => ({ ...c, end: Date.now() }));
     if (out.status === "done") nav(`/audit/${auditId}/dashboard`);
-  }, [auditId, running, update, nav, pick, onRan, onRunning, readState]);
+  }, [auditId, running, update, nav, onRunning, readState]);
 
-  const runButton = (testId) => (
-    <Button data-testid={testId} onClick={() => start()} disabled={running || blocked} className={`bg-sky-600 hover:bg-sky-500 gap-2 ${RUN_BUTTON_CLASS}`}>
-      {running && <Loader2 className="h-4 w-4 animate-spin" />}{RUN_LABEL}
-    </Button>
-  );
+  const ready = readiness(sheets, decks);
+  // Calculating results follows the engine and claims stages of the run.
+  const later = [stages.engine, stages.claims];
+  const calcStatus = later.some((s) => s.status === "failed") ? "failed" : later.some((s) => s.status === "running") ? "running"
+    : later.every((s) => s.status === "done") ? "done" : "idle";
+  const seconds = clock.start ? ((clock.end ?? clock.tick) - clock.start) / 1000 : null;
+  const rows = steps(sheets, decks, { status: calcStatus, seconds }, now);
   const failed = STAGES.find((s) => stages[s.key].status === "failed");
-  return (
-    <section className="mt-5" data-testid="run-audit-panel">
-      <p className="text-sm text-slate-600 mb-3 max-w-3xl">
-        {S_RUN_LINE}
-      </p>
-      {runButton("run-audit")}
-      {topHost && createPortal(runButton("run-audit-top"), topHost)}
 
-      <ol className="mt-4 space-y-2 max-w-3xl" data-testid="run-stages">
-        {STAGES.map((s) => {
-          const st = stages[s.key];
-          return (
-            <li key={s.key} data-testid={`stage-${s.key}`} data-status={st.status}
-              className="flex items-start gap-3 rounded-md border border-[#E5E7EB] bg-white px-4 py-3">
-              <StageIcon status={st.status} />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-slate-900">{s.label}</div>
-                <div className="text-xs text-slate-600" data-testid={`stage-${s.key}-status`}>{STAGE_STATUS_TEXT[st.status]}</div>
-                {st.message && <p className={`mt-1 text-xs ${st.status === "failed" ? "text-rose-800" : "text-slate-600"}`} data-testid={`stage-${s.key}-message`}>{st.message}</p>}
-              </div>
-              {st.status === "failed" && (
-                <Button size="sm" variant="outline" disabled={running || blocked} data-testid={`retry-${s.key}`} onClick={() => start(s.key)}>{RETRY_LABEL}</Button>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-      {failed && <p className="mt-2 text-xs text-slate-500">Nothing already done is lost: Retry stage carries on from the stage that failed.</p>}
+  return (
+    <section className="panel" data-testid="run-audit-panel">
+      <div className="runrow">
+        <button type="button" className="btn" data-testid="run-audit" disabled={running || ready.held} onClick={() => start()}>{RUN_LABEL}</button>
+        <p data-testid="run-readiness">{ready.text}</p>
+      </div>
+      <div className="steps" data-testid="run-steps">
+        {rows.map((r) => (
+          <div key={r.key} className={`step ${r.tone === "run" ? "run" : r.tone === "done" ? "done" : r.tone === "bad" ? "bad" : "wait"}`} data-testid={`step-${r.key}`} data-tone={r.tone}>
+            <StepIcon tone={r.tone} />
+            <b>{r.label}</b>
+            <span className={r.tone === "run" || r.tone === "done" ? "t" : ""} data-testid={`step-${r.key}-second`}>{r.second}</span>
+          </div>
+        ))}
+      </div>
+      {failed && (
+        <div className="stage-failed" data-testid={`stage-${failed.key}`} data-status="failed">
+          {stages[failed.key].message && <p className="bad" role="alert" data-testid={`stage-${failed.key}-message`}>{stages[failed.key].message}</p>}
+          <button type="button" className="btn quiet" disabled={running} data-testid={`retry-${failed.key}`} onClick={() => start(failed.key)}>{RETRY_LABEL}</button>
+          <p className="muted">Nothing already done is lost: Retry stage carries on from the stage that failed.</p>
+        </div>
+      )}
     </section>
   );
 }
 
-function StageIcon({ status }) {
-  if (status === "running") return <Loader2 className="h-4 w-4 mt-0.5 animate-spin text-sky-700" />;
-  if (status === "done") return <Check className="h-4 w-4 mt-0.5 text-emerald-700" />;
-  if (status === "failed") return <AlertTriangle className="h-4 w-4 mt-0.5 text-rose-700" />;
-  return <Circle className="h-4 w-4 mt-0.5 text-slate-400" />;
+function StepIcon({ tone }) {
+  const props = { width: 18, height: 18, "aria-hidden": true };
+  if (tone === "done") return <Check {...props} />;
+  if (tone === "run") return <Clock {...props} />;
+  if (tone === "bad") return <AlertTriangle {...props} />;
+  return <Circle {...props} />;
 }

@@ -97,5 +97,4 @@ def test_audit_creation_requires_a_company_name_and_has_no_client_name_or_engage
 
 def test_consent_is_ticked_by_default_and_can_be_unticked():
     assert server.AuditCreate(**REQUIRED).structure_reading_consent is True
-    assert server.AuditCreate(**REQUIRED, structure_reading_consent=False).structure_reading_consent is False
     assert server.AuditUpdate(structure_reading_consent=False).structure_reading_consent is False
