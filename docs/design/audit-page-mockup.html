@@ -24,12 +24,42 @@
   a:hover { text-decoration: underline; }
   p { margin: 0; }
 
-  /* top bar */
-  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
-  .top p { max-width: 70ch; color: var(--muted); }
-  .top label { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; }
+  /* top of page */
   .btn { background: var(--link); color: #fff; border: 0; border-radius: 6px; padding: 10px 18px; font: 600 15px var(--sans); cursor: pointer; white-space: nowrap; }
   .btn.quiet { background: #fff; color: var(--ink); border: 1px solid var(--line); font-weight: 500; padding: 6px 12px; }
+  .btn.up { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font-size: 14px; }
+  .btn svg, .fi svg { flex: none; }
+  .head { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .head h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+  .head p { max-width: 70ch; color: var(--muted); }
+  .panel { border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; margin: 16px 0 0; }
+  .panel .ph { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .panel h2 { font-size: 16px; font-weight: 600; margin: 0; }
+  .panel .line { max-width: 70ch; margin: 4px 0 0; }
+  .panel .line.muted, .muted { color: var(--muted); font-size: 13px; }
+  .drop { border: 1px dashed #b9bdc3; border-radius: 6px; padding: 18px; margin-top: 12px; text-align: center; color: var(--muted); }
+  .files { list-style: none; margin: 12px 0 0; padding: 0; }
+  .files li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto auto; gap: 4px 14px; align-items: center; padding: 9px 0; border-top: 1px solid var(--soft); }
+  .files li:first-child { border-top: 0; }
+  .files .fn { overflow-wrap: anywhere; }
+  .files .sub { grid-column: 2 / 3; margin: -2px 0 0; }
+  .files .sum { grid-column: 2 / -1; margin: -2px 0 0; }
+  .tag { font-size: 12.5px; padding: 2px 9px; border-radius: 10px; white-space: nowrap; background: #e8f0fb; color: var(--link); }
+  .tag.done { background: #e6f3ea; color: var(--ok); }
+  .time { font-family: var(--mono); font-size: 13px; color: var(--muted); min-width: 3.2em; text-align: right; }
+  .rm { font-size: 13px; }
+  .runrow { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .runrow p { max-width: 70ch; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .step { display: grid; grid-template-columns: 22px 1fr; gap: 0 10px; padding: 10px 12px; border-radius: 6px; }
+  .step svg { grid-row: 1; margin-top: 1px; }
+  .step b { grid-column: 2; font-weight: 600; }
+  .step span { grid-column: 2; font-size: 13px; }
+  .step.done { background: #e6f3ea; color: var(--ok); }
+  .step.run { background: #e8f0fb; color: var(--link); }
+  .step.wait { background: var(--soft); color: var(--muted); }
+  .step span.t { font-family: var(--mono); }
+  @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
 
   /* strip */
   .strip { display: flex; flex-wrap: wrap; gap: 6px 28px; padding: 16px 0 6px; }
@@ -94,13 +124,54 @@
 <body>
 <main>
 
-  <section class="top">
-    <div>
-      <p>The model reads each file in full. Names, contact details and ID numbers are removed first; client names are replaced by codes that exist only in this audit. Code checks every figure against its cell.</p>
-      <label><input type="checkbox" checked> AI reading</label>
-    </div>
-    <button class="btn">Run audit</button>
+  <header class="head">
+    <h1>Company: Tc · EUR</h1>
+    <p>Files are read by an AI model (Anthropic API, not used for training). Personal data is removed and company names are coded before sending. Page images are sent without changes. Uploading a file counts as consent. <a href="#processing">How your files are processed</a></p>
+  </header>
+
+  <section class="panel">
+    <div class="ph"><h2>Financial data</h2><button class="btn up"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 11V2.5M4.5 6 8 2.5 11.5 6M2.5 11v2.5h11V11"/></svg>Upload</button></div>
+    <p class="line">Required: a monthly revenue or ARR report. A P&amp;L, revenue by customer or CRM export add more metrics. .xlsx or .csv</p>
+    <div class="drop">Drop files here</div>
+    <ul class="files">
+      <li><span class="fi"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="#5f6368" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3"/></svg></span><span class="fn">Testco_Revenue.xlsx</span><span class="tag done">Read</span><span class="time">1:47</span><a href="#" class="rm">Remove</a></li>
+      <li><span class="fi"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="#5f6368" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3"/></svg></span><span class="fn">Testco_PnL.xlsx</span><span class="tag" data-live>Reading the sheet · Step 2 of 3</span><span class="time" data-count="38">0:38</span><a href="#" class="rm">Remove</a>
+        <span class="sub muted">usually 1–3 minutes</span></li>
+    </ul>
+    <!-- other stage tags, same row: "Removing personal data · Step 1 of 3"; "Checking cells · Step 3 of 3" with the muted line "n of m figures checked" -->
   </section>
+
+  <section class="panel">
+    <div class="ph"><h2>Board deck or growth plan</h2><button class="btn up"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 11V2.5M4.5 6 8 2.5 11.5 6M2.5 11v2.5h11V11"/></svg>Upload</button></div>
+    <p class="line">Board decks, investor updates, growth model or business plan. .pdf, .pptx or .docx · up to 8 documents</p>
+    <p class="line muted">Page images work for PDF only – export PowerPoint or Word to PDF for the best read. Cannot read: scanned PDFs, images, Keynote or Google Slides links.</p>
+    <div class="drop">Drop documents here</div>
+    <ul class="files">
+      <li><span class="fi"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="#5f6368" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3"/></svg></span><span class="fn">Board_deck_Q3.pdf</span><span class="tag done">Read</span><span class="time">1:12</span><a href="#" class="rm">Remove</a>
+        <span class="sum summary">24 pages · 17 with figures read · 7 skipped (no numbers)</span></li>
+    </ul>
+  </section>
+
+  <section class="panel">
+    <div class="runrow">
+      <button class="btn">Run audit</button>
+      <p>Waiting for Testco_PnL.xlsx to finish reading. 1 of 2 data files and 1 deck ready.</p>
+    </div>
+    <!-- ready state: "Ready: 2 data files and 1 deck read." -->
+    <div class="steps">
+      <div class="step run"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="9" r="7.5"/><path d="M9 4.8V9l3 1.8"/></svg><b>Reading files</b><span><span class="t" data-count="38">0:38</span> · 2 of 3 done</span></div>
+      <div class="step wait"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="7.5"/></svg><b>Checking figures</b><span>waits for reading</span></div>
+      <div class="step wait"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="9" r="7.5"/></svg><b>Calculating results</b><span>not started</span></div>
+    </div>
+    <!-- done step: class "step done" with the tick icon; running with figures: "0:38 · 112 of 185 confirmed" -->
+  </section>
+
+  <div id="processing" class="panel" style="display:none">
+    <h2>How your files are processed</h2>
+    <p class="line">Before anything is sent, names, contact details and ID numbers are removed, and client and company names are replaced by codes that exist only in this audit. Figures and labels are sent as they are. Deck pages are also sent as an image of the page, which is not masked. Narratives use AI on computed results.</p>
+    <p class="line">Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.</p>
+    <p class="line">The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and figures are checked by code against their cells. Files are read automatically. Nothing waits for your confirmation. The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training. Uploaded files are stored for this audit and deleted with it.</p>
+  </div>
 
   <section class="strip">
     <div><span>Currency</span>EUR</div>
@@ -301,5 +372,14 @@
 
   </section>
 </main>
+<script>
+document.querySelectorAll('[data-count]').forEach(function (el) {
+  var n = +el.dataset.count;
+  setInterval(function () { n++; el.textContent = Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0'); }, 1000);
+});
+document.querySelector('a[href="#processing"]').addEventListener('click', function (e) {
+  e.preventDefault(); var d = document.getElementById('processing'); d.style.display = d.style.display ? '' : 'none';
+});
+</script>
 </body>
 </html>
