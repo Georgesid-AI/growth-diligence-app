@@ -166,7 +166,12 @@
     <!-- done step: class "step done" with the tick icon; running with figures: "0:38 · 112 of 185 confirmed" -->
   </section>
 
-  <div id="processing" class="panel" style="display:none"><h2>How your files are processed</h2><p class="line">Full processing text opens here.</p></div>
+  <div id="processing" class="panel" style="display:none">
+    <h2>How your files are processed</h2>
+    <p class="line">Before anything is sent, names, contact details and ID numbers are removed, and client and company names are replaced by codes that exist only in this audit. Figures and labels are sent as they are. Deck pages are also sent as an image of the page, which is not masked. Narratives use AI on computed results.</p>
+    <p class="line">Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.</p>
+    <p class="line">The AI reads every cell of each uploaded spreadsheet – sheet names, headers, row labels and figures – after the masking described above, and figures are checked by code against their cells. Files are read automatically. Nothing waits for your confirmation. The AI reads every page of uploaded decks to find plan figures: the text of each page that carries a figure, masked as above, and one image of the whole page, which is not masked. Deck pages are processed by Anthropic under a zero-data-retention arrangement. Nothing is retained after the reply and nothing is used for training. Uploaded files are stored for this audit and deleted with it.</p>
+  </div>
 
   <section class="strip">
     <div><span>Currency</span>EUR</div>
