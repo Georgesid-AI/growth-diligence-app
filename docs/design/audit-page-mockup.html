@@ -63,14 +63,15 @@
   .step span.t { font-family: var(--mono); }
   @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
 
-  /* strip */
 
   /* settings */
-  .anchors { margin: 18px 0; display: grid; grid-template-columns: max-content 1fr max-content; gap: 4px 16px; align-items: baseline; }
-  .anchors .k { color: var(--muted); }
-  .anchors .wide { grid-column: 1 / -1; }
-  .anchors .wide span { color: var(--muted); margin: 0 8px 0 0; }
-  .anchors .wide span:not(:first-child) { margin-left: 22px; }
+  .block { margin: 22px 0; }
+  .block h3 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .block .muted { margin: 0 0 8px; }
+  .block .k { color: var(--muted); }
+  .pair .k { margin-right: 14px; }
+  .pair .k.gapl { margin-left: 40px; }
+  .anchors { margin: 0; display: grid; grid-template-columns: max-content 1fr max-content; gap: 6px 24px; align-items: baseline; }
 
   /* tables */
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -173,15 +174,26 @@
     <h1 class="section">Check results</h1>
     <p class="lead">Every figure the model read, after code opened its cell or page and compared the value. Three tables: Matches source, Doesn't match source, Needs review.</p>
 
-    <div class="anchors">
-      <p class="wide"><span>Currency</span>EUR<span>Reporting period</span>Jan 2019 – May 2022<span>FY end</span>December</p>
-      <span class="k">As-of month</span><span>May 2022 — customers row 23 ends at AP; recognised revenue from AQ equals the new sales row.</span><a href="#">Change</a>
-      <span class="k">Revenue row</span><span>Row 11, Recognised revenue, monthly (revenue_2019-2022.xlsx)</span><a href="#">Change</a>
-      <span class="k">Actual / plan</span><span>actual to column AP, plan from AQ (revenue_2019-2022.xlsx)</span><a href="#">Change</a>
-      <span class="k">Last actual</span><span>FY 2021 — columns E to H are headed forecast; D holds the last actual year (pnl.xlsx)</span><a href="#">Change</a>
-      <span class="k">Revenue row</span><span>Row 4, Revenue (recognised), yearly (pnl.xlsx)</span><a href="#">Change</a>
-      <span class="k">Actual / plan</span><span>actual to column D, plan from E (pnl.xlsx)</span><a href="#">Change</a>
+    <div class="block">
+      <h3>Audit settings</h3>
+      <p class="muted">Set for this audit, not read from the files.</p>
+      <p class="pair"><span class="k">Currency</span>EUR<span class="k gapl">Fiscal year-end</span>December</p>
     </div>
+
+    <div class="block">
+      <h3>Detected layout and calculation inputs</h3>
+      <p class="muted">How each file is structured and which rows and periods will be used in calculations. Review and change if needed.</p>
+      <div class="anchors">
+        <span class="k">Reporting period</span><span>Jan 2019 – May 2022</span><span></span>
+        <span class="k">As-of month</span><span>May 2022 — customers row 23 ends at AP; recognised revenue from AQ equals the new sales row.</span><a href="#">Change</a>
+        <span class="k">Revenue row</span><span>Row 11, Recognised revenue, monthly (revenue_2019-2022.xlsx)</span><a href="#">Change</a>
+        <span class="k">Actual / plan</span><span>actual to column AP, plan from AQ (revenue_2019-2022.xlsx)</span><a href="#">Change</a>
+        <span class="k">Last actual</span><span>FY 2021 — columns E to H are headed forecast; D holds the last actual year (pnl.xlsx)</span><a href="#">Change</a>
+        <span class="k">Revenue row</span><span>Row 4, Revenue (recognised), yearly (pnl.xlsx)</span><a href="#">Change</a>
+        <span class="k">Actual / plan</span><span>actual to column D, plan from E (pnl.xlsx)</span><a href="#">Change</a>
+      </div>
+    </div>
+
     <nav class="tabs" aria-label="Files">
       <a href="#" class="on">All <span>175</span></a>
       <a href="#">revenue_2019-2022.xlsx <span>37</span></a>
