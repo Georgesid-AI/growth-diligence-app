@@ -9,13 +9,13 @@ import { RETRY_LABEL, RUN_LABEL, STAGES, firstStageNotDone, idleStages, runAudit
 import { readiness, steps } from "@/lib/uploadView";
 
 /**
- * The run card (docs/design/audit-page-mockup.html): Run audit, the line beside it saying what it waits for, and the three steps - Reading files,
- * Checking figures, Calculating results. The first two follow the files the cards list (lib/uploadView.js); the third follows the run's own stages
+ * The run card (docs/design/audit-page-mockup.html): Run audit, the line beside it saying what it waits for, and the two steps - Reading and checking files,
+ * Calculating results. The first follows the files the cards list (lib/uploadView.js); the second follows the run's own stages
  * (lib/runAudit.js). Run audit is held while any file is being read. Files are sent the moment they are picked, so a run sends none: it calculates
  * from what the audit holds, from the first stage that is not done, and the Audit page opens when it is done. A stage that fails says what to do and
  * has a Retry stage button.
  */
-export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = Date.now(), onRunning }) {
+export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = Date.now(), readClock, onRunning }) {
   const nav = useNavigate();
   const [stages, setStages] = useState(idleStages());
   const [running, setRunning] = useState(false);
@@ -70,7 +70,7 @@ export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = 
   const calcStatus = later.some((s) => s.status === "failed") ? "failed" : later.some((s) => s.status === "running") ? "running"
     : later.every((s) => s.status === "done") ? "done" : "idle";
   const seconds = clock.start ? ((clock.end ?? clock.tick) - clock.start) / 1000 : null;
-  const rows = steps(sheets, decks, { status: calcStatus, seconds }, now);
+  const rows = steps(sheets, decks, { status: calcStatus, seconds }, now, readClock);
   const failed = STAGES.find((s) => stages[s.key].status === "failed");
 
   return (

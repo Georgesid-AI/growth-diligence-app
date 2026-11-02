@@ -4,7 +4,7 @@ import { getDatasets, getDecks, removeDeck, reportUsage, uploadChatFile, uploadD
 import { ALLOWED_EXTENSIONS, S7B_XLS_REFUSED, extensionOf } from "@/lib/chatUpload";
 import { DECK_ACCEPT, REMOVE_DECK_CONFIRM, isDeckFile } from "@/lib/deckClaims";
 import {
-  DECK_CARD, HEADER_TEXT, PROCESSING_LINK, PROCESSING_PARAGRAPHS, PROCESSING_TITLE, REMOVE_LABEL, SHEET_CARD, UPLOAD_LABEL,
+  DECK_CARD, HEADER_TEXT, PROCESSING_LINK, PROCESSING_SECTIONS, PROCESSING_TITLE, REMOVE_LABEL, SHEET_CARD, UPLOAD_LABEL,
   deckBusy, deckLine, headerText, sheetBusy, sheetLine,
 } from "@/lib/uploadView";
 
@@ -103,6 +103,9 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
   // When the last file has been read, the page's results and blockers follow.
   const wasRunning = useRef(false);
   useEffect(() => { if (wasRunning.current && !running) onChanged?.(); wasRunning.current = running; }, [running]); // eslint-disable-line
+  // The counter of "Reading and checking files": from the first upload of a batch to the last file processed.
+  const [readClock, setReadClock] = useState({ start: null, end: null });
+  useEffect(() => { if (!running) setReadClock((c) => (c.start != null && c.end == null ? { ...c, end: Date.now() } : c)); }, [running]);
 
   const fail = (id, message) => setLocal((all) => all.map((l) => (l.id === id ? { ...l, local: { ...l.local, state: "failed", message } } : l)));
   const send = (kind, file, id) => {
@@ -130,6 +133,7 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
         continue;
       }
       const id = `l${nextLocal++}`;
+      setReadClock((c) => (c.start == null || c.end != null ? { start: Date.now(), end: null } : c));
       setLocal((all) => [...all, { id, kind, file: file.name, local: { state: "uploading", startedAt: Date.now() } }]);
       send(kind, file, id);
     }
@@ -152,6 +156,13 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
           <a href="#processing" data-testid="processing-link" onClick={(e) => { e.preventDefault(); setProcessing((v) => !v); }}>{PROCESSING_LINK}</a>
         </p>
       </header>
+
+      {processing && (
+        <div id="processing" className="panel" data-testid="processing-text">
+          <h2>{PROCESSING_TITLE}</h2>
+          {PROCESSING_SECTIONS(audit.provider_zdr === true).map((s) => <p key={s.heading} className="line"><b>{s.heading}</b> {s.text}</p>)}
+        </div>
+      )}
 
       <Card kind="sheet" title={SHEET_CARD.title} lines={[SHEET_CARD.line]} drop={SHEET_CARD.drop} accept={PICKER_SHEET}
         onFiles={(f) => takeFiles("sheet", f)} refusal={refusal.sheet}>
@@ -184,14 +195,8 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
         )}
       </Card>
 
-      <RunAuditPanel auditId={auditId} sheets={sheets} decks={deckRows} now={now} onRunning={onRunning} />
+      <RunAuditPanel auditId={auditId} sheets={sheets} decks={deckRows} now={now} readClock={readClock} onRunning={onRunning} />
 
-      {processing && (
-        <div id="processing" className="panel" data-testid="processing-text">
-          <h2>{PROCESSING_TITLE}</h2>
-          {PROCESSING_PARAGRAPHS(audit.provider_zdr === true).map((t, i) => <p key={i} className="line">{t}</p>)}
-        </div>
-      )}
     </div>
   );
 }

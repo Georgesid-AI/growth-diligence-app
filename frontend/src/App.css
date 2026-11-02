@@ -96,7 +96,7 @@
 .upload-page .deckline { margin: 8px 0 0; }
 .upload-page .runrow { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .upload-page .runrow p { max-width: 70ch; }
-.upload-page .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+.upload-page .steps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
 .upload-page .step { display: grid; grid-template-columns: 22px 1fr; gap: 0 10px; padding: 10px 12px; border-radius: 6px; }
 .upload-page .step svg { grid-row: 1; margin-top: 1px; }
 .upload-page .step b { grid-column: 2; font-weight: 600; }
@@ -113,5 +113,7 @@
 .reading .block h3 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
 .reading .block .muted { margin: 0 0 8px; font-size: 13px; }
 .reading .block .k { color: var(--muted); }
-.reading .pair .k { margin-right: 14px; }
-.reading .pair .k.gapl { margin-left: 40px; }
+.reading .setting { margin: 2px 0; }
+.reading .setting .k { margin-right: 14px; }
+.reading .setting a, .reading .setting select { margin-left: 14px; }
+.reading .setting .help { display: block; margin: 2px 0 0; color: var(--muted); font-size: 12px; }

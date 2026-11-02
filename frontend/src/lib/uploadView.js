@@ -5,17 +5,31 @@
  * lib/format.js. The elapsed seconds are the server's; the page adds the seconds since it received them, so it needs no clock of its own.
  */
 import { fmtCount, fmtElapsed } from "./format";
-import { s2Explainer } from "./chatUpload";
+import { ZDR_SENTENCE_ON } from "./chatUpload";
 import { aiReadStatus, deckSummaryLine } from "./deckClaims";
-import { VERIFIED_LINE } from "./auditForm";
 
-export const HEADER_TEXT = "Files are read by an AI model (Anthropic API, not used for training). Personal data is removed and company names are coded before sending. Page images are sent without changes. Uploading a file counts as consent.";
+export const HEADER_TEXT = "Files are processed automatically using Anthropic's AI API and are not used for model training. Some identifying information is removed or replaced with codes, but names in free text and information visible in PDF deck images are sent unchanged. Processing starts on upload. By uploading, you consent to the processing described here.";
 export const PROCESSING_LINK = "How your files are processed";
 export const PROCESSING_TITLE = "How your files are processed";
-export const PROCESSING_PARAGRAPHS = (zdr) => [
-  "Before anything is sent, names, contact details and ID numbers are removed, and client and company names are replaced by codes that exist only in this audit. Figures and labels are sent as they are. Deck pages are also sent as an image of the page, which is not masked. Narratives use AI on computed results.",
-  VERIFIED_LINE,
-  s2Explainer(zdr),          // the ZDR sentence only when the server says PROVIDER_ZDR is on, else the existing off-text
+/** The four sections of the expanded text: bold heading, then text. The ZDR sentence is appended to the first only when the server says PROVIDER_ZDR is on. */
+export const PROCESSING_SECTIONS = (zdr) => [
+  {
+    heading: "Privacy protections and their limits:",
+    text: "Email addresses, phone numbers and ID numbers are removed from spreadsheet data and extracted deck text before they are sent to Anthropic. Selected spreadsheet fields containing people's names are withheld, and certain known company and client names are replaced with audit-specific codes. Other labels and figures are sent unchanged. These protections do not identify names written in free text. Names in free text are sent as written. PDF deck images are not masked, so any personal or company information visible on those pages is also sent. Do not rely on automatic masking to remove all sensitive information."
+      + (zdr ? ` ${ZDR_SENTENCE_ON}` : ""),
+  },
+  {
+    heading: "What is sent to the AI:",
+    text: "Spreadsheet contents – including sheet names, headers, row labels and figures – are sent after the masking described above. For decks, text from every page containing a figure is sent. For PDF decks, an image of each of those pages is also sent.",
+  },
+  {
+    heading: "Accuracy checks:",
+    text: "Extracted figures are checked against their original source and reviewed for reading errors. Figures that do not match are marked \"Doesn't match source\" and listed for review. These checks do not guarantee that every error will be detected. AI-written commentary uses only calculated results.",
+  },
+  {
+    heading: "Processing and storage:",
+    text: "Processing starts automatically when you upload, without a separate confirmation step. Uploaded files are stored for this audit and deleted when the audit is deleted. A file's reading is kept so that uploading the same file again does not re-read it; it is deleted with the last audit that uses it.",
+  },
 ];
 
 export const SHEET_CARD = {
@@ -123,43 +137,35 @@ export function readiness(sheets, decks) {
   return { held: false, text: `Ready: ${fmtCount(sheets.length)} ${sheetWord} and ${fmtCount(decks.length)} ${deckWord} processed.` };
 }
 
-export const STEP_LABELS = { reading: "Reading files", checking: "Checking figures", calculating: "Calculating results" };
+export const STEP_LABELS = { reading: "Reading and checking files", calculating: "Calculating results" };
 const maxOf = (list) => list.reduce((m, n) => (n != null && n > m ? n : m), -1);
 
 /**
- * The three steps of the run card: [{key, label, tone: done|run|wait|bad, second}]. Reading and checking follow the files; calculating follows the
- * run's own stages (`calc`: {status, seconds} - idle, running, done, failed - kept by the run panel).
+ * The two steps of the run card: [{key, label, tone: done|run|wait|bad, second}]. Reading and checking follows the files: its counter runs from the first
+ * upload of the batch to the last file processed (`read`: {start, end} in ms, kept by the upload section; without it, the longest single file time the
+ * server reports); calculating follows the run's own stages (`calc`: {status, seconds} - idle, running, done, failed - kept by the run panel).
  */
-export function steps(sheets, decks, calc, now) {
+export function steps(sheets, decks, calc, now, read = {}) {
   const all = [...sheets, ...decks];
   const busy = [...sheets.filter(sheetBusy), ...decks.filter(deckBusy)];
   const total = all.length;
-  const readSeconds = all.map((f) => (f.local ? null : f.read_elapsed));
   const longest = (list) => list.map((f) => runningSeconds(f, f.read_elapsed, now));
+  const sinceFirst = (until) => (read.start != null ? Math.max(0, (until - read.start) / 1000) : null);
   let reading;
   if (!total) reading = { tone: "wait", second: "not started" };
-  else if (busy.length) reading = { tone: "run", second: `${elapsedText(Math.max(...longest(busy)))} · ${fmtCount(total - busy.length)} of ${fmtCount(total)} files read` };
-  else reading = { tone: "done", second: maxOf(readSeconds) >= 0 ? fmtElapsed(maxOf(readSeconds)) : "Done" };
-
-  const checking = sheets.filter((s) => s.read_state === "reading" && s.read_stage === "checking_cells");
-  let check;
-  if (!total) check = { tone: "wait", second: "not started" };
   else if (busy.length) {
-    if (checking.length) {
-      const items = checking.reduce((n, s) => n + (s.read_items ?? 0), 0);
-      const matched = checking.reduce((n, s) => n + (s.read_matched ?? 0), 0);
-      const time = elapsedText(Math.max(...checking.map((s) => runningSeconds(s, s.read_checking_elapsed, now))));
-      check = { tone: "run", second: items ? `${time} · ${fmtCount(matched)} of ${fmtCount(items)} match` : time };
-    } else check = { tone: "wait", second: "waits for reading" };
+    const t = sinceFirst(now) ?? Math.max(...longest(busy));
+    reading = { tone: "run", second: `${elapsedText(t)} · ${fmtCount(total - busy.length)} of ${fmtCount(total)} files read` };
   } else {
-    const t = maxOf(sheets.map((s) => s.read_checking_elapsed));
-    check = { tone: "done", second: t >= 0 ? fmtElapsed(t) : "Done" };
+    const t = read.start != null && read.end != null ? sinceFirst(read.end) : (maxOf(all.map((f) => (f.local ? null : f.read_elapsed))) >= 0 ? maxOf(all.map((f) => (f.local ? null : f.read_elapsed))) : null);
+    const count = `${fmtCount(total)} ${total === 1 ? "file" : "files"} processed`;
+    reading = { tone: "done", second: t != null ? `${fmtElapsed(t)} · ${count}` : count };
   }
 
   let calculating;
   if (calc.status === "running") calculating = { tone: "run", second: elapsedText(calc.seconds ?? 0) };
-  else if (calc.status === "done") calculating = { tone: "done", second: calc.seconds != null ? fmtElapsed(calc.seconds) : "Done" };
+  else if (calc.status === "done") calculating = { tone: "done", second: calc.seconds != null ? `Done ${fmtElapsed(calc.seconds)}` : "Done" };
   else if (calc.status === "failed") calculating = { tone: "bad", second: "Failed" };
   else calculating = { tone: "wait", second: "not started" };
-  return [["reading", reading], ["checking", check], ["calculating", calculating]].map(([key, s]) => ({ key, label: STEP_LABELS[key], ...s }));
+  return [["reading", reading], ["calculating", calculating]].map(([key, s]) => ({ key, label: STEP_LABELS[key], ...s }));
 }

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import ReadingResults, { SourceLink } from "@/components/ReadingResults";
 import { changeReading, downloadReading, getAudit, getReading, updateAudit } from "@/lib/api";
-import { MONTHS, DEFAULT_FISCAL_YEAR_END, asOfEvidenceLine, parseMonthYear } from "@/lib/auditForm";
-import { monthName, periodText } from "@/lib/periods";
+import { MONTHS, DEFAULT_FISCAL_YEAR_END, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfEvidenceLine, parseMonthYear } from "@/lib/auditForm";
+import { monthName, shortMonth } from "@/lib/periods";
 import { describeRequestError } from "@/lib/requestError";
 import {
   FIGURE_HOVERS, FIGURE_WIDTHS, HOVERS, OUTCOME_LABELS, WIDTHS, actualPlanText, deckSummary, lastActualText, periodLabel, sheetSummary, splitEvidence, valueText,
@@ -30,35 +30,63 @@ function InlineChange({ label, placeholder, onSave, testid, type = "text" }) {
   );
 }
 
-/** The reporting period of the strip: the first and last actual month across the files; else the engine's revenue period; never "—" while an as-of month exists. */
+const monthIndex = (m) => { const x = /^(\d{4})-(\d{2})/.exec(m || ""); return x ? Number(x[1]) * 12 + Number(x[2]) : null; };
+
+/** "Jan 2019 – May 2022 (41 months)": from the first month with revenue to the as-of month, counted inclusively; without an as-of month, to the last month read; never "—" while an as-of month exists. */
 export function reportingPeriodText(audit, period) {
-  return periodText(period) || periodText(audit.datasets?.revenue?.months) || (audit.as_of_month ? monthName(audit.as_of_month) : "—");
+  const first = period?.first || audit.datasets?.revenue?.months?.first;
+  const last = audit.as_of_month || period?.last || audit.datasets?.revenue?.months?.last;
+  const n = monthIndex(last) - monthIndex(first) + 1;
+  if (first && last && n >= 1) return `${shortMonth(first)} – ${shortMonth(last)} (${n} ${n === 1 ? "month" : "months"})`;
+  return audit.as_of_month ? monthName(audit.as_of_month) : "—";
+}
+
+/** One audit setting on its own line: "Label: value" and a Change link that opens a select in place; picking a value saves it. */
+function SettingLine({ label, value, options, current, testid, help, onSave }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <p className="setting" data-testid={testid}>
+      <span className="k">{label}:</span><span data-testid={`${testid}-value`}>{value}</span>
+      {!open
+        ? <a href="#change" data-testid={`${testid}-change`} onClick={(e) => { e.preventDefault(); setOpen(true); }}>Change</a>
+        : (
+          <select aria-label={label} value={current} data-testid={`${testid}-select`} autoFocus
+            onChange={async (e) => { if (await onSave(e.target.value)) setOpen(false); }}>
+            {options.map(([v, text]) => <option key={v} value={v}>{text}</option>)}
+          </select>
+        )}
+      {open && help && <span className="help" data-testid={`${testid}-help`}>{help}</span>}
+    </p>
+  );
 }
 
 /** Audit settings and Detected layout and calculation inputs: the two blocks under the Check results sentence (docs/design/audit-page-mockup.html). */
-export function SettingsBlocks({ audit, files, period, onAsOf, onChange }) {
+export function SettingsBlocks({ audit, files, period, onAsOf, onChange, onSetting }) {
   const asOf = audit.as_of_month;
   const evidence = splitEvidence(asOfEvidenceLine(audit));
   const sheets = files.filter((f) => f.kind === "sheet");
+  const fy = Number(audit.fiscal_year_end) || DEFAULT_FISCAL_YEAR_END;
   return (
     <>
       <div className="block" data-testid="audit-settings">
         <h3>Audit settings</h3>
         <p className="muted">Set for this audit, not read from the files.</p>
-        <p className="pair">
-          <span className="k">Currency</span><span data-testid="assumption-currency">{audit.reporting_currency || "—"}</span>
-          <span className="k gapl">Fiscal year-end</span><span data-testid="assumption-fy-end">{MONTHS[(Number(audit.fiscal_year_end) || DEFAULT_FISCAL_YEAR_END) - 1]}</span>
-        </p>
+        <SettingLine label="Reporting currency" testid="setting-currency" value={audit.reporting_currency || "EUR"} current={audit.reporting_currency || "EUR"}
+          options={REPORTING_CURRENCIES.map((c) => [c, c])} help={SETUP_HELP.reporting_currency}
+          onSave={(v) => onSetting("reporting_currency", { reporting_currency: v })} />
+        <SettingLine label="Fiscal year-end" testid="setting-fy" value={MONTHS[fy - 1]} current={String(fy)}
+          options={MONTHS.map((m, i) => [String(i + 1), m])} help={SETUP_HELP.fiscal_year_end}
+          onSave={(v) => onSetting("fiscal_year_end", { fiscal_year_end: Number(v) }, "Fiscal year-end saved; claim periods re-mapped")} />
       </div>
       <div className="block" data-testid="detected-layout">
         <h3>Detected layout and calculation inputs</h3>
-        <p className="muted">How each file is structured and which rows and periods will be used in calculations. Review and change if needed.</p>
+        <p className="muted">This block shows only the inputs that decide periods and the main revenue row. Every other mapped row (ARR, MRR, customers, churn, S&M, costs) is used by its role and listed on each file's tab under "Show all lines". Review and change if needed.</p>
         <div className="anchors">
-          <span className="k">Reporting period</span><span data-testid="assumption-period">{reportingPeriodText(audit, period)}</span><span />
+          <span className="k">Actual data</span><span data-testid="assumption-period">{reportingPeriodText(audit, period)}</span><span />
           <span className="k">As-of month</span>
           <span data-testid="assumption-as-of">
             {asOf ? `${monthName(asOf)}${audit.as_of_by === "analyst" ? " (set by analyst)" : ""}` : "not determined"}
-            {(evidence.text || evidence.confirmed) && <span data-testid="assumption-as-of-evidence"> — {evidence.text}{evidence.confirmed && <> <b>{evidence.confirmed}</b></>}</span>}
+            {(evidence.text || evidence.confirmed) && <span data-testid="assumption-as-of-evidence"> — {evidence.text}{evidence.confirmed && <> {evidence.confirmed}</>}</span>}
           </span>
           <InlineChange label="As-of month" placeholder="Jun 2021" testid="assumptions-change" onSave={onAsOf} />
           {sheets.map((f) => <SheetAnchors key={f.file_hash} file={f} audit={audit} onAsOf={onAsOf} onChange={onChange} />)}
@@ -212,6 +240,10 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
     try { await updateAudit(auditId, { as_of_month: next }); await reloadAudit(); load(); return true; }
     catch (e) { toast.error(`As-of month could not be saved: ${describeRequestError(e).message}`); return false; }
   };
+  const onSetting = async (field, patch, success) => {
+    try { await updateAudit(auditId, patch); await reloadAudit(); load(); if (success) toast.success(success); return true; }
+    catch (e) { toast.error(`${SETUP_LABELS[field]} could not be saved: ${describeRequestError(e).message}`); return false; }
+  };
   const view = data || EMPTY;
   const current = view.files.find((f) => fileKey(f) === tab);
   const results = current ? narrowed(view, current) : view;
@@ -220,7 +252,7 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
     <div className="reading" data-testid="reading-screen">
       <h1 className="section" data-testid="results-heading">Check results</h1>
       <p className="lead" data-testid="results-lead">{LEAD}</p>
-      <SettingsBlocks audit={audit} files={view.files} period={view.period} onAsOf={onAsOf} onChange={changed} />
+      <SettingsBlocks audit={audit} files={view.files} period={view.period} onAsOf={onAsOf} onChange={changed} onSetting={onSetting} />
       <nav className="tabs" aria-label="Files" data-testid="file-tabs">
         <a href="#all" className={current ? "" : "on"} data-testid="tab-all" onClick={(e) => { e.preventDefault(); setTab("all"); }}>
           All <span>{fmtCount(view.files.reduce((n, f) => n + (f.summary?.confirmed || 0), 0))}</span>

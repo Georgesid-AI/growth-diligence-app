@@ -69,9 +69,9 @@ test("the old /audit/:id/run link redirects to Upload & Mapping", () => {
 const FILE = () => VIEW("revenue", { file_hash: "h1", read_state: "done", read_elapsed: 5 });
 const DECK = { deck_id: "d1", file: "board.pptx", pages: 12, page_unit: "slide", uploaded_at: "2026-10-02T08:00:00+00:00", ai_status: "read", figure_pages: 4, read_elapsed: 9 };
 const stored = () => api.getDatasets.mockResolvedValue([FILE()]);
-const tones = () => ["reading", "checking", "calculating"].map((k) => q(`step-${k}`).getAttribute("data-tone"));
+const tones = () => ["reading", "calculating"].map((k) => q(`step-${k}`).getAttribute("data-tone"));
 
-test("one press runs the three stages in order, sends no file (they went up when picked) and opens the Audit page", async () => {
+test("one press runs the stages in order, sends no file (they went up when picked) and opens the Audit page", async () => {
   const order = [];
   stored();
   api.runStage.mockImplementation(async (id, key) => { order.push(`stage:${key}`); return { stage: key, status: "done" }; });
@@ -100,7 +100,7 @@ test("a failed stage says what to do and Retry stage carries on from it", async 
   await press("run-audit");
   expect(q("stage-engine").getAttribute("data-status")).toBe("failed");
   expect(q("stage-engine-message").textContent).toContain("could not be completed");
-  expect(tones()).toEqual(["done", "done", "bad"]);
+  expect(tones()).toEqual(["done", "bad"]);
   expect(mockNavigate).not.toHaveBeenCalled();
   fail = false;
   await press("retry-engine");
@@ -119,7 +119,7 @@ test("under React.StrictMode the stage updates still land (alive ref is re-armed
 
 test("a new audit shows no file and every step as not started", async () => {
   await mount();
-  expect(tones()).toEqual(["wait", "wait", "wait"]);
+  expect(tones()).toEqual(["wait", "wait"]);
   expect(q("step-calculating-second").textContent).toBe("not started");
 });
 
@@ -128,7 +128,7 @@ test("a finished audit shows the calculating step done on load, never not starte
   api.getReview.mockResolvedValue({ computed: true });
   api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", status: "approved" }] });
   await mount();
-  expect(tones()).toEqual(["done", "done", "done"]);
+  expect(tones()).toEqual(["done", "done"]);
   expect(q("step-calculating-second").textContent).toBe("Done");
 });
 
@@ -137,7 +137,7 @@ test("a stale engine shows calculating as not started on load, not Done", async 
   api.getReview.mockResolvedValue({ computed: true, engine_stale: true });
   api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", status: "approved" }] });
   await mount();
-  expect(tones()).toEqual(["done", "done", "wait"]);
+  expect(tones()).toEqual(["done", "wait"]);
 });
 
 test("while a run is in progress Run audit waits, and the calculating step runs with its elapsed time", async () => {
@@ -168,7 +168,7 @@ const allDone = () => {
 test("a mapping confirmed or corrected after the last calculation makes the engine stage not done: Run audit calculates again", async () => {
   allDone();
   await mount();
-  expect(tones()).toEqual(["done", "done", "done"]);
+  expect(tones()).toEqual(["done", "done"]);
   api.getReview.mockResolvedValue({ computed: true, engine_stale: true });          // the analyst changed a layout input since
   await press("run-audit");
   expect(ranStages()).toEqual(["engine", "claims"]);
