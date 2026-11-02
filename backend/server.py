@@ -40,6 +40,7 @@ from app import claim_matching
 from app import claim_groups
 from app import access as access_mod
 from app import ic_memo
+from app import report_text
 from app import integrity as integrity_mod
 from app import verdict as verdict_mod
 from app import decks
@@ -348,6 +349,8 @@ async def audit_public(a: dict) -> dict:
     a["results_stale"] = run_audit.results_stale(a)
     if a["results_stale"]:
         a["results"] = None       # figures of an older engine contract never reach the browser (George, 2026-10-20)
+    elif a.get("results"):        # the report page reads the same reasons as the memo: written from the stored map (PR 4f)
+        a["results"] = report_text.apply_reasons(a["results"], await _report_table(a["id"], a))
     if a.get("created_at"):
         a["ic_inputs"] = verdict_mod.with_review(a, a.get("ic_inputs"))
     ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "recognition_sheets": 0, "_id": 0}).to_list(10)
@@ -1990,7 +1993,10 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     _, rows = await _claim_rows(audit_id, audit)
     state = verdict_mod.top5_state(rows, ic.get("top5"))
     rows = verdict_mod.mark_key_gates(rows, state["in_force"])
-    gaps = verdict_mod.data_gaps(results, rows, state["in_force"], ic.get("gap_target_dates"))
+    # The reasons a metric is missing are written from the stored map (PR 4f), here once, for the memo, the verdict and its gaps.
+    table = await _report_table(audit_id, audit) if results else []
+    results = report_text.apply_reasons(results, table)
+    gaps = verdict_mod.data_gaps(results, rows, state["in_force"], ic.get("gap_target_dates"), table=table, old_claims=flags.old_claims())
     return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None, "stale": stale,
             "open_questions": await _open_claim_questions(audit_id, audit, rows), "conflicts": _relations(audit, rows)["conflicts"]}
 
@@ -2416,21 +2422,14 @@ def _memo_filename(company: str) -> str:
     return f"{safe or 'audit'}_ic_memo.md"
 
 
-P_AND_L_ROLES = ("cost_of_revenue", "sales_marketing", "rnd", "ga", "opex", "ebitda")
-
 
 async def _memo_files(audit_id: str, audit: dict, datasets: list) -> list:
     """The files the memo lists as reviewed: the stored datasets, and every file read through the map (a file whose map holds a cost or profit
     row is a P&L, dtype "pnl"; any other is "reading", which covers no evidence category). A file is listed once."""
     files = [{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets]
     seen = {f["file"] for f in files}
-    table = (await _role_inputs(audit_id, audit))["table"]
-    for name in dict.fromkeys(r["file"] for r in table):
-        if name in seen:
-            continue
-        rows = [r for r in table if r["file"] == name]
-        pnl = [r for r in rows if r["role"] in P_AND_L_ROLES]
-        files.append({"dtype": "pnl" if pnl else "reading", "file": name, "sheet": (pnl or rows)[0]["sheet"]})
+    table = await _report_table(audit_id, audit)
+    files += report_text.read_files(table, skip=seen)
     return files
 
 
@@ -2510,7 +2509,14 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
                       "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT]})
     deck = [{**f, "file": d["file"], "page": f["source"]["page"]} for d in await deck_figures.checked(db, audit_id) for f in d["figures"]
             if f["outcome"] != checks_mod.REJECTED]
-    return {"table": role_engine.build_table(files), "deck": deck, "fye": _fiscal_year_end(audit)}
+    # "unread": mapped rows with no series, for the report text only (report_text); the engine reads "table" alone
+    return {"table": role_engine.build_table(files), "unread": report_text.rows_without_series(files), "deck": deck, "fye": _fiscal_year_end(audit)}
+
+
+async def _report_table(audit_id: str, audit: dict) -> list:
+    """The role table the report text reads: the engine's rows plus the mapped rows that hold no series."""
+    roles = await _role_inputs(audit_id, audit)
+    return [*roles["table"], *roles["unread"]]
 
 
 async def _run_compute(audit_id: str) -> dict:
@@ -2939,16 +2945,9 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
 
         # Anomalies
         an = r.get("anomalies")
+        # A flag whose input file or data kind is absent reads "Not applicable", never 0 (PR 4f; report_text.anomaly_rows)
         an_rows = [("Anomaly flags", "calculation error", "Not computed; see Missing Data")] if an is None else [
-            ("Months with negative MRR", len(an.get("negative_mrr_months", [])), ", ".join(an.get("negative_mrr_months", []))),
-            ("Customers with gaps > 2 months then resume", len(an.get("revenue_gap_then_resume", [])), ", ".join(an.get("revenue_gap_then_resume", [])[:50])),
-            ("Revenue lines missing customer ID", an.get("revenue_missing_customer_id", {}).get("count"), ""),
-            ("Deals close-before-created (excluded)", an.get("deals_close_before_created", {}).get("excluded_count"), ""),
-            *([("CRM rows sharing a deal ID", an["deals_duplicate_id"].get("collapsed"),
-                f"{an['deals_duplicate_id'].get('distinct_ids')} distinct deal IDs")] if an.get("deals_duplicate_id") else []),
-            ("Date columns with day/month order set from the data", len(an.get("date_order_from_data", [])),
-             "; ".join(f"{n['field']} ({n['dataset']}): {n['order']}, {n['rows']} rows" for n in an.get("date_order_from_data", []))),
-        ]
+            (a["label"], report_text.NOT_APPLICABLE if a["count"] is None else a["count"], a["detail"]) for a in report_text.anomaly_rows(an)]
         pd.DataFrame(an_rows, columns=["Flag", "Count", "Detail"]).to_excel(xw, sheet_name="Anomalies", index=False)
 
         # Missing data

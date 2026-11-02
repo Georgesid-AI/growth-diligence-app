@@ -2045,22 +2045,22 @@ def test_the_integrity_module_imports_nothing_from_the_gateway_and_logs_nothing_
 
 
 def test_the_verdict_and_memo_modules_import_nothing_from_the_gateway_a_provider_or_the_server_and_log_nothing():
-    for path in (BACKEND / "app" / "verdict.py", BACKEND / "app" / "ic_memo.py"):
+    for path in (BACKEND / "app" / "verdict.py", BACKEND / "app" / "ic_memo.py", BACKEND / "app" / "report_text.py"):      # report_text: PR 4f
         tree = ast.parse(path.read_text(encoding="utf-8"))
         offenders = [f"{m} -> {n}" for m, n in _imports(tree)
                      if (set(re.split(r"[.\s\"'()]+", m)) | {n}) & {"llm", "gateway", "anthropic", "structures", "<dynamic>", "server"}]
         assert not offenders, f"{path.name} reaches for the gateway:\n  " + "\n  ".join(offenders)
         assert not [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id in ("logger", "logging", "log", "print")], \
             f"{path.name} logs or prints"
-    code = ("import sys, app.verdict, app.ic_memo; "
+    code = ("import sys, app.verdict, app.ic_memo, app.report_text; "
             "print(sorted(m for m in sys.modules if m.startswith('app.llm') or m.split('.')[0] == 'anthropic'))")
     out = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]", out.stdout
     for gateway_file in sorted((BACKEND / "app" / "llm").glob("*.py")):
         for module, name in _imports(ast.parse(gateway_file.read_text(encoding="utf-8"))):
             parts = re.split(r"[.\s\"'()]+", module)
-            assert not ({"verdict", "ic_memo"} & set(parts)) and name not in ("verdict", "ic_memo"), \
-                f"{gateway_file.name} imports the verdict or memo module"
+            assert not ({"verdict", "ic_memo", "report_text"} & set(parts)) and name not in ("verdict", "ic_memo", "report_text"), \
+                f"{gateway_file.name} imports the verdict, memo or report-text module"
 
 
 def test_the_two_new_log_lines_are_fixed_formats_with_codes_and_counts_as_their_only_arguments():

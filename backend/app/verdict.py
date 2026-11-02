@@ -16,6 +16,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from app import claim_groups as cg
 from app import claim_matching as cm
+from app import report_text
 from app import role_engine
 from app.decks import claims as deck_claims
 
@@ -421,10 +422,14 @@ def is_gap(item: dict) -> bool:
     return item.get("status") == "Missing" and _gap_analysis(str(item.get("metric") or "")) is not None
 
 
-def data_gaps(results: Optional[dict], rows: List[dict], top5_ids: List[str], target_dates: Optional[dict] = None) -> List[dict]:
+def data_gaps(results: Optional[dict], rows: List[dict], top5_ids: List[str], target_dates: Optional[dict] = None,
+              table: Optional[List[dict]] = None, old_claims: bool = True) -> List[dict]:
     """What the company cannot measure: one row per Missing Data item that names an analysis, ordered by the top-5 claims it
-    blocks, then all register claims it blocks, then engine order."""
+    blocks, then all register claims it blocks, then engine order. `table`: the role table of the stored readings; a metric's data request names
+    only the roles no file maps (PR 4f). `old_claims` False (OLD_CLAIMS off): the deck's figures are called "deck figures", never "claims"."""
     target_dates = target_dates or {}
+    noun = "claims" if old_claims else "deck figures"
+    table = table or []
     top = set(top5_ids)
     out = []
     for index, item in enumerate((results or {}).get("missing_data") or ()):
@@ -433,7 +438,7 @@ def data_gaps(results: Optional[dict], rows: List[dict], top5_ids: List[str], ta
         metric = str(item["metric"])
         blocked = [r for r in rows if r.get("evidence_source_key") == cm.MISSING_KEY and r.get("evidence_analysis") == metric]
         analysis = _gap_analysis(metric)
-        claims = "; claims " + ranks_text(blocked) if blocked else ""
+        claims = f"; {noun} " + ranks_text(blocked) if blocked else ""
         reason = str(item.get("reason") or "").strip()
         reason = reason if not reason or reason[-1] in ".!?" else reason + "."
         out.append({"item": metric, "analysis": analysis, "claims": [r["claim_id"] for r in blocked],
@@ -446,8 +451,9 @@ def data_gaps(results: Optional[dict], rows: List[dict], top5_ids: List[str], ta
             continue
         reason = miss["reason"] if miss["reason"][-1:] in ".!?" else miss["reason"] + "."
         out.append({"item": miss["metric"], "analysis": miss["metric"], "claims": [], "ranks": [], "blocks_top5": 0,
-                    "why": f"Blocks {miss['metric']}. {reason}", "requested": "A file with " + " and ".join(
-                        f"{role_engine._a(n)} {n} row" for n in (x.replace('/', ' or ') for x in miss["needs"])),
+                    "why": f"Blocks {miss['metric']}. {reason}",
+                    "requested": report_text.request_line(report_text.request_roles(table, miss["needs"])) or "",
+                    "request_roles": report_text.request_roles(table, miss["needs"]),
                     "target_date": target_dates.get(miss["metric"]), "index": index})
     out.sort(key=lambda g: (-g["blocks_top5"], -len(g["claims"]), g["index"]))
     return out
@@ -566,13 +572,14 @@ def rate_reliability(integrity: Optional[dict]) -> dict:
 
 def rate_growth(results: Optional[dict], fmt_pct, fmt_months) -> dict:
     """Growth engine from NRR, gross revenue churn and CAC payback. NRR or churn absent: not rated. Weak when churn or payback is red;
-    Strong only when all three inputs are present and green; Adequate otherwise. The label "benchmark, not company data" goes with it."""
+    Strong only when all three inputs are present and green; Adequate otherwise. The label "benchmark, not company data" goes with a rated line
+    only: a line that is not rated states no benchmark."""
     results = results or {}
     nrr, churn = (results.get("nrr") or {}).get("overall_pct"), (results.get("gross_churn") or {}).get("overall_pct")
     months = cac_headline_months(results)
     missing = [name for name, v in (("NRR", nrr), ("gross revenue churn", churn)) if v is None]
     if missing:
-        return {"rating": None, "line": NOT_RATED, "benchmark": True, "missing": missing,
+        return {"rating": None, "line": NOT_RATED, "benchmark": False, "missing": missing,       # no threshold is stated on a line that is not rated (PR 4f)
                 "rule": f"{NOT_RATED}: {', '.join(missing)} not computed"}
     figures = f"NRR {fmt_pct(nrr)}, gross churn {fmt_pct(churn)}, CAC payback " + (fmt_months(months) if months is not None else "not computed")
     red = churn > CHURN_RED or (months is not None and months > PAYBACK_RED)

@@ -19,6 +19,7 @@ from app import claim_matching as cm
 from app import deck_actuals, disclosure
 from app import formatting as fmt
 from app import integrity as integrity_mod
+from app import report_text
 from app import verdict as vd
 from schemas import metrics as contract
 
@@ -67,11 +68,13 @@ CATEGORIES = (
     ("Monthly revenue by customer", "revenue", None),
     ("CRM export", "crm", None),
     ("P&L and budget vs actuals", "pnl", "budget vs actuals is not ingested"),
-    ("Headcount history and hiring plan", None, "not ingested by the app"),
+    ("Headcount history and hiring plan", "headcount", "the hiring plan is not ingested by the app"),
     ("Product usage data", None, "not ingested by the app"),
     ("Board decks, last 6–8 quarters", "decks", "the app does not check which quarters the decks cover"),
     ("Roadmap and hiring budget by segment/product", None, "not ingested by the app"),
 )
+# Listed below the seven as "also reviewed" (PR 4f): a metric-by-period revenue or ARR file. Not counted in "x of 7".
+ALSO_REVIEWED = (("Monthly revenue or ARR report", "revenue_report", "also reviewed; not one of the 7 evidence categories"),)
 
 
 class MemoRefused(Exception):
@@ -240,6 +243,7 @@ def count_words(text: str) -> int:
 # --- the export's tables (Appendix C) -----------------------------------------------------------------------------------------
 
 SKIPPED_SHEETS = ("Missing Data", "Glossary")        # Missing Data is in Appendix B; the glossary is not a data table
+ROLE_REPORT_SHEETS = ("Anomalies",)      # PR 4f: with OLD_CLAIMS off Appendix C holds the role tables and the anomaly table; the old export blocks are gone
 SHEET_BLOCKS = {
     "Headline": ("arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate"),
     "By Segment": ("nrr", "sales_cycle", "acv_path"), "NRR by Cohort": ("nrr",), "NRR Series": ("nrr",),
@@ -252,11 +256,15 @@ SHEET_BLOCKS = {
 KEY_VALUE_SHEETS = ("Headline", "Path to Plan")
 
 
-def memo_tables(tables: List[dict]) -> List[dict]:
+def memo_tables(tables: List[dict], claims: bool = True) -> List[dict]:
     """The export's tables as Appendix C prints them. The role tables replace three old blocks, which are left out: the CAC by Quarter sheet that holds
-    only "(P&L not provided)", a Path to Plan sheet with no value, and the Headline rows (and the other key-value sheet's) that have no value."""
+    only "(P&L not provided)", a Path to Plan sheet with no value, and the Headline rows (and the other key-value sheet's) that have no value.
+    With OLD_CLAIMS off (`claims` False) the old export blocks (Headline, By Segment, NRR by Cohort, NRR Series, Churn Series, ACV Bands, Segment Base ...)
+    are all left out: each metric is in the role tables once; only the anomaly table stays."""
     out = []
     for t in tables:
+        if not claims and t["sheet"] not in ROLE_REPORT_SHEETS:
+            continue
         rows = t["rows"]
         if t["sheet"] == "CAC by Quarter" and all(len([c for c in r if c]) <= 1 for r in rows[1:]) and any("not provided" in "".join(r) for r in rows[1:]):
             continue
@@ -346,15 +354,22 @@ def _table(header: List[str], rows: List[List[str]]) -> str:
 
 # --- the memo -------------------------------------------------------------------------------------------------------------------
 
-def evidence_categories(files: List[dict], decks: List[dict], pnl_read: bool = False) -> List[dict]:
-    """Section 7.2: a category is covered when a stored file of its type exists (the app ingests four types); the P&L category is also covered
-    when a P&L was read from a file's map (`pnl_read`, PR 4c)."""
-    present = {f["dtype"] for f in files} | ({"pnl"} if pnl_read else set())
-    out = []
-    for name, kind, note in CATEGORIES:
-        covered = bool(decks) if kind == "decks" else kind in present if kind else False
-        out.append({"category": name, "covered": covered, "note": note})
-    return out
+def category_files(kind: Optional[str], files: List[dict], decks: List[dict]) -> List[str]:
+    """The files of an evidence kind, from the stored datasets and the stored readings: a stored dataset by its type, a read file by what its
+    map holds (`kinds`: pnl, revenue_report, headcount), the decks for board decks. "file (sheet)"; a deck by its file name."""
+    if not kind:
+        return []
+    if kind == "decks":
+        return [d["file"] for d in decks if d.get("file")]
+    return [f"{f['file']} ({f['sheet']})" if f.get("sheet") else str(f["file"]) for f in files
+            if f.get("dtype") == kind or kind in (f.get("kinds") or ())]
+
+
+def evidence_categories(files: List[dict], decks: List[dict]) -> List[dict]:
+    """Section 7.2: a category is covered when a file is listed for it (PR 4f): a stored dataset of its type, a file whose stored reading maps its
+    rows, or a deck. The seven methodology categories only; "also reviewed" categories are listed apart."""
+    return [{"category": name, "covered": bool(category_files(kind, files, decks)), "note": note, "files": category_files(kind, files, decks)}
+            for name, kind, note in CATEGORIES]
 
 
 def overlap_groups(rows: List[dict]) -> List[List[int]]:
@@ -398,15 +413,9 @@ def vas_cells(rows: List[dict], currency: Optional[str]) -> Dict[int, str]:
 
 
 def anomaly_count(results: dict) -> Optional[int]:
-    """The anomaly flags the screen lists, added up (gapLists.js anomalyFlags); None when the engine could not compute them."""
-    a = results.get("anomalies")
-    if not a:
-        return None
-    return (len(a.get("negative_mrr_months") or ()) + len(a.get("revenue_gap_then_resume") or ())
-            + ((a.get("revenue_missing_customer_id") or {}).get("count") or 0)
-            + ((a.get("deals_close_before_created") or {}).get("excluded_count") or 0)
-            + ((a.get("deals_duplicate_id") or {}).get("collapsed") or 0)
-            + len(a.get("date_order_from_data") or ()))
+    """The anomaly flags the screen lists, added up over the checks that had an input (gapLists.js anomalyFlags); None when the engine could not
+    compute them or no check had a file to run on (a flag that never ran is "Not applicable", never 0)."""
+    return report_text.anomaly_total(results.get("anomalies"))
 
 
 def _step_narrative(narratives: List[dict], step: str) -> Optional[dict]:
@@ -454,7 +463,15 @@ def source_cell(r: dict) -> str:
 
 P_AND_L_ROLE_METRICS = ("gross_margin", "sm_share", "rnd_share", "ga_share", "opex_share", "ebitda_margin", "yearly_cac_payback")
 SUMMARY_METRICS = ("ending_arr", "customers", "monthly_churn", "growth")
-PLAN_ONLY_PREFIXES = ("S&M split only", "R&D split only", "G&A split only")
+
+
+_LENGTH_LABEL = re.compile(r"\d+ months?")
+
+
+def metric_label(m: dict) -> str:
+    """A metric's name with its label in brackets, without the series length: "MRR (41 months)" is "MRR", the cell range shows the length."""
+    label = m.get("label")
+    return m["name"] + (f" ({label})" if label and not _LENGTH_LABEL.fullmatch(str(label).strip()) else "")
 
 
 def _role_text(unit: Optional[str], value, ccy: Optional[str]) -> str:
@@ -513,15 +530,6 @@ def _role_source(entry: dict) -> dict:
     return {"file": s.get("file"), "sheet": s.get("sheet"), "rows": ", ".join(cell_ranges(s.get("cells") or ())), "rule": s.get("rule")}
 
 
-def p_and_l_read(results: dict) -> bool:
-    """True when a P&L was read: the yearly-basis block exists, a margin, cost share or payback was computed, or a cost split exists in plan years only."""
-    if results.get("yearly_basis"):
-        return True
-    metrics = (results.get("role_metrics") or {}).get("metrics") or ()
-    return any((m["metric"] in P_AND_L_ROLE_METRICS and m["status"] == "computed")
-               or str(m.get("reason") or "").startswith(PLAN_ONLY_PREFIXES) for m in metrics)
-
-
 def role_summary(results: dict, ccy: Optional[str], notes: "Notes") -> List[str]:
     """The Summary's opening lines (OLD_CLAIMS off): ARR, customers, monthly churn and growth with the as-of month, each with the cells it was
     read from; a metric the files cannot give is left to the unresolved questions."""
@@ -557,7 +565,7 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
     metrics = [m for m in rm["metrics"] if m["status"] == "computed" and m["metric"] not in ("reconciliation", "yearly_revenue")]
     if metrics:
         out.append(("Metrics read from the files", ["Metric", "Period", "Value", "Cells"],
-                    [[m["name"] + (f" ({m['label']})" if m.get("label") else ""), m.get("period") or "—", _role_text(m["unit"], m["value"], ccy),
+                    [[metric_label(m), m.get("period") or "—", _role_text(m["unit"], m["value"], ccy),
                       _cells_text(m.get("source"))] for m in metrics]))
     if rm.get("growth_by_year"):
         out.append(("Growth by year", ["Year", "Revenue", "Year before", "Growth", "Cells"],
@@ -581,6 +589,37 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
                       "—" if r["status"] == "not_compared" else fmt.fmt_currency(r["gap"], ccy), fmt.fmt_pct(r["gap_pct"]) if r.get("gap_pct") is not None else "—",
                       RECON_WORDS.get(r["status"], r.get("reason") or "—") + (f" ({r['note']})" if r.get("note") else ""),
                       "; ".join(f"{s['file']} {s['where']} {fmt.fmt_currency(s['value'], ccy)}" for s in r.get("also_read") or ()) or "—"] for r in recon]))
+    return out
+
+
+NO_ANOMALIES = "No anomalies found in the files read."
+GAP_FLAGS = ("revenue_gap_then_resume", "revenue_missing_customer_id")      # the flags the integrity gaps check reads
+NO_FLAGS_APPLY = "anomaly flags not applicable (no revenue lines or CRM deals read)"
+
+
+def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], notes: "Notes") -> List[str]:
+    """Worth flagging, from the role engine's results (PR 4f): each year of the revenue reconciliation that Differs (figure, sources, difference,
+    difference %), each year that Agrees (rounded) as one line, each anomaly flag with a count above 0 (a flag that did not apply is not listed) and
+    each integrity check rated Red or Amber (its finding only, no cause) that no reconciliation or anomaly line above already tells."""
+    out: List[str] = []
+    recon = [r for r in (results.get("role_metrics") or {}).get("reconciliation") or () if r["metric"] == "revenue" and r["basis"] == "yearly"]
+    for r in recon:
+        if r["status"] == "differs":
+            sources = "; ".join(f"{s['file']} {s['where']} {fmt.fmt_currency(s['value'], ccy)}" for s in r["sources"])
+            gap = f"difference {fmt.fmt_currency(r['gap'], ccy)}" + (f" ({fmt.fmt_pct(r['gap_pct'])})" if r.get("gap_pct") is not None else "")
+            out.append(f"Revenue {r['period']} differs across the sources: {sources}; {gap}"
+                       f"{notes.source('Revenue reconciliation', 'role_metrics.reconciliation', {'rows': sources})}")
+    reconciled = [r for r in recon if r["status"] in ("differs", "agrees_rounded")]
+    out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation', 'role_metrics.reconciliation')}"
+            for r in recon if r["status"] == "agrees_rounded"]
+    anomalies = [a for a in report_text.anomaly_rows(results.get("anomalies")) if a["count"]]
+    out += [f"{a['label']}: {fmt.fmt_count(a['count'])}{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
+            for a in anomalies]
+    # One entry per finding: an integrity check already told by a reconciliation line or an anomaly line is not told again
+    covered = {integrity_mod.RECONCILIATION: bool(reconciled), integrity_mod.GAPS: any(a["key"] in GAP_FLAGS for a in anomalies)}
+    out += [f"{c['check']} ({c['result']}): {c['finding']}{notes.add('data integrity check, ' + c['check'])}"
+            for c in (integrity or {}).get("results") or ()
+            if c.get("result") in (integrity_mod.RED, integrity_mod.AMBER) and not covered.get(c["check"])]
     return out
 
 
@@ -627,7 +666,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     five = [by_id[f["claim_id"]] for f in ver["five"]]
     top_ranks = [r["rank"] for r in five]
     counts = cm.label_counts(rows)
-    categories = evidence_categories(files, decks, p_and_l_read(results))
+    categories = evidence_categories(files, decks)
     covered = sum(1 for c in categories if c["covered"])
     narrative = _growth_narrative(narratives)
     # The date is the requested analysis date; the evidence end is the data's, never the as-of setting (dates-and-periods.md)
@@ -700,7 +739,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         recon = f"Revenue reconciliation: {counted['finding']}{notes.source('Revenue reconciliation', 'role_metrics.reconciliation', {'rows': counted['source']})}" \
             if counted else None
     anomalies = (f"{flags} anomaly flags{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
-                 if flags is not None else "anomaly flags not computed")
+                 if flags is not None else NO_FLAGS_APPLY if results.get("anomalies") else "anomaly flags not computed")
     # integrity-coverage.md section 4: the conclusion and the coverage head the row; the A2 narrative's verdict is never printed here.
     # The rating stays the analyst's.
     coverage = f"{integrity['conclusion']}. {integrity['completed_text']}."
@@ -760,13 +799,18 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     flagged += [f"{vd.flag_text(r)}{notes.register([r['rank']])}" for r in vd.flagged_rows(rows, listed)]
     if narrative:
         flagged += [f"{item}{notes.add('growth-engine narrative, AI call log')}" for item in narrative.get("worth_flagging") or ()]
+    if not claims:          # PR 4f: the role engine's own findings; nothing qualifies, the section says so
+        flagged += role_flags(results, integrity, ccy, notes)
+        if not flagged:
+            flagged = [NO_ANOMALIES]
     out += [f"- {f}" for f in flagged] + [""]
 
     # 6. Data gaps and requests
     out += [f"## {HEADINGS[5]}"]
     for g in gaps[:5]:
         date = f" Target date: {g['target_date']}." if g["target_date"] else ""
-        out += [f"- {g['item']}: {g['why']} Requested: {str(g['requested']).rstrip('.')}.{date}{notes.source('Missing Data', 'missing_data')}"]
+        asked = f" Requested: {str(g['requested']).rstrip('.')}." if g.get("requested") else ""
+        out += [f"- {g['item']}: {g['why']}{asked}{date}{notes.source('Missing Data', 'missing_data')}"]
     if len(gaps) > 5:
         out += [f"and {len(gaps) - 5} more in Appendix B{notes.source('Missing Data', 'missing_data')}"]
     out += [f"- {q}{notes.source('Questions for management', 'questions_for_management')}" for q in vd.management_questions(results)]
@@ -798,12 +842,11 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     app += [_table(["What the company cannot measure", "Why it matters", "Requested", "Target date"],
                    [[g["item"], g["why"], g["requested"] or "", g["target_date"] or "—"] for g in gaps]
                    + [[u["item"], f"Cannot be measured: {u['why']}", "", "—"] for u in unmeasured]) if gaps or unmeasured else "No data gaps.", ""]
-    asks = [f"- {a}" for a in _one_line_per_file([g["requested"] for g in gaps if g["requested"]])]
-    asks += [f"- {r}" for r in integrity["data_requests"]]        # a Blocked integrity check is a data request (integrity-coverage.md 3)
-    asks += [f"- {q}" for q in vd.management_questions(results)]
-    asks += [f"- {o['item']}: {o['requested']}" for o in vd.other_requests(results) if o["requested"]]
-    asks += [f"- {a[0].upper()}{a[1:]}" for a in deck_actuals.data_requests(rows)]       # deck-actuals.md section 6: the table behind a deck-only metric
-    app += ["Requests", *asks, ""]
+    asks = [*_one_line_per_file(gaps), *integrity["data_requests"]]        # a Blocked integrity check is a data request (integrity-coverage.md 3)
+    asks += vd.management_questions(results)
+    asks += [f"{o['item']}: {o['requested']}" for o in vd.other_requests(results) if o["requested"]]
+    asks += [f"{a[0].upper()}{a[1:]}" for a in deck_actuals.data_requests(rows)]       # deck-actuals.md section 6: the table behind a deck-only metric
+    app += ["Requests", *[f"- {a}" for a in dict.fromkeys(asks)], ""]        # each request once
     inventory = _step_narrative(narratives, "data_inventory")
     if inventory and inventory.get("next_actions"):
         # The data-inventory narrative (A1): its ranked data request list, most important first.
@@ -813,14 +856,14 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     app += [f"## {APPENDICES[2]}"]
     for title, header, body in role_tables(results, ccy):
         app += [title, _table(header, body), ""]
-    for t in memo_tables(tables):
+    for t in memo_tables(tables, claims):
         block = SHEET_BLOCKS.get(t["sheet"], ())
         cite = "".join(notes.source(t["sheet"], b, (results.get(b) or {}).get("source")) for b in block if (results.get(b) or {}).get("source"))
         width = max(len(r) for r in t["rows"])
         rows_ = [r + [""] * (width - len(r)) for r in t["rows"]]
         app += [f"{t['sheet']}{cite}", _table(rows_[0], rows_[1:]), ""]
     app += _glossed(deck_actuals.appendix_lines(rows, results))        # deck-actuals.md section 3: the details block of each metric, from stored data
-    if rec.get("available") and rec.get("by_month"):
+    if claims and rec.get("available") and rec.get("by_month"):          # the role reconciliation above holds the years
         cite = notes.source("Revenue reconciliation", "revenue_reconciliation.by_month", (rec.get("source") or {}).get("revenue_file"))
         app += [f"Revenue reconciliation by month{cite}",
                 _table(["Month", "Revenue file", "P&L", "Gap", "Gap %"],
@@ -829,10 +872,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
 
     app += [f"## {APPENDICES[3]}", "Files reviewed"]
     app += [_table(["Category", "Covered", "Files", "Note"],
-                   [[c["category"], "yes" if c["covered"] else "no",
-                     "; ".join(f"{f['file']} ({f['sheet']})" for f in files if f["dtype"] == kind) if kind and kind != "decks"
-                     else ("; ".join(d["file"] for d in decks) if kind == "decks" else ""), c["note"] or ""]
-                    for c, (_, kind, _) in zip(categories, CATEGORIES)]), ""]
+                   [[c["category"], "yes" if c["covered"] else "no", "; ".join(c["files"]), c["note"] or ""] for c in categories]
+                   + [[name, "yes" if category_files(kind, files, decks) else "no", "; ".join(category_files(kind, files, decks)), note or ""]
+                      for name, kind, note in ALSO_REVIEWED]), ""]
     groups = overlap_groups(rows)
     if claims:
         app += ["Value at risk: de-duplication", W16_VALUE_AT_RISK,
@@ -850,22 +892,18 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     return head, head + "\n" + "\n".join(app) + "\n"
 
 
-def _one_line_per_file(requests: List[str]) -> List[str]:
-    """The data requests with one line per file: every "A file with a <role> row" request is one file, asked for once with all its rows; any
-    other request is listed once."""
+def _one_line_per_file(gaps: List[dict]) -> List[str]:
+    """The data requests with one line per file (PR 4f): the roles no file maps, from every gap, are one "A file with a <role> row ..." line; any
+    other request (customer-level revenue lines, CRM deals, a monthly P&L) is listed once. A role that is mapped never appears: the gaps name only
+    unmapped roles."""
     roles, others = [], []
-    for text in requests:
-        text = str(text).rstrip(".")
-        if text.startswith("A file with "):
-            for part in re.split(r", | and ", text.removeprefix("A file with ")):
-                if part not in roles:
-                    roles.append(part)
-        elif text not in others:
+    for g in gaps:
+        roles += [r for r in g.get("request_roles") or () if r not in roles]
+        text = str(g.get("requested") or "").rstrip(".")
+        if text and not g.get("request_roles") and text not in others:
             others.append(text)
-    line = []
-    if roles:
-        line = ["A file with " + (", ".join(roles[:-1]) + " and " + roles[-1] if len(roles) > 1 else roles[0])]
-    return [*line, *others]
+    line = report_text.request_line(roles)
+    return [*([line] if line else []), *others]
 
 
 def summary_counts(counts: Dict[str, int]) -> str:
@@ -885,7 +923,8 @@ def _glossed(lines: List[str], keep: Iterable[str] = ()) -> List[str]:
 
 
 def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dict], ic: dict, files: List[dict],
-                    decks: List[dict], thesis: bool, tables: Optional[List[dict]] = None, unresolved: Optional[List[str]] = None) -> Allowed:
+                    decks: List[dict], thesis: bool, tables: Optional[List[dict]] = None, unresolved: Optional[List[str]] = None,
+                    integrity: Optional[dict] = None) -> Allowed:
     """The numbers a memo may state. `thesis=True` is the set for a thesis sentence: (a)-(c) and (e), without the analyst's deal terms."""
     allowed = Allowed().results(contract.MetricsPayload.model_validate(results), results)
     allowed.tree({k: audit.get(k) for k in ("company_name", "target_arr", "target_date", "as_of_month")})
@@ -904,6 +943,7 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
         allowed.tree(ic.get("gap_target_dates") or {}).tree(ic.get("first_quarterly_review"))
         allowed.tree(ic.get("note") or "")              # the analyst's own text: its numbers are the analyst's (section 7.4 d)
         allowed.tree(unresolved or [])
+        allowed.tree([c.get("finding") for c in (integrity or {}).get("results") or ()])        # a Red or Amber finding under Worth flagging: Python's own text
         allowed.number(int(ic.get("open_questions") or 0))
     return allowed
 
@@ -953,7 +993,7 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
     _, blank = _build(**common, thesis={k: (v if k in drafted else "") for k, v in thesis.items()})
     checked = "\n".join(line for line in blank.split("\n") if not line.startswith("Date: "))
     bad += [t for t in unmatched(checked, allowed_numbers(audit, results, rows, gaps, ic, files, decks, thesis=False, tables=tables,
-                                                          unresolved=unresolved)) if t not in bad]
+                                                          unresolved=unresolved, integrity=integrity)) if t not in bad]
     if bad:
         raise MemoRefused("numbers", W19_NUMBERS.format(n=len(bad), list=", ".join(bad)), unmatched=bad)
     head, text = _build(**common, thesis=thesis)

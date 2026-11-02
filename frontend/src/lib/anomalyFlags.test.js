@@ -1,4 +1,4 @@
-import { ANOMALIES_NOT_COMPUTED, anomalyFlags } from "./gapLists";
+import { ANOMALIES_NOT_COMPUTED, NOT_APPLICABLE, anomalyFlags } from "./gapLists";
 
 const anomalies = {
   negative_mrr_months: ["2024-03"],
@@ -6,6 +6,8 @@ const anomalies = {
   revenue_missing_customer_id: { count: 2 },
   deals_close_before_created: { excluded_count: 0 },
   date_order_from_data: [{ field: "invoice_date", dataset: "revenue", order: "DD/MM/YYYY", rows: 1200 }],
+  source: { file: "revenue.csv", row_numbers: [2, 3] },
+  deals_source: { file: "crm.csv", row_numbers: [2] },
 };
 
 test("computed flags are listed with their counts", () => {
@@ -29,4 +31,16 @@ test("CRM rows sharing a deal ID follow the deals closed before created, with th
 
 test("results stored before the flag existed show no row for it, never a zero", () => {
   expect(anomalyFlags({ anomalies }).map((f) => f.label)).not.toContain("CRM rows sharing a deal ID");
+});
+
+test("a flag whose input file is absent is Not applicable, never 0 (PR 4f)", () => {
+  const { deals_source, ...noCrm } = anomalies;
+  const flags = anomalyFlags({ anomalies: { ...noCrm, deals_duplicate_id: { rows: 0, distinct_ids: 0, collapsed: 0, rows_list: [] } } });
+  const by = Object.fromEntries(flags.map((f) => [f.label, f.count]));
+  expect(by["Deals with close before created (excluded)"]).toBeNull();
+  expect(by["CRM rows sharing a deal ID"]).toBeNull();
+  expect(by["Months with negative MRR"]).toBe(1);
+  const none = anomalyFlags({ anomalies: { ...noCrm, source: { file: "revenue", row_numbers: [] } } });
+  expect(none.every((f) => f.count === null)).toBe(true);
+  expect(NOT_APPLICABLE).toBe("Not applicable");
 });
