@@ -13,6 +13,7 @@ from test_memo_role_metrics import DECK, appendix_c, build  # noqa: E402
 from test_role_engine import file_of, row, run, sheet  # noqa: E402
 
 from app import ic_memo as im  # noqa: E402
+from app import integrity as integrity_mod  # noqa: E402
 from app import report_text  # noqa: E402
 from app import role_engine  # noqa: E402
 from app import verdict as vd  # noqa: E402
@@ -83,9 +84,20 @@ def test_worth_flagging_lists_a_rounded_agreement_as_one_line_and_an_amber_check
     assert "- Revenue 2025 agrees (rounded) across the sources" in section
 
 
-def test_worth_flagging_lists_the_integrity_checks_rated_red_or_amber(memo_text):
+def test_an_integrity_check_is_listed_only_when_no_reconciliation_or_anomaly_line_tells_the_same_finding(memo_text):
     section = memo_text.split("## Worth flagging")[1].split("## Data gaps and requests")[0]
-    assert "Revenue reconciliation (Red):" in section and "Smoothness (Amber):" in section
+    assert "Revenue 2025 differs across the sources" in section
+    assert "Revenue reconciliation (Red)" not in section, "the Differs line already tells it"
+    assert "Smoothness (Amber):" in section, "nothing else tells it"
+    integrity = {"results": [{"check": integrity_mod.RECONCILIATION, "result": "Red", "finding": "x differ"}, {"check": integrity_mod.GAPS, "result": "Amber", "finding": "y gaps"}]}
+    none = {"role_metrics": {"reconciliation": []}, "anomalies": None}
+    lines = im.role_flags(none, integrity, "EUR", im.Notes())
+    assert [line.split(" (")[0] for line in lines] == [integrity_mod.RECONCILIATION, integrity_mod.GAPS], "listed when nothing else covers them"
+    a = {"negative_mrr_months": [], "revenue_gap_then_resume": ["c1"], "revenue_missing_customer_id": {"count": 0}, "revenue_missing_fx_rate": {"count": 0},
+         "revenue_missing_amount": {"count": 0}, "deals_close_before_created": {"excluded_count": 0}, "date_order_from_data": [],
+         "source": {"file": "f", "row_numbers": [2]}}
+    lines = im.role_flags({**none, "anomalies": a}, integrity, "EUR", im.Notes())
+    assert any(line.startswith("Customers with gaps") for line in lines) and not any(line.startswith(integrity_mod.GAPS + " (") for line in lines)
 
 
 def test_worth_flagging_lists_an_applicable_anomaly_flag_above_zero_and_nothing_at_zero():
@@ -308,3 +320,28 @@ def test_the_summary_counts_the_seven_categories_only(memo_text):
 @pytest.mark.parametrize("banned", BANNED)
 def test_the_memo_holds_none_of_the_old_path_strings(memo_text, banned):
     assert banned not in memo_text
+
+
+# --- a mapped row with no series (George, PR 4f decision 4) --------------------------------------------------------------------------------------
+
+def unread_files():
+    """The monthly report with a headcount row whose range holds no number (no series) and a cash row likewise."""
+    f = monthly_file()
+    rows = [r for r in f["file_map"]["sheets"][0]["rows"] if r["role"] != "headcount"]
+    rows += [{"row": 9, "role": "headcount", "basis": "monthly", "actual_plan": "actual", "segment": None, "unit": "count", "cells": "B9:Z9"}]
+    f["file_map"]["sheets"][0]["rows"] = rows
+    return [f, pnl_file()]
+
+
+def test_a_mapped_row_with_no_series_reads_row_read_no_values_and_is_never_requested():
+    files = unread_files()
+    table = [*role_engine.build_table(files), *report_text.rows_without_series(files)]
+    assert report_text.role_state(table, "headcount") == "no_values"
+    out = report_text.apply_reasons(results_of(files), table)
+    reason = next(m["reason"] for m in out["role_metrics"]["metrics"] if m["metric"] == "headcount")
+    assert reason == "Headcount row read (Report!B9:Z9); not computed: no values in the cells"
+    assert report_text.request_roles(table, ["headcount"]) == []
+    text = build(results_of(files), files)
+    asks = text.split("\nRequests\n")[1].split("\n\n")[0]
+    assert "headcount" not in asks and "a cash row" in asks
+    assert "| Headcount history and hiring plan | yes | monthly report (Report) |" in text, "a mapped headcount row covers the category"

@@ -41,7 +41,7 @@ def reading_results():
 def build(results, maps=None, **over):
     """The memo of a run as the server hands it over (OLD_CLAIMS off): the reasons and the requests written from the maps' role table, the files
     the stored readings give. `maps` None reads no map (an empty role table)."""
-    table = role_engine.build_table(maps or [])
+    table = [*role_engine.build_table(maps or []), *report_text.rows_without_series(maps or [])]
     results = report_text.apply_reasons(results, table)
     integrity = integrity_mod.assess(results, 1, [])
     args = dict(audit={"company_name": "SynthCo", "target_arr": 1_000_000, "target_date": "2026-12-31", "as_of_month": "2026-06"},

@@ -593,13 +593,14 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
 
 
 NO_ANOMALIES = "No anomalies found in the files read."
+GAP_FLAGS = ("revenue_gap_then_resume", "revenue_missing_customer_id")      # the flags the integrity gaps check reads
 NO_FLAGS_APPLY = "anomaly flags not applicable (no revenue lines or CRM deals read)"
 
 
 def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], notes: "Notes") -> List[str]:
     """Worth flagging, from the role engine's results (PR 4f): each year of the revenue reconciliation that Differs (figure, sources, difference,
     difference %), each year that Agrees (rounded) as one line, each anomaly flag with a count above 0 (a flag that did not apply is not listed) and
-    each integrity check rated Red or Amber (its finding only, no cause)."""
+    each integrity check rated Red or Amber (its finding only, no cause) that no reconciliation or anomaly line above already tells."""
     out: List[str] = []
     recon = [r for r in (results.get("role_metrics") or {}).get("reconciliation") or () if r["metric"] == "revenue" and r["basis"] == "yearly"]
     for r in recon:
@@ -608,12 +609,17 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
             gap = f"difference {fmt.fmt_currency(r['gap'], ccy)}" + (f" ({fmt.fmt_pct(r['gap_pct'])})" if r.get("gap_pct") is not None else "")
             out.append(f"Revenue {r['period']} differs across the sources: {sources}; {gap}"
                        f"{notes.source('Revenue reconciliation', 'role_metrics.reconciliation', {'rows': sources})}")
+    reconciled = [r for r in recon if r["status"] in ("differs", "agrees_rounded")]
     out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation', 'role_metrics.reconciliation')}"
             for r in recon if r["status"] == "agrees_rounded"]
+    anomalies = [a for a in report_text.anomaly_rows(results.get("anomalies")) if a["count"]]
     out += [f"{a['label']}: {fmt.fmt_count(a['count'])}{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
-            for a in report_text.anomaly_rows(results.get("anomalies")) if a["count"]]
+            for a in anomalies]
+    # One entry per finding: an integrity check already told by a reconciliation line or an anomaly line is not told again
+    covered = {integrity_mod.RECONCILIATION: bool(reconciled), integrity_mod.GAPS: any(a["key"] in GAP_FLAGS for a in anomalies)}
     out += [f"{c['check']} ({c['result']}): {c['finding']}{notes.add('data integrity check, ' + c['check'])}"
-            for c in (integrity or {}).get("results") or () if c.get("result") in (integrity_mod.RED, integrity_mod.AMBER)]
+            for c in (integrity or {}).get("results") or ()
+            if c.get("result") in (integrity_mod.RED, integrity_mod.AMBER) and not covered.get(c["check"])]
     return out
 
 

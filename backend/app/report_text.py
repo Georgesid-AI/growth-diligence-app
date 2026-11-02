@@ -40,16 +40,41 @@ def needs_row(role: str) -> str:
     return f"{article(plain(role))} {plain(role)} row"
 
 
+def rows_without_series(files: List[dict]) -> List[dict]:
+    """The rows of the files' maps that have a role and no series (the engine's table skips them): records with empty `actual` and `plan` and
+    `no_series` set, so the report text sees that the role is mapped. A row the checks rejected is no input and is left out, as in the engine."""
+    out = []
+    for f in files:
+        rejected = set(f.get("rejected") or ())
+        for smap in (f.get("file_map") or {}).get("sheets") or []:
+            for row in smap.get("rows") or []:
+                if f"row:{smap['sheet']}:{row['row']}" in rejected or not row.get("role"):
+                    continue
+                if any(row.get(k) for k in ("series", "plan_series")):
+                    continue
+                out.append({"file": f.get("file"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
+                            "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"), "basis": row.get("basis"),
+                            "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
+                            "segment": (row.get("segment") or "").strip() or None, "actual": {}, "plan": {}, "cells": row.get("cells"),
+                            "no_series": True})
+    return out
+
+
 def _recs(table: List[dict], role: str) -> List[dict]:
-    return [r for r in table if r["role"] == role]
+    """The role's rows that hold a series."""
+    return [r for r in table if r["role"] == role and not r.get("no_series")]
+
+
+def _unread(table: List[dict], role: str) -> List[dict]:
+    return [r for r in table if r["role"] == role and r.get("no_series")]
 
 
 def role_state(table: List[dict], role: str) -> str:
-    """How the map holds a role: "unmapped" (no row), "segments" (segment rows only, no unsegmented total), "plan_only" (total rows that hold no
+    """How the map holds a role: "unmapped" (no row), "no_values" (rows mapped, no series in them), "segments" (segment rows only, no unsegmented total), "plan_only" (total rows that hold no
     actual value) or "mapped" (a total row with actuals)."""
     recs = _recs(table, role)
     if not recs:
-        return "unmapped"
+        return "no_values" if _unread(table, role) else "unmapped"
     totals = [r for r in recs if r["segment"] is None]
     if not totals:
         return "segments"
@@ -59,7 +84,7 @@ def role_state(table: List[dict], role: str) -> str:
 
 
 def mapped_roles(table: List[dict]) -> set:
-    """Every role any file maps, in any columns and any segment."""
+    """Every role any file maps, in any columns, any segment, with or without values."""
     return {r["role"] for r in table}
 
 
@@ -102,6 +127,10 @@ def _alternatives(needs) -> List[List[str]]:
 
 
 def _state_text(table: List[dict], role: str, state: str) -> Optional[str]:
+    if state == "no_values":
+        rec = _unread(table, role)[0]
+        cells = f"{rec['sheet']}!{rec['cells']}" if rec.get("sheet") and rec.get("cells") else rec.get("cells") or ""
+        return f"{_role_name(role)} row read ({cells}); not computed: no values in the cells"
     if state == "plan_only":
         return f"{_role_name(role)} split only in plan years; actual years carry {_total_label(table)} only"
     if state == "segments":
@@ -126,7 +155,8 @@ def missing_reason(table: List[dict], needs, engine_reason: Optional[str]) -> Op
         if usable:
             read.append(usable)
             continue
-        first = next((r for r in group if states[r] == "plan_only"), None) or next((r for r in group if states[r] == "segments"), None)
+        first = next((r for r in group if states[r] == "no_values"), None) or next((r for r in group if states[r] == "plan_only"), None) \
+            or next((r for r in group if states[r] == "segments"), None)
         if first:
             partial.append(_state_text(table, first, states[first]))
         else:
