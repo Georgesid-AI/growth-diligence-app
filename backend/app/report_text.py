@@ -52,7 +52,7 @@ def rows_without_series(files: List[dict]) -> List[dict]:
                     continue
                 if any(row.get(k) for k in ("series", "plan_series")):
                     continue
-                out.append({"file": f.get("file"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
+                out.append({"file": f.get("file"), "file_hash": f.get("file_hash"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
                             "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"), "basis": row.get("basis"),
                             "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
                             "segment": (row.get("segment") or "").strip() or None, "actual": {}, "plan": {}, "cells": row.get("cells"),
@@ -303,4 +303,26 @@ def read_files(table: List[dict], skip: Iterable[str] = ()) -> List[dict]:
     return out
 
 
-__all__ = ["missing_reason", "apply_reasons", "unmapped_roles", "anomaly_rows", "anomaly_total", "file_kinds", "read_files"]
+def memo_files(datasets: List[dict], table: List[dict]) -> List[dict]:
+    """The one list of data files the memo counts ("Files reviewed") and lists by evidence category (Appendix D). The file records come first, in
+    upload order, each joined by file hash (else by name) to what its reading maps: a record is typed "file" and carries no kind of its own, so
+    its kind is the reading's (P&L, revenue report, headcount). A stored type (an older dataset: pnl, revenue, crm) is kept. A read file with no
+    record is added after them."""
+    kinds = file_kinds(table)
+    by_hash = {}
+    for r in table:
+        if r.get("file_hash"):
+            by_hash.setdefault(r["file_hash"], r["file"])
+    out, seen = [], set()
+    for d in datasets:
+        name = d.get("file")
+        read_as = by_hash.get(d.get("file_hash"), name)
+        entry = kinds.get(read_as) or {"sheet": None, "kinds": []}
+        stored = d.get("dtype")
+        dtype = stored if stored not in (None, "file", "reading") else ("pnl" if "pnl" in entry["kinds"] else "reading")
+        out.append({"dtype": dtype, "file": name, "sheet": d.get("sheet") or entry["sheet"], "kinds": list(entry["kinds"])})
+        seen.update({name, read_as})
+    return out + read_files(table, skip=seen)
+
+
+__all__ = ["memo_files", "missing_reason", "apply_reasons", "unmapped_roles", "anomaly_rows", "anomaly_total", "file_kinds", "read_files"]

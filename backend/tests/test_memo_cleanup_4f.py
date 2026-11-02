@@ -345,3 +345,43 @@ def test_a_mapped_row_with_no_series_reads_row_read_no_values_and_is_never_reque
     asks = text.split("\nRequests\n")[1].split("\n\n")[0]
     assert "headcount" not in asks and "a cash row" in asks
     assert "| Headcount history and hiring plan | yes | monthly report (Report) |" in text, "a mapped headcount row covers the category"
+
+
+# --- Appendix D on a live audit's records (PR 4f fix) ---------------------------------------------------------------------------------------------
+
+def live_files(maps_):
+    """The file records as a live audit stores them: dtype "file", a hash, no kind; the kind sits on the reading's map (kind "sheet")."""
+    records, hashed = [], []
+    for i, f in enumerate(maps_):
+        h = f"hash{i}"
+        records.append({"dtype": "file", "file": f["file"], "file_hash": h, "sheet": None})
+        hashed.append({**f, "file_hash": h})
+    return records, report_text.memo_files(records, [*role_engine.build_table(hashed), *report_text.rows_without_series(hashed)])
+
+
+def test_a_live_audit_lists_each_file_once_in_the_summary_and_in_appendix_d():
+    records, files = live_files(maps())
+    text = build(results_of(), maps(), files=files)
+    table = files_table(text)
+    assert "| P&L and budget vs actuals | yes | pnl (P&L) |" in table
+    assert "| Monthly revenue or ARR report | yes | monthly report (Report) |" in table
+    assert "Files reviewed: 2 data files" in text and "Evidence categories covered: 3 of 7" in text
+    listed = {name for line in table.splitlines()[2:] for name in line.split("|")[3].split(";") if name.strip()}
+    named = {f"{f['file']} ({f['sheet']})" for f in files if f["sheet"]}
+    assert len(files) == len(records) and {n.strip() for n in listed} - {"deck.pdf"} == named
+
+
+def test_the_summary_count_and_the_file_list_are_one_list():
+    records, files = live_files(maps())
+    assert [f["file"] for f in files] == [r["file"] for r in records]        # one entry per record, in upload order, never a second pass
+    assert files[0]["kinds"] == ["revenue_report", "headcount"] and files[1]["dtype"] == "pnl"
+
+
+def test_the_anomalies_footnote_names_no_sheet_when_nothing_was_read():
+    base = results_of()
+    empty = {**base, "anomalies": {**(base.get("anomalies") or {}), "source": {"file": "revenue", "sheet": "Sheet1", "rows": "no rows", "row_numbers": [], "rule": "synthetic"}}}
+    empty["anomalies"].pop("deals_source", None)
+    anomalies = {"sheet": "Anomalies", "rows": [["Flag", "Count", "Detail"], ["Months with negative MRR", "Not applicable", ""]]}
+    text = build(empty, maps(), tables=[anomalies])
+    assert "Anomaly Flags · anomalies · no revenue lines or CRM deals read" in text
+    assert "Sheet1" not in text and "no rows" not in text

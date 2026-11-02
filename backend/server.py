@@ -2426,11 +2426,7 @@ def _memo_filename(company: str) -> str:
 async def _memo_files(audit_id: str, audit: dict, datasets: list) -> list:
     """The files the memo lists as reviewed: the stored datasets, and every file read through the map (a file whose map holds a cost or profit
     row is a P&L, dtype "pnl"; any other is "reading", which covers no evidence category). A file is listed once."""
-    files = [{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets]
-    seen = {f["file"] for f in files}
-    table = await _report_table(audit_id, audit)
-    files += report_text.read_files(table, skip=seen)
-    return files
+    return report_text.memo_files(datasets, await _report_table(audit_id, audit))
 
 
 @api.get("/audits/{audit_id}/memo.md")
@@ -2456,7 +2452,7 @@ async def export_memo(audit_id: str):
             narratives = [n.model_dump() for n in await llm_gateway.narratives_for_run(db, audit_id)]
         except Exception:                                 # the memo never depends on the narrative service
             narratives = []
-        datasets = await db.datasets.find({"audit_id": audit_id}, {"dtype": 1, "file": 1, "sheet": 1, "_id": 0}).to_list(10)
+        datasets = await db.datasets.find({"audit_id": audit_id}, {"dtype": 1, "file": 1, "file_hash": 1, "sheet": 1, "_id": 0}).to_list(10)
         deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"file": 1, "_id": 0}).to_list(100)
         meta = {**audit, "results": results}
         ver = verdict_mod.verdict(rows, results, ctx["ic"].get("top5"), ctx["open_questions"], ctx["conflicts"]) if claims else \
@@ -2504,7 +2500,7 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
         file_map = readings_mod.effective(reading["file_map"], await readings_mod.overrides_for(db, audit_id, reading["key"]))
         items = [i for i in check.get("items") or [] if str(i.get("key", "")).startswith("row:")]
         labels = {f"{sh['sheet']}:{ln['row']}": ln.get("label") for sh in check.get("lines") or [] for ln in sh.get("lines") or []}
-        files.append({"file": check.get("file"), "file_map": file_map, "labels": labels,
+        files.append({"file": check.get("file"), "file_hash": check.get("file_hash"), "file_map": file_map, "labels": labels,
                       "rejected": [i["key"] for i in items if i["outcome"] == checks_mod.REJECTED],
                       "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT]})
     deck = [{**f, "file": d["file"], "page": f["source"]["page"]} for d in await deck_figures.checked(db, audit_id) for f in d["figures"]

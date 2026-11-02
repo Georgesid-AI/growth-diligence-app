@@ -91,7 +91,7 @@ def build_table(files: List[Dict]) -> List[Dict]:
                          if row.get(key)}
                 if not pairs:
                     continue
-                table.append({"file": f.get("file"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
+                table.append({"file": f.get("file"), "file_hash": f.get("file_hash"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
                               "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"),
                               "basis": row.get("basis"), "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
                               "segment": (row.get("segment") or "").strip() or None, "parent": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
