@@ -27,11 +27,11 @@ def pnl(cogs=(300, 450, 600), plan_sm=(1_200, 1_500), plan_rnd=(600, 700), plan_
 
 
 def texts(maps, ccy="EUR"):
-    return [l["text"] for l in plan_lines.lines(run(maps), ccy)]
+    return [item["text"] for item in plan_lines.lines(run(maps), ccy)]
 
 
 def line(maps, start):
-    found = [l for l in plan_lines.lines(run(maps), "EUR") if l["text"].startswith(start)]
+    found = [item for item in plan_lines.lines(run(maps), "EUR") if item["text"].startswith(start)]
     return found[0] if found else None
 
 
@@ -114,12 +114,12 @@ def test_a_reconciliation_that_differs_reads_the_template_and_one_that_agrees_gi
     sources = [{"kind": "file", "file": "pnl", "where": "P&L!D4", "value": 2_400.0}, {"kind": "deck", "file": "deck.pdf", "where": "page 4", "value": 1_500.0}]
     differs = {"metric": "revenue", "period": "2025", "status": "differs", "gap": 900.0, "gap_pct": 0.375, "sources": sources}
     got = plan_lines.reconciliation_lines([differs, {**differs, "period": "2024", "status": "agrees"}, {**differs, "status": "agrees_rounded"}], "EUR")
-    assert [l["text"] for l in got] == ["Revenue 2025 differs across sources by 900 EUR (38%): pnl P&L!D4 2,400 EUR; deck.pdf page 4 1,500 EUR."]
+    assert [item["text"] for item in got] == ["Revenue 2025 differs across sources by 900 EUR (38%): pnl P&L!D4 2,400 EUR; deck.pdf page 4 1,500 EUR."]
 
 
 def test_every_line_is_built_from_a_template_of_this_module_and_carries_cells():
-    for l in plan_lines.lines(run(pnl()), "EUR"):
-        assert l["cells"] and l["kind"] in ("plan_vs_past", "trend")
+    for item in plan_lines.lines(run(pnl()), "EUR"):
+        assert item["cells"] and item["kind"] in ("plan_vs_past", "trend")
 
 
 # --- the memo ---------------------------------------------------------------------------------------------------------------------------------
@@ -159,8 +159,8 @@ def test_a_plan_to_date_gap_beyond_tolerance_is_in_the_block_and_in_worth_flaggi
 def test_the_memo_text_has_no_glossary_pointer_and_no_internal_field_name_in_the_key_evidence_column(memo_text):
     body = memo_text.split("## Appendix B")[0]
     assert "(see glossary)" not in memo_text
-    score = [l for l in body.split("## Scorecard")[1].split("\n## ")[0].splitlines() if l.startswith("| ") and "Key evidence" not in l]
-    for l in score:
-        evidence = l.rsplit("|", 2)[-2]
+    score = [item for item in body.split("## Scorecard")[1].split("\n## ")[0].splitlines() if item.startswith("| ") and "Key evidence" not in item]
+    for item in score:
+        evidence = item.rsplit("|", 2)[-2]
         for field in ("revenue_reconciliation", "gross_churn", "cac_payback", "acv_path", "nrr", "anomalies"):
-            assert field not in evidence, (field, l)
+            assert field not in evidence, (field, item)

@@ -806,8 +806,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         out += [f"## {plan_lines.HEADING}"]
         if trend_table:
             out += [_table(*trend_table) + notes.add("What the plan assumes · yearly values with their cells in Appendix C"), ""]
-        out += [f"- {l['text']}{notes.source(plan_lines.HEADING, None, {'file': l['file'], 'sheet': l['sheet'], 'rows': ', '.join(cell_ranges(l['cells']))})}"
-                for l in assumed]
+        out += [f"- {item['text']}{notes.source(plan_lines.HEADING, None, {'file': item['file'], 'sheet': item['sheet'], 'rows': ', '.join(cell_ranges(item['cells']))})}"
+                for item in assumed]
         out += [""]
 
     # 4. Key gates and deal terms
@@ -841,8 +841,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     flagged += [f"{vd.flag_text(r)}{notes.register([r['rank']])}" for r in vd.flagged_rows(rows, listed)]
     if narrative:
         flagged += [f"{item}{notes.add('growth-engine narrative, AI call log')}" for item in narrative.get("worth_flagging") or ()]
-    flagged += [f"{l['text']}{notes.source(plan_lines.HEADING, None, {'file': l['file'], 'sheet': l['sheet'], 'rows': ', '.join(cell_ranges(l['cells']))})}"
-                for l in assumed if l["kind"] == "plan_to_date" and l["beyond_tolerance"]]        # a plan-to-date gap beyond tolerance is also flagged
+    flagged += [f"{item['text']}{notes.source(plan_lines.HEADING, None, {'file': item['file'], 'sheet': item['sheet'], 'rows': ', '.join(cell_ranges(item['cells']))})}"
+                for item in assumed if item["kind"] == "plan_to_date" and item["beyond_tolerance"]]        # a plan-to-date gap beyond tolerance is also flagged
     if not claims:          # PR 4f: the role engine's own findings; nothing qualifies, the section says so
         flagged += role_flags(results, integrity, ccy, notes)
         if not flagged:
