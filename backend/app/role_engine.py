@@ -178,9 +178,9 @@ def costs_negative(table: List[Dict], role: str) -> bool:
 
 
 def cost_row(table: List[Dict], role: str, granularity: Optional[str] = None) -> Optional[Dict]:
-    """The row a cost role is read from: S&M is the sum of all its total rows, every other cost role the longest total row; in absolute values
-    when the role carries the opposite sign to revenue (`negated`)."""
-    return sum_role(table, role, granularity, many=(role == "sales_marketing"))
+    """The row a cost role is read from: the sum of all its total rows (cost of revenue, S&M, R&D, G&A and OPEX alike; a row whose parent row is
+    mapped to the same role is not added to it); in absolute values when the role carries the opposite sign to revenue (`negated`)."""
+    return sum_role(table, role, granularity, many=True)
 
 
 def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, many: bool = True) -> Optional[Dict]:
@@ -191,7 +191,7 @@ def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, ma
             and (granularity is None or r["granularity"] == granularity)]
     if not rows:
         return None
-    numbers = {(r["file"], r["sheet"], r["row"]) for r in rows}
+    numbers = {(r["file"], r["sheet"], r["row"]) for r in table if r["role"] == role}          # a total and its parts are never both summed
     rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers]
     best = max(((r["file"], r["sheet"]) for r in rows), key=lambda k: sum(len(r["actual"]) for r in rows if (r["file"], r["sheet"]) == k))
     rows = [r for r in rows if (r["file"], r["sheet"]) == best]

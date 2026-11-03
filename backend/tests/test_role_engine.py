@@ -599,3 +599,31 @@ def test_an_s_and_m_split_with_actuals_in_an_earlier_year_is_not_called_plan_onl
         r = run(pnl_with(*rows, sm_rows=[] if role == "sales_marketing" else None, costs_sign=1))
         assert "split only in plan years" not in str(metric(r, name)["reason"]), role
     assert re_.sm_reason(re_.build_table(pnl_with(row(6, "sales_marketing", [100], ["2024"], basis="yearly"), sm_rows=[])), "2025") is None
+
+
+# ---------------------------------------------------------------------------
+# Every cost role is the sum of all the rows mapped to it; a part of a total of the same role is not added to it
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("role", ["cost_of_revenue", "sales_marketing"])
+def test_every_cost_role_is_the_sum_of_all_its_rows_and_cites_every_cell(role):
+    rows = [row(6, role, [100, 200, 300], YEARS, basis="yearly"), row(7, role, [10, 20, 30], YEARS, basis="yearly")]
+    base = [r for r in pnl_with(costs_sign=1)[0]["file_map"]["sheets"][0]["rows"] if r["role"] not in (role,)]
+    f = file_of("pnl", [sheet("P&L", base + rows, granularity="yearly")])
+    table = re_.build_table([f])
+    summed = re_.cost_row(table, role, "yearly")
+    assert summed["actual"]["2025"] == (330, "D6+D7") and summed["rows"] == [6, 7]
+
+
+@pytest.mark.parametrize("role", ["cost_of_revenue", "rnd", "ga", "opex"])
+def test_rows_of_the_other_cost_roles_are_summed_too_with_every_cell_cited(role):
+    rows = [row(10, role, [100, 200, 300], YEARS, basis="yearly"), row(11, role, [1, 2, 3], YEARS, basis="yearly")]
+    table = re_.build_table([file_of("pnl", [sheet("P&L", rows, granularity="yearly")])])
+    assert re_.cost_row(table, role, "yearly")["actual"]["2024"] == (202, "C10+C11")
+
+
+def test_a_row_whose_parent_row_is_mapped_to_the_same_role_is_not_summed_with_it():
+    total = row(10, "opex", [1_000, 1_100, 1_200], YEARS, basis="yearly")
+    part = {**row(11, "opex", [600, 700, 800], YEARS, basis="yearly"), "parent_row": 10}
+    other = row(12, "opex", [5, 5, 5], YEARS, basis="yearly")
+    table = re_.build_table([file_of("pnl", [sheet("P&L", [total, part, other], granularity="yearly")])])
+    assert re_.cost_row(table, "opex", "yearly")["actual"]["2025"] == (1_205, "D10+D12")
