@@ -23,7 +23,7 @@ import AssumptionsStrip from "@/components/AssumptionsStrip";
 import FiveClaims from "@/components/FiveClaims";
 import NeedsAttention from "@/components/NeedsAttention";
 import IntegrityCoverage from "@/components/IntegrityCoverage";
-import { MissingMetrics, PlanToDate, ReconciliationTable, RoleCards, YearlyPayback } from "@/components/RoleReport";
+import { EstimateMetrics, MissingMetrics, PlanToDate, ReconciliationTable, RoleCards, YearlyPayback } from "@/components/RoleReport";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { ANOMALIES_NOT_COMPUTED, NONE, NOT_APPLICABLE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
@@ -274,6 +274,7 @@ export default function Dashboard() {
 
       {/* One reason per metric the files could not give: the Data gaps table below carries the same lines (read-check-review.md section 16) */}
       <MissingMetrics rm={r.role_metrics} />
+      <EstimateMetrics rm={r.role_metrics} ccy={ccy} />
 
       {/* The conclusion with its contradiction lines, the five selected claims, the questions, the report (docs/design/simplified-flow.md) */}
       {/* PR 4: the five-claims conclusion, the questions, the claim register, the reasons, the key gates and the claim labels stay in the code

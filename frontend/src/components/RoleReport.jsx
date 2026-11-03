@@ -43,6 +43,28 @@ export function MissingMetrics({ rm }) {
   );
 }
 
+/** R&D and G&A estimated from the plan split applied to actual OPEX: the label, the method with its cells under each value, and the data request
+ * for the actual split. Read by no rating. */
+export function EstimateMetrics({ rm, ccy }) {
+  const rows = (rm?.metrics || []).filter((m) => m.estimate && m.status === "computed");
+  if (!rows.length) return null;
+  return (
+    <section className="mb-6" data-testid="role-estimates">
+      <h2 className="font-heading text-lg font-semibold text-slate-900">Estimates</h2>
+      <ul className="mt-1 text-sm text-slate-700 space-y-2">
+        {rows.map((m) => (
+          <li key={m.metric} data-testid={`role-estimate-${m.metric}`}>
+            <b>{m.name}</b> ({m.period}): <span data-testid={`role-estimate-value-${m.metric}`}>{fmtCurrency(m.value, ccy)}</span>{" "}
+            <i data-testid={`role-estimate-label-${m.metric}`}>{m.label}</i>
+            <p className="text-xs text-slate-600" data-testid={`role-estimate-method-${m.metric}`}>{m.source?.rule} Cells: {(m.source?.cells || []).join(", ")}.</p>
+            {m.reason ? <p className="text-xs text-slate-600" data-testid={`role-estimate-request-${m.metric}`}>Data request: {m.reason}</p> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** The cards that sit with Ending ARR: customer count, monthly churn and growth by year, each with its cell. */
 export function RoleCards({ rm, ccy }) {
   if (!rm) return null;

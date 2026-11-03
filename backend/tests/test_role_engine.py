@@ -216,7 +216,7 @@ def test_customer_level_and_crm_metrics_still_say_they_need_their_files():
 
 def test_the_engine_output_passes_the_contract_and_carries_the_version():
     r = run(monthly_report() + yearly_pnl())
-    assert r["contract_version"] == metrics.CONTRACT_VERSION == 16
+    assert r["contract_version"] == metrics.CONTRACT_VERSION == 17
     metrics.MetricsPayload.model_validate(r)
     assert metrics.safe_problems(r) == []
 
@@ -627,3 +627,102 @@ def test_a_row_whose_parent_row_is_mapped_to_the_same_role_is_not_summed_with_it
     other = row(12, "opex", [5, 5, 5], YEARS, basis="yearly")
     table = re_.build_table([file_of("pnl", [sheet("P&L", [total, part, other], granularity="yearly")])])
     assert re_.cost_row(table, "opex", "yearly")["actual"]["2025"] == (1_205, "D10+D12")
+
+
+# ---------------------------------------------------------------------------
+# R&D and G&A estimated from the plan split applied to actual OPEX
+# ---------------------------------------------------------------------------
+PLAN_YEARS = ["2026", "2027"]
+LABEL = "Estimate – plan split applied to actual OPEX"
+
+
+def split_pnl(*, plan=None, actual_opex=(800, 1_100, 1_900), actual_sm=(300, 400, 900), extra=()):
+    """Actual years 2023-25 carry OPEX and S&M only; plan years 2026-27 carry S&M, R&D, G&A and OPEX. Non-S&M OPEX 2025 = 1,000."""
+    plan = plan or {"sales_marketing": (1_000, 1_200), "rnd": (600, 700), "ga": (400, 500), "opex": (2_000, 2_400)}
+    rows = [row(4, "revenue", [1_000, 1_500, 2_400], YEARS, basis="yearly"),
+            row(5, "opex", list(actual_opex), YEARS, basis="yearly"),
+            row(6, "sales_marketing", list(actual_sm), YEARS, basis="yearly")]
+    for n, (role, values) in enumerate(plan.items(), start=10):
+        rows.append(row(n, role, list(values), PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True))
+    return [file_of("pnl", [sheet("P&L", rows + list(extra), granularity="yearly")])]
+
+
+def test_r_and_d_and_g_and_a_are_estimated_from_the_plan_split_applied_to_actual_opex():
+    r = run(split_pnl())
+    rnd, ga = metric(r, "rnd_expense"), metric(r, "ga_expense")
+    # non-S&M OPEX 2025 = 1,900 − 900 = 1,000; r = (600 + 700) ÷ (600 + 700 + 400 + 500) = 59%
+    assert rnd["status"] == ga["status"] == "computed" and rnd["estimate"] and ga["estimate"]
+    assert rnd["label"] == ga["label"] == LABEL and rnd["period"] == "2025"
+    assert rnd["value"] == pytest.approx(1_000 * 1_300 / 2_200) and ga["value"] == pytest.approx(1_000 * 900 / 2_200)
+    assert rnd["value"] + ga["value"] == pytest.approx(1_000)
+    cells = rnd["source"]["cells"]
+    assert {"D5", "D6", "B10", "C10"} <= set(cells) and len(cells) >= 10, "OPEX and S&M of the year and every plan cell used"
+    rule = rnd["source"]["rule"]
+    assert "non-S&M OPEX of 2025 1,000" in rule and "r = 59%" in rule and "(a)" in rule and "(b)" in rule
+
+
+def test_the_data_request_for_the_actual_split_stays_with_the_estimate():
+    r = run(split_pnl())
+    lines = {x["metric"]: x for x in re_.missing_reasons(r["role_metrics"])}
+    assert lines["R&D expense"]["reason"] == "R&D split only in plan years; actual years carry OPEX total only"
+    assert lines["G&A expense"]["needs"] == ["ga"]
+
+
+def test_an_actual_value_of_the_split_is_no_estimate():
+    r = run(split_pnl(extra=[row(20, "rnd", [100, 150, 480], YEARS, basis="yearly")]))
+    m = metric(r, "rnd_expense")
+    assert m["value"] == 480 and m["estimate"] is False and m["label"] == "yearly"
+
+
+def failed(r, name="rnd_expense"):
+    m = metric(r, name)
+    assert m["status"] == "needs_row" and m["value"] is None and m["estimate"] is False
+    assert m["reason"].startswith("No estimate: ")
+    return m["reason"]
+
+
+def test_check_a_fails_when_the_plan_parts_do_not_add_up_to_plan_opex():
+    plan = {"sales_marketing": (1_000, 1_200), "rnd": (600, 700), "ga": (400, 500), "opex": (2_000, 2_500)}      # 2027: 2,400 against 2,500
+    reason = failed(run(split_pnl(plan=plan)))
+    assert "check (a)" in reason and "2027" in reason and "4%" in reason
+    ok = {**plan, "opex": (2_000, 2_420)}                    # 2027: 2,400 against 2,420 = 0.8 %
+    assert metric(run(split_pnl(plan=ok)), "rnd_expense")["status"] == "computed"
+
+
+def test_check_b_fails_when_the_split_moves_more_than_10_points_between_plan_years():
+    plan = {"sales_marketing": (1_000, 1_200), "rnd": (600, 500), "ga": (400, 700), "opex": (2_000, 2_400)}       # 60 % then 42 %
+    reason = failed(run(split_pnl(plan=plan)), "ga_expense")
+    assert "check (b)" in reason and "18 points" in reason
+    near = {**plan, "rnd": (600, 550), "ga": (400, 650)}       # 60 % then 46 %: 14 points
+    assert "check (b)" in failed(run(split_pnl(plan=near)))
+    inside = {**plan, "rnd": (600, 640), "ga": (400, 560)}      # 60 % then 53 %
+    assert metric(run(split_pnl(plan=inside)), "ga_expense")["status"] == "computed"
+
+
+@pytest.mark.parametrize("drop, text", [("opex", "plan year"), ("sales_marketing", "plan year")])
+def test_a_plan_year_missing_an_input_gives_no_estimate(drop, text):
+    plan = {"sales_marketing": (1_000, 1_200), "rnd": (600, 700), "ga": (400, 500), "opex": (2_000, 2_400)}
+    del plan[drop]
+    assert text in failed(run(split_pnl(plan=plan)))
+
+
+def without(*roles):
+    """The split P&L without the actual rows of the roles (the plan rows stay)."""
+    rows = [r for r in split_pnl()[0]["file_map"]["sheets"][0]["rows"] if r["role"] not in roles or r.get("plan_series")]
+    return [file_of("p", [sheet("P&L", rows, granularity="yearly")])]
+
+
+def test_without_a_plan_split_or_actual_s_and_m_or_opex_there_is_no_estimate():
+    assert "no plan split" in failed(run(split_pnl(plan={"sales_marketing": (1_000, 1_200)})))
+    assert "S&M for 2025" in failed(run(without("sales_marketing")))
+    assert metric(run(without("opex")), "rnd_expense")["reason"] == "needs an opex row"
+
+
+def test_estimates_are_read_by_no_rating_and_the_export_labels_them():
+    from app import ic_memo
+    r = run(split_pnl())
+    table = [x for x in ic_memo.role_tables(r, "EUR") if x[0] == "Metrics read from the files"][0]
+    rows = {x[0]: x for x in table[2]}
+    assert LABEL in rows[f"R&D expense ({LABEL})"][0] and "non-S&M OPEX" in rows[f"R&D expense ({LABEL})"][3], "label, method and cells in the export"
+    from app import integrity
+    assert "R&D expense" not in str(integrity.assess(r, 0, []))

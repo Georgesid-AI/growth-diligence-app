@@ -574,7 +574,8 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
     if metrics:
         out.append(("Metrics read from the files", ["Metric", "Period", "Value", "Cells"],
                     [[metric_label(m), m.get("period") or "—", _role_text(m["unit"], m["value"], ccy),
-                      _cells_text(m.get("source"))] for m in metrics]))
+                      _cells_text(m.get("source")) + (f" · {m['source']['rule']}" if m.get("estimate") and m.get("source") else "")]     # an estimate carries its method
+                     for m in metrics]))
     if rm.get("growth_by_year"):
         out.append(("Growth by year", ["Year", "Revenue", "Year before", "Growth", "Cells"],
                     [[y["period"], fmt.fmt_currency(y["value"], ccy), fmt.fmt_currency(y["prior"], ccy), fmt.fmt_pct(y["growth"]),
