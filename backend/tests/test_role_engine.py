@@ -721,9 +721,11 @@ def test_without_a_plan_split_or_actual_s_and_m_or_opex_there_is_no_estimate():
 def test_estimates_are_read_by_no_rating_and_the_export_labels_them():
     from app import ic_memo
     r = run(split_pnl())
-    table = [x for x in ic_memo.role_tables(r, "EUR") if x[0] == "Metrics read from the files"][0]
-    rows = {x[0]: x for x in table[2]}
+    tables = {x[0]: x for x in ic_memo.role_tables(r, "EUR")}
+    rows = {x[0]: x for x in tables["Estimates"][2]}
     assert LABEL in rows[f"R&D expense ({LABEL})"][0] and "non-S&M OPEX" in rows[f"R&D expense ({LABEL})"][3], "label, method and cells in the export"
+    assert tables["Estimates"][1] == tables["Metrics read from the files"][1] == ["Metric", "Period", "Value", "Cells"], "same columns"
+    assert not any("R&D expense" in x[0] or "G&A expense" in x[0] for x in tables["Metrics read from the files"][2]), "an estimate is not a figure read from the files"
     from app import integrity
     assert "R&D expense" not in str(integrity.assess(r, 0, []))
 
@@ -771,3 +773,22 @@ def test_the_sign_convention_of_the_plan_years_is_read_on_the_plan_cells():
     m = metric(r, "rnd_expense")
     assert m["status"] == "computed" and m["value"] == pytest.approx(1_000 * 1_300 / 2_200) and m["detail"] == "costs shown as negative"
     assert metric(r, "ga_expense")["value"] == pytest.approx(1_000 * 900 / 2_200)
+
+
+def test_a_part_is_skipped_only_when_its_parent_holds_a_value_in_the_same_series():
+    """A plan-only total does not remove its parts from the actual sum, and a total that holds actual values only does not remove them from the
+    plan sum: the parent-skip rule reads the series being summed. A total with no series at all behaves the same way."""
+    total = row(10, "opex", [1_500, 1_600], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True)                 # plan cells only
+    parts = [{**row(11, "opex", [600, 700, 800], YEARS, basis="yearly"), "parent_row": 10},
+             {**row(12, "opex", [400, 400, 400], YEARS, basis="yearly"), "parent_row": 10}]
+    table = re_.build_table([file_of("pnl", [sheet("P&L", [total, *parts], granularity="yearly")])])
+    assert re_.cost_row(table, "opex", "yearly")["actual"]["2025"] == (1_200, "D11+D12"), "the actual sum is the parts'"
+    assert re_.sum_role(table, "opex", "yearly", key="plan")["plan"]["2026"] == (1_500, "B10"), "the plan sum is the total's"
+    both = {**row(10, "opex", [1_000, 1_100, 1_200], YEARS, basis="yearly"), "plan_series": series([1_500, 1_600], PLAN_YEARS, first_row=10, col0=5)}
+    plan_parts = [{**row(11, "opex", [600, 700], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True), "parent_row": 10},
+                  {**row(12, "opex", [400, 400], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True), "parent_row": 10}]
+    table = re_.build_table([file_of("pnl", [sheet("P&L", [both, *plan_parts], granularity="yearly")])])
+    assert re_.cost_row(table, "opex", "yearly")["actual"]["2025"] == (1_200, "D10") and re_.sum_role(table, "opex", "yearly", key="plan")["plan"]["2026"] == (1_500, "E10")
+    actual_total = row(10, "opex", [1_000, 1_100, 1_200], YEARS, basis="yearly")                                      # actual cells only
+    table = re_.build_table([file_of("pnl", [sheet("P&L", [actual_total, *plan_parts], granularity="yearly")])])
+    assert re_.sum_role(table, "opex", "yearly", key="plan")["plan"]["2026"] == (1_000, "B11+B12"), "the plan sum is the parts'"

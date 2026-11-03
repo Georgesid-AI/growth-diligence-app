@@ -579,12 +579,15 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
     if not rm:
         return []
     out = []
-    metrics = [m for m in rm["metrics"] if m["status"] == "computed" and m["metric"] not in ("reconciliation", "yearly_revenue")]
-    if metrics:
-        out.append(("Metrics read from the files", ["Metric", "Period", "Value", "Cells"],
-                    [[metric_label(m), m.get("period") or "—", _role_text(m["unit"], m["value"], ccy),
-                      _cells_text(m.get("source")) + (f" · {m['source']['rule']}" if m.get("estimate") and m.get("source") else "")]     # an estimate carries its method
-                     for m in metrics]))
+    computed = [m for m in rm["metrics"] if m["status"] == "computed" and m["metric"] not in ("reconciliation", "yearly_revenue")]
+    # An estimate (R&D, G&A from the plan split) is not a figure read from the files: its own table, same columns, its label and its method
+    for title, metrics in (("Metrics read from the files", [m for m in computed if not m.get("estimate")]),
+                           ("Estimates", [m for m in computed if m.get("estimate")])):
+        if metrics:
+            out.append((title, ["Metric", "Period", "Value", "Cells"],
+                        [[metric_label(m), m.get("period") or "—", _role_text(m["unit"], m["value"], ccy),
+                          _cells_text(m.get("source")) + (f" · {m['source']['rule']}" if m.get("estimate") and m.get("source") else "")]
+                         for m in metrics]))
     if rm.get("growth_by_year"):
         out.append(("Growth by year", ["Year", "Revenue", "Year before", "Growth", "Cells"],
                     [[y["period"], fmt.fmt_currency(y["value"], ccy), fmt.fmt_currency(y["prior"], ccy), fmt.fmt_pct(y["growth"]),

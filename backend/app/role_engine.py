@@ -181,21 +181,24 @@ def costs_negative(table: List[Dict], role: str, key: str = "actual") -> bool:
 
 def cost_row(table: List[Dict], role: str, granularity: Optional[str] = None) -> Optional[Dict]:
     """The row a cost role is read from: the sum of all its total rows (cost of revenue, S&M, R&D, G&A and OPEX alike; a row whose parent row is
-    mapped to the same role is not added to it); in absolute values when the role carries the opposite sign to revenue (`negated`)."""
+    mapped to the same role and holds actual values is not added to it); in absolute values when the role carries the opposite sign to revenue
+    (`negated`)."""
     return sum_role(table, role, granularity, many=True)
 
 
 def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, many: bool = True, key: str = "actual") -> Optional[Dict]:
     """One synthetic row for a role that the sheet spreads over several rows (sales and marketing as two lines): the total rows (no segment, no
-    parent row of the same role) of one sheet and granularity, added period by period; each summed cell cites every row's cell ("B6+B7").
+    parent row of the same role with a value in the series) of one sheet and granularity, added period by period; each summed cell cites every row's cell ("B6+B7").
     One row is returned as it is. A cost role is returned in absolute values when it carries the opposite sign to revenue. `key` is the series read:
     "actual", or "plan" for the plan years."""
     rows = [r for r in table if r["role"] == role and r[key] and r["segment"] is None
             and (granularity is None or r["granularity"] == granularity)]
     if not rows:
         return None
-    numbers = {(r["file"], r["sheet"], r["row"]) for r in table if r["role"] == role}          # a total and its parts are never both summed
-    rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers]
+    # A total and its parts are never both summed: a part is skipped only when its parent row holds a value in the series being summed. A
+    # plan-only total leaves its parts in the actual sum, a total with no series at all the same.
+    numbers = {(r["file"], r["sheet"], r["row"]) for r in table if r["role"] == role and r[key]}
+    rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers] or rows
     best = max(((r["file"], r["sheet"]) for r in rows), key=lambda k: sum(len(r[key]) for r in rows if (r["file"], r["sheet"]) == k))
     rows = [r for r in rows if (r["file"], r["sheet"]) == best]
     if not many:
