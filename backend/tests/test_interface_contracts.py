@@ -595,7 +595,7 @@ def api(monkeypatch):
 STALE = "Stale – re-run audit"
 
 
-@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4, 8, 9])      # 8: before the simplified flow (George, 2026-10-25); 9: before the annual payback proxies (forecast-and-payback.md)
+@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4, 8, 9, 16])  # 8: before the simplified flow (George, 2026-10-25); 9: before the annual payback proxies (forecast-and-payback.md); 16: before the estimate flag (contract 17)
 def test_results_of_an_older_contract_are_stale_not_recomputed_and_not_shown(api, stored_version):
     """Version 0 (no version) holds whole-number percents, 1 to 4 lack the fields added since: whichever it is, a read never calculates
     and never answers with the figures, and `/results` says "Stale – re-run audit" until Run audit calculates again."""

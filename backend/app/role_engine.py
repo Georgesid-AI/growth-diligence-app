@@ -596,21 +596,25 @@ def plan_split(table: List[Dict], view: List[Dict]):
     return {"r": rd_sum / (rd_sum + ga_sum), "rd": rd_sum, "ga": ga_sum, "years": years, "cells": cells, "home": home}, None
 
 
+def _actual_years(rec: Dict, as_of, fye) -> List[str]:
+    """The fiscal years ("2025") of a row's actual cells that end at or before the as-of month, in order."""
+    return sorted(p for p in rec["actual"] if re.fullmatch(r"\d{4}", p) and (_end_month(p, fye) or as_of + 1) <= as_of)
+
+
 def split_expense(metric: str, role: str, table, as_of, fye) -> Dict:
     """R&D or G&A (`role`) of the latest actual year. A value the file states for that year is the value (no estimate flag). Otherwise, where the
     actual years carry the OPEX total only, an estimate: non_sm_opex = OPEX − S&M of the year; r from `plan_split`; R&D = non_sm_opex × r,
     G&A = non_sm_opex × (1 − r). A missing input or a failed check gives no value and one reason line. non_sm_opex and r are not metrics:
     they are written in the method text (`source.rule`) with their cells."""
     name = SPLIT_FIELDS[role]
-    opex = cost_row(table, "opex", "yearly")
-    if opex is None:
-        return _missing(metric, "needs an opex row", ["opex"])
-    years = sorted(p for p in opex["actual"] if re.fullmatch(r"\d{4}", p) and (_end_month(p, fye) or as_of + 1) <= as_of)
+    opex, own = cost_row(table, "opex", "yearly"), cost_row(table, role, "yearly")
+    years = sorted({p for rec in (opex, own) if rec for p in _actual_years(rec, as_of, fye)})      # the latest actual year of the role's row or the opex row
     if not years:
+        if opex is None:
+            return _missing(metric, "needs an opex row", ["opex"])
         return _missing(metric, "the opex row holds no yearly value at or before the as-of month", ["opex"])
     year = years[-1]
-    own = cost_row(table, role, "yearly")
-    if own is not None and year in own["actual"]:
+    if own is not None and year in own["actual"]:       # the file states the year: the value, whether or not an opex row is mapped
         value, cell = own["actual"][year]
         return _entry(metric, period=year, basis="yearly", unit="money", value=value, label=YEARLY_LABEL,
                       detail=NEGATIVE_COSTS if own.get("negated") else None,
@@ -619,6 +623,8 @@ def split_expense(metric: str, role: str, table, as_of, fye) -> Dict:
     def no(reason: str, needs=None) -> Dict:
         return _entry(metric, status="needs_row", reason=NO_ESTIMATE + reason, needs=_flat(needs or (role,)))
 
+    if opex is None or year not in opex["actual"]:
+        return no(f"OPEX for {year} is not in the actual years", ["opex"])
     sm = cost_row(table, "sales_marketing", "yearly")
     if sm is None or year not in sm["actual"]:
         return no(f"S&M for {year} is not in the actual years", ["sales_marketing"])

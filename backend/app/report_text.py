@@ -15,6 +15,8 @@ import copy
 import re
 from typing import Dict, Iterable, List, Optional
 
+from . import role_engine
+
 # A role by its plain name, as a person writes it in a sentence ("needs a sales and marketing row").
 PLAIN = {
     "revenue": "revenue", "bookings": "bookings", "arr": "ARR", "mrr": "MRR", "churn_rate": "churn rate", "customers": "customers",
@@ -213,8 +215,8 @@ def apply_reasons(results: Optional[dict], table: List[dict]) -> Optional[dict]:
         return results
     out = copy.deepcopy(results)
     for m in ((out.get("role_metrics") or {}).get("metrics")) or ():
-        if m["status"] == "computed" or m["metric"] == "reconciliation":
-            continue
+        if m["status"] == "computed" or m["metric"] == "reconciliation" or str(m.get("reason") or "").startswith(role_engine.NO_ESTIMATE):
+            continue            # an estimate's own closed reason (a failed check, a missing plan input) stays as the engine wrote it
         reason = missing_reason(table, m.get("needs"), m.get("reason"))
         if reason:
             m["reason"] = reason

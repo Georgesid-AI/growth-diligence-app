@@ -726,3 +726,48 @@ def test_estimates_are_read_by_no_rating_and_the_export_labels_them():
     assert LABEL in rows[f"R&D expense ({LABEL})"][0] and "non-S&M OPEX" in rows[f"R&D expense ({LABEL})"][3], "label, method and cells in the export"
     from app import integrity
     assert "R&D expense" not in str(integrity.assess(r, 0, []))
+
+
+# ---------------------------------------------------------------------------
+# Review of PR 226, commits 1 and 2
+# ---------------------------------------------------------------------------
+def test_a_failed_check_reason_reaches_the_screen_as_the_engine_wrote_it():
+    """The server rewrites a missing metric's reason from the map (report_text.apply_reasons); an estimate's own closed reason (a failed check, a
+    missing plan input) is kept, not replaced by the plan-only line of the rnd row."""
+    from app import report_text
+    plan = {"sales_marketing": (1_000, 1_200), "rnd": (600, 700), "ga": (400, 500), "opex": (2_000, 2_500)}
+    files = split_pnl(plan=plan)
+    out = report_text.apply_reasons(run(files), re_.build_table(files))
+    assert metric(out, "rnd_expense")["reason"].startswith("No estimate: check (a) failed")
+    assert metric(out, "ga_expense")["reason"].startswith("No estimate: check (a) failed")
+    missing = {m["metric"]: m["reason"] for m in re_.missing_reasons(out["role_metrics"])}
+    assert missing["R&D expense"].startswith("No estimate: check (a) failed")
+
+
+def test_a_stated_r_and_d_value_needs_no_opex_row():
+    """A file that states R&D in the actual years gives the value whether or not an opex row is mapped: the estimate is the fallback, never a gate."""
+    rows = [row(4, "revenue", [1_000, 1_500, 2_400], YEARS, basis="yearly"), row(7, "rnd", [100, 150, 480], YEARS, basis="yearly")]
+    m = metric(run([file_of("pnl", [sheet("P&L", rows, granularity="yearly")])]), "rnd_expense")
+    assert m["status"] == "computed" and m["value"] == 480 and m["estimate"] is False and m["period"] == "2025"
+    assert m["source"]["cells"] == ["D7"]
+    assert metric(run([file_of("pnl", [sheet("P&L", rows, granularity="yearly")])]), "ga_expense")["reason"] == "needs an opex row"
+
+
+def test_the_plan_split_never_counts_a_plan_total_and_its_parts_twice():
+    """Plan R&D as a total row (no parent) with two part rows that name it as parent_row: r is the total's, and only the total's cells are cited."""
+    parts = [{**row(20, "rnd", [400, 450], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True), "parent_row": 11},
+             {**row(21, "rnd", [200, 250], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True), "parent_row": 11}]
+    r = run(split_pnl(extra=parts))
+    m = metric(r, "rnd_expense")
+    assert m["status"] == "computed" and m["value"] == pytest.approx(1_000 * 1_300 / 2_200)
+    assert "B11" in m["source"]["cells"] and not {"B20", "B21", "C20", "C21"} & set(m["source"]["cells"])
+
+
+def test_the_sign_convention_of_the_plan_years_is_read_on_the_plan_cells():
+    """A P&L that prints costs as negatives, in the actual and the plan years alike, gives the same positive estimate as one that prints them
+    as positives; the sign of the plan cells is read on the plan cells, not on the actual ones."""
+    neg = {"sales_marketing": (-1_000, -1_200), "rnd": (-600, -700), "ga": (-400, -500), "opex": (-2_000, -2_400)}
+    r = run(split_pnl(plan=neg, actual_opex=(-800, -1_100, -1_900), actual_sm=(-300, -400, -900)))
+    m = metric(r, "rnd_expense")
+    assert m["status"] == "computed" and m["value"] == pytest.approx(1_000 * 1_300 / 2_200) and m["detail"] == "costs shown as negative"
+    assert metric(r, "ga_expense")["value"] == pytest.approx(1_000 * 900 / 2_200)
