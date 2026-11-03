@@ -18,10 +18,11 @@ from typing import Dict, List, Optional
 from . import checks
 from .decks import claims
 from .llm.schemas import SCHEMA_CURRENCIES
-from .structures import checker
+from .structures import checker, verify
 
 R_PAGE_RANGE = "Reading cites page {page}; the deck ends at page {last}."
 R_PAGE = "Reading says {value}; page {n} holds no such figure."
+R_SCALE_DIFFERS = "scale differs from page"      # closed words: a reading a factor of 1,000 or more from the page's figure (George, 2026-11-02)
 R_PAGE_SCALE = "Page {n} states {page}; reading says {value}. Unit or scale differs; not compared."
 
 # A suffix the parser leaves unread or reads case-sensitively: "3.5Mn", "$22.9 Bn", "12 MM". The prompt's rule 10: K, M, MM, Mn, B, Bn attached to a
@@ -90,6 +91,12 @@ def printed_precision(deck: Dict, page: int, value) -> float:
             decimals = len(m.group(1) or "") if m else 0
             return claims._SCALE[f["mult"].lower()] / (10 ** decimals)
     return 0.0
+
+
+def page_has_scale_mark(deck: Dict, page: int) -> bool:
+    """True when a line of the page is a scale mark on its own or ends in one ("in millions", "€k", "Revenue (£'000)"): the page may print 2.5 for
+    2,500,000, so a gap of a thousand or a million between it and the reading is not a mismatch."""
+    return any(verify.scale_source(line["text"]) for line in page_lines(deck, page))
 
 
 def page_unscaled(deck: Dict, page: int) -> List[float]:
@@ -164,11 +171,16 @@ def check_figure(figure: Dict, candidate: Dict, deck: Dict) -> Dict:
     other = next((n for n in unscaled if checks.compare(unit, float(value), n)), None)
     if other is None:
         other = next((n for n in numbers if checks._scale_check(float(value), n)), None)
+    # A figure the text layer may not hold (a chart, a picture: extraction incomplete) is never rejected for a scale gap: a number of the page a
+    # factor of 1,000 away is then a coincidence, not a sign (review of PR 225). The incomplete check comes before the rejection.
+    incomplete = checker.EXTRACTION_INCOMPLETE in (candidate.get("flags") or [])
+    if not incomplete and unit != "rate" and value and any(checks.compare("money", float(value) * 10.0 ** power, n) for n in numbers
+                                                           for power in (-6, -3, 3, 6)) and not page_has_scale_mark(deck, page):
+        return {**base, "outcome": checks.REJECTED, "reason": R_SCALE_DIFFERS}      # a factor of 1,000 or more from a figure the page prints
     if other is not None:
         shown = other * 100.0 if unit == "rate" else other
         return {**base, "outcome": checks.CANNOT, "reason": R_PAGE_SCALE.format(n=page, page=checks.shown(shown), value=checks.shown(
             float(value) * 100.0 if unit == "rate" else float(value)))}
-    incomplete = checker.EXTRACTION_INCOMPLETE in (candidate.get("flags") or [])
     if not numbers or incomplete:
         return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_TEXT.format(n=page)}
     return {**base, "outcome": checks.REJECTED, "reason": R_PAGE.format(value=checks.shown(float(value) * (100.0 if unit == "rate" else 1.0)), n=page)}

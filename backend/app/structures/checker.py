@@ -83,6 +83,14 @@ from typing import Dict, List, Optional
 from ..decks import claims, parser
 from . import association, corrections, page_check, verify
 
+# The version of Python's normaliser: the rules that turn a printed figure into a value (structures/verify.py, items.py, page_check.py, and the
+# number readers they share: structures/redact.py and decks/claims.py). A stored page reply carries the version it was checked under; one stored
+# under an older version is flagged "Re-read needed" on opening the audit and checked again on Run audit, from the stored reply, with no model
+# call (George, 2026-11-02 and 2026-11-03). Raise it whenever a change to any of those five files changes what a printed figure reads as.
+# 1: scale only from a scale mark, none on a figure of seven digits or more. 2: thousands separators (thin space, apostrophe, two or more dot
+# groups) in redact.py and claims.py.
+NORMALISER_VERSION = 2
+
 VALUE_NOT_ON_PAGE = "value not on page"
 CURRENCY_ASSUMED = "currency assumed"
 UNIT_ASSUMED = "unit assumed"
@@ -150,6 +158,14 @@ SCENARIO_WORDS = {
 _SCENARIO = {name: re.compile(r"(?i)\b(?:" + words + r")\b") for name, words in SCENARIO_WORDS.items()}
 _CURRENCY_UNITS = frozenset(code for code in page_check.CURRENCY_SYMBOLS) | {page_check.OTHER}
 _TIME_UNITS = ("days", "months", "years")
+
+
+SCALE_FROM = "scale from"        # the flag is "scale from r1c1": a cell id, never a line of the page
+SCALE_FROM_FLAG = re.compile(rf"{SCALE_FROM} r[1-9]\d*c[1-9]\d*")
+
+
+def scale_from_flag(cell: str) -> str:
+    return f"{SCALE_FROM} {cell}"
 
 
 def year_label_flag(year) -> str:
@@ -316,6 +332,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
     for claim, item in zip(kept, checked["items"]):
         cell = by_id[item["value_cell"]]            # the cell the value was found in: the cited one, or another (cell tolerance)
         flags = [CELL_CORRECTED] if item.get("cell_corrected") else []
+        if item.get("scale_from"):
+            flags.append(scale_from_flag(item["scale_from"]))        # informational: the analyst sees where the scale came from
         if not item["checks"]["value"] and not value_on_page(listed, claim, furniture):
             if claim.get("value") is not None or not claim.get("period"):
                 flags.append(VALUE_NOT_ON_PAGE)

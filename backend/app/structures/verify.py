@@ -244,18 +244,58 @@ def _corner(structure: Dict) -> List[Dict]:
     return [c for c in cells if c["row"] in rows and c["col"] == first]
 
 
-def scale_factor(structure: Dict, cell: Dict) -> float:
-    """The scale a figure with no suffix or % of its own takes: the first stated in a neighbouring cell of its
-    row (in a KPI panel one directly next to it, _beside), one of its header cells or the table's corner cell
-    ("£m" -> 1e6, "'000" -> 1e3), else 1."""
+SCALE_SOURCE_MAX = 25      # a scale mark is short: a longer cell is a sentence (George, 2026-11-02)
+_SCALE_WORDS_ALONE = r"thousands?|millions?|billions?|tsd|mio|mrd|млн|млрд|хил|k|mn|mm|m|bn|['’]?000s?"
+_CURRENCY_ALONE = r"(?:US\$|[£$€¥₹]|USD|EUR|GBP|CHF|JPY|BGN|PLN|SEK|NOK|DKK|CAD|AUD)"
+# A scale expression on its own: "in €k", "€M", "'000", "in millions", "(in thousands)", "(£000)", "€ Mio", "USD thousands". Any other word before
+# or after the scale word makes the cell prose.
+_SCALE_ALONE = re.compile(
+    r"(?i)^\(?\s*(?:in\s+)?(?:" + _CURRENCY_ALONE + r"\s*)?(?:in\s+)?(?P<mark>" + _SCALE_WORDS_ALONE + r")\s*(?:" + _CURRENCY_ALONE + r"\s*)?\)?$")
+
+
+# A short label that ends in a mark written as a mark: a currency symbol or code with its scale ("Revenue £m", "Revenue €k") or a scale in
+# brackets ("Revenue (£'000)", "2026 (€'000)", "Revenue (thousands)"). The conventional table header (issue #50); a bare scale word inside a
+# sentence is never one.
+_SCALE_MARK_SHORT = r"k|mn|mm|m|bn|['’]?000s?"
+_SYMBOL_ALONE = r"(?:US\$|[£$€¥₹])"          # a code ("EUR k") is no mark in a labelled cell: as before
+_SCALE_LABELLED = re.compile(
+    r"(?i)^[^()]+?\s*(?:\(\s*(?:" + _SYMBOL_ALONE + r"\s*)?(?P<bracket>" + _SCALE_WORDS_ALONE + r")\s*\)"
+    r"|(?<![^\W\d_])" + _SYMBOL_ALONE + r"\s?(?P<mark>" + _SCALE_MARK_SHORT + r"))$")
+
+
+def scale_source(text: str) -> Optional[float]:
+    """The scale a cell states when the cell is a scale mark: under SCALE_SOURCE_MAX characters and either a scale expression on its own
+    ("in €k", "'000", "in millions", "(in thousands)") or a short label that ends in a currency-attached or bracketed mark ("Revenue £m",
+    "Revenue (£'000)"). A sentence that holds a scale word ("64 towns with population over 2 million") is no scale source: None."""
+    t = (text or "").strip()
+    if not t or len(t) >= SCALE_SOURCE_MAX:
+        return None
+    m = _SCALE_ALONE.match(t) or _SCALE_LABELLED.match(t)
+    if not m:
+        return None
+    token = (m.groupdict().get("mark") or m.groupdict().get("bracket")).lower().strip("'’")
+    if token.startswith("000"):
+        return 1e3
+    return _SCALE_WORD.get(token if token in _SCALE_WORD else token.rstrip("s"))
+
+
+def scale_origin(structure: Dict, cell: Dict) -> Tuple[float, Optional[Dict]]:
+    """(scale, the cell it came from) a figure with no suffix or % of its own takes: the first scale mark (scale_source) in a neighbouring
+    cell of its row (in a KPI panel one directly next to it, _beside), one of its header cells or the table's corner cell
+    ("£m" -> 1e6, "'000" -> 1e3), else (1, None)."""
     cells, comma = structure["cells"], decimal_comma(structure["cells"])
     neighbours = _beside(structure, cell, [c for c in cells if c["row"] == cell["row"]
                                            and abs(c["col"] - cell["col"]) == 1 and not _is_value(c, comma)])
     for c in neighbours + header_cells(structure, cell) + _corner(structure):
-        scale = scale_of(c["text"])
+        scale = scale_source(c["text"])
         if scale:
-            return scale
-    return 1.0
+            return scale, c
+    return 1.0, None
+
+
+def scale_factor(structure: Dict, cell: Dict) -> float:
+    """The scale of scale_origin, 1 when no cell of the structure is a scale mark."""
+    return scale_origin(structure, cell)[0]
 
 
 # ---------------------------------------------------------------------------

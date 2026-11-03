@@ -38,6 +38,14 @@ def _first(choices: List, default) -> List:
     return sorted(choices, key=lambda c: c != default)
 
 
+FULL_DIGITS = 7
+
+
+def printed_in_full(figure: Dict) -> bool:
+    """True when a figure's written number has FULL_DIGITS or more integer digits, with or without separators: it is already in units."""
+    return any(abs(number) >= 10 ** (FULL_DIGITS - 1) for number, _, _ in figure["readings"])
+
+
 def list_items(structure: Dict, titles: bool = False) -> Dict:
     """{"items": [...], "dates": [...], "lines": [...]} for a structure's (redacted) cells; dates and lines are
     empty unless it is a roadmap. A title cell holds no item unless titles is True (page_check reads the figures of title lines)."""
@@ -53,11 +61,13 @@ def list_items(structure: Dict, titles: bool = False) -> Dict:
         if not figures:
             continue
         headers = [redact.cell_id(h) for h in verify.header_cells(structure, cell)]
-        factor, first = None, len(out)
+        factor, origin, first = None, None, len(out)
         for n, figure in enumerate(figures, 1):
             if not figure["own_scale"] and factor is None:
-                factor = verify.scale_factor(structure, cell)
+                factor, origin = verify.scale_origin(structure, cell)
             scale = 1.0 if figure["own_scale"] else factor
+            if scale != 1.0 and printed_in_full(figure):
+                scale = 1.0                           # a number of seven or more digits is already in units: no outside scale (George, 2026-11-02)
             readings = figure["readings"]
             dot = ("decimal" if figure["suffix"] else "thousands") if readings[0][1] else None
             bracket = ("negative" if _LOSS_WORD.search(text[:figure["start"]]) else "positive") \
@@ -69,7 +79,8 @@ def list_items(structure: Dict, titles: bool = False) -> Dict:
                         "raw": text[figure["start"]:figure["end"]],
                         "values": [{"value": _full_units(number, scale), "dot_reading": d, "bracket_reading": b}
                                    for number, d, b in ordered],
-                        "headers": headers})
+                        "headers": headers,
+                        **({"scale_from": redact.cell_id(origin)} if scale != 1.0 and origin is not None else {})})
             if "range_low" in figure:
                 low, high = out[first + figure["range_low"]], out[-1]
                 span = {"items": [low["id"], high["id"]], "low": low["values"][0]["value"],

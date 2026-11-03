@@ -200,8 +200,12 @@ INFORMATIONAL_FLAGS = ("cell corrected", "currency assumed", "unit assumed", "pe
 INFORMATIONAL_YEAR_LABEL = re.compile(r"year label below: \d{4}")
 
 
+# "scale from r1c1" (George, 2026-11-02): a scale mark in another cell was applied to the figure; a note, the claim stays in the main list.
+INFORMATIONAL_SCALE_FROM = re.compile(r"scale from r[1-9]\d*c[1-9]\d*")
+
+
 def is_informational(flag) -> bool:
-    return flag in INFORMATIONAL_FLAGS or bool(INFORMATIONAL_YEAR_LABEL.fullmatch(flag or ""))
+    return flag in INFORMATIONAL_FLAGS or bool(INFORMATIONAL_YEAR_LABEL.fullmatch(flag or "")) or bool(INFORMATIONAL_SCALE_FROM.fullmatch(flag or ""))
 
 
 def review_flags(flags) -> list:
@@ -369,10 +373,12 @@ _TABLE_DATES = _table_dates()
 # A space (or a no-break space) between groups of three digits is a thousands separator, in any number of groups: "30 000", "770 000 000"
 # (George, 2026-10-24; the checker's reader has it since 2026-10-23, structures/redact.SPACE_GROUPS). A group is exactly three digits, so
 # "2024 500" is the year 2024 and the figure 500, never 2,024,500.
-_SPACE_GROUPS = "[ \u00a0\u202f]"
+_SPACE_GROUPS = "[ \u00a0\u2009\u202f]"
+_APOSTROPHE_GROUPS = "['\u2019]"       # "650'000'000" (George, 2026-11-02); two or more dot groups ("650.000.000") are thousands too
 _NUMBER = re.compile(
     r"(?<![\w.,])(?P<cur>US\$|\$|€|£|(?:USD|EUR|GBP)(?=\s?\d))?\s?~?"
-    r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:" + _SPACE_GROUPS + r"\d{3}(?!\d))+(?:\.\d+)?|\d+(?:\.\d+)?)\+?"
+    r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:" + _SPACE_GROUPS + r"\d{3}(?!\d))+(?:\.\d+)?"
+    r"|\d{1,3}(?:" + _APOSTROPHE_GROUPS + r"\d{3}(?!\d))+(?:\.\d+)?|\d{1,3}(?:\.\d{3}(?!\d)){2,}|\d+(?:\.\d+)?)\+?"
     r"(?:(?P<mult>MM|mn|bn|[KkMmBbT])(?![A-Za-z])|\s?(?P<word>(?i:thousand|million|billion|trillion))\b)?\+?"
     r"(?:\s?(?P<pct>%)|(?P<x>[xX])(?![A-Za-z]))?(?P<ord>st|nd|rd|th)?")
 _SPACED_MULT = re.compile(r"\s(?P<mult>MM|bn|[KMBT])(?![A-Za-z])")       # "$52 B": only after a currency
@@ -601,7 +607,7 @@ def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
                 unit = time.group("unit").lower().rstrip("s") + "s"
         if unit is None and not cur:
             unit, count = _counted(line, end)
-        out.append({"start": m.start(), "pos": num_start, "end": end, "num": float(re.sub(_SPACE_GROUPS, "", g["num"]).replace(",", "")),
+        out.append({"start": m.start(), "pos": num_start, "end": end, "num": _plain_number(g["num"]),
                     "mult": mult, "currency": _CURRENCY.get(cur.strip()) if cur else None, "unit": unit,
                     "count": count})
     for n in out:
@@ -643,6 +649,14 @@ def _counted(line: str, end: int) -> Tuple[Optional[str], bool]:
         while pos < len(line) and line[pos].isspace():
             pos += 1
     return m.group("noun").lower(), True
+
+
+def _plain_number(text: str) -> float:
+    """A matched number as a float: the thousands separators (space, thin space, apostrophe, comma, two or more dot groups) removed."""
+    text = re.sub(_SPACE_GROUPS + "|" + _APOSTROPHE_GROUPS, "", text)
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3}){2,}", text):
+        text = text.replace(".", "")
+    return float(text.replace(",", ""))
 
 
 def _scaled(num: float, mult: Optional[str]):

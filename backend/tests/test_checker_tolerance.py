@@ -192,7 +192,8 @@ def test_every_flag_declares_whether_it_is_informational_or_for_review():
     assert SIGN in checker.REVIEW_FLAGS and checker.VALUE_NOT_ON_PAGE in checker.REVIEW_FLAGS
     shared = json.loads((BACKEND.parent / "frontend" / "src" / "lib" / "informational_flags.json").read_text())
     assert shared["flags"] == list(checker.INFORMATIONAL_FLAGS), "the screen reads the same list"
-    assert shared["patterns"] == [f"^{claims.INFORMATIONAL_YEAR_LABEL.pattern}$"], "and the same pattern for the year label"
+    assert shared["patterns"] == [f"^{claims.INFORMATIONAL_YEAR_LABEL.pattern}$", f"^{claims.INFORMATIONAL_SCALE_FROM.pattern}$"], \
+        "and the same patterns for the year label and the scale note"
 
 
 def test_a_cell_corrected_claim_is_not_flagged_for_review_but_another_flag_still_is():

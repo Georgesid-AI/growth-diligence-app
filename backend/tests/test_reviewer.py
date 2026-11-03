@@ -317,8 +317,31 @@ def test_the_page_does_not_choose_the_scale_a_reading_of_2_5_is_not_confirmed_by
     page = [{"page": 2, "text": "ARR EUR 2.5m at year end", "kind": "text"}]
     assert check_deck(page, candidate(2_500_000))["outcome"] == "confirmed"
     got = check_deck(page, candidate(2.5))
-    assert got["outcome"] == "cannot_check" and got["reason"] == "Page 2 states 2.5; reading says 2.5. Unit or scale differs; not compared."
+    assert got["outcome"] == "rejected" and got["reason"] == "scale differs from page", "a factor of 1,000 or more goes to Doesn't match source (George, 2026-11-02)"
     assert check_deck(page, candidate(7))["outcome"] == "rejected"
+
+
+def test_a_reading_a_million_times_the_printed_figure_is_rejected_unless_the_page_states_a_scale_mark():
+    """The live case: "650 000 000 devices" printed, reading 650,000,000 x 10^6. A factor of 1,000 or more is a mismatch, not a note line; a
+    page that carries a scale mark of its own ("in millions") may print 2.5 for 2,500,000, so that stays "cannot check"."""
+    page = [{"page": 2, "text": "650 000 000 devices", "kind": "text"}]
+    got = check_deck(page, candidate(650_000_000 * 10 ** 6, unit="count", currency=None))
+    assert got["outcome"] == "rejected" and got["reason"] == "scale differs from page"
+    assert check_deck(page, candidate(650_000_000, unit="count", currency=None))["outcome"] == "confirmed"
+    marked = [{"page": 2, "text": "Revenue", "kind": "text"}, {"page": 2, "text": "in millions", "kind": "text"}, {"page": 2, "text": "2.5", "kind": "text"}]
+    kept = check_deck(marked, candidate(2_500_000))
+    assert kept["outcome"] == "cannot_check" and kept["reason"].endswith("Unit or scale differs; not compared.")
+
+
+def test_a_figure_held_only_in_the_image_stays_cannot_check_it_is_never_rejected_for_a_scale_gap():
+    """Review of PR 225: 12,000 in a chart the text layer does not carry, on a page whose text says "12 markets", is a figure held only in the
+    image. The extraction-incomplete check comes first: "cannot check", never "scale differs from page" (a factor of 1,000 against an
+    unrelated number of the page). The same reading from a complete text layer is still rejected."""
+    page = [{"page": 2, "text": "Expansion to 12 markets", "kind": "text"}]
+    held_in_image = check_deck(page, candidate(12_000, unit="count", currency=None, flags=["extraction incomplete"]))
+    assert held_in_image["outcome"] == "cannot_check" and held_in_image["reason"] != "scale differs from page"
+    complete = check_deck(page, candidate(12_000, unit="count", currency=None))
+    assert complete["outcome"] == "rejected" and complete["reason"] == "scale differs from page"
 
 
 def test_a_deck_rate_is_held_as_a_fraction_and_compared_within_one_point_of_the_page():

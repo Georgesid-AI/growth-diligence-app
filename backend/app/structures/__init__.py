@@ -16,7 +16,7 @@ value from a spreadsheet.
 import re
 import statistics
 from collections import Counter
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from . import redact
 
@@ -218,6 +218,18 @@ async def store_candidate(db, row: Dict) -> None:
     page reply, order and cell finds the row there and leaves it alone (live bug, 2026-10-28: two stored copies, identical but for the id)."""
     key = {k: row.get(k) for k in CANDIDATE_KEY}
     await db[CANDIDATES_COLLECTION].update_one(key, {"$setOnInsert": {k: v for k, v in row.items() if k not in key}}, upsert=True)
+
+
+async def renormalise_audit(db, audit_id: str) -> Dict:
+    """Run audit: page replies stored under an older normaliser, checked again from the stored reply with no model call (pages.renormalise_audit)."""
+    from . import pages as page_pipeline
+    return await page_pipeline.renormalise_audit(db, audit_id)
+
+
+async def decks_to_reread(db, audit_id: str) -> Set[str]:
+    """Opening the audit: the decks that hold a reply of an older normaliser or rows whose reply is gone; read only (pages.decks_to_reread)."""
+    from . import pages as page_pipeline
+    return await page_pipeline.decks_to_reread(db, audit_id)
 
 
 async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:

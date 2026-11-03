@@ -86,13 +86,19 @@ SUFFIX = (r"(?:\+?\s?(?P<suffix>k|K|(?i:mn|mm|bn)|m|M|B|T|(?i:thousand|million|b
 # in the parser's reader (claims.figures): no letter directly before it ("zero2hero", "Web3"), no ordinal ending
 # ("1st") (structure-labelling.md section 1).
 # A space (or a no-break space) between groups of three digits is a thousands separator too: "30 000", "7 753 000" (George, 2026-10-23).
-SPACE_GROUPS = "[ \u00a0\u202f]"
+# George, 2026-11-02: a thin space and an apostrophe ("650'000'000") separate thousands too, and so do two or more dot groups ("650.000.000"; one dot
+# before three digits stays ambiguous, "2.500"). A group is exactly three digits: "1 25 000" is no separator pattern. Only a suffix multiplies.
+SPACE_GROUPS = "[ \u00a0\u2009\u202f]"
+APOSTROPHE_GROUPS = "['\u2019]"
+DOT_GROUPS = re.compile(r"\d{1,3}(?:\.\d{3}){2,}")
 NUMBER = {
     False: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])(?<![^\W\d_])"
-                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:" + SPACE_GROUPS + r"\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
+                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:" + SPACE_GROUPS + r"\d{3})+(?:\.\d+)?|\d{1,3}(?:" + APOSTROPHE_GROUPS + r"\d{3})+(?:\.\d+)?"
+                      r"|\d{1,3}(?:\.\d{3}){2,}|\d+(?:\.\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
                       + SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
     True: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])(?<![^\W\d_])"
-                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d{1,3}(?:" + SPACE_GROUPS + r"\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
+                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d{1,3}(?:" + SPACE_GROUPS + r"\d{3})+(?:,\d+)?|\d{1,3}(?:" + APOSTROPHE_GROUPS + r"\d{3})+(?:,\d+)?"
+                     r"|\d+(?:,\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
                      + SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
 }
 _VALUE = r"-?\d+(?:\.\d+)?"
@@ -103,8 +109,9 @@ _LISTED_LINE = re.compile(rf"^(?P<id>[dt][1-9]\d*) (?P<cell>{_CELL})$")
 
 
 def digits_only(raw: str) -> str:
-    """A matched number without its space separators ("7 753 000" -> "7753000")."""
-    return re.sub(SPACE_GROUPS, "", raw)
+    """A matched number without its thousands separators ("7 753 000" -> "7753000", "650'000'000", "650.000.000"); a single dot stays."""
+    raw = re.sub(SPACE_GROUPS + "|" + APOSTROPHE_GROUPS, "", raw)
+    return raw.replace(".", "") if DOT_GROUPS.fullmatch(raw) else raw
 
 
 def blank_currency(text: str) -> str:
