@@ -1245,12 +1245,18 @@ async def list_deck_candidates(audit_id: str):
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
                    "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "images_unavailable": 1, "images_need_file": 1, "diagnostics": 1,
-                   "reading_since": 1, "read_finished_at": 1, "reread_needed": 1}
-    # Replies stored under an older normaliser are checked again from the stored reply on opening the audit: no model call (George, 2026-11-02).
-    await structures.renormalise_audit(db, audit_id)
+                   "reading_since": 1, "read_finished_at": 1}
+    # Opening the audit writes and deletes nothing (George, 2026-11-03, review of PR 225): the decks holding a page reply an older normaliser checked
+    # are told "Re-read needed", and Run audit checks those replies again. A version check that fails never fails the list: the decks say "check failed".
+    try:
+        reread, check_failed = await structures.decks_to_reread(db, audit_id), False
+    except Exception as exc:        # the log names the error type only (rule 17)
+        logger.error("normaliser version check failed: run_id=%s error=%s", audit_id, type(exc).__name__)
+        reread, check_failed = set(), True
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     for d in found:
+        d["reread_needed"], d["check_failed"] = d["deck_id"] in reread, check_failed
         # The deck panel's run log: status and the pages sent to the model (no text, no cost: usage-and-allowance.md section 9).
         d["sent_pages"] = sorted({p for s in d.pop("sent", None) or [] for p in ([s["page"]] if s.get("page") is not None else s.get("pages") or [])})
         # The panel's "AI read" counts (George, 2026-10-23): pages read and pages whose reply was rejected or not read; counts only.
@@ -1821,6 +1827,12 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
         raise HTTPException(404, "Audit not found")
     files = await db.datasets.count_documents({"audit_id": audit_id})
     result = None
+    # Replies stored under an older normaliser are checked again here, from the stored reply, with no model call: the rows are rewritten on Run audit
+    # and never on opening the audit (George, 2026-11-03, review of PR 225). A deck being read is left to its own run. A failure never stops the run.
+    try:
+        await structures.renormalise_audit(db, audit_id)
+    except Exception as exc:        # the log names the error type only (rule 17)
+        logger.error("normaliser: check again failed: run_id=%s error=%s", audit_id, type(exc).__name__)
     try:
         if stage == "mapping":
             if not files:

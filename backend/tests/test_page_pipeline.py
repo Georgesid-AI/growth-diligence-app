@@ -395,13 +395,28 @@ def test_a_reply_stored_under_an_older_normaliser_is_checked_again_on_opening_wi
     assert asyncio.run(pipeline.renormalise_audit(db, AUDIT)) == {"renormalised": 0, "re_read_needed": 0}, "a current reply is left as it is"
 
 
-def test_a_reading_with_no_stored_reply_is_marked_re_read_needed_and_read_again_on_the_next_run(monkeypatch):
+def test_a_reading_with_no_stored_reply_is_re_read_needed_computed_on_opening_and_cleared_by_a_new_read(monkeypatch):
     db, adapter = _read_once(monkeypatch)
     db[gateway.STRUCTURES_COLLECTION].docs.clear()                      # the raw reply is not stored
     db[CANDIDATES_COLLECTION].docs[0]["normaliser_version"] = 0
-    done = asyncio.run(pipeline.renormalise_audit(db, AUDIT))
-    assert done == {"renormalised": 0, "re_read_needed": 1}
-    assert db[TEXT_COLLECTION].docs[0]["reread_needed"] is True
+    before = copy.deepcopy(db[TEXT_COLLECTION].docs)
+    assert asyncio.run(pipeline.decks_to_reread(db, AUDIT)) == {"d1"}
+    assert db[TEXT_COLLECTION].docs == before, "opening computes the flag and writes nothing"
+    assert asyncio.run(pipeline.renormalise_audit(db, AUDIT)) == {"renormalised": 0, "re_read_needed": 1}
+    assert db[TEXT_COLLECTION].docs == before, "and neither does the check again: no reply, no row to rewrite"
     asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
-    assert adapter.calls == 2, "the next Run audit reads the page again"
-    assert not db[TEXT_COLLECTION].docs[0].get("reread_needed")
+    assert adapter.calls == 2, "a new read asks the model again"
+    assert asyncio.run(pipeline.decks_to_reread(db, AUDIT)) == set()
+
+
+def test_the_normaliser_version_was_raised_for_the_separator_change_and_the_note_names_every_file_that_needs_a_bump():
+    """Review of PR 225: the separator rules of redact.py and claims.py feed the same check as verify.py, items.py and page_check.py, so a change
+    to any of the five raises the version. This PR changed the last two: raised once, to 2."""
+    import inspect
+
+    from app.structures import checker
+    assert checker.NORMALISER_VERSION >= 2
+    source = inspect.getsource(checker)
+    note = source[source.index("The version of Python's normaliser"):source.index("NORMALISER_VERSION =")]
+    for name in ("verify.py", "items.py", "page_check.py", "redact.py", "claims.py"):
+        assert name in note, name

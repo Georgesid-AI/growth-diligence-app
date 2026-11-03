@@ -171,14 +171,16 @@ def check_figure(figure: Dict, candidate: Dict, deck: Dict) -> Dict:
     other = next((n for n in unscaled if checks.compare(unit, float(value), n)), None)
     if other is None:
         other = next((n for n in numbers if checks._scale_check(float(value), n)), None)
-    if unit != "rate" and value and any(checks.compare("money", float(value) * 10.0 ** power, n) for n in numbers for power in (-6, -3, 3, 6)) \
-            and not page_has_scale_mark(deck, page):
+    # A figure the text layer may not hold (a chart, a picture: extraction incomplete) is never rejected for a scale gap: a number of the page a
+    # factor of 1,000 away is then a coincidence, not a sign (review of PR 225). The incomplete check comes before the rejection.
+    incomplete = checker.EXTRACTION_INCOMPLETE in (candidate.get("flags") or [])
+    if not incomplete and unit != "rate" and value and any(checks.compare("money", float(value) * 10.0 ** power, n) for n in numbers
+                                                           for power in (-6, -3, 3, 6)) and not page_has_scale_mark(deck, page):
         return {**base, "outcome": checks.REJECTED, "reason": R_SCALE_DIFFERS}      # a factor of 1,000 or more from a figure the page prints
     if other is not None:
         shown = other * 100.0 if unit == "rate" else other
         return {**base, "outcome": checks.CANNOT, "reason": R_PAGE_SCALE.format(n=page, page=checks.shown(shown), value=checks.shown(
             float(value) * 100.0 if unit == "rate" else float(value)))}
-    incomplete = checker.EXTRACTION_INCOMPLETE in (candidate.get("flags") or [])
     if not numbers or incomplete:
         return {**base, "outcome": checks.CANNOT, "reason": checks.C_NO_TEXT.format(n=page)}
     return {**base, "outcome": checks.REJECTED, "reason": R_PAGE.format(value=checks.shown(float(value) * (100.0 if unit == "rate" else 1.0)), n=page)}

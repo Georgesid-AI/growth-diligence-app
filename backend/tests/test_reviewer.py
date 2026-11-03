@@ -333,6 +333,17 @@ def test_a_reading_a_million_times_the_printed_figure_is_rejected_unless_the_pag
     assert kept["outcome"] == "cannot_check" and kept["reason"].endswith("Unit or scale differs; not compared.")
 
 
+def test_a_figure_held_only_in_the_image_stays_cannot_check_it_is_never_rejected_for_a_scale_gap():
+    """Review of PR 225: 12,000 in a chart the text layer does not carry, on a page whose text says "12 markets", is a figure held only in the
+    image. The extraction-incomplete check comes first: "cannot check", never "scale differs from page" (a factor of 1,000 against an
+    unrelated number of the page). The same reading from a complete text layer is still rejected."""
+    page = [{"page": 2, "text": "Expansion to 12 markets", "kind": "text"}]
+    held_in_image = check_deck(page, candidate(12_000, unit="count", currency=None, flags=["extraction incomplete"]))
+    assert held_in_image["outcome"] == "cannot_check" and held_in_image["reason"] != "scale differs from page"
+    complete = check_deck(page, candidate(12_000, unit="count", currency=None))
+    assert complete["outcome"] == "rejected" and complete["reason"] == "scale differs from page"
+
+
 def test_a_deck_rate_is_held_as_a_fraction_and_compared_within_one_point_of_the_page():
     page = [{"page": 2, "text": "Churn 5.4 % a month", "kind": "text"}]
     figure = deck_figures.figure_of(candidate(4.5, unit="%", currency=None), deck(page))

@@ -2691,6 +2691,29 @@ def test_a_sheet_step_keeps_its_header_text_the_customer_header_rule_is_for_deck
     assert out == cells and "customer_blanked" not in counts
 
 
+# --- Figures written with apostrophe groups or two or more dot groups (PR 225, George 2026-11-02; review of PR 225, item 4) ------------------
+@pytest.mark.parametrize("figure", ["CHF 1'250k", "EUR 1.234.567", "CHF 1 250 000"], ids=["apostrophe groups", "dot groups", "thin-space groups"])
+def test_a_figure_with_apostrophe_dot_or_thin_space_groups_is_a_figure_never_blanked_learned_as_a_name_or_masked(figure):
+    """What the model sees changed with the separator rule: apostrophe-grouped and thin-space-grouped cells count as figures
+    (structures/redact.is_figure), so they are no longer blanked under a customer header, learned as a company name or rewritten in a sheet
+    reading. Dot-grouped ("1.234.567") cells were figures before, through the decimal-comma form of the same pattern; the case pins that they stay
+    so. Names and the personal-data patterns beside a figure are masked as before."""
+    assert structure_redact.is_figure(figure) and structure_redact.reading_figure(figure)
+    deck = [{"row": 1, "col": 1, "text": "Top customers"}, {"row": 2, "col": 1, "text": "Acme Retail"}, {"row": 3, "col": 1, "text": figure},
+            {"row": 4, "col": 1, "text": "jane.doe@acme.example"}]
+    out, counts = structure_redact.redact_structure(deck, "Target Co", {}, deck=True)
+    texts = {c["row"]: c["text"] for c in out}
+    assert texts[3] == figure, "the figure stays under a customer header"
+    assert texts[2] == structure_redact.REDACTED and counts["customer_blanked"] == 1, "the name beside it is still blanked, and only the name"
+    assert "@" not in texts[4], "the personal-data patterns apply as before"
+    sheet = structure_redact.reading_text([{"name": "S", "cells": [{"row": 1, "col": 1, "text": "Company name"}, {"row": 2, "col": 1, "text": "Acme Retail"},
+                                                                  {"row": 3, "col": 1, "text": figure}]}])
+    assert structure_redact.reading_company_names(sheet, "Target Co", {}) == ["Acme Retail"], "the figure is learned as no name"
+    masked, _ = structure_redact.mask_reading(sheet, "Target Co", {"Acme Retail": "Client-01"})
+    assert f"A3: {' '.join(figure.split())}" in masked and "Acme Retail" not in masked, "the figure is never rewritten (the text format folds a thin space), the name is coded"
+    assert structure_redact.mask_text(figure, "Target Co", {}) == figure
+
+
 # ---------------------------------------------------------------------------
 # The page_claims step (docs/design/ai-reads-rules-check.md, docs/design/page-image.md; CLAUDE.md rules 16 and 31): the text lines of
 # deck pages that carry a figure as digits, as printed with no redaction, may reach the provider, prose lines included, as

@@ -16,7 +16,7 @@ value from a spreadsheet.
 import re
 import statistics
 from collections import Counter
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from . import redact
 
@@ -221,9 +221,15 @@ async def store_candidate(db, row: Dict) -> None:
 
 
 async def renormalise_audit(db, audit_id: str) -> Dict:
-    """Page replies stored under an older normaliser, checked again from the stored reply with no model call (pages.renormalise_audit)."""
+    """Run audit: page replies stored under an older normaliser, checked again from the stored reply with no model call (pages.renormalise_audit)."""
     from . import pages as page_pipeline
     return await page_pipeline.renormalise_audit(db, audit_id)
+
+
+async def decks_to_reread(db, audit_id: str) -> Set[str]:
+    """Opening the audit: the decks that hold a reply of an older normaliser or rows whose reply is gone; read only (pages.decks_to_reread)."""
+    from . import pages as page_pipeline
+    return await page_pipeline.decks_to_reread(db, audit_id)
 
 
 async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:

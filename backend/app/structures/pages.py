@@ -23,7 +23,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from ..decks import CANDIDATES_COLLECTION, TEXT_COLLECTION, claims
 from ..decks import pages as page_grids_mod
@@ -368,44 +368,75 @@ async def apply_reply(db, audit_id: str, deck_id: str, deck: Dict, run: RunState
     return counts
 
 
-async def renormalise_audit(db, audit_id: str) -> Dict:
-    """Check again, on opening the audit, every stored page reply that an older normaliser checked (George, 2026-11-02): the claims of the
-    stored reply (the model's JSON output, never the page text) go through the same Python check against the deck's stored pages, with no
-    model call and no change to the prompt version; the rows nobody has touched are replaced as on a new run, and the reply is stamped with the
-    current normaliser version. A row stored under an older version whose reply is not stored cannot be checked again: its deck is marked
-    `reread_needed` (the panel says "Re-read needed") and the next Run audit reads its pages again. Returns {"renormalised": replies checked
-    again, "re_read_needed": decks marked}. Cheap when nothing is stale: two reads."""
+def _from_page_reply(row: Dict) -> bool:
+    """True for a row a page reply wrote (apply_reply: origin "ai", first source of kind "page"). A row of the structure read, the rules read or
+    Add from deck has a structure key or none and no page reply behind it: it is never a reply "lost" (review of PR 225)."""
+    return row.get("origin") == "ai" and ((row.get("sources") or [{}])[0] or {}).get("kind") == "page"
+
+
+async def stale_replies(db, audit_id: str) -> Tuple[List[Dict], Set[str]]:
+    """Read only: (the stored page replies an older normaliser checked, the decks holding rows of a page reply that is no longer stored). A deck
+    being read (`ai_status` "reading") is left out of both: a reply the gateway has stored and its run has not yet checked reads as version 0,
+    and that run checks it itself (review of PR 225: a poll of the deck list landing in a read wrote every row of such a reply twice)."""
+    reading = {d.get("deck_id") for d in await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": "reading"}, {"_id": 0, "deck_id": 1}).to_list(1000)}
     replies = await db[gateway.STRUCTURES_COLLECTION].find({"audit_id": audit_id, "type": PAGE_CLAIMS}, {"_id": 0}).to_list(100000)
-    rows = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "origin": "ai"}, {"_id": 0, "structure_key": 1, "deck_id": 1,
-                                                                                         "normaliser_version": 1}).to_list(100000)
+    rows = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "origin": "ai"}, {"_id": 0, "structure_key": 1, "deck_id": 1, "normaliser_version": 1,
+                                                                                         "origin": 1, "sources": 1}).to_list(100000)
     current = checker.NORMALISER_VERSION
-    stale = [r for r in replies if (r.get("normaliser_version") or 0) < current and (r.get("output") or {}).get("claims") is not None]
+    stale = [r for r in replies if (r.get("normaliser_version") or 0) < current and (r.get("output") or {}).get("claims") is not None
+             and r.get("deck_id") not in reading]
     stored = {r.get("key") for r in replies}
-    lost = {r.get("deck_id") for r in rows if r.get("structure_key") and r["structure_key"] not in stored
-            and (r.get("normaliser_version") or 0) < current and r.get("deck_id")}
+    lost = {r.get("deck_id") for r in rows if _from_page_reply(r) and r.get("structure_key") and r["structure_key"] not in stored
+            and (r.get("normaliser_version") or 0) < current and r.get("deck_id") and r["deck_id"] not in reading}
+    return stale, lost
+
+
+async def decks_to_reread(db, audit_id: str) -> Set[str]:
+    """Read only, for opening the audit (the deck list): the ids of the decks that hold a stored page reply checked under an older normaliser,
+    or rows of a page reply that is no longer stored. The panel says "Re-read needed" for them. Writes and deletes nothing (George, 2026-11-03,
+    review of PR 225): Run audit checks the replies again (renormalise_audit)."""
+    stale, lost = await stale_replies(db, audit_id)
+    return {r["deck_id"] for r in stale if r.get("deck_id")} | lost
+
+
+async def renormalise_audit(db, audit_id: str) -> Dict:
+    """Run audit's check again of every stored page reply an older normaliser checked (George, 2026-11-02, moved from opening the audit on
+    2026-11-03): the claims of the stored reply (the model's JSON output, never the page text) go through the same Python check against the
+    deck's stored pages (apply_reply), with no model call and no change to the prompt version; the rows nobody has touched are replaced as on a
+    new run, and the reply is stamped with the current normaliser version. A row whose reply is not stored cannot be checked again: its deck stays
+    "Re-read needed" until its pages are read again. A deck whose check fails is left as it was and the others go on. Returns {"renormalised":
+    replies checked again, "re_read_needed": decks with a reply gone}. Cheap when nothing is stale: three reads."""
+    stale, lost = await stale_replies(db, audit_id)
     done = 0
-    for deck_id in sorted({r.get("deck_id") for r in stale if r.get("deck_id")}):
-        deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
-                                                  {"_id": 0, "file": 1, "pages": 1, "blocks": 1, "layout": 1, "diagnostics": 1})
-        audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1})
-        if not deck:
-            continue
-        grids = page_grids_mod.page_grids(deck.get("blocks") or [], deck.get("layout"))
-        by_page = {page_grids_mod.page_number(g): g for g in grids}
-        page_count = deck.get("pages") or (max(by_page) if by_page else None)
-        reviewed = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "file": deck["file"]}, {"_id": 0}).to_list(100000)
-        run = RunState(reviewed, list(deck.get("diagnostics") or []))
-        for reply in (r for r in stale if r.get("deck_id") == deck_id):
-            numbers = [int(n) for n in reply.get("pages") or ([reply["page"]] if reply.get("page") else [])]
-            await apply_reply(db, audit_id, deck_id, deck, run, by_page, int((audit or {}).get("fiscal_year_end") or 12), page_count,
-                              reply["key"], numbers, reply["output"]["claims"])
-            done += 1
-        await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"diagnostics": run.diagnostics}})
-    for deck_id in lost:
-        await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"reread_needed": True}})
+    for deck_id in sorted({r["deck_id"] for r in stale if r.get("deck_id")}):
+        try:
+            done += await _check_deck_again(db, audit_id, deck_id, [r for r in stale if r.get("deck_id") == deck_id])
+        except Exception as exc:        # the log names the error type only (rule 17: an exception message can quote a cell)
+            logger.error("normaliser: check again failed: run_id=%s deck_id=%s error=%s", audit_id, deck_id, type(exc).__name__)
     if done or lost:
         logger.info("normaliser: run_id=%s replies checked again=%d decks to read again=%d", audit_id, done, len(lost))
     return {"renormalised": done, "re_read_needed": len(lost)}
+
+
+async def _check_deck_again(db, audit_id: str, deck_id: str, replies: List[Dict]) -> int:
+    deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
+                                              {"_id": 0, "file": 1, "pages": 1, "blocks": 1, "layout": 1, "diagnostics": 1})
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1})
+    if not deck:
+        return 0
+    grids = page_grids_mod.page_grids(deck.get("blocks") or [], deck.get("layout"))
+    by_page = {page_grids_mod.page_number(g): g for g in grids}
+    page_count = deck.get("pages") or (max(by_page) if by_page else None)
+    reviewed = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "file": deck["file"]}, {"_id": 0}).to_list(100000)
+    run = RunState(reviewed, list(deck.get("diagnostics") or []))
+    done = 0
+    for reply in replies:
+        numbers = [int(n) for n in reply.get("pages") or ([reply["page"]] if reply.get("page") else [])]
+        await apply_reply(db, audit_id, deck_id, deck, run, by_page, int((audit or {}).get("fiscal_year_end") or 12), page_count,
+                          reply["key"], numbers, reply["output"]["claims"])
+        done += 1
+    await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"diagnostics": run.diagnostics}})
+    return done
 
 
 async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
@@ -504,6 +535,6 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         "page_reads": kept + reads, "sent": list((previous or {}).get("sent") or []) + sent, "unread_pages": unread, "retry_pages": retry,
         "images_unavailable": bool(undrawn) or bool(kept and (previous or {}).get("images_unavailable")),     # a retry keeps the earlier pages' state
         "images_need_file": no_file or bool(kept and (previous or {}).get("images_need_file")),
-        "diagnostics": run.diagnostics, "reread_needed": False}})
+        "diagnostics": run.diagnostics}})
     return await _deck_status(db, audit_id, deck_id, overall, stopped_message or (gateway.PROMPT_MISSING_TEXT if overall == PROMPT_MISSING else
                                                                                 gateway.PAGE_READER_BLOCKED if overall == BLOCKED else None))

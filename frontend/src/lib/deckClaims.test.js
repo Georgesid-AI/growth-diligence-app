@@ -293,6 +293,12 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ...deck, reread_needed: false })).toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected"]);
   });
 
+  test("a deck whose version check failed says Check failed, after the deck line, and the deck list still shows", () => {
+    const deck = { ai_status: "read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, skipped_pages: [], unread_pages: [] };
+    expect(deckRunLog({ ...deck, check_failed: true })).toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected", "Check failed"]);
+    expect(deckRunLog({ ...deck, check_failed: false, reread_needed: false })).toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected"]);
+  });
+
   test("the run log says when page images were unavailable and the pages went as text only", () => {
     const deck = { ai_status: "read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, skipped_pages: [], unread_pages: [] };
     expect(deckRunLog({ ...deck, images_unavailable: true }))
