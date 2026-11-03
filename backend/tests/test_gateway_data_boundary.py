@@ -3996,3 +3996,10 @@ def test_the_estimate_flag_method_text_and_failed_check_reasons_sit_in_the_serve
     from schemas.metrics import RoleMetric, ROLE_METRICS
     assert "estimate" in RoleMetric.model_fields and {"rnd_expense", "ga_expense"} <= set(ROLE_METRICS)
     assert not {"estimate", "rnd_expense", "ga_expense"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
+
+
+def test_the_yearly_pnl_trend_sits_in_the_server_only_role_metrics_block():
+    """The trend values, their cells and the comparison lines built from them (memo only) reach no step slice, no log line and no provider payload."""
+    from schemas.metrics import RoleMetrics, PnlTrend
+    assert "pnl_trend" in RoleMetrics.model_fields and "rows" in PnlTrend.model_fields
+    assert not {"pnl_trend", "periods"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}

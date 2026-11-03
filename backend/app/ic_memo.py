@@ -19,6 +19,8 @@ from app import claim_matching as cm
 from app import deck_actuals, disclosure
 from app import formatting as fmt
 from app import integrity as integrity_mod
+from app import plan_lines
+from app.role_engine import ESTIMATE_LABEL
 from app import report_text
 from app import verdict as vd
 from schemas import metrics as contract
@@ -564,6 +566,13 @@ def role_summary(results: dict, ccy: Optional[str], notes: "Notes") -> List[str]
 RECON_WORDS = {"agrees": "Agrees", "agrees_rounded": "Agrees (rounded)", "differs": "Differs"}
 
 
+def _trend_cells(trend: dict, value: dict) -> str:
+    """"pnl · P&L!B4, B6": the cells of a trend value in the file and sheet of the years; a cell of another sheet keeps its own sheet name."""
+    own = [c for c in value["cells"] if "!" not in c]
+    other = [c for c in value["cells"] if "!" in c]
+    return "; ".join(x for x in (_cells_text({"file": trend.get("file"), "sheet": trend.get("sheet"), "cells": own}) if own else "", ", ".join(other)) if x) or "—"
+
+
 def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str], List[List[str]]]]:
     """The role metrics as Appendix C tables, each cell with the cells it was read from: [(title, header, rows)]."""
     rm = results.get("role_metrics")
@@ -580,6 +589,13 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
         out.append(("Growth by year", ["Year", "Revenue", "Year before", "Growth", "Cells"],
                     [[y["period"], fmt.fmt_currency(y["value"], ccy), fmt.fmt_currency(y["prior"], ccy), fmt.fmt_pct(y["growth"]),
                      _cells_text(y["source"]) + (f" · {y['deck_note']}" if y.get("deck_note") else "")] for y in rm["growth_by_year"]]))
+    trend = rm.get("pnl_trend")
+    if trend:
+        out.append(("Yearly P&L trend", ["Metric", "Year", "Value", "Cells"],
+                    [[r["name"], v["period"] + (" (plan)" if v["kind"] == "plan" else ""),
+                      (fmt.fmt_currency(v["value"], ccy) if r["unit"] == "money" else fmt.fmt_pct(v["value"]))
+                      + (f" ({ESTIMATE_LABEL})" if v["estimate"] else ""), _trend_cells(trend, v)]
+                     for r in trend["rows"] for v in r["values"]]))
     plan = rm.get("plan_to_date")
     if plan:
         out.append(("Plan to date", ["Period", "Actual", "Plan", "Gap", "Gap %", "Cells"],
@@ -648,10 +664,16 @@ def allow_role_figures(allowed: "Allowed", results: dict) -> None:
             allowed.number(m["value"], kinds.get(m.get("unit"), fmt.CURRENCY))
     for y in rm.get("growth_by_year") or ():
         allowed.number(y["value"], fmt.CURRENCY).number(y["prior"], fmt.CURRENCY).number(y["growth"], fmt.PCT)
+    for row in (rm.get("pnl_trend") or {}).get("rows") or ():
+        for v in row["values"]:
+            allowed.number(v["value"], fmt.CURRENCY if row["unit"] == "money" else fmt.PCT)
     plan = rm.get("plan_to_date")
     if plan:
         for k in ("actual", "plan", "variance"):
             allowed.number(plan[k], fmt.CURRENCY)
+        allowed.number(abs(plan["variance"]), fmt.CURRENCY)
+        if plan.get("variance_pct") is not None:
+            allowed.number(abs(plan["variance_pct"]), fmt.PCT)
         if plan.get("variance_pct") is not None:
             allowed.number(plan["variance_pct"], fmt.PCT)
     for r in rm.get("reconciliation") or ():
@@ -759,7 +781,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         coverage += f" Smoothness: {smooth['result']} ({integrity_mod.SMOOTHNESS_LABEL})."
     claimed = f"; {verified} of {len(rows)} claims Verified{notes.register()}" if claims else ""
     reliability = f"{coverage} " + "; ".join(x for x in (recon, anomalies + claimed) if x) + "."
-    reliability_evidence = f"Data integrity conclusion: {integrity['conclusion']}; revenue_reconciliation, anomalies" + (", claim register" if claims else "")
+    reliability_evidence = f"Data integrity conclusion: {integrity['conclusion']}; revenue reconciliation, anomaly flags" + (", claim register" if claims else "")
     if narrative:
         growth = f"{narrative['headline']}{notes.add('growth-engine narrative, AI call log')}"
     else:
@@ -773,9 +795,20 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     rel, grow = rated["data_reliability"], rated["growth_engine"]
     rule = lambda r: f" {r['rule']}{' (' + vd.BENCHMARK + ')' if r['benchmark'] else ''}."            # noqa: E731
     score = [["Data reliability", rel["rating"] or vd.NOT_RATED, reliability + rule(rel), reliability_evidence],
-             ["Growth engine", grow["rating"] or vd.NOT_RATED, growth + rule(grow), "arr, nrr, gross_churn, cac_payback, acv_path"]]
+             ["Growth engine", grow["rating"] or vd.NOT_RATED, growth + rule(grow), "ARR, NRR, gross revenue churn, CAC payback, ACV path"]]
     score += [[name, text, "", ""] for name, text in W17_NOT_ASSESSED]
     out += [f"## {HEADINGS[2]}", _table(["Area", "Rating", "Headline", "Key evidence"], score), ""]
+
+    # What the plan assumes: the yearly trend and the templated comparison lines (docs/design/pnl-lines.md), from computed values only
+    assumed = plan_lines.lines(results, ccy)
+    trend_table = plan_lines.table((results.get("role_metrics") or {}).get("pnl_trend"), ccy)
+    if trend_table or assumed:
+        out += [f"## {plan_lines.HEADING}"]
+        if trend_table:
+            out += [_table(*trend_table) + notes.add("What the plan assumes · yearly values with their cells in Appendix C"), ""]
+        out += [f"- {l['text']}{notes.source(plan_lines.HEADING, None, {'file': l['file'], 'sheet': l['sheet'], 'rows': ', '.join(cell_ranges(l['cells']))})}"
+                for l in assumed]
+        out += [""]
 
     # 4. Key gates and deal terms
     out += [f"## {HEADINGS[3] if claims else DEAL_TERMS_HEADING}"]
@@ -808,6 +841,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     flagged += [f"{vd.flag_text(r)}{notes.register([r['rank']])}" for r in vd.flagged_rows(rows, listed)]
     if narrative:
         flagged += [f"{item}{notes.add('growth-engine narrative, AI call log')}" for item in narrative.get("worth_flagging") or ()]
+    flagged += [f"{l['text']}{notes.source(plan_lines.HEADING, None, {'file': l['file'], 'sheet': l['sheet'], 'rows': ', '.join(cell_ranges(l['cells']))})}"
+                for l in assumed if l["kind"] == "plan_to_date" and l["beyond_tolerance"]]        # a plan-to-date gap beyond tolerance is also flagged
     if not claims:          # PR 4f: the role engine's own findings; nothing qualifies, the section says so
         flagged += role_flags(results, integrity, ccy, notes)
         if not flagged:
@@ -827,7 +862,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     if unmeasured:
         out += [f"- {len(unmeasured)} {'claim is' if len(unmeasured) == 1 else 'claims are'} never tested against data; the reason for each is in Appendix B"
                 f"{notes.register([u['rank'] for u in unmeasured])}."]
-    head = "\n".join(_glossed(out, keep=set(verbatim))).rstrip() + "\n"
+    head = "\n".join(out).rstrip() + "\n"
 
     # Appendices
     app: List[str] = []
@@ -872,7 +907,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         width = max(len(r) for r in t["rows"])
         rows_ = [r + [""] * (width - len(r)) for r in t["rows"]]
         app += [f"{t['sheet']}{cite}", _table(rows_[0], rows_[1:]), ""]
-    app += _glossed(deck_actuals.appendix_lines(rows, results))        # deck-actuals.md section 3: the details block of each metric, from stored data
+    app += deck_actuals.appendix_lines(rows, results)        # deck-actuals.md section 3: the details block of each metric, from stored data
     if claims and rec.get("available") and rec.get("by_month"):          # the role reconciliation above holds the years
         cite = notes.source("Revenue reconciliation", "revenue_reconciliation.by_month", (rec.get("source") or {}).get("revenue_file"))
         app += [f"Revenue reconciliation by month{cite}",
@@ -895,8 +930,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
                                          for n in narratives or ()])
     if block:
         app += [block["text"], ""]
-    app = [_glossed([line])[0] if line.startswith("- ") or line == W16_VALUE_AT_RISK else line for line in app]
-    # The glossary the "(see glossary)" pointers name: the terms of the screen and the export, as they define them.
+    # The glossary: the terms of the screen and the export, as they define them (no pointer to it in the text: George, 2026-11-03).
     app += ["Glossary", *(f"- {term}: {definition}" for term, definition in fmt.GLOSSARY.items() if claims or term not in CLAIM_TERMS), ""]
     app += ["Footnotes", notes.definitions()]
     return head, head + "\n" + "\n".join(app) + "\n"
@@ -922,14 +956,6 @@ def summary_counts(counts: Dict[str, int]) -> str:
     unverified = sum(counts.get(label, 0) for label in cm.MEMO_GROUPS["Unverified"])
     return (f"{counts.get('Contradicted', 0)} Contradicted, {counts.get('Unsupported', 0)} Unsupported, "
             f"{unverified} Unverified ({counts.get(cm.INCONCLUSIVE, 0)} Inconclusive)")
-
-
-def _glossed(lines: List[str], keep: Iterable[str] = ()) -> List[str]:
-    """Each prose line (a paragraph or a list item) with VaS, ARR, MRR, NRR and CAC pointing to the glossary at their first
-    use in it (George, 2026-10-09). Headings, tables and footnotes are not text blocks: a sheet name or a source reference
-    is never changed; nor is a line in `keep` (the analyst's judgment, printed verbatim, claim-review-conclusion.md section 4)."""
-    keep = set(keep)
-    return [fmt.see_glossary(line) if line and line not in keep and not line.startswith(("#", "|", "[^")) else line for line in lines]
 
 
 def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dict], ic: dict, files: List[dict],

@@ -147,3 +147,35 @@ Code: `backend/app/structures/pnl_lines.py` (uses, periods, checks, plan cells),
   overhead sits at the mapping step (`sheet.meaning_of`).
 - The deck forecast is compared with the plan line for revenue, gross profit and EBITDA claims; a cost forecast names no one plan line.
 - The yearly revenue-based payback reads "CAC payback FY 2021: 12.5 months (yearly, revenue-based)": unit kept, label kept (George, 2026-10-29).
+
+## The comparison lines (memo block "What the plan assumes")
+
+George, 2026-11-03. The memo carries a block "What the plan assumes" directly after the Scorecard: the yearly P&L trend table and the lines below. Code: `app/plan_lines.py`
+(templates, tolerances), `role_engine.pnl_trend` (values and cells), `role_metrics.pnl_trend` (stored, contract version 17). No model writes a line.
+
+**Trend table.** One row per metric: revenue, gross margin, S&M share, R&D share, G&A share, EBITDA margin. Actual years first (fiscal years that end at or before the as-of
+month), then plan years (the other years the plan holds), the plan years marked "(plan)". A value with an input missing is "—". R&D and G&A of an actual year that carries OPEX
+only are the estimate of the Estimates block (plan split applied to actual OPEX, non-S&M OPEX × r) and carry the label "Estimate – plan split applied to actual OPEX"; when its
+check (a) or (b) fails there is no estimate and the cell is "—". Each value is stored with the cells it was computed from (Appendix C, "Yearly P&L trend"). A plan row may be a
+plan cell of the line's own row or a `forecast` row that names its line by its metric.
+
+**Stable.** Shares and margins: within ±2 points. Money: within ±5% of the first figure (the claim-matching amount tolerance, `AMOUNT_TOLERANCE`). The boundary is stable.
+
+**Lines.** `{metric}` is the table's name, lower-cased in mid-sentence ("gross margin"; "S&M share of revenue" and "EBITDA margin" keep their capitals). `{label}` is ", estimate"
+when the actual value is an estimate, else empty. A figure goes through the one formatter.
+
+| Kind | Template | When |
+|---|---|---|
+| Plan against the past | Plan assumes {metric} rises from {a} ({year_a}{label}) to {p} ({year_p}). | latest actual year against the last plan year; p above a, outside the tolerance |
+| | Plan assumes {metric} falls from {a} ({year_a}{label}) to {p} ({year_p}). | p below a, outside the tolerance |
+| | Plan holds {metric} at about {a} ({year_a}{label}) through {year_p}. | within the tolerance |
+| Trend (actual years) | {metric} rose from {first} ({year}) to {last} ({year}). | two or more actual years; last above first, outside the tolerance |
+| | {metric} fell from {first} ({year}) to {last} ({year}). | last below first, outside the tolerance |
+| | {metric} moved between {min} and {max} over {year}–{year}. | last within the tolerance of first; min and max over the actual years |
+| Plan to date | Revenue is {gap} ({gap_pct}) behind plan to {month}. / … ahead of plan to {month}. | plan-to-date gap outside ±5%; also listed under Worth flagging |
+| | Revenue is on plan to {month}. | within ±5% |
+| Reconciliation | {metric} {year} differs across sources by {diff} ({pct}): {list}. | status Differs; Agrees gives no line |
+
+**No line** when an input is missing (no row, no year, no percentage because the plan is zero), when the estimate's checks failed, or for the trend of an estimated row (an
+estimate is the plan's split applied to one year's OPEX, not a trend). Each line is footnoted with the cells it was built from.
+

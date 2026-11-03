@@ -324,7 +324,7 @@ def test_the_summary_counts_the_definition_checks_answered_and_worth_flagging_li
     summary = head_of(text).split("## Deal thesis")[0]
     assert re.search(r"^Definition checks: 1 answered Yes, 0 answered No\.\[\^\d+\]$", summary, re.M), summary
     section = head_of(text).split("## Worth flagging")[1].split("## Data gaps")[0]
-    line = "- New MRR (see glossary), Q4 2023: Contradicted, €5,000 lower (miss). Same metric and period confirmed by the analyst."
+    line = "- New MRR, Q4 2023: Contradicted, €5,000 lower (miss). Same metric and period confirmed by the analyst."
     assert sum(1 for item in section.splitlines() if item.startswith(line)) == 1, section
     banner = {"kind": "claim_contradicted", "claim_id": "c37", "text": "Top-5 claim contradicted: revenue 5,000 EUR vs 0 EUR observed."}
     shown = head_of(memo(run="D", answers={"c37": "yes"}, blockers=[banner])).split("## Worth flagging")[1].split("## Data gaps")[0]
@@ -382,7 +382,7 @@ def test_partial_coverage_is_noted_in_appendix_d_not_counted_as_half():
 
 def test_value_at_risk_reads_not_yet_computed_in_the_summary_and_appendix_d_with_the_method():
     text = memo()
-    line = ("Value at risk: ARR (see glossary) not yet computed (ARR bridge not run); cash not yet computed (no cash analysis). "
+    line = ("Value at risk: ARR not yet computed (ARR bridge not run); cash not yet computed (no cash analysis). "
             "Overlapping claims are counted once, at the largest value in their group.")
     assert head_of(text).count(line) == 1 and text.count(line) == 2
     assert "Overlap groups: #1, #7;" in text
@@ -529,21 +529,12 @@ def verdict_of_labels(labels, gates):
 
 # --- abbreviations (George, 2026-10-09): Value at stake reads VaS; the first use in a text block points to the glossary ----------
 
-def test_value_at_stake_reads_vas_and_each_abbreviation_points_to_the_glossary_once_per_text_block():
+def test_value_at_stake_reads_vas_and_the_memo_text_carries_no_pointer_to_the_glossary():
+    """George, 2026-11-03: no "(see glossary)" after a metric name in the memo; the glossary stays in Appendix D."""
     text = memo(narratives=[narrative()])
     assert "| VaS |" in text and "Value at stake" not in text
     body, glossary = text.split("\nGlossary\n")
-    for line in body.split("\n"):
-        if line.startswith("|") or line.startswith("#") or line.startswith("[^"):
-            assert "(see glossary)" not in line, f"a table, a heading or a footnote is not a text block: {line!r}"
-            continue
-        if line.startswith(("Reasons: ", "Unresolved questions: ")):      # the analyst's judgment is printed verbatim
-            assert "(see glossary)" not in line, line
-            continue
-        for term in fmt.GLOSSED:
-            uses = re.findall(rf"(?<![\w-]){term}(?![\w-])( \(see glossary\))?", line)
-            if uses:
-                assert uses[0] == " (see glossary)" and all(u == "" for u in uses[1:]), (term, line)
+    assert "(see glossary)" not in body and "(see glossary)" not in glossary
     glossary = glossary.split("\n\n")[0].split("\n")       # the glossary's own entries define the terms, unchanged
     assert glossary == [f"- {term}: {definition}" for term, definition in fmt.GLOSSARY.items()]
     assert "- VaS: value at stake: " in text
@@ -577,7 +568,7 @@ def test_the_data_reliability_row_reads_the_integrity_conclusion_never_the_a2_ve
     assert row[3].strip().startswith("Material concerns. Completed 5 of 5 applicable checks.")
     assert "not a finding about the company" not in row[3], "the sentence belongs to Insufficient assessment coverage only"
     assert "Revenue file and P&L differ by 70% over 2023-03–2024-02" in row[3], "the computed line follows"
-    assert row[4].strip() == "Data integrity conclusion: Material concerns; revenue_reconciliation, anomalies, claim register"
+    assert row[4].strip() == "Data integrity conclusion: Material concerns; revenue reconciliation, anomaly flags, claim register"
     assert "Material concerns: the revenue file and the P&L differ by 70%." not in text and "Data integrity verdict" not in text
 
 

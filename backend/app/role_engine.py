@@ -167,15 +167,15 @@ PLAN_ONLY = "{name} split only in plan years; actual years carry OPEX total only
 SM_PLAN_ONLY = PLAN_ONLY.format(name="S&M")
 
 
-def _total(rec: Optional[Dict]) -> float:
-    return sum(v for v, _ in (rec["actual"].values() if rec else ()))
+def _total(rec: Optional[Dict], key: str = "actual") -> float:
+    return sum(v for v, _ in (rec[key].values() if rec else ()))
 
 
-def costs_negative(table: List[Dict], role: str) -> bool:
+def costs_negative(table: List[Dict], role: str, key: str = "actual") -> bool:
     """True when the cost rows of the role carry the opposite sign to revenue (a P&L that prints costs as negatives). Compared on the sums of
-    the rows' actual cells; without a revenue row a negative cost sum is read against a positive revenue."""
-    cost = sum(_total(r) for r in table if r["role"] == role and r["segment"] is None)
-    rev = _total(pick(table, "revenue", "yearly") or pick(table, "revenue"))
+    the rows' cells of the series `key` (actual, or plan); without a revenue row a negative cost sum is read against a positive revenue."""
+    cost = sum(_total(r, key) for r in table if r["role"] == role and r["segment"] is None)
+    rev = _total(pick(table, "revenue", "yearly", key) or pick(table, "revenue", None, key), key)
     return cost < 0 if not rev else (cost < 0) != (rev < 0) and cost != 0
 
 
@@ -200,7 +200,7 @@ def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, ma
     rows = [r for r in rows if (r["file"], r["sheet"]) == best]
     if not many:
         rows = [max(rows, key=lambda r: len(r[key]))]
-    negate = role in COST_ROLES and costs_negative(table, role)
+    negate = role in COST_ROLES and costs_negative(table, role, key)
     if len(rows) == 1 and not negate:
         return rows[0]
     actual: Dict[str, Tuple[float, str]] = {}
@@ -530,6 +530,9 @@ SPLIT_FIELDS = {"rnd": "R&D", "ga": "G&A"}
 SPLIT_TOLERANCE = 0.01         # check (a): S&M + R&D + G&A = OPEX within 1 % in every plan year
 SPLIT_STABLE = 0.10            # check (b): R&D ÷ (R&D + G&A) within 10 points across the plan years
 NO_ESTIMATE = "No estimate: "
+# A plan row of a P&L is often a `forecast` row that names its line by its metric ("Plan: R&D"): the role its line has.
+FORECAST_LINES = {None: "revenue", "revenue": "revenue", "cost_of_revenue": "cost_of_revenue", "sm_expense": "sales_marketing", "rnd_expense": "rnd",
+                  "ga_expense": "ga", "opex": "opex", "ebitda": "ebitda"}
 
 
 def _n(value: float) -> str:
@@ -540,11 +543,63 @@ def _cell_of(rec: Dict, cell: str, home: Dict) -> str:
     return cell if (rec["file"], rec["sheet"]) == (home["file"], home["sheet"]) else f"{rec['sheet']}!{cell}"
 
 
+def plan_view(table: List[Dict]) -> List[Dict]:
+    """The table as the plan reads it: every row that has plan cells, and each `forecast` row of a line (revenue, cost of revenue, S&M, R&D, G&A,
+    OPEX, EBITDA) again under the role of its line with its values as the plan series (a forecast row keeps them in either series)."""
+    out = [r for r in table if r["plan"]]
+    for r in table:
+        role = FORECAST_LINES.get(r["metric"]) if r["role"] == "forecast" else None
+        values = r["plan"] or r["actual"]
+        if role and values and r["segment"] is None:
+            out.append({**r, "role": role, "plan": values})
+    return out
+
+
+def plan_split(table: List[Dict], view: List[Dict]):
+    """The plan's split of R&D and G&A: ({"r", "rd", "ga", "years", "cells", "home"}, None), or (None, the reason there is no split to apply).
+    r = R&D ÷ (R&D + G&A) over the plan years (the sums). Checks: (a) S&M + R&D + G&A = OPEX within 1 % in every plan year, (b) r within 10
+    points across the plan years."""
+    home = cost_row(table, "opex", "yearly")
+    if home is None:
+        return None, "needs an opex row"
+    plan = {r: sum_role(view, r, "yearly", key="plan") for r in ("rnd", "ga")}
+    absent = [r for r in ("rnd", "ga") if plan[r] is None]
+    if absent:
+        return None, f"no plan split: {' and '.join(SPLIT_FIELDS[r] for r in absent)} not in the plan years"
+    parts = {"S&M": sum_role(view, "sales_marketing", "yearly", key="plan"), "R&D": plan["rnd"], "G&A": plan["ga"],
+             "OPEX": sum_role(view, "opex", "yearly", key="plan")}
+    years = sorted({p for r in plan.values() for p in r["plan"] if re.fullmatch(r"\d{4}", p)})
+    if not years:
+        return None, "no yearly plan split"
+    cells: List[str] = []
+    r_by_year: Dict[str, float] = {}
+    rd_sum = ga_sum = 0.0
+    for py in years:
+        lack = [k for k, rec in parts.items() if rec is None or py not in rec["plan"]]
+        if lack:
+            return None, f"plan year {py} has no {' or '.join(lack)} value"
+        sm_v, rd_v, ga_v, op_v = (parts[k]["plan"][py][0] for k in ("S&M", "R&D", "G&A", "OPEX"))
+        cells += [_cell_of(parts[k], c, home) for k in parts for c in parts[k]["plan"][py][1].split("+")]
+        gap = abs(sm_v + rd_v + ga_v - op_v)
+        if not op_v or gap > SPLIT_TOLERANCE * abs(op_v):
+            pct = fmt.fmt_pct(gap / abs(op_v)) if op_v else "OPEX is zero"
+            return None, f"check (a) failed – S&M + R&D + G&A differ from OPEX by {pct} in plan year {py} (limit 1%)"
+        if not rd_v + ga_v:
+            return None, f"R&D + G&A is zero in plan year {py}"
+        r_by_year[py] = rd_v / (rd_v + ga_v)
+        rd_sum, ga_sum = rd_sum + rd_v, ga_sum + ga_v
+    spread = max(r_by_year.values()) - min(r_by_year.values())
+    if spread > SPLIT_STABLE:
+        shown = ", ".join(f"{py} {fmt.fmt_pct(v)}" for py, v in r_by_year.items())
+        return None, (f"check (b) failed – the R&D share of R&D + G&A moves {fmt.fmt_number(spread * 100)} points across the plan years "
+                      f"({shown}; limit 10 points)")
+    return {"r": rd_sum / (rd_sum + ga_sum), "rd": rd_sum, "ga": ga_sum, "years": years, "cells": cells, "home": home}, None
+
+
 def split_expense(metric: str, role: str, table, as_of, fye) -> Dict:
     """R&D or G&A (`role`) of the latest actual year. A value the file states for that year is the value (no estimate flag). Otherwise, where the
-    actual years carry the OPEX total only, an estimate: non_sm_opex = OPEX − S&M of the year; r = R&D ÷ (R&D + G&A) over the plan years;
-    R&D = non_sm_opex × r, G&A = non_sm_opex × (1 − r). Two checks gate it: (a) S&M + R&D + G&A = OPEX within 1 % in every plan year, (b) r within
-    10 points across the plan years. A missing input or a failed check gives no value and one reason line. non_sm_opex and r are not metrics:
+    actual years carry the OPEX total only, an estimate: non_sm_opex = OPEX − S&M of the year; r from `plan_split`; R&D = non_sm_opex × r,
+    G&A = non_sm_opex × (1 − r). A missing input or a failed check gives no value and one reason line. non_sm_opex and r are not metrics:
     they are written in the method text (`source.rule`) with their cells."""
     name = SPLIT_FIELDS[role]
     opex = cost_row(table, "opex", "yearly")
@@ -567,53 +622,104 @@ def split_expense(metric: str, role: str, table, as_of, fye) -> Dict:
     sm = cost_row(table, "sales_marketing", "yearly")
     if sm is None or year not in sm["actual"]:
         return no(f"S&M for {year} is not in the actual years", ["sales_marketing"])
-    plan = {r: sum_role(table, r, "yearly", key="plan") for r in ("rnd", "ga")}
-    absent = [r for r in ("rnd", "ga") if plan[r] is None]
-    if absent:
-        return no(f"no plan split: {' and '.join(SPLIT_FIELDS[r] for r in absent)} not in the plan years", absent)
-    plan_sm, plan_opex = sum_role(table, "sales_marketing", "yearly", key="plan"), sum_role(table, "opex", "yearly", key="plan")
-    pyears = sorted({p for r in plan.values() for p in r["plan"] if re.fullmatch(r"\d{4}", p)})
-    if not pyears:
-        return no("no yearly plan split")
-    cells: List[str] = []
-    r_by_year: Dict[str, float] = {}
-    rd_sum = ga_sum = 0.0
-    for py in pyears:
-        parts = {"S&M": plan_sm, "R&D": plan["rnd"], "G&A": plan["ga"], "OPEX": plan_opex}
-        lack = [k for k, rec in parts.items() if rec is None or py not in rec["plan"]]
-        if lack:
-            return no(f"plan year {py} has no {' or '.join(lack)} value", [role])
-        sm_v, rd_v, ga_v, op_v = (parts[k]["plan"][py][0] for k in ("S&M", "R&D", "G&A", "OPEX"))
-        cells += [_cell_of(parts[k], c, opex) for k in parts for c in parts[k]["plan"][py][1].split("+")]
-        gap = abs(sm_v + rd_v + ga_v - op_v)
-        if not op_v or gap > SPLIT_TOLERANCE * abs(op_v):
-            pct = fmt.fmt_pct(gap / abs(op_v)) if op_v else "OPEX is zero"
-            return no(f"check (a) failed – S&M + R&D + G&A differ from OPEX by {pct} in plan year {py} (limit 1%)")
-        if not rd_v + ga_v:
-            return no(f"R&D + G&A is zero in plan year {py}")
-        r_by_year[py] = rd_v / (rd_v + ga_v)
-        rd_sum, ga_sum = rd_sum + rd_v, ga_sum + ga_v
-    spread = max(r_by_year.values()) - min(r_by_year.values())
-    if spread > SPLIT_STABLE:
-        shown = ", ".join(f"{py} {fmt.fmt_pct(v)}" for py, v in r_by_year.items())
-        return no(f"check (b) failed – the R&D share of R&D + G&A moves {fmt.fmt_number(spread * 100)} points across the plan years ({shown}; limit 10 points)")
+    split, reason = plan_split(table, plan_view(table))
+    if split is None:
+        return no(reason, ["opex"] if reason == "needs an opex row" else None)
     op_v, op_cell = opex["actual"][year]
     sm_v, sm_cell = sm["actual"][year]
     non_sm = op_v - sm_v
     if non_sm < 0:
         return no(f"S&M is above OPEX in {year}")
-    r = rd_sum / (rd_sum + ga_sum)
+    r = split["r"]
     share_ = r if role == "rnd" else 1 - r
-    actual_cells = [_cell_of(opex, c, opex) for c in op_cell.split("+")] + [_cell_of(sm, c, opex) for c in sm_cell.split("+")]
-    rule = (f"Estimate: non-S&M OPEX of {year} {_n(non_sm)} (OPEX {_n(op_v)} [{', '.join(actual_cells[:len(op_cell.split('+'))])}] − S&M {_n(sm_v)} "
-            f"[{', '.join(actual_cells[len(op_cell.split('+')):])}]) × {name} share of R&D + G&A r = {fmt.fmt_pct(r)}"
-            f"{'' if role == 'rnd' else ' (G&A: 1 − r)'}; r from the plan years {', '.join(pyears)} (R&D {_n(rd_sum)}, G&A {_n(ga_sum)}) "
-            f"[{', '.join(cells)}]. Checks passed: (a) S&M + R&D + G&A = OPEX within 1% in every plan year; (b) r within 10 points across the plan years.")
-    src = {"file": opex["file"], "sheet": opex["sheet"], "row": opex["row"], "cells": [*actual_cells, *cells], "rule": rule}
+    op_cells = [_cell_of(opex, c, opex) for c in op_cell.split("+")]
+    sm_cells = [_cell_of(sm, c, opex) for c in sm_cell.split("+")]
+    rule = (f"Estimate: non-S&M OPEX of {year} {_n(non_sm)} (OPEX {_n(op_v)} [{', '.join(op_cells)}] − S&M {_n(sm_v)} [{', '.join(sm_cells)}]) "
+            f"× {name} share of R&D + G&A r = {fmt.fmt_pct(r)}{'' if role == 'rnd' else ' (G&A: 1 − r)'}; r from the plan years "
+            f"{', '.join(split['years'])} (R&D {_n(split['rd'])}, G&A {_n(split['ga'])}) [{', '.join(split['cells'])}]. "
+            f"Checks passed: (a) S&M + R&D + G&A = OPEX within 1% in every plan year; (b) r within 10 points across the plan years.")
+    src = {"file": opex["file"], "sheet": opex["sheet"], "row": opex["row"], "cells": [*op_cells, *sm_cells, *split["cells"]], "rule": rule}
     return _entry(metric, period=year, basis="yearly", unit="money", value=non_sm * share_, label=ESTIMATE_LABEL, estimate=True,
                   reason=plan_only_reason(table, role) or f"{name} split not in the actual years", needs=[role],
                   detail=NEGATIVE_COSTS if opex.get("negated") or sm.get("negated") else None, source=src)
 
+
+# ---------------------------------------------------------------------------
+# The yearly P&L trend: revenue and the margins and shares, one value per fiscal year, actual years then plan years
+# ---------------------------------------------------------------------------
+TREND_ROWS = (("revenue", "Revenue", "money"), ("gross_margin", "Gross margin", "rate"), ("sm_share", "S&M share of revenue", "rate"),
+              ("rnd_share", "R&D share of revenue", "rate"), ("ga_share", "G&A share of revenue", "rate"), ("ebitda_margin", "EBITDA margin", "rate"))
+
+
+def pnl_trend(table: List[Dict], as_of: pd.Period, fye: int) -> Optional[Dict]:
+    """{"periods": [{"period", "kind"}], "rows": [{"metric", "name", "unit", "values": [{"period", "kind", "value", "estimate", "cells"}]}]}: the
+    yearly values of the six lines, every value with the cells it was computed from. Actual years are the fiscal years that end at or before the
+    as-of month, plan years the other years the plan holds. R&D and G&A of an actual year that carries OPEX only are the estimate of
+    `split_expense` (flagged); a value with an input missing is left out. None without a yearly revenue row."""
+    view = plan_view(table)
+    revenue = {"actual": pick(table, "revenue", "yearly"), "plan": pick(view, "revenue", "yearly", key="plan")}
+    if revenue["actual"] is None and revenue["plan"] is None:
+        return None
+    years = lambda rec, key: [p for p in (rec[key] if rec else {}) if re.fullmatch(r"\d{4}", p)]          # noqa: E731
+    actual_years = sorted(p for p in years(revenue["actual"], "actual") if (_end_month(p, fye) or as_of + 1) <= as_of)
+    plan_years = sorted(p for p in years(revenue["plan"], "plan") if p not in actual_years)
+    periods = [{"period": p, "kind": "actual"} for p in actual_years] + [{"period": p, "kind": "plan"} for p in plan_years]
+    home = revenue["actual"] or revenue["plan"]
+    recs: Dict[Tuple[str, str], Optional[Dict]] = {}
+
+    def rec_of(kind: str, role: str) -> Optional[Dict]:
+        if (kind, role) not in recs:
+            src = table if kind == "actual" else view
+            key = "actual" if kind == "actual" else "plan"
+            recs[(kind, role)] = (sum_role(src, role, "yearly", key=key) if role in COST_ROLES else pick(src, role, "yearly", key=key))
+        return recs[(kind, role)]
+
+    def get(kind: str, role: str, year: str) -> Optional[Tuple[float, List[str]]]:
+        rec = rec_of(kind, role)
+        key = "actual" if kind == "actual" else "plan"
+        if rec is None or year not in rec[key]:
+            return None
+        value, cell = rec[key][year]
+        return value, [_cell_of(rec, c, home) for c in cell.split("+")]
+    split, _ = plan_split(table, view)
+
+    def estimate(role: str, year: str) -> Optional[Tuple[float, List[str]]]:
+        """R&D or G&A of an actual year from the plan split; None when OPEX, S&M or the split is missing."""
+        opex, sm = get("actual", "opex", year), get("actual", "sales_marketing", year)
+        if split is None or opex is None or sm is None or opex[0] - sm[0] < 0:
+            return None
+        share_ = split["r"] if role == "rnd" else 1 - split["r"]
+        return (opex[0] - sm[0]) * share_, [*opex[1], *sm[1], *split["cells"]]
+
+    def value_of(metric: str, kind: str, year: str):
+        rev = get(kind, "revenue", year)
+        if rev is None:
+            return None
+        if metric == "revenue":
+            return rev[0], False, rev[1]
+        if not rev[0]:
+            return None
+        if metric == "gross_margin":
+            cogs = get(kind, "cost_of_revenue", year)
+            if cogs is None or (rev[0] - cogs[0]) / rev[0] > 1:           # a margin above 100 % is a sign or a mapping error, never a result
+                return None
+            return (rev[0] - cogs[0]) / rev[0], False, [*rev[1], *cogs[1]]
+        role = {"sm_share": "sales_marketing", "rnd_share": "rnd", "ga_share": "ga", "ebitda_margin": "ebitda"}[metric]
+        num, estimated = get(kind, role, year), False
+        if num is None and kind == "actual" and role in ("rnd", "ga"):
+            num, estimated = estimate(role, year), True
+        if num is None:
+            return None
+        return num[0] / rev[0], estimated, [*rev[1], *num[1]]
+    rows = []
+    for metric, name, unit in TREND_ROWS:
+        values = []
+        for p in periods:
+            found = value_of(metric, p["kind"], p["period"])
+            if found is not None:
+                values.append({"period": p["period"], "kind": p["kind"], "value": found[0], "estimate": found[1], "cells": found[2]})
+        rows.append({"metric": metric, "name": name, "unit": unit, "values": values})
+    return {"periods": periods, "rows": rows, "file": home["file"], "sheet": home["sheet"]} if periods else None
 
 def stock(metric: str, role: str, unit: str, table, as_of, fye) -> Dict:
     rec = pick(table, role, "monthly") or pick(table, role)
@@ -878,8 +984,9 @@ def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: 
                 run("headcount", lambda: stock("headcount", "headcount", "count", table, as_of, fye))]
     reconciliation = _guarded("reconciliation", lambda: reconcile(table, deck or [], as_of, fye), on_error, lambda e: [])
     by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye, deck), on_error, lambda e: [])
+    trend = _guarded("pnl_trend", lambda: pnl_trend(table, as_of, fye), on_error, lambda e: None)
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
-                             "growth_by_year": by_year},
+                             "growth_by_year": by_year, "pnl_trend": trend},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}
 
