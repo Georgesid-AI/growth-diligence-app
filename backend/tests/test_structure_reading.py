@@ -980,9 +980,9 @@ def test_the_4000_cap_is_on_the_text_and_item_list_not_the_prompt_and_schema():
     assert (result.status, adapter.calls) == ("read", 1)
     whole = adapter.count_requests[1]
     assert whole["system"] and whole["json_schema"] and json.loads(whole["user_payload"])["text"] == TEXT
-    # The 400,000 cap counts the whole call: 391,300 used + 5,000 input + 4,000 max_tokens is over
+    # The 600,000 cap counts the whole call: 591,300 used + 5,000 input + 4,000 max_tokens is over
     # (with the text's 3,900 it would fit).
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 385000,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 585000,
                                  "output_tokens": 1000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
     adapter.text_tokens, adapter.input_tokens = 3900, 5000
@@ -990,15 +990,15 @@ def test_the_4000_cap_is_on_the_text_and_item_list_not_the_prompt_and_schema():
     assert result.status == "stopped" and adapter.calls == 0
 
 
-def test_the_400000_token_cap_counts_billed_input_and_output_and_stops_with_the_spec_message():
+def test_the_600000_token_cap_counts_billed_input_and_output_and_stops_with_the_spec_message():
     db = _db()
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 390000,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 590000,
                                  "output_tokens": 4000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.input_tokens = 2001            # 394,000 used + 2,001 input + 4,000 max_tokens > 400,000
+    adapter.input_tokens = 2001            # 594,000 used + 2,001 input + 4,000 max_tokens > 600,000
     result, _ = _read(db, adapter=adapter)
     assert result.status == "stopped" and adapter.calls == 0
-    assert result.reason == ("AI reading stopped: this audit reached its 400,000-token limit. The remaining "
+    assert result.reason == ("AI reading stopped: this audit reached its 600,000-token limit. The remaining "
                              "structures were read by Python only.")
     adapter.input_tokens = 2000            # exactly at the cap: the call goes out
     result, _ = _read(db, adapter=adapter)
@@ -1007,7 +1007,7 @@ def test_the_400000_token_cap_counts_billed_input_and_output_and_stops_with_the_
 
 def test_an_audit_of_8_decks_of_5_structures_fits_the_token_cap():
     """At the live run's 4,156 billed input tokens a read and about 300 output tokens, the 40 reads of an audit of 8
-    decks of 5 structures each use about 178,000 tokens. The cap stops reading at the 89th read: each call must leave
+    decks of 5 structures each use about 178,000 tokens. The cap stops reading at the 134th read: each call must leave
     room for its input and its 4,000 max_tokens."""
     class Read(t.FakeAdapter):
         input_tokens, text_tokens = 4156, 100
@@ -1016,25 +1016,25 @@ def test_an_audit_of_8_decks_of_5_structures_fits_the_token_cap():
             reply, tokens_in, _ = super().complete(**kwargs)
             return reply, tokens_in, 300
     db, adapter = _db(), Read(replies=[json.dumps({"type": "table", "labels": [], "pairs": []})])
-    statuses = [_read(db, f"r1c1: Revenue\nr1c2: {n}", adapter=adapter)[0].status for n in range(89)]
-    assert statuses == ["read"] * 88 + ["stopped"]
-    assert asyncio.run(guards.structure_tokens_used(db, AUDIT)) == 88 * 4456
+    statuses = [_read(db, f"r1c1: Revenue\nr1c2: {n}", adapter=adapter)[0].status for n in range(134)]
+    assert statuses == ["read"] * 133 + ["stopped"]
+    assert asyncio.run(guards.structure_tokens_used(db, AUDIT)) == 133 * 4456
 
 
 def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
-    """A structure the daily spend cap or the 400,000-token cap refuses was not read and printed nothing, so a run
+    """A structure the daily spend cap or the 600,000-token cap refuses was not read and printed nothing, so a run
     that hit a cap showed only "0 of N structures read". It logs the one "ai call refused" line, reason=spend_cap or reason=token_cap, with the
     input tokens the call would have sent; there is no "structure not read" line beside it (PR 4)."""
     import logging
     from datetime import datetime, timezone
     db = _db()
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 395500,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 595500,
                                  "output_tokens": 4000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     with caplog.at_level(logging.INFO):
         result, adapter = _read(db)
     assert (result.status, adapter.calls) == ("stopped", 0)
     assert caplog.text.count("structure not read:") == 0
-    assert caplog.text.count("ai call refused:") == 1 and "reason=token_cap used=399500 cap=400000 input=" in caplog.text
+    assert caplog.text.count("ai call refused:") == 1 and "reason=token_cap used=599500 cap=600000 input=" in caplog.text
     assert db["llm_calls"].docs[-1]["status"] == "structure_token_cap_reached" and db["llm_calls"].docs[-1]["refused_input_tokens"] > 0
     caplog.clear()
     monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
@@ -1094,7 +1094,7 @@ def test_usage_gains_per_deck_cost_and_keeps_narrative_calls_apart():
     _read(db, deck_id="deck-1")
     _read(db, deck_id="deck-1")             # a cache hit
     usage = asyncio.run(gateway.usage_for_run(db, AUDIT))
-    assert usage.calls == 0 and usage.structure_calls == 1 and usage.structure_token_cap == 400000
+    assert usage.calls == 0 and usage.structure_calls == 1 and usage.structure_token_cap == 600000
     deck = usage.by_deck["deck-1"]
     assert (deck.calls, deck.cache_hits, deck.input_tokens, deck.output_tokens) == (1, 1, 1200, 300)
     assert deck.estimated_cost_usd == pytest.approx(gateway.estimate_cost_usd("claude-sonnet-5-5", 1200, 300))
@@ -1609,13 +1609,13 @@ def test_uploading_the_same_deck_again_is_served_from_the_cache_and_lists_no_row
 def test_the_token_cap_stops_the_remaining_structures_and_the_deck_says_so(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 395500,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 595500,
                                  "output_tokens": 0, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     before = adapter.calls
     _upload_deck(client)
     deck = _deck(client)["decks"][0]
     assert adapter.calls == before and deck["ai_status"] == "stopped"
-    assert deck["ai_message"] == ("AI reading stopped: this audit reached its 400,000-token limit. The remaining "
+    assert deck["ai_message"] == ("AI reading stopped: this audit reached its 600,000-token limit. The remaining "
                                   "structures were read by Python only.")
     stored = db["deck_text"].docs[0]["structures"]
     assert {s["ai"]["status"] for s in stored} == {"stopped"}

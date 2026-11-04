@@ -1,7 +1,7 @@
 # Reading consistency: a second read of the same input
 
 Status: built 2026-11-04 (brief of George, items 5 to 8; commit 2 of the reconciliation and reading-consistency PR). Architecture change (CLAUDE.md rule 32):
-needs George's approval before merge.
+approved by George on #237 (2026-11-04), with the per-audit token cap raised from 400,000 to 600,000.
 
 ## What changes
 
@@ -26,9 +26,9 @@ other figure is stored with the review flag `reading uncertain` and a correction
 the review tab and on the deck's tab in the reading screen, and used by no reconciliation, rating or verdict until the analyst chooses (the existing
 `answer_correction` route; Undo brings the card back).
 
-**Ratings.** `role_metrics.awaiting_confirmation` {count, rows, figures} counts the uncertain sheet rows and deck figures of a role a rating reads
-(`role_engine.RATING_ROLES`). Uncertain deck figures are held out of the reconciliation and the growth by year; uncertain sheet rows are used with the first
-read's values (as stored) and counted. When the count is not zero each rating line says "N figures await confirmation" (`verdict.ratings`) and the memo's
+**Ratings.** `role_metrics.awaiting_confirmation` {count, rows, figures} counts every uncertain sheet row and deck figure (George, 2026-11-04: no fixed role
+list). Both are held out of the calculations until the analyst chooses (`role_engine.confirmed_rows`); a metric that needs only held rows reads "awaits
+confirmation" (`mark_awaiting`). The first read's values stay stored. When the count is not zero each rating line says "N figures await confirmation" (`verdict.ratings`) and the memo's
 Summary says it once.
 
 **Cost.** The second read reuses what is stored: a file or page whose second read is stored makes no call; a file read before this change makes the one

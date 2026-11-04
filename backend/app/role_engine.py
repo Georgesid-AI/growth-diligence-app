@@ -56,7 +56,7 @@ YEARLY_LABEL = "yearly"
 FORM = {"monthly": "month", "quarterly": "quarter", "yearly": "year"}
 DECK_METRICS = {"revenue": "revenue", "arr": "arr", "mrr": "mrr", "customers": "customers", "headcount": "headcount", "cash": "cash",
                 "ebitda": "ebitda"}      # a role's name in the deck reader's closed metric list
-RATING_ROLES = ("revenue", "arr", "mrr", "customers", "churn_rate", "sales_marketing")     # the roles a rating reads: an uncertain figure of one could change it
+AWAITS = "awaits confirmation"       # the reason of a metric whose only rows are held out because the two reads disagree on them
 RECONCILE_TOLERANCE = 0.005         # money within 0.5 %, as the cell checks (app/checks.py); a count exact
 CUMULATIVE = "cumulative_to_date"
 MONTHLY_ONLY_REASON = "needs a yearly P&L; the revenue file is monthly"
@@ -1118,11 +1118,25 @@ def _best(rows: List[Dict], table: List[Dict]) -> Dict:
 
 
 def awaiting_confirmation(table: List[Dict], deck: List[Dict]) -> Dict:
-    """{"count", "rows", "figures"}: the figures a rating could change on that wait for the analyst (docs/design/reading-consistency.md). A sheet row
-    the two reads disagree on (stored with the first read's values) and a deck figure the two page reads disagree on, of a role a rating reads."""
-    rows = sum(1 for r in table if r.get("uncertain") and r["role"] in RATING_ROLES)
-    figures = sum(1 for f in deck if f.get("uncertain") and DECK_METRICS.get(f.get("metric") or "") in RATING_ROLES)
+    """{"count", "rows", "figures"}: every sheet row and every deck figure the two reads disagree on, whatever its role or metric (docs/design/
+    reading-consistency.md). All of them are held out of the calculations until the analyst chooses."""
+    rows = sum(1 for r in table if r.get("uncertain"))
+    figures = sum(1 for f in deck if f.get("uncertain"))
     return {"count": rows + figures, "rows": rows, "figures": figures}
+
+
+def confirmed_rows(table: List[Dict]) -> List[Dict]:
+    """The rows the calculations read: those the two reads agree on, or the analyst has chosen."""
+    return [r for r in table if not r.get("uncertain")]
+
+
+def mark_awaiting(metrics: List[Dict], table: List[Dict]) -> None:
+    """A metric that is missing only because the rows it needs are held out says "awaits confirmation", not "needs a <role> row" (in place)."""
+    held = {r["role"] for r in table if r.get("uncertain")}
+    for m in metrics:
+        if m["status"] == "needs_row" and not str(m.get("reason") or "").startswith(NO_ESTIMATE) and m.get("reason") != AWAITS \
+                and held & {role for need in m.get("needs") or () for role in need.split("/")}:
+            m["reason"] = AWAITS
 
 
 def mapping_flags(table: List[Dict]) -> List[Dict]:
@@ -1227,11 +1241,12 @@ def _guarded(metric: str, fn, on_error, fallback):
         return fallback(exc)
 
 
-def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None) -> Dict:
+def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None) -> Dict:
     """{"role_metrics": block, "arr", "mrr_series", "customers_series", "revenue_series", "yearly"}: the `role_metrics` block of the contract,
     the legacy blocks the map feeds (None where the rows are missing) and the yearly input of compute_yearly_basis."""
     if as_of is None:
         return {"role_metrics": None, "arr": None, "mrr_series": None, "customers_series": None, "revenue_series": None, "yearly": None}
+    table = confirmed_rows(all_rows)        # a row the two reads disagree on is held out until the analyst chooses
 
     def run(metric, fn, pair=False):
         return _guarded(metric, fn, on_error, (lambda e: (_failed(metric, e), None)) if pair else (lambda e: _failed(metric, e)))
@@ -1261,10 +1276,11 @@ def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: 
     reconciliation = _guarded("reconciliation", lambda: reconcile(table, confirmed_deck, as_of, fye), on_error, lambda e: [])
     by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye, confirmed_deck), on_error, lambda e: [])
     trend = _guarded("pnl_trend", lambda: pnl_trend(table, as_of, fye), on_error, lambda e: None)
+    mark_awaiting(metrics, all_rows)
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
                              "growth_by_year": by_year, "pnl_trend": trend,
                              "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: []),
-                             "awaiting_confirmation": awaiting_confirmation(table, deck or [])},
+                             "awaiting_confirmation": awaiting_confirmation(all_rows, deck or [])},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}
 

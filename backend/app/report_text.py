@@ -219,7 +219,8 @@ def apply_reasons(results: Optional[dict], table: List[dict]) -> Optional[dict]:
         return results
     out = copy.deepcopy(results)
     for m in ((out.get("role_metrics") or {}).get("metrics")) or ():
-        if m["status"] == "computed" or m["metric"] == "reconciliation" or str(m.get("reason") or "").startswith(role_engine.NO_ESTIMATE):
+        if m["status"] == "computed" or m["metric"] == "reconciliation" or str(m.get("reason") or "").startswith(role_engine.NO_ESTIMATE) \
+                or m.get("reason") == role_engine.AWAITS:
             continue            # an estimate's own closed reason (a failed check, a missing plan input) stays as the engine wrote it
         reason = missing_reason(table, m.get("needs"), m.get("reason"))
         if reason:

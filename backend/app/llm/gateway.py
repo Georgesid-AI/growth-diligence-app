@@ -2061,7 +2061,7 @@ async def read_structure(
 
         consent -> boundary and redaction check -> cache (audit, key) -> token count of the text and
         its item list (4,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
-        (not for a column mapping) -> token cap (400,000 per audit, with the whole call's input) -> provider
+        (not for a column mapping) -> token cap (600,000 per audit, with the whole call's input) -> provider
         -> schema, type and item id check (one reask) -> store -> log
 
     A column mapping is exempt from the daily spend cap (chat-upload.md section 4.2, 2026-10-17), and so is a page read
@@ -2223,7 +2223,7 @@ async def read_structure(
     if structure_type == SHEET_READING:
         input_cap, max_tokens = SHEET_READING_INPUT_CAP, SHEET_READING_MAX_TOKENS
     try:
-        # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
+        # The 4,000-token cap is on the structure text plus its item list; the 600,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > input_cap:

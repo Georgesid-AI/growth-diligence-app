@@ -285,10 +285,10 @@ def test_an_uncertain_deck_figure_is_held_out_of_the_reconciliation_and_the_rati
     assert revenue["uncertain"] is True and revenue["period"] == "2025"
     results = run(synthetic_pnl(), as_of="2025-12", deck=figures)
     assert results["role_metrics"]["reconciliation"] == [], "the uncertain figure is no source"
-    assert results["role_metrics"]["awaiting_confirmation"] == {"count": 1, "rows": 0, "figures": 1}, "the margin is no role a rating reads"
+    assert results["role_metrics"]["awaiting_confirmation"] == {"count": 2, "rows": 0, "figures": 2}, "every uncertain figure counts, whatever its metric"
     rated = verdict.ratings(results, integrity.assess(results, 0, []), lambda v: f"{v:.0%}", lambda v: f"{v} months")
-    assert rated["data_reliability"]["line"].endswith("1 figure awaits confirmation") and rated["growth_engine"]["line"].endswith("1 figure awaits confirmation")
-    assert rated["data_reliability"]["rule"].endswith("1 figure awaits confirmation")
+    assert rated["data_reliability"]["line"].endswith("2 figures await confirmation") and rated["growth_engine"]["line"].endswith("2 figures await confirmation")
+    assert rated["data_reliability"]["rule"].endswith("2 figures await confirmation")
     two = verdict.ratings({"role_metrics": {"awaiting_confirmation": {"count": 3}}}, None, lambda v: v, lambda v: v)
     assert two["data_reliability"]["line"].endswith("– 3 figures await confirmation")
     plain = verdict.ratings(run(synthetic_pnl(), as_of="2025-12"), integrity.assess(run(synthetic_pnl(), as_of="2025-12"), 0, []), lambda v: v, lambda v: v)
@@ -323,7 +323,7 @@ def test_confirming_the_figure_includes_it(monkeypatch, second_page_read):
     results = run(synthetic_pnl(), as_of="2025-12", deck=figures)
     rec, = results["role_metrics"]["reconciliation"]
     assert rec["status"] == "agrees" and {s["kind"] for s in rec["sources"]} == {"file", "deck"}, "confirmed: the figure is a source"
-    assert results["role_metrics"]["awaiting_confirmation"]["count"] == 0, "nothing awaits: the ratings carry no such line"
+    assert results["role_metrics"]["awaiting_confirmation"] == {"count": 1, "rows": 0, "figures": 1}, "only the margin still awaits"
     undone = client.post(f"/api/audits/{DECK_AUDIT}/decks/candidates/{revenue['id']}/correction", json={"index": len(revenue["corrections"]) - 1, "action": "undo"})
     assert undone.status_code == 200 and checker.READING_UNCERTAIN in undone.json()["flags"] and undone.json()["value"] == 150000 and undone.json()["status"] == "pending"
 
@@ -350,3 +350,42 @@ def test_the_second_page_reads_reply_is_never_a_page_reply_the_normaliser_would_
     assert sorted(d["type"] for d in stored) == ["page_claims", "page_claims_second"]
     first = next(d for d in stored if d["type"] == "page_claims")
     assert first["second_key"] == next(d for d in stored if d["type"] == "page_claims_second")["key"]
+
+
+# ---------------------------------------------------------------------------
+# Uncertain sheet rows are held out of the engine; every uncertain row and figure counts
+# ---------------------------------------------------------------------------
+def held_report(held=("Report:8",), extra_rows=()):
+    from test_role_engine import monthly_report
+    files = monthly_report(list(extra_rows))
+    files[0]["uncertain"] = list(held)
+    return files
+
+
+def test_an_uncertain_sheet_row_is_held_out_of_the_engine_and_its_metric_awaits_confirmation():
+    r = run(held_report(), as_of="2026-06")
+    customers = next(m for m in r["role_metrics"]["metrics"] if m["metric"] == "customers")
+    assert customers["status"] == "needs_row" and customers["reason"] == "awaits confirmation" and customers["value"] is None
+    assert r["customers_series"]["data"] == [], "not computed from the held row"
+    arr = next(m for m in r["role_metrics"]["metrics"] if m["metric"] == "ending_arr")
+    assert arr["status"] == "computed", "the other rows are used as before"
+    assert run(held_report(held=()), as_of="2026-06")["customers_series"]["data"], "the same row, agreed, is used"
+
+
+def test_a_held_row_is_not_reported_as_a_missing_row_by_the_report_text():
+    from app import report_text, role_engine
+    files = held_report()
+    results = run(files, as_of="2026-06")
+    table = role_engine.build_table(files)
+    again = report_text.apply_reasons(results, table)
+    customers = next(m for m in again["role_metrics"]["metrics"] if m["metric"] == "customers")
+    assert customers["reason"] == "awaits confirmation"
+
+
+def test_every_uncertain_row_and_figure_counts_whatever_its_role_or_metric():
+    from test_role_engine import row as map_row_, MONTHS
+    cash = map_row_(9, "cash", [10] * 18, MONTHS[:18], unit="money")
+    rows = run(held_report(held=("Report:9",), extra_rows=[cash]), as_of="2026-06")["role_metrics"]["awaiting_confirmation"]
+    assert rows == {"count": 1, "rows": 1, "figures": 0}, "a cash row is no role a rating reads, and still counts"
+    deck = [{"metric": "ebitda", "period": "2025", "value": 5.0, "uncertain": True, "file": "d", "page": 1}]
+    assert run(held_report(held=()), as_of="2026-06", deck=deck)["role_metrics"]["awaiting_confirmation"] == {"count": 1, "rows": 0, "figures": 1}

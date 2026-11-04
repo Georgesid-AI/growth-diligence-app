@@ -2195,7 +2195,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                 "reason": f"The calculation stopped on an unexpected {type(exc).__name__}; reported as Missing, not estimated",
                 "unlocked_by": "Not computable from the data as supplied; the server log has the run id", "file": yearly.get("file")})
     if mapped is not None and mapped["role_metrics"] is not None:
-        role_engine.fill_yearly(mapped["role_metrics"], roles["table"], results.get("yearly_basis"))
+        role_engine.fill_yearly(mapped["role_metrics"], role_engine.confirmed_rows(roles["table"]), results.get("yearly_basis"))
+        role_engine.mark_awaiting(mapped["role_metrics"]["metrics"], roles["table"])
         results["role_metrics"] = mapped["role_metrics"]
     if statement:
         try:
