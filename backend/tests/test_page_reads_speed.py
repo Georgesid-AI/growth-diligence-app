@@ -203,12 +203,13 @@ def _run_deck(db, adapter):
 def test_a_page_that_errors_or_times_out_is_logged_and_listed_and_only_it_is_asked_again(monkeypatch, caplog):
     import logging
     monkeypatch.setenv("DECK_PIPELINE", "ai")
-    monkeypatch.setattr(pipeline, "PAGE_TIMEOUT_SECONDS", 0.2)
-    monkeypatch.setattr(pipeline, "read_pages", _with_timeout(pipeline.read_pages, 0.2))
+    monkeypatch.setattr(pipeline, "PAGE_TIMEOUT_SECONDS", 2.0)
+    monkeypatch.setattr(pipeline, "read_pages", _with_timeout(pipeline.read_pages, 2.0))
     caplog.set_level(logging.WARNING)
     parsed = many_pages(6, plain={4})
     db = _page_db(parsed)
     first = Gauge(hold=0.01, slow={2}, failing={5})
+    first.slow_for = 5.0  # far beyond the 2.0 s timeout, so a loaded runner cannot make the other pages time out
     assert _run_deck(db, first) == "read"
     doc, = db[TEXT_COLLECTION].docs
     assert doc["unread_pages"] == [2, 5] and doc["retry_pages"] == [2, 5] and doc["skipped_pages"] == [4]
