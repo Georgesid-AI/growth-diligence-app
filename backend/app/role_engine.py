@@ -846,13 +846,13 @@ def pnl_trend(table: List[Dict], as_of: pd.Period, fye: int) -> Optional[Dict]:
         value, cell = rec[key][year]
         return value, [_cell_of(rec, c, home) for c in cell.split("+")]
     split, _ = plan_split(table, view)
-    three_year = three_way_year(table, view, as_of, fye)
-    three, _ = plan_shares(table, view) if three_year else (None, None)
+    plan_has_three = all(sum_role(view, r, "yearly", key="plan") is not None for r in (*SPLIT3, "opex"))
+    three, _ = plan_shares(table, view) if plan_has_three else (None, None)
 
     def estimate(role: str, year: str) -> Optional[Tuple[float, List[str]]]:
         """R&D or G&A of an actual year from the plan split; None when OPEX, S&M or the split is missing."""
         opex, sm = get("actual", "opex", year), get("actual", "sales_marketing", year)
-        if sm is None and year == three_year and three is not None:         # no S&M, R&D or G&A in the year: the three-way split of OPEX
+        if sm is None and three is not None and not any(get("actual", r, year) for r in SPLIT3):       # no S&M, R&D or G&A in the year: OPEX split three ways
             return (opex[0] * three["shares"][role], [*opex[1], *three["cells"]]) if opex is not None else None
         if split is None or opex is None or sm is None or opex[0] - sm[0] < 0:
             return None
@@ -874,7 +874,7 @@ def pnl_trend(table: List[Dict], as_of: pd.Period, fye: int) -> Optional[Dict]:
             return (rev[0] - cogs[0]) / rev[0], False, [*rev[1], *cogs[1]]
         role = {"sm_share": "sales_marketing", "rnd_share": "rnd", "ga_share": "ga", "ebitda_margin": "ebitda"}[metric]
         num, estimated = get(kind, role, year), False
-        if num is None and kind == "actual" and role in ("sales_marketing", "rnd", "ga") and (role != "sales_marketing" or year == three_year):
+        if num is None and kind == "actual" and role in ("sales_marketing", "rnd", "ga"):
             num, estimated = estimate(role, year), True
         if num is None:
             return None

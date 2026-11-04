@@ -833,7 +833,25 @@ def test_the_three_way_shares_of_revenue_are_estimates_with_their_cells():
         v = trend[name]["2025"]
         assert v["estimate"] is True and v["value"] == pytest.approx(1_900 * part / 4_400 / 2_400) and "D5" in v["cells"] and "D4" in v["cells"]
         assert not trend[name]["2026"]["estimate"], "a plan year is the plan's own value"
-        assert "2024" not in trend[name], "only the latest actual year is estimated"
+
+
+def test_every_actual_year_with_opex_and_no_split_is_estimated_by_the_same_pooled_shares():
+    from app import plan_lines
+    r = run(three_way(plan_revenue=True))
+    trend = {x["metric"]: {v["period"]: v for v in x["values"]} for x in r["role_metrics"]["pnl_trend"]["rows"]}
+    revenue, opex = {"2023": 1_000, "2024": 1_500, "2025": 2_400}, {"2023": 800, "2024": 1_100, "2025": 1_900}
+    for name, part in (("sm_share", 2_200), ("rnd_share", 1_300), ("ga_share", 900)):
+        for year in revenue:
+            v = trend[name][year]
+            assert v["estimate"] is True and v["value"] == pytest.approx(opex[year] * part / 4_400 / revenue[year])
+            col = {"2023": "B", "2024": "C", "2025": "D"}[year]
+            assert f"{col}5" in v["cells"] and f"{col}4" in v["cells"] and {"B10", "C10", "B13", "C13"} <= set(v["cells"]), "OPEX and revenue of the year, every plan cell"
+    assert metric(r, "sm_expense")["period"] == "2025", "the expense metrics stay on the latest actual year"
+    text = " ".join(x["text"] for x in plan_lines.lines(r, "EUR"))
+    assert "(2025, estimate)" in text
+    header, rows = plan_lines.table(r["role_metrics"]["pnl_trend"], "EUR")
+    by = {x[0]: x for x in rows}
+    assert all(c.endswith(", estimate") for c in by["S&M share of revenue"][1:4]) and not by["S&M share of revenue"][4].endswith("estimate")
 
 
 def test_the_three_way_estimates_are_no_rating_input_and_cac_payback_stays_missing():

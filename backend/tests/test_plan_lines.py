@@ -9,7 +9,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 from test_memo_role_metrics import build  # noqa: E402
-from test_role_engine import LABEL, file_of, row, run, sheet  # noqa: E402
+from test_role_engine import file_of, row, run, sheet  # noqa: E402
 
 from app import plan_lines  # noqa: E402
 
@@ -80,7 +80,7 @@ def test_an_estimate_carries_the_label_in_the_line_and_the_table_and_has_no_tren
     header, rows = plan_lines.table(run(maps)["role_metrics"]["pnl_trend"], "EUR")
     assert header == ["Metric", "2023", "2024", "2025", "2026 (plan)", "2027 (plan)"]
     by = {r[0]: r for r in rows}
-    assert by["R&D share of revenue"][3] == f"25% ({LABEL})" and by["R&D share of revenue"][5] == "18%", "the plan values are not estimates"
+    assert by["R&D share of revenue"][3] == "25%, estimate" and by["R&D share of revenue"][5] == "18%", "the plan values are not estimates"
     assert by["Revenue"][1:] == ["1,000 EUR", "1,500 EUR", "2,400 EUR", "3,000 EUR", "4,000 EUR"]
 
 
@@ -134,7 +134,7 @@ def test_the_block_sits_directly_after_the_scorecard_with_the_trend_table_and_th
     assert "## " not in scorecard, "directly after the Scorecard: no section between"
     block = block.split("\n## ")[0]
     assert "| Metric | 2023 | 2024 | 2025 | 2026 (plan) | 2027 (plan) |" in block
-    assert f"| R&D share of revenue | 30% ({LABEL}) |" in block
+    assert f"| R&D share of revenue | 30%, estimate |" in block
     assert "- Plan assumes revenue rises from 2,400 EUR (2025) to 4,000 EUR (2027).[^" in block
     assert "- Revenue rose from 1,000 EUR (2023) to 2,400 EUR (2025).[^" in block
 
@@ -142,7 +142,7 @@ def test_the_block_sits_directly_after_the_scorecard_with_the_trend_table_and_th
 def test_the_cells_of_every_trend_value_are_in_appendix_c_and_the_footnotes(memo_text):
     appendix = memo_text.split("## Appendix C")[1].split("## Appendix D")[0]
     assert "Yearly P&L trend" in appendix and "| Revenue | 2027 (plan) | 4,000 EUR | pnl · P&L!C10 |" in appendix
-    assert f"| R&D share of revenue | 2025 | 25% ({LABEL}) |" in appendix
+    assert f"| R&D share of revenue | 2025 | 25%, estimate |" in appendix
     assert "What the plan assumes · pnl · P&L · D4" in memo_text.split("Footnotes")[-1]
 
 

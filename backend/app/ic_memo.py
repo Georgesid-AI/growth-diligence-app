@@ -600,7 +600,7 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
         out.append(("Yearly P&L trend", ["Metric", "Year", "Value", "Cells"],
                     [[r["name"], v["period"] + (" (plan)" if v["kind"] == "plan" else ""),
                       (fmt.fmt_currency(v["value"], ccy) if r["unit"] == "money" else fmt.fmt_pct(v["value"]))
-                      + (f" ({ESTIMATE_LABEL})" if v["estimate"] else ""), _trend_cells(trend, v)]
+                      + (", estimate" if v["estimate"] else ""), _trend_cells(trend, v)]
                      for r in trend["rows"] for v in r["values"]]))
     plan = rm.get("plan_to_date")
     if plan:
