@@ -1047,9 +1047,10 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
 
 
 def narrative_words(text: str) -> int:
-    """Narrative words (section 7.5): every table line (starts with a pipe), the title line and the memo-text line are left out."""
+    """Narrative words (section 7.5): every table line (starts with a pipe), the title line, the Date and Evidence lines under it and the
+    memo-text line are left out."""
     return count_words("\n".join(line for line in text.split("\n")
-                                 if not line.startswith(("|", "# ", "Memo text: "))))
+                                 if not line.startswith(("|", "# ", "Memo text: ", "Date: ", "Evidence to "))))
 
 
 def word_count_of(text: str) -> int:

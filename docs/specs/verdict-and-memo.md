@@ -281,7 +281,7 @@ their count.
 
 ### 7.5 Word count
 Words are whitespace-separated tokens holding a letter or a digit, counted from the title to the end of section 6, narrative text only:
-every table (Scorecard, trend table, evidence tables) and the title line are left out (Prompt 0, "Word limits apply to narrative text only").
+every table (Scorecard, trend table, evidence tables) the title line and the Date and Evidence lines under it are left out (Prompt 0, "Word limits apply to narrative text only").
 A footnote marker counts as one word; appendices are excluded. The word count never blocks the download (2026-11-04): over 1,500 words the
 memo is exported and one line under the title reads "Memo text: N words (limit 1,500)"; at 1,500 or fewer there is no line.
 

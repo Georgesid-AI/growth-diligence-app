@@ -251,6 +251,8 @@ def test_tables_and_the_title_are_not_narrative_words():
     table = "\n".join(["| " + " | ".join(["cell"] * 20) + " |"] * 10)           # 200 words in a table
     assert im.narrative_words(head_of(text) + "\n" + table) == 1400
     assert im.narrative_words("# A long title line of many words\n" + table + "\nOne two.") == 2
+    assert im.narrative_words("# Title\nDate: 2026-10-08\nEvidence to February 2024\nOne two.") == 2, "the Date and Evidence lines are not narrative"
+    assert text.split("\n")[1].startswith("Date: ") and text.split("\n")[2].startswith("Evidence to ")
 
 
 def test_the_appendices_are_not_counted():
