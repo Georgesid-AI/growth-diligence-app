@@ -216,7 +216,7 @@ def test_customer_level_and_crm_metrics_still_say_they_need_their_files():
 
 def test_the_engine_output_passes_the_contract_and_carries_the_version():
     r = run(monthly_report() + yearly_pnl())
-    assert r["contract_version"] == metrics.CONTRACT_VERSION == 17
+    assert r["contract_version"] == metrics.CONTRACT_VERSION == 18
     metrics.MetricsPayload.model_validate(r)
     assert metrics.safe_problems(r) == []
 
@@ -712,9 +712,15 @@ def without(*roles):
     return [file_of("p", [sheet("P&L", rows, granularity="yearly")])]
 
 
+def without_sm(files):
+    rows = [r for r in files[0]["file_map"]["sheets"][0]["rows"] if r["role"] != "sales_marketing"]
+    return [file_of("p", [sheet("P&L", rows, granularity="yearly")])]
+
+
 def test_without_a_plan_split_or_actual_s_and_m_or_opex_there_is_no_estimate():
     assert "no plan split" in failed(run(split_pnl(plan={"sales_marketing": (1_000, 1_200)})))
-    assert "S&M for 2025" in failed(run(without("sales_marketing")))
+    no_plan_sm = {"rnd": (600, 700), "ga": (400, 500), "opex": (1_000, 1_200)}          # S&M in neither the actual nor the plan years
+    assert "S&M for 2025" in failed(run(without_sm(split_pnl(plan=no_plan_sm))))
     assert metric(run(without("opex")), "rnd_expense")["reason"] == "needs an opex row"
 
 
@@ -792,3 +798,77 @@ def test_a_part_is_skipped_only_when_its_parent_holds_a_value_in_the_same_series
     actual_total = row(10, "opex", [1_000, 1_100, 1_200], YEARS, basis="yearly")                                      # actual cells only
     table = re_.build_table([file_of("pnl", [sheet("P&L", [actual_total, *plan_parts], granularity="yearly")])])
     assert re_.sum_role(table, "opex", "yearly", key="plan")["plan"]["2026"] == (1_000, "B11+B12"), "the plan sum is the parts'"
+
+
+# ---------------------------------------------------------------------------
+# The three-way split: actual OPEX only, plan years carry S&M, R&D and G&A
+# ---------------------------------------------------------------------------
+def three_way(plan=None, *, plan_revenue=False):
+    """Actual years 2023-25 carry OPEX only (2025: 1,900); the plan years carry S&M, R&D, G&A and OPEX. Pooled shares: S&M 2,200, R&D 1,300, G&A 900
+    of 4,400."""
+    rows = [r for r in split_pnl(plan=plan)[0]["file_map"]["sheets"][0]["rows"] if r["role"] != "sales_marketing" or r.get("plan_series")]
+    if plan_revenue:
+        rows.append(row(14, "revenue", [3_000, 3_600], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True))
+    return [file_of("p", [sheet("P&L", rows, granularity="yearly")])]
+
+
+def test_actual_opex_is_split_three_ways_by_the_pooled_plan_shares():
+    r = run(three_way())
+    sm, rnd, ga = (metric(r, n) for n in ("sm_expense", "rnd_expense", "ga_expense"))
+    for m in (sm, rnd, ga):
+        assert m["status"] == "computed" and m["estimate"] is True and m["label"] == LABEL and m["period"] == "2025"
+    assert sm["value"] == pytest.approx(1_900 * 2_200 / 4_400) and rnd["value"] == pytest.approx(1_900 * 1_300 / 4_400)
+    assert ga["value"] == pytest.approx(1_900 * 900 / 4_400)
+    assert sm["value"] + rnd["value"] + ga["value"] == pytest.approx(1_900)
+    cells = set(sm["source"]["cells"])
+    assert "D5" in cells and {"B10", "C10", "B11", "C11", "B12", "C12", "B13", "C13"} <= cells, "the actual OPEX cell and every plan cell used"
+    rule = sm["source"]["rule"]
+    assert "50%" in rule and "(a)" in rule and "(b)" in rule
+
+
+def test_the_three_way_shares_of_revenue_are_estimates_with_their_cells():
+    r = run(three_way(plan_revenue=True))
+    trend = {x["metric"]: {v["period"]: v for v in x["values"]} for x in r["role_metrics"]["pnl_trend"]["rows"]}
+    for name, part in (("sm_share", 2_200), ("rnd_share", 1_300), ("ga_share", 900)):
+        v = trend[name]["2025"]
+        assert v["estimate"] is True and v["value"] == pytest.approx(1_900 * part / 4_400 / 2_400) and "D5" in v["cells"] and "D4" in v["cells"]
+        assert not trend[name]["2026"]["estimate"], "a plan year is the plan's own value"
+        assert "2024" not in trend[name], "only the latest actual year is estimated"
+
+
+def test_the_three_way_estimates_are_no_rating_input_and_cac_payback_stays_missing():
+    from app import integrity
+    r = run(three_way())
+    cac = metric(r, "yearly_cac_payback")
+    assert cac["status"] == "needs_row" and cac["value"] is None and cac["estimate"] is False
+    assert "S&M expense" not in str(integrity.assess(r, 0, []))
+    lines = {x["metric"]: x for x in re_.missing_reasons(r["role_metrics"])}
+    assert lines["S&M expense"]["reason"] == "S&M split only in plan years; actual years carry OPEX total only"
+    assert "R&D expense" in lines and "G&A expense" in lines and "S&M share of revenue" in lines, "the data requests for the actual split stay"
+
+
+def test_the_templated_lines_mark_the_three_way_estimates():
+    from app import plan_lines
+    r = run(three_way(plan_revenue=True))
+    text = " ".join(x["text"] for x in plan_lines.lines(r, "EUR"))
+    assert "S&M share of revenue" in text and ", estimate" in text
+
+
+def test_three_way_check_a_failure_gives_no_estimate_and_names_the_check():
+    plan = {"sales_marketing": (1_000, 1_200), "rnd": (600, 700), "ga": (400, 500), "opex": (2_000, 2_500)}
+    r = run(three_way(plan))
+    assert "check (a) failed" in failed(r) and "2027" in failed(r, "ga_expense")
+    assert not [m for m in r["role_metrics"]["metrics"] if m["metric"] == "sm_expense"], "no estimate, no S&M expense line"
+
+
+def test_three_way_check_b_failure_names_the_share_that_moved():
+    plan = {"sales_marketing": (1_000, 800), "rnd": (600, 900), "ga": (400, 700), "opex": (2_000, 2_400)}          # S&M 50 % then 33 %
+    reason = failed(run(three_way(plan)), "ga_expense")
+    assert "check (b) failed" in reason and "S&M" in reason and "17 points" in reason
+
+
+def test_the_two_way_split_is_chosen_when_actual_s_and_m_exists():
+    r = run(split_pnl())
+    rnd = metric(r, "rnd_expense")
+    assert rnd["value"] == pytest.approx(1_000 * 1_300 / 2_200) and "r = 59%" in rnd["source"]["rule"]
+    assert not [m for m in r["role_metrics"]["metrics"] if m["metric"] == "sm_expense"]

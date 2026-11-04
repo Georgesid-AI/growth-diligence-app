@@ -151,12 +151,12 @@ Code: `backend/app/structures/pnl_lines.py` (uses, periods, checks, plan cells),
 ## The comparison lines (memo block "What the plan assumes")
 
 George, 2026-11-03. The memo carries a block "What the plan assumes" directly after the Scorecard: the yearly P&L trend table and the lines below. Code: `app/plan_lines.py`
-(templates, tolerances), `role_engine.pnl_trend` (values and cells), `role_metrics.pnl_trend` (stored, contract version 17). No model writes a line.
+(templates, tolerances), `role_engine.pnl_trend` (values and cells), `role_metrics.pnl_trend` (stored, contract version 18). No model writes a line.
 
 **Trend table.** One row per metric: revenue, gross margin, S&M share, R&D share, G&A share, EBITDA margin. Actual years first (fiscal years that end at or before the as-of
 month), then plan years (the other years the plan holds), the plan years marked "(plan)". A value with an input missing is "—". R&D and G&A of an actual year that carries OPEX
 only are the estimate of the Estimates block (plan split applied to actual OPEX, non-S&M OPEX × r) and carry the label "Estimate – plan split applied to actual OPEX"; when its
-check (a) or (b) fails there is no estimate and the cell is "—". Each value is stored with the cells it was computed from (Appendix C, "Yearly P&L trend"). A plan row may be a
+check (a) or (b) fails there is no estimate and the cell is "—". **Three-way split (contract 18).** When the latest actual year has an OPEX total and no S&M, R&D or G&A value, and the plan years carry rows of all three and OPEX, actual OPEX is split three ways: share of X = the sum of X over the plan years ÷ the sum of S&M + R&D + G&A over the plan years. Checks: (a) S&M + R&D + G&A = plan OPEX within 1% in every plan year; (b) each share moves no more than 10 points across the plan years; a failed check gives no estimate and the line "No estimate: check (a) failed …" or "check (b) failed …" naming the check. S&M, R&D and G&A expense (metric `sm_expense` is new) and their shares of revenue in that year are estimates: flagged, labelled "Estimate – plan split applied to actual OPEX", citing the actual OPEX cell and every plan cell used, read by no rating and by no CAC payback (yearly), which stays Missing with its data request. The data request for the actual split stays. The two-way split above stays, and takes priority, when the year has actual S&M. `sm_expense` exists only when the three-way estimate is computed; only the latest actual year is estimated. Each value is stored with the cells it was computed from (Appendix C, "Yearly P&L trend"). A plan row may be a
 plan cell of the line's own row or a `forecast` row that names its line by its metric.
 
 **Stable.** Shares and margins: within ±2 points. Money: within ±5% of the first figure (the claim-matching amount tolerance, `AMOUNT_TOLERANCE`). The boundary is stable.

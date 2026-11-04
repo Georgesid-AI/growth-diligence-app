@@ -4025,7 +4025,7 @@ def test_the_estimate_flag_method_text_and_failed_check_reasons_sit_in_the_serve
     """The R&D and G&A estimates (flag, label, method text with cells, "No estimate: check (a) failed ..." reasons) are part of `role_metrics`: in no
     step slice, no log line and no provider payload."""
     from schemas.metrics import RoleMetric, ROLE_METRICS
-    assert "estimate" in RoleMetric.model_fields and {"rnd_expense", "ga_expense"} <= set(ROLE_METRICS)
+    assert "estimate" in RoleMetric.model_fields and {"sm_expense", "rnd_expense", "ga_expense"} <= set(ROLE_METRICS)
     assert not {"estimate", "rnd_expense", "ga_expense"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
 
 

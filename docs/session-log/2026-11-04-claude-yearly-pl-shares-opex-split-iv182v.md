@@ -1,0 +1,6 @@
+2026-11-04, claude/yearly-pl-shares-opex-split-iv182v.
+Deleted: the old "no S&M, no estimate" path for a year with OPEX only and a full plan split (the test that pinned it now uses a plan with no S&M).
+Decided: three-way split in role_engine (`three_way_year`, `plan_shares`, `three_way_expense`); new metric `sm_expense` only when the estimate computes, so no new gap line for files without S&M; only the latest actual year is estimated in the trend; contract 18; the trend table keeps its " (Estimate – ...)" suffix and the lines keep ", estimate".
+Slow or unclear: commit 1 (plan-year S&M share "—") did not reproduce: the synthetic case and the real map shape (8 segment-labelled plan rows with parents, total rows of other roles, mixed revenue) both give the plan-year shares, so no fix and no commit; a failing test needs the stored map or the run id.
+Root cause and rule: the bug-1 cause is unknown; rule 13 stopped the fix. For commit 2, a test pinning "no estimate without S&M" had to change with the spec, and a shared field-name list (gateway outbound fields) already held `sm_expense`, so a boundary test on a new key must check the existing vocabulary first.
+Process change to propose: ask for the stored `role_metrics.pnl_trend` and the file map of the run with every bug report about a blank cell, so the failing test starts from the artefact.
