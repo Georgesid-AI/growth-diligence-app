@@ -3,4 +3,4 @@
 3. Decided: one list (report_text.memo_files) feeds both "Files reviewed" and Appendix D; file records first, joined to the reading's role table by file hash (name as fallback); the role table now carries file_hash. The Anomalies footnote says "no revenue lines or CRM deals read" with no file or sheet when no revenue lines or deals were read.
 4. Slow or unclear: the file record of a live audit carries dtype "file" and no P&L, revenue, customer or CRM type; the type exists only as what the reading maps. Customer-level and CRM files cannot be told apart on a live record.
 5. Root cause: `_memo_files` skipped every read file already present as a file record, and the record has no kind, so the kinds were dropped; tests built the list from readings alone and never from records. Prevented by the new test built from records (dtype "file", hash, no kind) and by one list for count and table.
-6. Process change to propose: moved to docs/pr6-cleanup.md.
+6. Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

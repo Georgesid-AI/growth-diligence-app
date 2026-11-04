@@ -2,4 +2,4 @@
 Deleted: the blanket "magnitude of any negative figure" allowance in allowed_numerals.
 Optimized: guard judges numbers per sentence; a dropped minus sign needs decline wording and no growth wording.
 Slow/unclear: a sentence with both decline and growth words is flagged (strict reading); word lists are English only.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

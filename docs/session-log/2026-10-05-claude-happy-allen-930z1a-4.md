@@ -2,4 +2,4 @@
 Deleted: nothing.
 Optimized: "value at stake" in deck-parser.md §2 now points to the spec that will define it, so the term is no longer an undefined reference.
 Slow/unclear: nothing; the wording was given exactly.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

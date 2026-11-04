@@ -2,4 +2,4 @@
 Denominator change: the consistency report's match rate now counts roadmap figure items (it used to leave every roadmap item out); milestones stay out. Financial and roadmap rates are reported beside it.
 Deleted: nothing; the value-keyed dedupe set became a per-cell list of (value, value_high).
 Slow or unclear: "the matcher" had two candidates once the verifier stopped comparing values (AI-row dedupe, deck inconsistency check); asked before building.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

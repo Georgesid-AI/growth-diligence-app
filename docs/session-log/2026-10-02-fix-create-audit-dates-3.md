@@ -2,4 +2,4 @@
 Deleted: double count of ambiguous invoice-date rows in "no usable invoice date".
 Optimized: ambiguous row ids travel in frame attrs from normalize to build_mrr_matrix; no new results keys.
 Slow/unclear: "reach the gateway" vs. anomalies being outside every step slice; the gateway test is a guard and cannot fail before the change.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

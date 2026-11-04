@@ -2,4 +2,4 @@
 Deleted: nothing.
 Decided: the register stays the approved and edited rows of deck_candidates and everything but the analyst's inputs is computed on read, so nothing goes stale and no collection is added; metrics are read from the stored results only (ARR at a past month is the engine's own MRR × 12); the register holds no deck text; rank follows the decision of 2026-10-07 (misses by normalised gap, beats as 0, untested rows after); the fixture runs on sample_data/ so every gap is known by construction.
 Slow or unclear: the method's A9 and the TestCo audit are not in the repo, so the baseline follows the request's wording and the fixture uses sample_data/; prose had to fit 600 words, so period and unit rules moved into tables.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

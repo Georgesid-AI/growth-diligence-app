@@ -3,5 +3,5 @@ Deleted: "Provisional" and "Insufficient evidence" states, the scope sentence an
 Decided: conclusion screen = verdict line, one grey line, one Change link; 15 Oct wording on screen and in memo; four label definitions standard everywhere; gates for every non-Verified claim, edited in Verdict only; setup and questions trimmed; ic_memo.py judgment fields recorded as a build task (no code changed).
 Slow or unclear: section 8 (was 7) decisions 3, 4, 6, 8 are now answered by the edits but left untouched as instructed; section 7 was renumbered to 8 to make room for Acceptance criteria.
 Root cause and rule: the design note carried states (provisional, insufficient) that blocked the verdict; rule: the verdict is always computed, uncertainty shows as a count.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.
 Also: open decisions 3, 4, 5, 6, 7, 8 of the design note marked decided with pointers to their sections (decision 1 left open for the build PR); wording only.

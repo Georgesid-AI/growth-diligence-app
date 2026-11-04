@@ -2,4 +2,4 @@
 Deleted: nothing in code; the drafted "words beside a figure" limit on borrowing was measured (recall 97% to 92%, precision +2 points) and not kept.
 Optimized: recall 52% to 97% (89/92) by borrowing keyword and date from table header, text box, position and slide title; pdf columns kept apart; unpack cap; pass mark 95%, precision floor 30%.
 Slow/unclear: precision is 34% (96/280): most false candidates are borrowed labels, date-only lines and chart axis numbers. Next improvement, not built: reduce false candidates, starting with date-only lines and chart axis numbers.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

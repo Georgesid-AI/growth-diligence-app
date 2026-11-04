@@ -2,4 +2,4 @@
 Deleted: four of the five open questions; the two-schemas-by-type interim rule for charts, unit economics and use of funds.
 Optimized: the spec stays under two pages (lists folded into prose, replaced sections as one table).
 Slow/unclear: funding → cash names a claim type that does not exist and contradicts deck-parser.md's funds-raised drop, so it stays open; a pair-dated roadmap figure is Verified only when the headers give the same period (pairing is the model's).
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

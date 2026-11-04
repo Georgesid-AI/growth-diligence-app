@@ -3,4 +3,4 @@ Deleted: `_error_message` and its test of the 200-character cut; the whole-reply
 Decided: the 500 line is back to type plus the last frame (file:line in function); `parse_page_reply` validates the top-level object (type, a list, no extra keys) first and each claim on its own, logs "page n: claim rejected (fields)" with closed schema names ("claim" for a model-level validator, "?" for a claim with no valid cell id) and keeps the rest; a cell not sent still rejects the whole reply because George's rule named schema failures only.
 Slow or unclear: the existing boundary test encoded the old whole-reply rule for label_cell and metric, so it was rewritten to the new rule; ruff 0.16.8 is not in the venv, installed by hand to match ruff.toml.
 Root cause and rule: a schema check written for the whole reply made one wrong field cost every claim on the page; rule: a validator for a model reply works at the smallest unit that can be dropped, and the log names the field, never the value.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

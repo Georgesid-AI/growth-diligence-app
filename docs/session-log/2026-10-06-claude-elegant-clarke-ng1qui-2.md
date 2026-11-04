@@ -2,4 +2,4 @@
 Live runs, 3 passes, 81 model reads: #44 run 287,576 input / 44,517 output tokens, $1.0203; #51 run 294,621 / 40,534, $0.9946. This branch sends 0.1% fewer characters than #51 and 18 fewer items per run: estimate about 294,200 input / 39,500-40,500 output tokens, $0.98-0.99 ($1.03 at #44's output).
 Deleted: the consistency script's "untracked, copy it out" notes. Optimized: header_cells and scale_factor share verify._beside instead of two copies of the guard.
 Decided: a test fails if git would ignore a report or diagnostic in docs/test-runs, because that is how the 2026-10-06 numbers were lost. Slow or unclear: live input is about 0.5 tokens per character sent, twice what the --fake counter's 4 characters per token assumes, so fake token and cost lines understate a live run.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

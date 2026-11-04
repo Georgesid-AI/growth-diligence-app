@@ -2,4 +2,4 @@
 Deleted: nothing.
 Optimized: the spec's unit rule states the stop at the next figure as its own sentence, with an example; no code change.
 Slow/unclear: nothing; the stop was already in code and tests, the spec only named it in passing.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

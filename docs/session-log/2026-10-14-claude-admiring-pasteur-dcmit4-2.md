@@ -3,4 +3,4 @@ Deleted: nothing; the verdict block wherever a check ranks and the banner stay a
 Decided: one optional argument on approveAllToast that only the upload page passes, so the review screen, which can answer the question, keeps its toast; the chat-upload.md §17 sentence that gives the toast word for word now says so, so the spec does not contradict the screen.
 Slow or unclear: nothing; the existing review-screen test already pins its toast with no hint, so it guards "upload page only" without a new test.
 Root cause and rule: the first pass left a toast naming a skip on a page that cannot resolve it; a message about a skipped item names where the analyst resolves it whenever that place is another screen.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

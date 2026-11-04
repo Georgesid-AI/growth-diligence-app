@@ -3,4 +3,4 @@ Deleted: the "Evidence supports the plan" phrases, the A10 names, the grey-line 
 Decided: the conclusion is claim-review-conclusion.md §2 word for word with its precedence and codes; Inconclusive gets its evidence-labels.md §3 definition as the fifth label; the strip is read-only with one Change link; contradiction lines sit under the outcome and the register keeps row labels only; rule 21 and the architecture approval sentences are rewritten in the build PR (§9).
 Slow or unclear: the Unverified and Unsupported definitions decided in the note differ from evidence-labels.md §2; kept as decided, the build PR must align the spec.
 Root cause and rule: the earlier edit invented three outcome phrases instead of reading the 15 Oct spec; a design note quotes outcome wording from the spec, never from memory.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

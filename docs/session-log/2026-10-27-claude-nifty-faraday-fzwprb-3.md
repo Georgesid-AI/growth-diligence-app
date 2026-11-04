@@ -3,4 +3,4 @@ Deleted: the separate heading-only "model period kept" block in page_check.perio
 Decided: the Diagnostics line is written for every kept model period a cited source reads otherwise (heading, other cell or the figure's own source alike), not for the cited-cell case alone: one rule, one line shape, and the line carries period tokens and cell ids only; the bar-year correction is excluded by its source word (AXIS), so BAR_YEAR stays the one check that changes a model period.
 Slow or unclear: five existing tests pinned the replacement as the figure's own source "taking precedence"; each now pins the precedence on a blank model period and the kept period on a set one.
 Root cause and rule: the section 5 rule was built for headings and other cells only, while the cited cell's own reading went through the older "rebuilt period replaces the model's" path; the rule now names every source, and the docstring of period_check states the one exception.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

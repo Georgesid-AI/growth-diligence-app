@@ -3,4 +3,4 @@ Deleted: Target ARR and Target date lines on the audit tile; the old intro tagli
 Decided: new intro text as given; a minimal "Show all lines" toggle in RecognitionLine (it did not exist in code, only in docs/design/simplified-flow.md) hides the Supports/Blocked paragraph and the claims line by default, for revenue and P&L blocks alike.
 Slow or unclear: the brief called the toggle "existing"; it was not in the code.
 Root cause and rule: design doc described a toggle that was never built; check the code, not the doc, before briefing "existing" UI.
-Process change to propose: moved to docs/pr6-cleanup.md.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.
