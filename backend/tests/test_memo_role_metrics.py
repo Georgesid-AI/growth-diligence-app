@@ -79,11 +79,11 @@ def test_appendix_c_carries_the_role_metrics_with_their_cells(text):
     for name in ("Customers", "Monthly churn", "Gross margin", "S&M share of revenue"):
         assert name in metrics_table, name
     assert "Report!S8" in metrics_table and "Report!S7" in metrics_table, "the cells of customers and churn"
-    plan = appendix.split("Plan to date")[1].split("Yearly P&L")[0] if "Plan to date" in appendix.split("Yearly P&L")[0] else appendix
+    plan = appendix.split("Plan to date")[1].split("Yearly P&L")[0] if "Plan to date" in appendix.split("\nYearly P&L\n")[0] else appendix
     assert "Report!" in plan
     recon = appendix.split("Revenue reconciliation")[1]
     assert "deck.pdf page 4" in recon and "Also read" in recon and "400 EUR" in recon, "the second FY figure of the page is listed, not compared"
-    assert "P&L!" in appendix.split("Yearly P&L")[1] or "P&L" in appendix.split("Yearly P&L")[1]
+    assert "P&L!" in appendix.split("\nYearly P&L\n")[1] or "P&L" in appendix.split("\nYearly P&L\n")[1]
 
 
 def test_files_reviewed_marks_the_pnl_as_covered_when_a_pnl_is_read_and_counts_the_categories(text):

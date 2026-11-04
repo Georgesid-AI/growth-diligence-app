@@ -189,7 +189,7 @@ NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry bo
                    # docs/specs/revenue-file-recognition.md section 9: closed words and counts about how the revenue was read
                    "recognition": "closed words and counts; a sheet with two tables that differ adds, per month, both figures and their cell positions",
                    # docs/design/read-check-review.md section 16: every metric carries its own source (the cells), or the roles it needs
-                   "role_metrics": "each metric, the plan to date and each year of growth carry a RoleSource of cells; a missing metric names the roles it needs; a reconciliation lists its sources by cell or page"}
+                   "role_metrics": "each metric, the plan to date and each year of growth carry a RoleSource of cells; a missing metric names the roles it needs; an estimate (rnd_expense, ga_expense) carries the flag, its label and its method with every cell; each value of the yearly P&L trend carries the cells it was computed from; a reconciliation lists its sources by cell or page"}
 
 
 def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_engine_output():
@@ -220,7 +220,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 16 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 17 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -560,7 +560,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 16 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 17 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"
@@ -595,7 +595,7 @@ def api(monkeypatch):
 STALE = "Stale – re-run audit"
 
 
-@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4, 8, 9])      # 8: before the simplified flow (George, 2026-10-25); 9: before the annual payback proxies (forecast-and-payback.md)
+@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4, 8, 9, 16])  # 8: before the simplified flow (George, 2026-10-25); 9: before the annual payback proxies (forecast-and-payback.md); 16: before the estimate flag (contract 17)
 def test_results_of_an_older_contract_are_stale_not_recomputed_and_not_shown(api, stored_version):
     """Version 0 (no version) holds whole-number percents, 1 to 4 lack the fields added since: whichever it is, a read never calculates
     and never answers with the figures, and `/results` says "Stale – re-run audit" until Run audit calculates again."""

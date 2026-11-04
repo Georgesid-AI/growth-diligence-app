@@ -174,3 +174,18 @@ test("a row whose costs are printed as negatives carries the note, and a margin 
     expect(text(host, "role-detail-yearly_cac_payback")).toContain("costs shown as negative");
   } finally { await done(); }
 });
+
+test("an estimated R&D figure is labelled, carries its method and cells, and keeps the data request", async () => {
+  const est = metric("rnd_expense", "R&D expense", { period: "2025", unit: "money", value: 590.9, estimate: true, label: "Estimate – plan split applied to actual OPEX",
+    reason: "R&D split only in plan years; actual years carry OPEX total only", needs: ["rnd"], source: { ...SRC(["D5", "D6", "B10"]), rule: "Estimate: non-S&M OPEX of 2025 1,000 × r = 59%." } });
+  const failed = missing("ga_expense", "G&A expense", "No estimate: check (a) failed – S&M + R&D + G&A differ from OPEX by 4.0% in plan year 2027 (limit 1%)", ["ga"]);
+  const { host, done } = await mount(results({ role_metrics: { ...RM, metrics: [...RM.metrics, est, failed] } }));
+  try {
+    expect(text(host, "role-estimate-label-rnd_expense")).toBe("Estimate – plan split applied to actual OPEX");
+    expect(text(host, "role-estimate-method-rnd_expense")).toContain("r = 59%");
+    expect(text(host, "role-estimate-method-rnd_expense")).toContain("D5, D6, B10");
+    expect(text(host, "role-estimate-request-rnd_expense")).toContain("split only in plan years");
+    expect(text(host, "role-missing-reason-ga_expense")).toContain("check (a) failed");
+    expect(q(host, "role-missing-rnd_expense")).toBeNull();
+  } finally { await done(); }
+});
