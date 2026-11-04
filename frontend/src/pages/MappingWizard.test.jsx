@@ -55,51 +55,6 @@ const click = (el) => act(async () => { el.click(); });
 beforeEach(() => { jest.clearAllMocks(); });
 afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); });
 
-describe("the FX settings", () => {
-  test("rates save to the audit as they change and need no file", async () => {
-    api.saveFx.mockResolvedValue({ fx: { USD: 0.9 } });
-    await mount();
-    expect(q("fx-settings")).not.toBeNull();
-    expect(q("revenue-settings")).toBeNull();           // no revenue file, and the rates are still there to set
-    await change(q("fx-ccy-input"), "usd");
-    await change(q("fx-rate-input"), "0.9");
-    const add = [...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add"));
-    await click(add);
-    await flush();
-    expect(api.saveFx).toHaveBeenCalledWith("a1", { USD: 0.9 });
-    expect(q("fx-settings").textContent).toContain("1 USD = 0.9 EUR");
-  });
-
-  test("a saved rate makes the results load again; a refused save does not", async () => {
-    api.saveFx.mockResolvedValue({ fx: { USD: 0.9 } });
-    await mount();
-    const before = Number(q("reading-screen").getAttribute("data-reload"));
-    await change(q("fx-ccy-input"), "usd");
-    await change(q("fx-rate-input"), "0.9");
-    await click([...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add")));
-    await flush();
-    expect(Number(q("reading-screen").getAttribute("data-reload"))).toBe(before + 1);
-    api.saveFx.mockRejectedValue(new Error("x"));
-    await change(q("fx-ccy-input"), "gbp");
-    await change(q("fx-rate-input"), "1.14");
-    await click([...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add")));
-    await flush();
-    expect(Number(q("reading-screen").getAttribute("data-reload"))).toBe(before + 1);
-  });
-
-  test("a rate that cannot be saved is taken back and says so", async () => {
-    const { toast } = require("sonner");
-    api.saveFx.mockRejectedValue(new Error("x"));
-    await mount();
-    await change(q("fx-ccy-input"), "gbp");
-    await change(q("fx-rate-input"), "1.14");
-    await click([...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add")));
-    await flush();
-    expect(toast.error).toHaveBeenCalledWith("Save failed");
-    expect(q("fx-settings").textContent).not.toContain("1 GBP");
-  });
-});
-
 describe("the page no longer holds the older mapping (read-check-review.md section 12)", () => {
   test("?view=legacy brings nothing back: no mapping block, no type picker, no revenue-row picker, no Confirm all", async () => {
     window.history.pushState({}, "", "/?view=legacy");

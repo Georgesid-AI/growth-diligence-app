@@ -90,6 +90,7 @@ export const SETUP_HELP = {
   as_of_month: "Last month of actual figures. Months after it are read as plan.",
   fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
 };
+export const FX_HELP = "All figures are reported in your reporting currency. Add a rate for each other currency used in your files or decks. With no rates set, every amount is treated as already in the reporting currency. Once any rate is set, amounts in a currency without a rate are left out of the totals and flagged. The app does not fetch rates; each rate applies to all periods.";
 export const AS_OF_PLACEHOLDER = "e.g. Jun 2021";
 
 const MONTH_ABBR = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];

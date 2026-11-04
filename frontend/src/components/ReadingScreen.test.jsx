@@ -13,7 +13,7 @@ import path from "path";
  */
 jest.mock("@/lib/api", () => ({
   getReading: jest.fn(), decideCard: jest.fn(), changeReading: jest.fn(), getCell: jest.fn(), getDeckPage: jest.fn(), downloadReading: jest.fn(),
-  getAudit: jest.fn(), updateAudit: jest.fn(),
+  getAudit: jest.fn(), updateAudit: jest.fn(), saveFx: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -91,7 +91,9 @@ describe("the two blocks under the Check results sentence", () => {
     await show();
     expect(q("audit-settings").querySelector("h3").textContent).toBe("Audit settings");
     expect(q("audit-settings").querySelector(".muted").textContent).toBe("Set for this audit, not read from the files.");
-    expect([...q("audit-settings").querySelectorAll(".setting")].map((l) => l.textContent)).toEqual(["Reporting currency:EURChange", "Fiscal year-end:DecemberChange"]);
+    expect([...q("audit-settings").querySelectorAll(".setting")].map((l) => l.textContent)).toEqual(["Fiscal year-end:DecemberChange", "Reporting currency:EURChange"]);
+    const follows0 = (a, b) => q(a).compareDocumentPosition(q(b)) & Node.DOCUMENT_POSITION_FOLLOWING;
+    for (const [a, b] of [["setting-fy", "setting-gap"], ["setting-gap", "setting-currency"], ["setting-currency", "fx-settings"]]) expect(follows0(a, b)).toBeTruthy();
     expect(q("audit-settings").textContent).not.toContain("Currency EUR");
     api.updateAudit.mockResolvedValue({});
     await act(async () => { q("setting-fy-change").click(); });
@@ -111,6 +113,34 @@ describe("the two blocks under the Check results sentence", () => {
     expect(follows("results-lead", "audit-settings")).toBeTruthy();
     expect(follows("audit-settings", "detected-layout")).toBeTruthy();
     expect(follows("detected-layout", "file-tabs")).toBeTruthy();
+  });
+
+  test("FX rates sit directly under Reporting currency, with the help text under them", async () => {
+    await show();
+    const fxBox = q("fx-settings");
+    expect(q("setting-currency").nextElementSibling).toBe(fxBox);
+    expect(fxBox.textContent).toContain("no FX rates — single-currency assumed");
+    expect(q("fx-help").textContent).toBe("All figures are reported in your reporting currency. Add a rate for each other currency used in your files or decks. With no rates set, every amount is treated as already in the reporting currency. Once any rate is set, amounts in a currency without a rate are left out of the totals and flagged. The app does not fetch rates; each rate applies to all periods.");
+    expect(fxBox.lastElementChild.contains(q("fx-help"))).toBe(true);
+  });
+
+  test("rates save to the audit as they change, need no file and load the results again; a refused save is taken back", async () => {
+    const { toast } = require("sonner");
+    api.saveFx.mockResolvedValue({});
+    await show();
+    const add = () => [...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add"));
+    const set = async (el, v) => act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); });
+    await set(q("fx-ccy-input"), "usd"); await set(q("fx-rate-input"), "0.9");
+    const reads = api.getReading.mock.calls.length;
+    await act(async () => { add().click(); });
+    expect(api.saveFx).toHaveBeenCalledWith("a1", { USD: 0.9 });
+    expect(q("fx-settings").textContent).toContain("1 USD = 0.9 EUR");
+    expect(api.getReading.mock.calls.length).toBe(reads + 1);
+    api.saveFx.mockRejectedValue(new Error("x"));
+    await set(q("fx-ccy-input"), "gbp"); await set(q("fx-rate-input"), "1.14");
+    await act(async () => { add().click(); });
+    expect(toast.error).toHaveBeenCalledWith("Save failed");
+    expect(q("fx-settings").textContent).not.toContain("1 GBP");
   });
 
   test("Detected layout: Actual data, the as-of month with its evidence and Confirmed on in plain text, the revenue row and the boundary, each with Change", async () => {
