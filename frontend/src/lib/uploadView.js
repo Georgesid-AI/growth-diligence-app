@@ -77,8 +77,9 @@ export function runningSeconds(item, seconds, now) {
 }
 const elapsedText = (s) => `Elapsed ${fmtElapsed(s)}`;
 
-/** The line of one spreadsheet: {tag, tone: run|done|bad, time, sub}. */
-export function sheetLine(v, now) {
+/** The line of one spreadsheet: {tag, tone: run|done|bad, time, sub}. `shared`: the one provider error the step shows at its top; the file's own
+ *  "could not be read" line then gives way to it. */
+export function sheetLine(v, now, shared = null) {
   if (v.local) {
     if (v.local.state === "failed") return { tag: NOT_PROCESSED, tone: "bad", time: "", sub: v.local.message };
     return { tag: STAGE_TAGS.removing_personal_data, tone: "run", time: elapsedText(runningSeconds(v, null, now)), sub: null };
@@ -90,7 +91,9 @@ export function sheetLine(v, now) {
     if (stage === "checking_cells" && v.read_total != null) sub = `${fmtCount(v.read_checked ?? 0)} of ${fmtCount(v.read_total)} figures checked`;
     return { tag: STAGE_TAGS[stage], tone: "run", time: elapsedText(runningSeconds(v, v.read_elapsed, now)), sub };
   }
-  if (v.read_state === "failed") return { tag: NOT_PROCESSED, tone: "bad", time: v.read_elapsed != null ? fmtElapsed(v.read_elapsed) : "", sub: NOT_READ_LINE };
+  const time = v.read_elapsed != null ? fmtElapsed(v.read_elapsed) : "";
+  // A read that ended with no mapped row is not processed, whatever the reader returned (rows_mapped is absent on a file read before it was kept).
+  if (v.read_state === "failed" || (v.read_state === "done" && v.rows_mapped === 0)) return { tag: NOT_PROCESSED, tone: "bad", time, sub: shared ? null : NOT_READ_LINE };
   return { tag: PROCESSED, tone: "done", time: v.read_elapsed != null ? fmtElapsed(v.read_elapsed) : "", sub: null };
 }
 
@@ -103,8 +106,8 @@ export function deckSummary(d) {
     ...(skipped ? [`${fmtCount(skipped)} skipped (no numbers)`] : [])].join(" · ");
 }
 
-/** The line of one deck: {tag, tone, time, summary} (one summary line, shown once). */
-export function deckLine(d, now) {
+/** The line of one deck: {tag, tone, time, summary} (one summary line, shown once). `shared`: as for sheetLine. */
+export function deckLine(d, now, shared = null) {
   if (d.local) {
     if (d.local.state === "failed") return { tag: NOT_PROCESSED, tone: "bad", time: "", summary: d.local.message };
     return { tag: DECK_READING_TAG, tone: "run", time: elapsedText(runningSeconds(d, null, now)), summary: null };
@@ -114,7 +117,33 @@ export function deckLine(d, now) {
   }
   const time = d.read_elapsed != null ? fmtElapsed(d.read_elapsed) : "";
   if (d.ai_status === "read") return { tag: PROCESSED, tone: "done", time, summary: deckSummary(d) };
-  return { tag: NOT_PROCESSED, tone: "bad", time, summary: deckSummaryLine(d) };
+  return { tag: NOT_PROCESSED, tone: "bad", time, summary: shared ? null : deckSummaryLine(d) };
+}
+
+export const READ_FAILED = "Failed – no file could be read";
+
+/** Whether the files' reading has ended with nothing to show: "ok" (processed, or not read by the model at all), "fail", or "busy". A spreadsheet is
+ *  processed when it mapped at least one row; a deck when it has at least one accepted page. A record without the counts (read before they were kept)
+ *  is judged by its state alone. */
+const sheetOutcome = (v) => {
+  if (v.local) return v.local.state === "failed" ? "fail" : "busy";
+  if (sheetBusy(v)) return "busy";
+  return v.read_state === "failed" || (v.read_state === "done" && v.rows_mapped === 0) ? "fail" : "ok";
+};
+const deckOutcome = (d) => {
+  if (d.local) return d.local.state === "failed" ? "fail" : "busy";
+  if (deckBusy(d)) return "busy";
+  if (["not_read", "blocked", "prompt_missing", "stopped"].includes(d.ai_status)) return d.pages_read > 0 ? "ok" : "fail";
+  return d.ai_status === "read" && d.pages_read === 0 ? "fail" : "ok";
+};
+const outcomes = (sheets, decks) => [...sheets.map(sheetOutcome), ...decks.map(deckOutcome)];
+const noneRead = (sheets, decks) => { const o = outcomes(sheets, decks); return o.length > 0 && o.every((x) => x === "fail"); };
+
+/** The provider error in plain words that every file shares, when no file could be read and each failed file carries the same one; else null. */
+export function sharedReadError(sheets, decks) {
+  if (!noneRead(sheets, decks)) return null;
+  const errors = new Set([...sheets, ...decks].map((f) => (f.local ? null : f.read_error) || null));
+  return errors.size === 1 && !errors.has(null) ? [...errors][0] : null;
 }
 
 /** "A", "A and B", or "3 files": the files a line names. */
@@ -139,7 +168,10 @@ export function readiness(sheets, decks) {
     };
   }
   if (!sheets.length && !decks.length) return { held: false, text: "The audit cannot run yet. Missing: a file." };
-  return { held: false, text: `Ready: ${fmtCount(sheets.length)} ${sheetWord} and ${fmtCount(decks.length)} ${deckWord} processed.` };
+  if (noneRead(sheets, decks)) return { held: true, text: READ_FAILED };
+  const sheetsOk = sheets.filter((x) => sheetOutcome(x) === "ok").length;
+  const decksOk = decks.filter((x) => deckOutcome(x) === "ok").length;
+  return { held: false, text: `Ready: ${fmtCount(sheetsOk)} data ${sheetsOk === 1 ? "file" : "files"} and ${fmtCount(decksOk)} ${decksOk === 1 ? "deck" : "decks"} processed.` };
 }
 
 export const STEP_LABELS = { reading: "Reading and checking files", calculating: "Calculating results" };
@@ -161,9 +193,13 @@ export function steps(sheets, decks, calc, now, read = {}) {
   else if (busy.length) {
     const t = sinceFirst(now) ?? Math.max(...longest(busy));
     reading = { tone: "run", second: `${elapsedText(t)} · ${fmtCount(total - busy.length)} of ${fmtCount(total)} files read` };
+  } else if (noneRead(sheets, decks)) {
+    const shared = sharedReadError(sheets, decks);
+    reading = { tone: "bad", second: READ_FAILED, ...(shared ? { error: shared } : {}) };
   } else {
+    const processed = outcomes(sheets, decks).filter((x) => x === "ok").length;
     const t = read.start != null && read.end != null ? sinceFirst(read.end) : (maxOf(all.map((f) => (f.local ? null : f.read_elapsed))) >= 0 ? maxOf(all.map((f) => (f.local ? null : f.read_elapsed))) : null);
-    const count = `${fmtCount(total)} ${total === 1 ? "file" : "files"} processed`;
+    const count = `${fmtCount(processed)} ${processed === 1 ? "file" : "files"} processed`;
     reading = { tone: "done", second: t != null ? `${fmtElapsed(t)} · ${count}` : count };
   }
 

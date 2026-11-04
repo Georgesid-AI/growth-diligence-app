@@ -5,7 +5,7 @@ import { ALLOWED_EXTENSIONS, S7B_XLS_REFUSED, extensionOf } from "@/lib/chatUplo
 import { DECK_ACCEPT, isDeckFile } from "@/lib/deckClaims";
 import {
   DECK_CARD, HEADER_TEXT, PROCESSING_LINK, PROCESSING_SECTIONS, PROCESSING_TITLE, REMOVE_CONFIRM, REMOVE_LABEL, REPLACE_LABEL, REREAD_FAILED_LABEL,
-  REREAD_LABEL, SHEET_CARD, UPLOAD_LABEL, deckBusy, deckLine, headerText, replaceLine, sheetBusy, sheetLine,
+  REREAD_LABEL, SHEET_CARD, UPLOAD_LABEL, deckBusy, deckLine, headerText, replaceLine, sharedReadError, sheetBusy, sheetLine,
 } from "@/lib/uploadView";
 
 /**
@@ -194,6 +194,7 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
     try { await call(auditId, id); } catch (e) { /* the file keeps its line; the next refresh shows where it stands */ }
     await afterChange();
   };
+  const shared = sharedReadError(sheets, deckRows);          // the one provider error every file met: the run card names it, the files' lines give way
   const failedSheets = stored.filter((v) => sheetLine(v, now).tone === "bad");        // the files the page shows as Not processed
   const failedDecks = decks.filter((d) => deckLine(d, now).tone === "bad");
   const failedCount = failedSheets.length + failedDecks.length;
@@ -231,7 +232,7 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
         {sheets.length > 0 && (
           <ul className="files" data-testid="sheet-files">
             {sheets.map((v) => (
-              <FileRow key={v.file_hash || v.id} testid="sheet-file" name={v.file} line={sheetLine(v, now)}
+              <FileRow key={v.file_hash || v.id} testid="sheet-file" name={v.file} line={sheetLine(v, now, shared)}
                 onRemove={v.local ? (v.local.state === "failed" ? () => removeLocal(v.id) : undefined) : () => removeStored(removeDataset, v.file_hash)}
                 confirmRemove={!v.local}
                 onReread={!v.local && sheetLine(v, now).tone === "bad" ? () => reread(rereadDataset, v.file_hash) : undefined} />
@@ -246,7 +247,7 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
         {deckRows.length > 0 && (
           <ul className="files" data-testid="deck-files">
             {deckRows.map((d) => (
-              <FileRow key={d.deck_id || d.id} testid="deck-file" name={d.file} line={deckLine(d, now)}
+              <FileRow key={d.deck_id || d.id} testid="deck-file" name={d.file} line={deckLine(d, now, shared)}
                 onRemove={d.local ? (d.local.state === "failed" ? () => removeLocal(d.id) : undefined) : () => removeStored(removeDeck, d.deck_id)}
                 confirmRemove={!d.local}
                 onReread={!d.local && deckLine(d, now).tone === "bad" ? () => reread(rereadDeck, d.deck_id) : undefined} />

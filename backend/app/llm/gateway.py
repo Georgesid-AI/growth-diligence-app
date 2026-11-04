@@ -65,7 +65,7 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from schemas.metrics import safe_problems
 
-from .. import allowance, disclosure, formatting, readings
+from .. import allowance, disclosure, formatting, provider_errors, readings
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
 from .schemas import (PAGE_CLAIMS, SHEET_READING, STRUCTURE_TYPES, DeckUsage, LabellingReply, Narrative, NarrativeResponse, PageClaimsReply, StructureRead, UsageResponse, narrative_output_schema)
@@ -721,6 +721,16 @@ def _message_field(exc: Exception, *sent) -> str:
     """` message=...` for a log line when the provider's 4xx message is loggable, else nothing."""
     message = _logged_provider_message(exc, *[x if isinstance(x, str) else json.dumps(x, default=str) for x in sent])
     return "" if message == "-" else f" message={message}"
+
+
+def _provider_info(exc: Exception, *sent) -> Optional[dict]:
+    """What a failed provider call tells the page and the deck record: the HTTP status, the error type, the message as it is logged and the
+    plain-words sentence (app/provider_errors.py). None when the failure was not the provider's (a cap, a lock, a reply that did not validate)."""
+    if getattr(exc, "reason", None) not in ("provider_error", "provider_unreachable"):
+        return None
+    status, kind = getattr(exc, "status", None), getattr(exc, "error_type", None)
+    shown = _logged_provider_message(exc, *[x if isinstance(x, str) else json.dumps(x, default=str) for x in sent])
+    return {"status": status, "type": kind, "message": shown, "plain": provider_errors.plain_words(status, kind, getattr(exc, "provider_message", None))}
 
 
 def _retry_after_seconds(exc: Exception) -> Optional[float]:
@@ -2242,7 +2252,7 @@ async def read_structure(
         shown = _message_field(exc, text, system, user_payload, prompt.text)
         logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=%s type=%s%s", audit_id,
                        STRUCTURE_STEP, digest, code, status or "-", kind or "-", shown)
-        return _structure_result("not_read", structure_type, NOT_READ, **base)
+        return _structure_result("not_read", structure_type, NOT_READ, provider=_provider_info(exc, text, system, user_payload, prompt.text), **base)
 
     parallel = structure_type == PAGE_CLAIMS
     lock_rounds = PAGE_LOCK_ROUNDS if parallel else SHEET_READING_LOCK_ROUNDS if structure_type == SHEET_READING else 1
@@ -2334,6 +2344,7 @@ async def read_structure(
                 await readings.use(db, audit_id, reading_key)
             return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, reason,
                                      input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, rejected=rejected,
+                                     provider=_provider_info(exc, text, system, user_payload, prompt.text),
                                      image_tokens=image_billed, image_cost_usd=image_cost, **base)
         cost = estimate_cost_usd(model, in_tok, out_tok)
         image_billed = min(in_tok, image_tokens * sent_calls)           # a reasked call bills its images again

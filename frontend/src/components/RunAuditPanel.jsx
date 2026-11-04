@@ -85,6 +85,7 @@ export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = 
             <StepIcon tone={r.tone} />
             <b>{r.label}</b>
             <span className={r.tone === "run" || r.tone === "done" ? "t" : ""} data-testid={`step-${r.key}-second`}>{r.second}</span>
+            {r.error && <p className="bad" role="alert" data-testid={`step-${r.key}-error`}>{r.error}</p>}
           </div>
         ))}
       </div>

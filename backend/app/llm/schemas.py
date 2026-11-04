@@ -781,6 +781,7 @@ class StructureRead(BaseModel):
 
     status: StructureStatus
     reason: Optional[str] = None
+    provider: Optional[dict] = None         # a call the provider failed: {status, type, message (logged form), plain (the Upload page's sentence or None)}
     rejected: Optional[str] = None          # a page reply that failed validation: the check and schema fields, closed words, never the reply
     type: str
     model_type: Optional[str] = None

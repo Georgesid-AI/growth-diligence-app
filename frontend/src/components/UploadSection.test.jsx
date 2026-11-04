@@ -339,6 +339,21 @@ describe("the run card", () => {
     expect(q("run-readiness").textContent).toBe("Ready: 2 data files and 1 deck processed.");
   });
 
+  test("every file stored but none read: the step fails in red and Run audit is disabled with that message", async () => {
+    await mount({ sheets: [SHEET({ read_state: "failed", rows_mapped: 0 })], decks: [DECK({ ai_status: "not_read", pages_read: 0, pages_rejected: 3 })] });
+    expect(q("run-audit").disabled).toBe(true);
+    expect(q("run-readiness").textContent).toBe("Failed – no file could be read");
+    expect(q("step-reading").getAttribute("data-tone")).toBe("bad");
+    expect(q("step-reading-second").textContent).toBe("Failed – no file could be read");
+  });
+
+  test("the same provider error on every file is shown once, at the top of the step", async () => {
+    const credit = "Anthropic API: insufficient credit – add credit and re-run";
+    await mount({ sheets: [SHEET({ read_state: "failed", rows_mapped: 0, read_error: credit })], decks: [DECK({ ai_status: "not_read", pages_read: 0, read_error: credit })] });
+    expect(all("step-reading-error").map((e) => e.textContent)).toEqual([credit]);
+    expect(all("file-sub").map((e) => e.textContent).filter((t) => /could not be read/.test(t))).toEqual([]);
+  });
+
   test("a deck still being read holds the button too", async () => {
     await mount({ sheets: [SHEET()], decks: [DECK({ ai_status: "reading", read_progress: { done: 1, total: 24 } })] });
     expect(q("run-audit").disabled).toBe(true);
