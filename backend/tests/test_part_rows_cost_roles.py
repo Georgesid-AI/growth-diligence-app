@@ -156,13 +156,36 @@ def test_the_guard_needs_one_row_that_is_the_sum_and_no_other():
     assert rec["actual"]["2025"] == (20, "D9+D10+D11") and not rec.get("note"), "two rows each equal the others' sum: no total is read"
 
 
-def test_the_guard_runs_after_the_parent_rule():
-    # the total links 2 of its 8 parts; the 6 unlinked parts and the total remain, and the total still equals their sum ... it does not: it
-    # equals the sum of all 8, so the unlinked 6 plus the total are summed, as the rule as given reads
+def test_the_guard_runs_before_the_parent_rule_on_every_row_of_the_role():
+    """A total that links 2 of its 8 parts: the guard reads all 9 rows, the total equals the sum of the other 8 within 1 %, so the total alone is
+    read; the 6 unlinked parts are not added to it and the total's cell is cited once."""
     parts = part_rows()
     parts[0]["parent_row"] = parts[1]["parent_row"] = 9
     rec = role_engine.cost_row(role_engine.build_table(pnl([unlinked_total(), *parts])), "sales_marketing", "yearly")
-    assert not rec.get("note") and rec["actual"]["2025"] == (600 + 600 - 15 - 30, "D9+" + "+".join(f"D{n}" for n in range(12, 18)))
+    assert rec["actual"]["2025"] == (600, "D9") and rec["note"] == TOTAL_NOTE
+    sm = metric(run(pnl([unlinked_total(), *parts])), "sm_share")
+    assert sm["value"] == pytest.approx(600 / 2_400) and sm["source"]["cells"].count("D9") == 1
+    assert not {f"D{n}" for n in range(10, 18)} & set(sm["source"]["cells"]), "no part is added to the total"
+
+
+def test_a_forecast_row_with_a_segment_label_enters_the_plan_like_any_other_plan_row():
+    """Plan S&M as 8 `forecast` rows of the sm_expense line, each with a segment label and no total: the plan S&M share of every plan year is the
+    parts' sum over plan revenue, and every part cell is cited."""
+    rows = [both(4, "revenue", [1_000, 1_500, 2_400], [3_000, 3_600, 4_200]), both(5, "cost_of_revenue", [300, 450, 600], [700, 800, 900]),
+            both(6, "opex", [700, 800, 1_000], [1_000, 1_160, 1_320])]
+    for i, (name, base) in enumerate(zip(PARTS, BASE)):
+        r = row(10 + i, "forecast", [base * k for k in PLAN_K], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True, segment=name)
+        r["metric"] = "sm_expense"
+        r["plan_series"] = series([base * k for k in PLAN_K], PLAN_YEARS, first_row=10 + i, col0=6)
+        rows.append(r)
+    r = run([file_of("pnl", [sheet("P&L", rows, granularity="yearly")])])
+    trend = {row_["metric"]: row_ for row_ in r["role_metrics"]["pnl_trend"]["rows"]}
+    plan = {v["period"]: v for v in trend["sm_share"]["values"] if v["kind"] == "plan"}
+    assert sorted(plan) == PLAN_YEARS, "every plan year has a plan S&M share"
+    assert plan["2026"]["value"] == pytest.approx(700 / 3_000) and plan["2028"]["value"] == pytest.approx(900 / 4_200)
+    assert set(plan["2026"]["cells"]) == {"F4", *(f"F{n}" for n in range(10, 18))}, plan["2026"]["cells"]
+    view = role_engine.plan_view(role_engine.build_table([file_of("pnl", [sheet("P&L", rows, granularity="yearly")])]))
+    assert role_engine.sum_role(view, "sales_marketing", "yearly", key="plan")["plan"]["2027"] == (800, "+".join(f"G{n}" for n in range(10, 18)))
 
 
 def test_the_total_cell_is_cited_and_the_note_is_in_the_method_text_of_the_share_the_payback_and_the_estimate():

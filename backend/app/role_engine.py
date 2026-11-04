@@ -232,24 +232,28 @@ def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, ma
     (any other role: its unsegmented rows) except a row whose parent row is mapped to the same role and holds a value in the series, of one sheet and
     granularity, added period by period; part rows with no total row are summed; each summed cell cites every row's cell ("B6+B7").
     One row is returned as it is. A cost role is returned in absolute values when it carries the opposite sign to revenue. `key` is the series read:
-    "actual", or "plan" for the plan years. The total-row guard (`_total_row`): among 3 or more rows of a cost role, a row that equals the sum of
-    the others within 1 % is their total; the total alone is read, and the row carries the `note` the method texts print."""
+    "actual", or "plan" for the plan years. The total-row guard (`_total_row`) runs before the parent rule, on every row of the role in the
+    series: among 3 or more rows of a cost role, a row that equals the sum of all the others within 1 % is their total, linked or not; the total
+    alone is read, and the row carries the `note` the method texts print."""
     rows = [r for r in table if r["role"] == role and r[key] and _counts(r, role)
             and (granularity is None or r["granularity"] == granularity)]
     if not rows:
         return None
-    # A total and its parts are never both summed: a part is skipped only when its parent row holds a value in the series being summed. A
-    # plan-only total leaves its parts in the actual sum, a total with no series at all the same.
-    numbers = {(r["file"], r["sheet"], r["row"]) for r in table if r["role"] == role and r[key]}
-    rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers] or rows
     best = max(((r["file"], r["sheet"]) for r in rows), key=lambda k: sum(len(r[key]) for r in rows if (r["file"], r["sheet"]) == k))
     rows = [r for r in rows if (r["file"], r["sheet"]) == best]
-    if not many:
-        rows = [max(rows, key=lambda r: len(r[key]))]
+    # The total-row guard runs first, on every row of the role in the series, linked or not: a row that equals the sum of all the others is the
+    # total; its cell alone is cited and no part is counted twice. Without one, a total and its parts are still never both summed: a part is
+    # skipped when its parent row holds a value in the series being summed. A plan-only total leaves its parts in the actual sum, a total with
+    # no series at all the same.
     note = None
     total = _total_row(rows, key) if role in COST_ROLES else None
-    if total is not None:       # a total row the reader did not link: the total's cell is cited, its parts are not counted twice
+    if total is not None:
         note, rows = TOTAL_NOTE.format(n=len(rows) - 1), [total]
+    else:
+        numbers = {(r["file"], r["sheet"], r["row"]) for r in table if r["role"] == role and r[key]}
+        rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers] or rows
+    if not many:
+        rows = [max(rows, key=lambda r: len(r[key]))]
     negate = role in COST_ROLES and costs_negative(table, role, key)
     if len(rows) == 1 and not negate:
         return {**rows[0], "note": note} if note else rows[0]
@@ -595,12 +599,13 @@ def _cell_of(rec: Dict, cell: str, home: Dict) -> str:
 
 def plan_view(table: List[Dict]) -> List[Dict]:
     """The table as the plan reads it: every row that has plan cells, and each `forecast` row of a line (revenue, cost of revenue, S&M, R&D, G&A,
-    OPEX, EBITDA) again under the role of its line with its values as the plan series (a forecast row keeps them in either series)."""
+    OPEX, EBITDA) again under the role of its line with its values as the plan series (a forecast row keeps them in either series). A forecast
+    row with a segment label enters like any other plan row: a cost line's parts are summed by sum_role, any other line's are left out by pick."""
     out = [r for r in table if r["plan"]]
     for r in table:
         role = FORECAST_LINES.get(r["metric"]) if r["role"] == "forecast" else None
         values = r["plan"] or r["actual"]
-        if role and values and r["segment"] is None:
+        if role and values:
             out.append({**r, "role": role, "plan": values})
     return out
 
