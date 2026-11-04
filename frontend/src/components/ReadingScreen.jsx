@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import ReadingResults, { SourceLink } from "@/components/ReadingResults";
 import FxEditor from "@/components/FxEditor";
-import { changeReading, downloadReading, getAudit, getReading, updateAudit } from "@/lib/api";
+import { answerCorrection, changeReading, decideUncertain, downloadReading, getAudit, getReading, updateAudit } from "@/lib/api";
 import { MONTHS, DEFAULT_FISCAL_YEAR_END, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfDisplay, asOfEvidenceLine, parseMonthYear } from "@/lib/auditForm";
 import { monthName, shortMonth } from "@/lib/periods";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  FIGURE_HOVERS, FIGURE_WIDTHS, HOVERS, OUTCOME_LABELS, WIDTHS, actualPlanText, deckSummary, lastActualText, periodLabel, sheetSummary, splitEvidence, valueText,
+  FIGURE_HOVERS, FIGURE_WIDTHS, HOVERS, OUTCOME_LABELS, UNCERTAIN_LABEL, WIDTHS, actualPlanText, candidateText, deckSummary, lastActualText, periodLabel, sheetSummary,
+  splitEvidence, uncertainTitle, valueText,
 } from "@/lib/readingView";
 import { PLACEHOLDER, fmtCount } from "@/lib/format";
 
@@ -89,6 +90,33 @@ function SettingLine({ label, value, options, current, testid, help, onSave }) {
   );
 }
 
+/**
+ * The items of a spreadsheet the two reads of the file disagree on (docs/design/reading-consistency.md): "Reading uncertain – confirm", both candidates, and a
+ * button for each. Nothing is picked for the analyst; a pick is an override record. `kinds` says which items this place lists: the rows go on the file's
+ * tab, the sheet-level fields and sheets on the Detected layout block.
+ */
+function UncertainItems({ file, auditId, kinds, onChange }) {
+  const items = (file.consistency?.uncertain || []).filter((i) => kinds.includes(i.kind));
+  const pick = async (item, which) => {
+    try { await decideUncertain(auditId, file.file_hash, { key: item.key, pick: which }); onChange(); }
+    catch (e) { toast.error(e.response?.data?.detail || "The choice could not be saved."); }
+  };
+  if (!items.length) return null;
+  return (
+    <div className="uncertain" data-testid="uncertain-items">
+      {items.map((item) => (
+        <p key={item.key} className="note" data-testid="uncertain-item">
+          <b data-testid="uncertain-label">{UNCERTAIN_LABEL}</b> · {uncertainTitle(item)}{" "}
+          {["first", "second"].map((which) => (
+            <button key={which} type="button" className="btn quiet" data-testid={`uncertain-${which}`} onClick={() => pick(item, which)}
+              title={`Use the ${which} reading`}>{which === "first" ? "First reading" : "Second reading"}: {candidateText(item, which)}</button>
+          ))}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 /** Audit settings and Detected layout and calculation inputs: the two blocks under the Check results sentence (docs/design/audit-page-mockup.html). */
 export function SettingsBlocks({ audit, files, period, onAsOf, onChange, onSetting, onFxSaved }) {
   const asOf = audit.as_of_month;
@@ -122,6 +150,7 @@ export function SettingsBlocks({ audit, files, period, onAsOf, onChange, onSetti
           <InlineChange label="As-of month" placeholder="Jun 2021" testid="assumptions-change" current={asOfDisplay(asOf)} same={sameMonth} onSave={onAsOf} />
           {sheets.map((f) => <SheetAnchors key={f.file_hash} file={f} audit={audit} onAsOf={onAsOf} onChange={onChange} />)}
         </div>
+        {sheets.map((f) => <UncertainItems key={f.file_hash} file={f} auditId={audit.id} kinds={["field", "sheet"]} onChange={onChange} />)}
       </div>
     </>
   );
@@ -192,13 +221,15 @@ function SheetAnchors({ file, audit, onAsOf, onChange }) {
 }
 
 /** What a sheet's tab adds under the tabs: its summary lines, the reader's notes, the exports and every line of the map. */
-function SheetDetail({ file, auditId }) {
+function SheetDetail({ file, auditId, onChange }) {
   const [open, setOpen] = useState(false);
   const sheet = file.anchors.revenue_row?.sheet || file.anchors.actual_plan?.sheet || file.lines[0]?.sheet;
   return (
     <section className="file" data-testid="file-block">
       <Summary lines={sheetSummary(file.summary)} />
       {(file.notes || []).map((n, i) => <p key={i} className="note" data-testid="file-note">{n.name}: {n.reason}</p>)}
+      {file.consistency?.status === "not_compared" && <p className="note" data-testid="consistency-note">{file.consistency.reason}</p>}
+      <UncertainItems file={file} auditId={auditId} kinds={["row"]} onChange={onChange} />
       <p className="exports">
         <a href="#json" data-testid="export-json" onClick={(e) => { e.preventDefault(); downloadReading(auditId, file.file_hash, "json"); }}>Export map (JSON)</a>
         {" · "}
@@ -221,7 +252,11 @@ function DeckDetail({ file }) {
 }
 
 /** The deck tab's full figures list, in the bordered box of the lines table: every figure read from the deck, with its page and outcome. */
-function DeckFigures({ file }) {
+function DeckFigures({ file, auditId, onChange }) {
+  const choose = async (f, option) => {
+    try { await answerCorrection(auditId, f.id, { index: f.reading.index, action: "choose", option }); onChange(); }
+    catch (e) { toast.error(e.response?.data?.detail || "The choice could not be saved."); }
+  };
   const heads = Object.keys(FIGURE_HOVERS);
   return (
     <div className="box" data-testid="deck-figures">
@@ -236,7 +271,12 @@ function DeckFigures({ file }) {
               <td data-h="Period" className="nw">{periodLabel(f.period)}</td>
               <td data-h="Label">{f.label || PLACEHOLDER}</td>
               <td data-h="Page">{f.page ?? PLACEHOLDER}</td>
-              <td data-h="Outcome" className="nw">{OUTCOME_LABELS[f.outcome] || f.outcome}</td>
+              <td data-h="Outcome" className="nw">
+                {f.uncertain ? <b data-testid="deck-figure-uncertain">{UNCERTAIN_LABEL}</b> : (OUTCOME_LABELS[f.outcome] || f.outcome)}
+                {f.uncertain && (f.reading?.options || []).map((text, i) => (
+                  <button key={i} type="button" className="btn quiet" data-testid="deck-figure-choose" onClick={() => choose(f, i)}>Use {text}</button>
+                ))}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -294,9 +334,9 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
         ))}
       </nav>
       <p className="tabnote" data-testid="tab-note">{TAB_NOTE}</p>
-      {current?.kind === "sheet" && <SheetDetail file={current} auditId={auditId} />}
+      {current?.kind === "sheet" && <SheetDetail file={current} auditId={auditId} onChange={changed} />}
       {current?.kind === "deck" && <DeckDetail file={current} />}
-      {current?.kind === "deck" && <DeckFigures file={current} />}
+      {current?.kind === "deck" && <DeckFigures file={current} auditId={auditId} onChange={changed} />}
       {!current && view.review?.not_completed && <p className="evidence" data-testid="review-not-completed">{view.review.not_completed}</p>}
       <ReadingResults data={results} auditId={auditId} confirmedOpen={confirmedOpen} setConfirmedOpen={setConfirmedOpen} onChanged={changed} />
     </div>

@@ -14,14 +14,16 @@ Nothing here corrects a citation: a re-read is the model's, and its answer is ch
 prompt, a missing consent or a file over the limit gives a status and a message, never an exception: the upload goes on (rule 20).
 """
 import asyncio
+import logging
 from typing import Dict, List, Optional
 
-from . import cards, checks, lines as lines_mod, readings
+from . import cards, checks, consistency, lines as lines_mod, readings
 from .llm import gateway, redaction
 from .llm.schemas import SHEET_READING
 from .structures import reading_input
 
 READ_SECONDS = gateway.SHEET_READING_TIMEOUT_SECONDS + 30
+logger = logging.getLogger("growth")
 
 
 async def _no_stage(name: str, **counts) -> None:
@@ -72,6 +74,9 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
         return {"status": "not_read", "reason": gateway.NOT_READ}
     if first.status != "read" or not first.file_map:
         return {"status": first.status, "reason": first.reason or gateway.NOT_READ, "provider": first.provider}
+    # The consistency read (docs/design/reading-consistency.md): the same input read a second time, beside the first. A stored second read is
+    # reused (a file read before makes at most this one call); a failure of any kind leaves the first reading standing, compared with nothing.
+    second, same = await _second_read(db, audit_id, text, file_hash, adapter, fiscal_year_end, stage, first)
     cells = checks.Cells(first.payload)
     total = _cited(first.file_map)
     await stage("checking_cells", checked=0, total=total)
@@ -129,6 +134,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
            "month": best["month"] if best else None,
            "evidence": (f"{best['evidence']} (confirmed on sheet {best['sheet']}, column {best['column']})" if best else None),
            "lines": sheet_lines(merged, cells, final["items"]),
+           "consistency": same,
            "dims": {name: [sheet.max_row, sheet.max_col] for name, sheet in cells.sheets.items()},
            "rows_mapped": sum(len(s.get("rows") or []) for s in merged.get("sheets") or []),
            "period_columns": max((redactless_cols(s) for s in merged.get("sheets") or []), default=0)}
@@ -138,6 +144,31 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     await readings.save_checks(db, audit_id, file_hash, doc)
     await cards.open_for_checks(db, audit_id, doc)
     return doc
+
+
+async def _second_read(db, audit_id: str, text: str, file_hash: str, adapter, fiscal_year_end: int, stage, first) -> tuple:
+    """(the second read or None, the consistency record): {"status": "compared" | "not_compared", "reason", "items", "reads"}. The tokens of both
+    reads are logged per file (llm_calls, `read_no`) and counted here by number only."""
+    reads = {"first": {"input_tokens": first.input_tokens, "output_tokens": first.output_tokens, "cache_hit": bool(first.cache_hit)}}
+    failure = None
+    second = None
+    try:
+        second = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter,
+                                                              fiscal_year_end=fiscal_year_end, on_stage=stage, second_read=True), READ_SECONDS)
+        if second.status != "read" or second.file_map is None:
+            failure = second.reason or second.status
+    except asyncio.TimeoutError:
+        failure = "timed out"
+    except Exception as exc:           # an error, a cap, a missing prompt: the first reading stands, nothing is flagged
+        failure = type(exc).__name__ if not str(exc) else str(exc)
+    if failure is not None:
+        logger.warning("sheet reads: run_id=%s hash=%s second read not completed", audit_id, file_hash[:12])
+        return None, {"status": "not_compared", "reason": f"second read not completed: {failure}", "items": [], "reads": reads}
+    reads["second"] = {"input_tokens": second.input_tokens, "output_tokens": second.output_tokens, "cache_hit": bool(second.cache_hit)}
+    items = consistency.compare(first.file_map, second.file_map)
+    logger.info("sheet reads: run_id=%s hash=%s first=%d/%d second=%d/%d uncertain=%d", audit_id, file_hash[:12], first.input_tokens,
+                first.output_tokens, second.input_tokens, second.output_tokens, len(items))
+    return second, {"status": "compared", "reason": None, "items": items, "reads": reads}
 
 
 def sheet_lines(file_map: Dict, cells: "checks.Cells", items: List[Dict]) -> List[Dict]:

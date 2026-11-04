@@ -91,7 +91,7 @@ def monthly():
 def test_an_uploaded_report_is_read_checked_and_sets_the_as_of_month_with_its_evidence(flow):
     assert upload(flow, MONTHLY, monthly()).status_code == 200
     router = flow.state["adapter"]
-    assert router.sheet_calls == 1
+    assert router.sheet_calls == 2, "the reading and the consistency read"
     got = audit_of(flow)
     assert (got["as_of_month"], got["as_of_by"], got["as_of_file"]) == ("2025-06-30", "detected", MONTHLY)
     assert got["as_of_evidence"] == "Forecast title over July (confirmed on sheet CSV, column G)"
@@ -117,8 +117,8 @@ def test_a_rejected_item_is_read_once_more_with_its_reason_and_the_second_readin
     flow.state["adapter"] = Router(good_map(revenue=11000), good_map(revenue=10625))
     upload(flow, MONTHLY, monthly())
     router = flow.state["adapter"]
-    assert router.sheet_calls == 2
-    assert router.sheet_payloads[1]["recheck"] == [{"item": "figure:CSV:G4:revenue", "reason": "Reading says 11000; cell G4 holds 10625."}]
+    assert router.sheet_calls == 3, "the reading, the consistency read and the re-read of the rejected item"
+    assert router.sheet_payloads[2]["recheck"] == [{"item": "figure:CSV:G4:revenue", "reason": "Reading says 11000; cell G4 holds 10625."}]
     checks = flow.db[readings.CHECKS].docs[0]
     assert checks["counts"]["rejected"] == 0 and checks["rereads"] == [
         {"item": "figure:CSV:G4:revenue", "first_reason": "Reading says 11000; cell G4 holds 10625.", "reread": "agrees with the cell",
@@ -134,7 +134,7 @@ def test_a_second_reading_that_repeats_the_first_stays_rejected_and_waits_for_a_
     checks = flow.db[readings.CHECKS].docs[0]
     assert checks["counts"]["rejected"] == 1 and checks["rereads"][0]["reread"] == "repeats the first reading"
     assert checks["rereads"][0]["action"] == "card"
-    assert flow.state["adapter"].sheet_calls == 2, "one re-read, never a third call"
+    assert flow.state["adapter"].sheet_calls == 3, "one re-read, never a fourth call"
     assert audit_of(flow)["as_of_month"] == "2025-06-30", "a rejected figure does not take the confirmed boundary away"
 
 
@@ -160,11 +160,11 @@ def test_the_same_file_in_another_audit_gets_the_stored_reading_and_makes_no_cal
     flow.db["audits"].docs.append({**AUDIT_DOC, "id": "audit-two", "company_name": COMPANY, "usage": usage_mod.empty()})
     router = flow.state["adapter"]
     again = flow.post("/api/audits/audit-two/datasets/upload", files={"file": (MONTHLY, monthly())})
-    assert again.status_code == 200 and router.sheet_calls == 1, "no second call"
+    assert again.status_code == 200 and router.sheet_calls == 2, "no new call: both stored reads are reused"
     two = audit_of(flow, "audit-two")
     assert (two["as_of_month"], two["as_of_by"]) == ("2025-06-30", "detected")
     assert len(flow.db[readings.READINGS].docs) == 1 and len(flow.db[readings.USES].docs) == 2
-    assert [c["cache_hit"] for c in flow.db["llm_calls"].docs if c["structure_type"] == "sheet_reading"] == [False, True]
+    assert [(c["read_no"], c["cache_hit"]) for c in flow.db["llm_calls"].docs if c["structure_type"] == "sheet_reading"] == [(1, False), (2, False), (1, True), (2, True)]
 
 
 def test_a_typed_month_wins_and_the_readers_proposal_stays_beside_it(flow):
@@ -236,7 +236,7 @@ def test_compute_reads_the_stored_map_and_series_by_role_and_needs_no_confirmati
     by_name = {m["metric"]: m for m in results["role_metrics"]["metrics"]}
     assert by_name["customers"]["reason"] == "needs a customers row" and by_name["monthly_churn"]["reason"] == "needs a churn_rate row"
     assert by_name["ending_arr"]["reason"] == "needs an arr row or an mrr row"
-    assert results["contract_version"] == 20
+    assert results["contract_version"] == 21
     assert flow.get(f"/api/audits/{AUDIT}/results").status_code == 200
 
 
@@ -256,7 +256,7 @@ def test_no_collection_holds_the_text_the_sheet_reader_was_sent_and_the_calls_ho
             assert line not in stored.get("llm_calls", ""), line
     assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd", "image_tokens",
                           "image_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp", "content_hash", "deck_id", "http_status",
-                          "error_type", "structure_type", "file_hash", "refused_input_tokens"} for c in flow.db["llm_calls"].docs)
+                          "error_type", "structure_type", "file_hash", "refused_input_tokens", "read_no"} for c in flow.db["llm_calls"].docs)
 
 
 def test_the_log_lines_of_an_upload_a_compute_and_a_delete_hold_no_file_name_cell_value_or_company_name(flow, caplog):
@@ -347,7 +347,7 @@ def test_re_read_replaces_the_result_of_a_failed_file_without_a_new_upload(flow)
     assert after["file_hash"] == view["file_hash"] and after["read_state"] == "done"
     assert [c["status"] for c in flow.db[readings.CHECKS].docs] == ["read"], "the one result of the file is the new one"
     assert audit_of(flow)["as_of_month"] == "2025-06-30" and audit_of(flow)["sheet_reads_pending"] == 0
-    assert flow.state["adapter"].sheet_calls == 1
+    assert flow.state["adapter"].sheet_calls == 2, "a file with no stored reading is read twice"
 
 
 def test_re_read_of_a_file_not_stored_or_without_consent_is_refused(flow):

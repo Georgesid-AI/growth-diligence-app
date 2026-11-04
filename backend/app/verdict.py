@@ -594,8 +594,25 @@ def rate_growth(results: Optional[dict], fmt_pct, fmt_months) -> dict:
     return {"rating": rating, "line": f"{rating} ({figures})", "rule": f"{rating}: {figures}", "benchmark": True, "missing": []}
 
 
+AWAITING = "{n} {figures} await confirmation"
+
+
+def awaiting_text(results: Optional[dict]) -> Optional[str]:
+    """"N figures await confirmation" when the two reads of a file or a page disagree on figures a rating reads (role_metrics.awaiting_confirmation),
+    else None. The ratings use confirmed or agreed figures only (docs/design/reading-consistency.md)."""
+    n = (((results or {}).get("role_metrics") or {}).get("awaiting_confirmation") or {}).get("count") or 0
+    return (AWAITING.format(n=n, figures="figures") if n != 1 else "1 figure awaits confirmation") if n else None
+
+
 def ratings(results: Optional[dict], integrity: Optional[dict], fmt_pct, fmt_months) -> dict:
-    return {"data_reliability": rate_reliability(integrity), "growth_engine": rate_growth(results, fmt_pct, fmt_months)}
+    """Both ratings. When figures await confirmation, each rating's line and rule say so (`awaiting`, "N figures await confirmation"): the rating
+    itself was computed from confirmed or agreed figures only."""
+    out = {"data_reliability": rate_reliability(integrity), "growth_engine": rate_growth(results, fmt_pct, fmt_months)}
+    note = awaiting_text(results)
+    if note:
+        for r in out.values():
+            r.update(line=f"{r['line']} – {note}", rule=f"{r['rule']} – {note}", awaiting=note)
+    return out
 
 
 # --- the computed Reasons and Unresolved questions, and the thesis draft -------------------------------------------------------

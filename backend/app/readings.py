@@ -10,6 +10,8 @@ Nothing here updates a stored document. What changes later is written as a recor
     readings          the reading: file map, prompt version, model, tokens, cost. Insert-only.
     reading_uses      which audits use a reading (so Delete audit can remove a reading no audit uses any more, rule 22).
     reading_rereads   the automatic second reading of a rejected item, with the reason attached. Insert-only, beside the first reading.
+    reading_second_reads  the consistency read: the same input read a second time, beside the first reading (app/consistency.py). Insert-only,
+                      one per reading; a file read again reuses it, so only a reading with none makes a new call.
     reading_overrides a reviewer correction or an analyst Change: reading, item, old value, new value, who, when, why. Insert-only.
     reading_checks    the outcome of the checks for one audit and file. Derived (app/checks.py), rewritten for the audit at each upload.
     reading_reviews   the reviewer's findings for one audit and what followed each (app/reviewer.py). Derived, rewritten by a new review.
@@ -30,7 +32,8 @@ OVERRIDES = "reading_overrides"
 CHECKS = "reading_checks"
 REVIEWS = "reading_reviews"        # the reviewer's findings for one audit and what followed each (PR 3), derived and rewritten on a new review
 CARDS = "reading_cards"            # the cards of an audit: the three cases of section 7.4 and the analyst's decision on each (PR 3)
-COLLECTIONS = (READINGS, USES, REREADS, OVERRIDES, CHECKS, REVIEWS, CARDS)
+SECOND_READS = "reading_second_reads"      # the second read of the same input (consistency pass), one per reading
+COLLECTIONS = (READINGS, USES, REREADS, SECOND_READS, OVERRIDES, CHECKS, REVIEWS, CARDS)
 
 
 def _now() -> str:
@@ -91,6 +94,23 @@ async def use(db, audit_id: str, key: str) -> None:
     """Note that an audit uses a reading. Once per audit and reading."""
     if not await db[USES].find_one({"audit_id": audit_id, "key": key}, {"_id": 0, "key": 1}):
         await db[USES].insert_one({"audit_id": audit_id, "key": key, "at": _now()})
+
+
+async def get_second(db, reading: str) -> Optional[dict]:
+    """The stored consistency read of a reading (the same input read a second time), or None. A hit makes no provider call."""
+    return await db[SECOND_READS].find_one({"reading": reading}, {"_id": 0})
+
+
+async def put_second(db, *, reading: str, prompt_version: str, model: str, file_map: dict, input_tokens: int = 0, output_tokens: int = 0,
+                     cost: float = 0.0) -> dict:
+    """Store the second read of a reading once, beside the first. One already stored is returned as it stands and nothing is written."""
+    kept = await get_second(db, reading)
+    if kept:
+        return kept
+    doc = {"reading": reading, "prompt_version": prompt_version, "model": model, "file_map": copy.deepcopy(file_map),
+           "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6), "created_at": _now()}
+    await db[SECOND_READS].insert_one(dict(doc))
+    return doc
 
 
 def reread_key(reading: str, items: List[str], reason: str = "") -> str:
@@ -202,6 +222,7 @@ async def purge_file(db, audit_id: str, file_hash: str) -> Dict[str, int]:
         if await db[USES].count_documents({"key": key}) == 0:
             readings += getattr(await db[READINGS].delete_many({"key": key}), "deleted_count", 0)
             rereads += getattr(await db[REREADS].delete_many({"reading": key}), "deleted_count", 0)
+            rereads += getattr(await db[SECOND_READS].delete_many({"reading": key}), "deleted_count", 0)
     return {"reading_uses": uses, "reading_checks": getattr(checks, "deleted_count", 0), "reading_overrides": overrides,
             "reading_reviews": getattr(reviews, "deleted_count", 0), "reading_cards": getattr(cards, "deleted_count", 0),
             "readings": readings, "reading_rereads": rereads}
@@ -221,6 +242,7 @@ async def purge_audit(db, audit_id: str) -> Dict[str, int]:
         if await db[USES].count_documents({"key": key}) == 0:
             readings += getattr(await db[READINGS].delete_many({"key": key}), "deleted_count", 0)
             rereads += getattr(await db[REREADS].delete_many({"reading": key}), "deleted_count", 0)
+            rereads += getattr(await db[SECOND_READS].delete_many({"reading": key}), "deleted_count", 0)
     return {"reading_uses": getattr(uses, "deleted_count", 0), "reading_checks": getattr(checks, "deleted_count", 0),
             "reading_overrides": getattr(overrides, "deleted_count", 0), "reading_reviews": getattr(reviews, "deleted_count", 0),
             "reading_cards": getattr(cards, "deleted_count", 0), "readings": readings, "reading_rereads": rereads}

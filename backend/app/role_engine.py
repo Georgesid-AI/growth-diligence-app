@@ -56,6 +56,7 @@ YEARLY_LABEL = "yearly"
 FORM = {"monthly": "month", "quarterly": "quarter", "yearly": "year"}
 DECK_METRICS = {"revenue": "revenue", "arr": "arr", "mrr": "mrr", "customers": "customers", "headcount": "headcount", "cash": "cash",
                 "ebitda": "ebitda"}      # a role's name in the deck reader's closed metric list
+RATING_ROLES = ("revenue", "arr", "mrr", "customers", "churn_rate", "sales_marketing")     # the roles a rating reads: an uncertain figure of one could change it
 RECONCILE_TOLERANCE = 0.005         # money within 0.5 %, as the cell checks (app/checks.py); a count exact
 CUMULATIVE = "cumulative_to_date"
 MONTHLY_ONLY_REASON = "needs a yearly P&L; the revenue file is monthly"
@@ -99,7 +100,8 @@ def build_table(files: List[Dict]) -> List[Dict]:
                               "basis": row.get("basis"), "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
                               "segment": (row.get("segment") or "").strip() or None, "parent": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
                               "actual": pairs.get("series", {}), "plan": pairs.get("plan_series", {}),
-                              "unchecked": f"row:{smap['sheet']}:{row['row']}" in cannot})
+                              "unchecked": f"row:{smap['sheet']}:{row['row']}" in cannot,
+                              "uncertain": f"{smap['sheet']}:{row['row']}" in set(f.get("uncertain") or ())})
     return table
 
 
@@ -1115,6 +1117,14 @@ def _best(rows: List[Dict], table: List[Dict]) -> Dict:
     return max(rows, key=lambda r: (len(r["actual"]), -table.index(r)))
 
 
+def awaiting_confirmation(table: List[Dict], deck: List[Dict]) -> Dict:
+    """{"count", "rows", "figures"}: the figures a rating could change on that wait for the analyst (docs/design/reading-consistency.md). A sheet row
+    the two reads disagree on (stored with the first read's values) and a deck figure the two page reads disagree on, of a role a rating reads."""
+    rows = sum(1 for r in table if r.get("uncertain") and r["role"] in RATING_ROLES)
+    figures = sum(1 for f in deck if f.get("uncertain") and DECK_METRICS.get(f.get("metric") or "") in RATING_ROLES)
+    return {"count": rows + figures, "rows": rows, "figures": figures}
+
+
 def mapping_flags(table: List[Dict]) -> List[Dict]:
     """[{"role", "file", "sheet", "rows", "used_row", "text"}]: one flag for each sheet and role (cost roles are summed, so left out) that holds two or
     more rows with no parent link: "two rows mapped as customers (rows 23, 24); the calculation uses row 23"."""
@@ -1246,12 +1256,15 @@ def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: 
                 run("bookings", lambda: stock("bookings", "bookings", "money", table, as_of, fye)),
                 run("cash", lambda: stock("cash", "cash", "money", table, as_of, fye)),
                 run("headcount", lambda: stock("headcount", "headcount", "count", table, as_of, fye))]
-    reconciliation = _guarded("reconciliation", lambda: reconcile(table, deck or [], as_of, fye), on_error, lambda e: [])
-    by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye, deck), on_error, lambda e: [])
+    # A deck figure the two page reads disagree on is not used until the analyst confirms it: not by the reconciliation, the growth by year or a rating.
+    confirmed_deck = [f for f in deck or [] if not f.get("uncertain")]
+    reconciliation = _guarded("reconciliation", lambda: reconcile(table, confirmed_deck, as_of, fye), on_error, lambda e: [])
+    by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye, confirmed_deck), on_error, lambda e: [])
     trend = _guarded("pnl_trend", lambda: pnl_trend(table, as_of, fye), on_error, lambda e: None)
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
                              "growth_by_year": by_year, "pnl_trend": trend,
-                             "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: [])},
+                             "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: []),
+                             "awaiting_confirmation": awaiting_confirmation(table, deck or [])},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}
 

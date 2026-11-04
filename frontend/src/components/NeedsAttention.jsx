@@ -18,6 +18,7 @@ const safe = (call, fallback) => Promise.resolve().then(call).catch(() => fallba
 function ClaimCard({ item, busy, act, auditId, addsUp }) {
   const { c } = item;
   const asks = definitionOf(c).open;
+  const uncertain = waitingCorrections(c).some((e) => e.field === "reading");       // the two page reads disagree: a reading is chosen, Keep would pick the first for the analyst
   const legend = waitingCorrections(c).some((e) => e.field === "segment");      // a legend item names the figure: Keep would make a slice a rival total
   return (
     <div className="flex flex-wrap items-start justify-between gap-3 text-xs" data-testid="attention-claim">
@@ -41,7 +42,7 @@ function ClaimCard({ item, busy, act, auditId, addsUp }) {
                 title={`Use ${e.field}: ${o.value}`}
                 onClick={() => act(c.id, () => answerCorrection(auditId, c.id, { index: e.index, action: "choose", option: i }))}>{o.value}</Button>
             )))}
-            {!legend && (
+            {!legend && !uncertain && (
               <Button size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="attention-keep"
                 onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "approved" }))}>Keep</Button>
             )}

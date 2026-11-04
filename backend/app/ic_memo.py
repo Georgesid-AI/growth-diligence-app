@@ -739,6 +739,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         verbatim = [f"{ANALYST_NOTE}: {ic['note']}{notes.analyst()}"]
         out += verbatim
     out += [""]
+    waiting = vd.awaiting_text(results)
+    if waiting:         # once: the ratings in the Scorecard say it too, on their own lines (docs/design/reading-consistency.md)
+        out += [f"{waiting[:1].upper()}{waiting[1:]} (the two readings differ); the ratings use confirmed or agreed figures only.", ""]
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
             *(["Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"] if claims else [])]

@@ -87,9 +87,9 @@ def test_a_finding_on_a_wrong_role_row_is_read_again_and_corrected_on_review(flo
     router = start(flow, map_with("revenue"), again=map_with("bookings"), review={"findings": [finding()]})
     assert flow.db[readings.CHECKS].docs[0]["counts"]["rejected"] == 0, "the cell check cannot see a wrong role"
     done = review(flow)
-    assert router.review_calls == 1 and router.sheet_calls == 2, "one review, one re-read"
-    assert "Row 10 behaves like bookings" in router.sheet_payloads[1]["recheck"][0]["reason"], "the finding goes with the re-read"
-    assert router.sheet_payloads[1]["recheck"][0]["item"] == f"row:{SHEET}:10"
+    assert router.review_calls == 1 and router.sheet_calls == 3, "one review, one re-read (beside the two reads of the file)"
+    assert "Row 10 behaves like bookings" in router.sheet_payloads[2]["recheck"][0]["reason"], "the finding goes with the re-read"
+    assert router.sheet_payloads[2]["recheck"][0]["item"] == f"row:{SHEET}:10"
     assert done["findings"][0]["items"][0]["result"] == "agrees" and not cards_of(flow)
     stored = flow.db[readings.READINGS].docs[0]["file_map"]["sheets"][0]["rows"][1]
     assert stored["role"] == "revenue", "the reading itself is never edited"
@@ -104,7 +104,7 @@ def test_a_finding_on_a_wrong_role_row_is_read_again_and_corrected_on_review(flo
 def test_a_finding_the_reader_rejects_becomes_a_card_with_both_readings(flow):
     router = start(flow, map_with("revenue"), again=map_with("revenue"), review={"findings": [finding()]})
     done = review(flow)
-    assert router.sheet_calls == 2 and done["findings"][0]["items"][0]["result"] == "repeats the first reading"
+    assert router.sheet_calls == 3 and done["findings"][0]["items"][0]["result"] == "repeats the first reading"
     assert not flow.db[readings.OVERRIDES].docs, "no override when the reader disagrees"
     (card,) = cards_of(flow)
     assert card["kind"] == cards.DISAGREEMENT and card["status"] == "open"
@@ -182,7 +182,7 @@ def test_a_finding_citing_a_cell_sheet_or_file_that_does_not_exist_is_dropped_an
     caplog.set_level(logging.WARNING)
     done = review(flow)
     assert done["dropped"] == 1 and done["findings"][0]["state"] == "dropped" and done["findings"][0]["drop_reason"]
-    assert router.sheet_calls == 1, "a dropped finding triggers no re-read"
+    assert router.sheet_calls == 2, "a dropped finding triggers no re-read (the two reads of the file only)"
     assert not cards_of(flow) and not flow.db[readings.OVERRIDES].docs
     assert "finding dropped: run_id=audit-chat finding=f1 reason=" in "\n".join(r.getMessage() for r in caplog.records)
     assert "behaves like bookings" not in "\n".join(r.getMessage() for r in caplog.records), "a log line holds a closed word, never the finding"
@@ -192,13 +192,13 @@ def test_nothing_flagged_means_no_card_no_re_read_and_no_override(flow):
     router = start(flow, map_with("bookings"), review={"findings": []})
     done = review(flow)
     assert done["status"] == "read" and done["findings"] == []
-    assert router.sheet_calls == 1 and not cards_of(flow) and not flow.db[readings.OVERRIDES].docs
+    assert router.sheet_calls == 2 and not cards_of(flow) and not flow.db[readings.OVERRIDES].docs
 
 
 def test_a_valid_finding_on_a_cell_no_mapped_row_holds_is_a_card_without_a_re_read(flow):
     router = start(flow, map_with("bookings"), review={"findings": [finding(cell="B7:M7")]})        # Customers: not mapped in this reading
     done = review(flow)
-    assert router.sheet_calls == 1 and done["findings"][0]["items"][0]["result"] == "no item"
+    assert router.sheet_calls == 2 and done["findings"][0]["items"][0]["result"] == "no item"
     assert len(cards_of(flow)) == 1
 
 
@@ -377,7 +377,7 @@ def test_deck_figures_reach_the_reviewer_and_a_finding_on_a_page_is_a_card(flow)
     deck_file = router.review_payloads[0]["input"]["files"][1]
     assert deck_file["kind"] == "deck" and deck_file["figures"][0]["value"] == 447223 and deck_file["figures"][0]["page"] == 2
     assert "ARR 447,223" not in json.dumps(router.review_payloads[0]), "no page text goes to the reviewer"
-    assert done["findings"][0]["items"][0]["result"] == "no item" and router.sheet_calls == 1, "a deck figure has no re-read"
+    assert done["findings"][0]["items"][0]["result"] == "no item" and router.sheet_calls == 2, "a deck figure has no re-read"
     (card,) = cards_of(flow)
     assert card["source"]["page"] == 2 and card["reader"]["value"] == 447223
 
@@ -585,7 +585,7 @@ def test_run_audit_asks_the_reviewer_again_when_its_last_status_is_not_read_even
     _stored_review(flow)["status"] = last                        # the review the last run left behind did not read
     assert _stage(flow, "claims")["status"] == "done"
     assert router.review_calls == 2 and _stored_review(flow)["status"] == "read", "the claims stage queued it; the calculations were not repeated"
-    assert router.sheet_calls == 1, "no file was read again"
+    assert router.sheet_calls == 2, "no file was read again (the two reads of the upload only)"
 
 
 def test_run_audit_asks_for_a_review_when_none_was_ever_stored(flow):

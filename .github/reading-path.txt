@@ -24,3 +24,4 @@ backend/app/decks/**
 backend/app/structures/**
 backend/schemas/__init__.py
 backend/schemas/metrics.py
+backend/app/consistency.py

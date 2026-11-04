@@ -152,6 +152,7 @@ export const ownerSetAllowance = (token, id, allowance_usd) => api.post(`/admin/
 // The reading screen (docs/design/read-check-review.md section 11; PR 3): the register, the cards, the analyst's Change, the cell a Source cites.
 export const getReading = (id) => api.get(`/audits/${id}/reading`).then((r) => r.data);
 export const decideCard = (id, cardId, body) => api.post(`/audits/${id}/cards/${cardId}`, body).then((r) => r.data);
+export const decideUncertain = (id, fileHash, body) => api.post(`/audits/${id}/readings/${fileHash}/uncertain`, body).then((r) => r.data);
 export const changeReading = (id, fileHash, body) => api.post(`/audits/${id}/readings/${fileHash}/change`, body).then((r) => r.data);
 export const getCell = (id, fileHash, sheet, cell) => api.get(`/audits/${id}/readings/${fileHash}/cell`, { params: { sheet, cell } }).then((r) => r.data);
 export const downloadReading = (id, fileHash, format) => downloadFile(`/audits/${id}/readings/${fileHash}/export?format=${format}`, `reading.${format}`);

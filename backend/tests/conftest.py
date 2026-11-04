@@ -14,6 +14,18 @@ where the tests read it; it is imported when the fixture runs, so this file load
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def single_page_read(monkeypatch):
+    """The page-claims tests written for one read per page keep it: the second read of a page (the consistency read) is switched off here and
+    switched on by `second_page_read` in the tests of that read (tests/test_reading_consistency.py)."""
+    monkeypatch.setenv("PAGE_SECOND_READ", "0")
+
+
+@pytest.fixture()
+def second_page_read(monkeypatch):
+    monkeypatch.setenv("PAGE_SECOND_READ", "1")
+
+
 @pytest.fixture()
 def api(monkeypatch):
     from fastapi.testclient import TestClient

@@ -75,6 +75,10 @@ model's is not on the page): a model period that conflicts with a cited heading,
 SOURCES_DISAGREE (page_check._kept), PERIOD_NOT_ON_PAGE only flags; BAR_YEAR is the one check that still changes a model period.
 SIGN_NOT_ON_PAGE no longer changes the value.
 
+Added 2026-11-04 (reading consistency, docs/design/reading-consistency.md): READING_UNCERTAIN, a review flag on a figure the page was read twice for
+and the two reads do not both give with the same metric, period and value (pages.merge_reads). The row carries both readings as buttons
+(a correction that waits); it is not used by the reconciliation, the ratings or the verdict until the analyst chooses one.
+
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.
 """
 import re
@@ -117,6 +121,7 @@ SOURCES_DISAGREE = association.SOURCES_DISAGREE
 SOURCE_AMBIGUOUS = association.SOURCE_AMBIGUOUS
 SOURCE_NOT_ASSOCIATED = association.SOURCE_NOT_ASSOCIATED
 SOURCE_AMBIGUOUS_NOTED = "source ambiguous, noted"      # SOURCE_AMBIGUOUS on a claim whose label_text and period the page reader supplied: a note, never a card
+READING_UNCERTAIN = "reading uncertain"                  # the two page reads disagree on this figure (pages.merge_reads); listed under Review with both readings as buttons
 NO_LABEL = "no label read"                              # the only label the claim cites is a page or chart title: the row says "(no label read)" and asks
 EXTRACTION_INCOMPLETE = "extraction incomplete"
 NO_PRINTED_SOURCE = "no printed source"
@@ -128,7 +133,7 @@ FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL,
          PERIOD_IS_RANGE, GROWTH_START_YEAR, LABEL_MISMATCH, SOURCES_DISAGREE, SOURCE_AMBIGUOUS, SOURCE_NOT_ASSOCIATED, EXTRACTION_INCOMPLETE,
-         SOURCE_AMBIGUOUS_NOTED, NO_LABEL)
+         SOURCE_AMBIGUOUS_NOTED, NO_LABEL, READING_UNCERTAIN)
 INFORMATIONAL_FLAGS = claims.INFORMATIONAL_FLAGS        # a note on the row; the claim stays in the main list (George, 2026-10-23)
 REVIEW_FLAGS = tuple(f for f in FLAGS if f not in INFORMATIONAL_FLAGS)      # the claim is listed under Review
 review_flags = claims.review_flags

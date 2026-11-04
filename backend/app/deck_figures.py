@@ -128,6 +128,14 @@ def page_of(candidate: Dict) -> Optional[int]:
     return source.get("page") or source.get("slide")
 
 
+def reading_choice(candidate: Dict) -> Optional[Dict]:
+    """{"index", "options": [the words of each reading]} of the correction that waits on a figure the two page reads disagree on, else None."""
+    for index, entry in enumerate(candidate.get("corrections") or []):
+        if entry.get("reason") == checker.READING_UNCERTAIN and entry.get("state") == "choose":
+            return {"index": index, "options": [o["value"] for o in entry.get("options") or []]}
+    return None
+
+
 def figure_of(candidate: Dict, deck: Dict) -> Dict:
     """One deck figure in the file map's fields (value, unit, currency, period, actual/plan, source), its candidate's id for the register."""
     page = page_of(candidate)
@@ -145,6 +153,8 @@ def figure_of(candidate: Dict, deck: Dict) -> Dict:
             "unit": unit, "currency": candidate.get("currency"), "period": period, "label": label,
             "actual_plan": "plan" if candidate.get("basis") == "projection" else "actual" if candidate.get("basis") == "actual" else None,
             "segment": candidate.get("page_segment"), "precision": printed_precision(deck, page, value) if unit in ("money", "count") else 0.0,
+            "uncertain": checker.READING_UNCERTAIN in (candidate.get("flags") or []),       # the two page reads disagree: held out until the analyst chooses
+            "reading": reading_choice(candidate),
             "source": {"page": page, "text_layer": bool(page and page_numbers(deck, page))}}
 
 
