@@ -103,7 +103,8 @@ def test_the_memo_is_built_from_the_run_a_fixture_in_the_order_of_w15_with_the_f
 def test_the_run_a_memo_fits_1500_words_and_every_number_in_sections_1_to_6_has_a_footnote_resolved_in_appendix_d():
     text = memo(narratives=[narrative()])
     head = head_of(text)
-    assert im.count_words(head) <= 1500 and im.word_count_of(text) == im.count_words(head)
+    assert im.narrative_words(head) <= 1500 and im.word_count_of(text) == im.narrative_words(head)
+    assert "Memo text:" not in text
     defined = set(re.findall(r"^\[\^(\d+)\]: ", text, re.M))
     assert {m for m in re.findall(r"\[\^(\d+)\]", head)} <= defined, "every marker is resolved in Appendix D"
     fixed = {str(n) for n in im.FIXED_NUMERALS}
@@ -229,16 +230,29 @@ def test_words_are_tokens_with_a_letter_or_a_digit_pipes_and_heading_marks_are_n
 
 
 def _padded(words):
-    return narrative(headline=" ".join(["word"] * words))
+    return narrative(flagging=(" ".join(["word"] * words),))
 
 
-def test_the_memo_passes_at_1500_words_and_refuses_at_1501_showing_the_count():
+def test_the_memo_is_never_refused_for_length_over_1500_narrative_words_it_exports_with_one_line_under_the_title():
     base = im.word_count_of(memo(narratives=[_padded(1)]))
     ok = memo(narratives=[_padded(1500 - base + 1)])
-    assert im.word_count_of(ok) == 1500
-    exc = refusal(narratives=[_padded(1500 - base + 2)])
-    assert exc.code == "words" and exc.words == 1501
-    assert exc.message == "Memo not exported: 1,501 words; the limit is 1,500."
+    assert im.word_count_of(ok) == 1500 and "Memo text:" not in ok
+    over = memo(narratives=[_padded(1504 - base + 1)])
+    assert im.word_count_of(over) == 1504
+    lines = over.split("\n")
+    assert lines[0].startswith("# ") and lines[1] == "Memo text: 1,504 words (limit 1,500)"
+    assert over.count("Memo text:") == 1
+
+
+def test_tables_and_the_title_are_not_narrative_words():
+    base = im.word_count_of(memo(narratives=[_padded(1)]))
+    text = memo(narratives=[_padded(1400 - base + 1)])
+    assert im.word_count_of(text) == 1400
+    table = "\n".join(["| " + " | ".join(["cell"] * 20) + " |"] * 10)           # 200 words in a table
+    assert im.narrative_words(head_of(text) + "\n" + table) == 1400
+    assert im.narrative_words("# A long title line of many words\n" + table + "\nOne two.") == 2
+    assert im.narrative_words("# Title\nDate: 2026-10-08\nEvidence to February 2024\nOne two.") == 2, "the Date and Evidence lines are not narrative"
+    assert text.split("\n")[1].startswith("Date: ") and text.split("\n")[2].startswith("Evidence to ")
 
 
 def test_the_appendices_are_not_counted():

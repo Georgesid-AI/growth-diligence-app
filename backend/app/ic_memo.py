@@ -49,7 +49,8 @@ W17_NOT_ASSESSED = (
 S17 = ("Narrative could not be generated. The computed metrics below are unaffected — they come from the calculation "
        "engine, not the narrative.")
 W19_PREFIX = "Memo not exported: "
-W19_WORDS = W19_PREFIX + "{n} words; the limit is 1,500."
+# Never a refusal (George, 2026-11-04): over the limit the memo is exported with this one line under the title.
+MEMO_TEXT_LINE = "Memo text: {n} words (limit 1,500)"
 W19_NUMBERS = W19_PREFIX + "{n} numbers are not in the stored results: {list}."
 W19_CONTRACT = W19_PREFIX + "the stored results fail the contract: {fields}."
 CONTRACT_NO_VERDICT = "No conclusion: the stored results fail the contract: {fields}."
@@ -244,7 +245,9 @@ def count_words(text: str) -> int:
 
 # --- the export's tables (Appendix C) -----------------------------------------------------------------------------------------
 
-SKIPPED_SHEETS = ("Missing Data", "Glossary")        # Missing Data is in Appendix B; the glossary is not a data table
+SKIPPED_SHEETS = ("Missing Data", "Glossary", "Yearly P&L metrics", "Estimates", "Yearly P&L trend", "What the plan assumes")
+# Missing Data is in Appendix B; the glossary is not a data table; the four yearly P&L sheets are the role tables and the plan block of the memo
+
 ROLE_REPORT_SHEETS = ("Anomalies",)      # PR 4f: with OLD_CLAIMS off Appendix C holds the role tables and the anomaly table; the old export blocks are gone
 SHEET_BLOCKS = {
     "Headline": ("arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate"),
@@ -268,7 +271,7 @@ def memo_tables(tables: List[dict], claims: bool = True) -> List[dict]:
         if not claims and t["sheet"] not in ROLE_REPORT_SHEETS:
             continue
         rows = t["rows"]
-        if t["sheet"] == "CAC by Quarter" and all(len([c for c in r if c]) <= 1 for r in rows[1:]) and any("not provided" in "".join(r) for r in rows[1:]):
+        if t["sheet"] == "CAC by Quarter" and all(len([c for c in r if c]) <= 1 for r in rows[1:]) and any(("not provided" in "".join(r) or "the P&L supplied is yearly" in "".join(r)) for r in rows[1:]):
             continue
         if t["sheet"] in KEY_VALUE_SHEETS:
             body = [r for r in rows[1:] if any(c.strip() for c in r[1:])]
@@ -1036,12 +1039,20 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
     if bad:
         raise MemoRefused("numbers", W19_NUMBERS.format(n=len(bad), list=", ".join(bad)), unmatched=bad)
     head, text = _build(**common, thesis=thesis)
-    words = count_words(head)
+    words = narrative_words(head)
     if words > WORD_LIMIT:
-        raise MemoRefused("words", W19_WORDS.format(n=fmt.fmt_count(words)), words=words)
+        title, _, rest = text.partition("\n")
+        text = f"{title}\n{MEMO_TEXT_LINE.format(n=fmt.fmt_count(words))}\n{rest}"
     return text
 
 
+def narrative_words(text: str) -> int:
+    """Narrative words (section 7.5): every table line (starts with a pipe), the title line, the Date and Evidence lines under it and the
+    memo-text line are left out."""
+    return count_words("\n".join(line for line in text.split("\n")
+                                 if not line.startswith(("|", "# ", "Memo text: ", "Date: ", "Evidence to "))))
+
+
 def word_count_of(text: str) -> int:
-    """Words of a built memo: from the title to the end of section 6 (appendices are not counted)."""
-    return count_words(text.split(f"## {APPENDICES[0]}")[0])
+    """Narrative words of a built memo: from the title to the end of section 6 (appendices are not counted)."""
+    return narrative_words(text.split(f"## {APPENDICES[0]}")[0])
