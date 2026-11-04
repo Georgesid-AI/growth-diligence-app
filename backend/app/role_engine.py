@@ -13,7 +13,7 @@ Code never reads and never decides what a row means: it picks the row by the rea
 granularity a metric needs, and does arithmetic on the cells the series holds. A row whose check was rejected is not an input.
 """
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
@@ -214,6 +214,32 @@ def notes(*recs: Optional[Dict], names: Optional[Dict[str, str]] = None) -> List
             if text not in out:
                 out.append(text)
     return out
+
+
+def notes_of_role(role: str, *recs: Optional[Dict], names: Optional[Dict[str, str]] = None) -> List[str]:
+    """The method notes of the rows of one role: an estimate carries the note of its own role's rows only, never another role's total-row guard."""
+    return notes(*(r for r in recs if r and r.get("role") == role), names=names)
+
+
+def by_row(cells: Iterable[str]) -> List[str]:
+    """The cells grouped row by row (first appearance of a row decides the order, columns left to right), so that `cell_ranges` can write each row's
+    run as a range; a cell of another sheet keeps its sheet name and its own group."""
+    from .ic_memo import _CELL, _column_number
+    groups: Dict[Tuple, List[Tuple[int, str]]] = {}
+    other: List[str] = []
+    for c in dict.fromkeys(cells):
+        m = _CELL.fullmatch(str(c))
+        if m:
+            groups.setdefault((m.group("sheet"), m.group("row")), []).append((_column_number(m.group("col")), str(c)))
+        else:
+            other.append(str(c))
+    return [c for g in groups.values() for _, c in sorted(g)] + other
+
+
+def ranges(cells: Iterable[str]) -> str:
+    """"B10:D10, B11:D11": cells as the memo's tables print them."""
+    from .ic_memo import cell_ranges
+    return ", ".join(cell_ranges(cells))
 
 
 def with_notes(rule: str, *recs: Optional[Dict], names: Optional[Dict[str, str]] = None) -> str:
@@ -585,6 +611,7 @@ SPLIT_FIELDS = {"rnd": "R&D", "ga": "G&A"}
 SPLIT_TOLERANCE = 0.01         # check (a): S&M + R&D + G&A = OPEX within 1 % in every plan year
 SPLIT_STABLE = 0.10            # check (b): R&D ÷ (R&D + G&A) (two-way), each share of S&M + R&D + G&A (three-way) within 10 points across the plan years
 NO_ESTIMATE = "No estimate: "
+ESTIMATED_REASON = "Estimated (plan split applied to actual OPEX); actual split requested"
 # A plan row of a P&L is often a `forecast` row that names its line by its metric ("Plan: R&D"): the role its line has.
 FORECAST_LINES = {None: "revenue", "revenue": "revenue", "cost_of_revenue": "cost_of_revenue", "sm_expense": "sales_marketing", "rnd_expense": "rnd",
                   "ga_expense": "ga", "opex": "opex", "ebitda": "ebitda"}
@@ -649,8 +676,8 @@ def plan_split(table: List[Dict], view: List[Dict]):
         shown = ", ".join(f"{py} {fmt.fmt_pct(v)}" for py, v in r_by_year.items())
         return None, (f"check (b) failed – the R&D share of R&D + G&A moves {fmt.fmt_number(spread * 100)} points across the plan years "
                       f"({shown}; limit 10 points)")
-    return {"r": rd_sum / (rd_sum + ga_sum), "rd": rd_sum, "ga": ga_sum, "years": years, "cells": cells, "home": home,
-            "notes": notes(*parts.values(), names={**PLAN_ONLY_NAMES, "opex": "OPEX"})}, None
+    return {"r": rd_sum / (rd_sum + ga_sum), "rd": rd_sum, "ga": ga_sum, "years": years, "cells": by_row(cells), "home": home,
+            "recs": list(parts.values())}, None
 
 
 def _actual_years(rec: Dict, as_of, fye) -> List[str]:
@@ -719,8 +746,8 @@ def plan_shares(table: List[Dict], view: List[Dict]):
             return None, (f"check (b) failed – the {SPLIT3[r]} share of S&M + R&D + G&A moves {fmt.fmt_number(spread * 100)} points across the plan "
                           f"years ({shown}; limit 10 points)")
     total = sum(sums.values())
-    return {"shares": {r: sums[r] / total for r in SPLIT3}, "sums": sums, "total": total, "years": years, "cells": cells, "home": home,
-            "notes": notes(*parts.values(), names={**PLAN_ONLY_NAMES, "opex": "OPEX"})}, None
+    return {"shares": {r: sums[r] / total for r in SPLIT3}, "sums": sums, "total": total, "years": years, "cells": by_row(cells), "home": home,
+            "recs": list(parts.values())}, None
 
 
 def three_way_expense(metric: str, role: str, table: List[Dict], view: List[Dict], year: str) -> Dict:
@@ -735,14 +762,14 @@ def three_way_expense(metric: str, role: str, table: List[Dict], view: List[Dict
     share_ = split["shares"][role]
     op_cells = [_cell_of(opex, c, opex) for c in op_cell.split("+")]
     sums = split["sums"]
-    rule = (f"Estimate: OPEX of {year} {_n(op_v)} [{', '.join(op_cells)}] × {name} share of S&M + R&D + G&A = {fmt.fmt_pct(share_)}; share from the plan "
+    rule = (f"Estimate: OPEX of {year} {_n(op_v)} [{ranges(op_cells)}] × {name} share of S&M + R&D + G&A = {fmt.fmt_pct(share_)}; share from the plan "
             f"years {', '.join(split['years'])} ({name} {_n(sums[role])} ÷ S&M + R&D + G&A {_n(split['total'])}; S&M {_n(sums['sales_marketing'])}, "
-            f"R&D {_n(sums['rnd'])}, G&A {_n(sums['ga'])}) [{', '.join(split['cells'])}]. "
+            f"R&D {_n(sums['rnd'])}, G&A {_n(sums['ga'])}) [{ranges(split['cells'])}]. "
             f"Checks passed: (a) S&M + R&D + G&A = OPEX within 1% in every plan year; (b) each share within 10 points across the plan years.")
-    rule = "; ".join([rule, *dict.fromkeys([*notes(opex, names={**PLAN_ONLY_NAMES, "opex": "OPEX"}), *split["notes"]])])
+    rule = "; ".join([rule, *dict.fromkeys(notes_of_role(role, opex, *split["recs"], names=PLAN_ONLY_NAMES))])
     src = {"file": opex["file"], "sheet": opex["sheet"], "row": opex["row"], "cells": [*op_cells, *split["cells"]], "rule": rule}
     return _entry(metric, period=year, basis="yearly", unit="money", value=op_v * share_, label=ESTIMATE_LABEL, estimate=True,
-                  reason=plan_only_reason(table, role) or f"{name} split not in the actual years", needs=[role],
+                  reason=ESTIMATED_REASON, needs=[role],
                   detail=NEGATIVE_COSTS if opex.get("negated") else None, source=src)
 
 
@@ -797,14 +824,14 @@ def split_expense(metric: str, role: str, table, as_of, fye) -> Dict:
     share_ = r if role == "rnd" else 1 - r
     op_cells = [_cell_of(opex, c, opex) for c in op_cell.split("+")]
     sm_cells = [_cell_of(sm, c, opex) for c in sm_cell.split("+")]
-    rule = (f"Estimate: non-S&M OPEX of {year} {_n(non_sm)} (OPEX {_n(op_v)} [{', '.join(op_cells)}] − S&M {_n(sm_v)} [{', '.join(sm_cells)}]) "
+    rule = (f"Estimate: non-S&M OPEX of {year} {_n(non_sm)} (OPEX {_n(op_v)} [{ranges(op_cells)}] − S&M {_n(sm_v)} [{ranges(sm_cells)}]) "
             f"× {name} share of R&D + G&A r = {fmt.fmt_pct(r)}{'' if role == 'rnd' else ' (G&A: 1 − r)'}; r from the plan years "
-            f"{', '.join(split['years'])} (R&D {_n(split['rd'])}, G&A {_n(split['ga'])}) [{', '.join(split['cells'])}]. "
+            f"{', '.join(split['years'])} (R&D {_n(split['rd'])}, G&A {_n(split['ga'])}) [{ranges(split['cells'])}]. "
             f"Checks passed: (a) S&M + R&D + G&A = OPEX within 1% in every plan year; (b) r within 10 points across the plan years.")
-    rule = "; ".join([rule, *dict.fromkeys([*notes(opex, sm, names={**PLAN_ONLY_NAMES, "opex": "OPEX"}), *split["notes"]])])
+    rule = "; ".join([rule, *dict.fromkeys(notes_of_role(role, opex, sm, *split["recs"], names=PLAN_ONLY_NAMES))])
     src = {"file": opex["file"], "sheet": opex["sheet"], "row": opex["row"], "cells": [*op_cells, *sm_cells, *split["cells"]], "rule": rule}
     return _entry(metric, period=year, basis="yearly", unit="money", value=non_sm * share_, label=ESTIMATE_LABEL, estimate=True,
-                  reason=plan_only_reason(table, role) or f"{name} split not in the actual years", needs=[role],
+                  reason=ESTIMATED_REASON, needs=[role],
                   detail=NEGATIVE_COSTS if opex.get("negated") or sm.get("negated") else None, source=src)
 
 
