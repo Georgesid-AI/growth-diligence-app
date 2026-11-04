@@ -56,9 +56,15 @@ def _trend(results: dict) -> Optional[Sheet]:
     return TREND_SHEET, header, rows, [KIND_OF_UNIT[r["unit"]] for r in trend["rows"]]
 
 
+def _yearly_metric_read(results: dict) -> bool:
+    """A role metric of yearly basis was computed (the EBITDA margin of twelve months of a monthly file, with no yearly P&L)."""
+    return any(m["status"] == "computed" and m.get("basis") == "yearly" for m in (results.get("role_metrics") or {}).get("metrics") or ())
+
+
 def sheets(results: dict, ccy: Optional[str]) -> List[Sheet]:
-    """The four sheets of the yearly P&L work; a sheet with no row is left out. Empty when no yearly P&L was read."""
-    if not yearly_pnl_read(results):
+    """The four sheets of the yearly P&L work; a sheet with no row is left out. Empty when no yearly P&L was read and no yearly-basis metric
+    was computed."""
+    if not yearly_pnl_read(results) and not _yearly_metric_read(results):
         return []
     out: List[Sheet] = []
     plain, plain_kinds = _metric_rows(results, False)

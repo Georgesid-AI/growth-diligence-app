@@ -4,3 +4,5 @@ Decided: the six review points hold as built except one: the twelve-month sum fo
 Slow or unclear: the reader parses "Q1 2026", "2026 Q1" and "Q1-26" but not "Q1 FY26"; a quarter of a fiscal year that does not end on a quarter boundary is labelled by the calendar quarter of its end month.
 Root cause and rule: the full-year path reused the share's basis guard, which stops only a cumulative row against a flow row, not two cumulative rows nor an LTM row; rule 11 (fix leftover risk in scope with a test that failed first).
 Process change to propose: added to docs/pr6-cleanup.md (quarter headers with an FY-prefixed two-digit year parse to no period).
+
+Follow-up (same session, George's decision): the twelve-month margin's basis is yearly with the label "full year, sum of 12 months", and the Excel yearly sheets list a computed yearly-basis metric when no yearly P&L was read; golden file regenerated, unchanged (its fixtures carry no EBITDA row). The cumulative-row fiscal-year-end reading is on docs/pr6-cleanup.md, not built.

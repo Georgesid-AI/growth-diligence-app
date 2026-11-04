@@ -951,10 +951,16 @@ def test_a_single_month_ebitda_margin_from_a_monthly_file_is_not_reported():
 
 
 def test_twelve_monthly_ebitda_values_of_a_full_year_give_that_years_margin_from_the_sums():
+    from app import yearly_sheets
     r = run(_monthly_ebitda_file(MONTHS, [-10 + i for i in range(18)]))
     m = metric(r, "ebitda_margin")
     assert m["status"] == "computed" and m["period"] == "2025"
     assert m["value"] == pytest.approx(sum(-10 + i for i in range(12)) / 1200)
+    assert m["basis"] == "yearly" and m["label"] == "full year, sum of 12 months", "a fiscal year's figure, listed with the yearly metrics"
+    excel = {name: rows for name, _, rows, _ in yearly_sheets.sheets(r, "EUR")}
+    row_ = next(x for x in excel[yearly_sheets.METRICS_SHEET] if x[0] == "EBITDA margin")
+    assert row_[1] == "2025" and row_[2] == m["value"] and row_[3] == "sales sheet · Sales!B5:M5, B4:M4" and row_[4] == "no"
+    assert "twelve months of one fiscal year" in row_[5]
 
 
 def test_a_yearly_or_quarterly_ebitda_row_is_still_read():

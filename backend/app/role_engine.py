@@ -968,7 +968,8 @@ EBITDA_MONTHLY_REASON = "needs an EBITDA row at yearly or quarterly granularity,
 def _ebitda_margin_of_full_year(metric: str, ebitda: Dict, rev: Dict, as_of: pd.Period, fye: int) -> Dict:
     """EBITDA margin from monthly rows: the latest fiscal year with all twelve months in both rows at or before the as-of month, the sum of the
     EBITDA months over the sum of the revenue months. A single month is not a margin of the business (cleanup PR 6, item 6). A row that
-    accumulates (cumulative to date, last 12 months) holds no monthly flows to add up: it gives no twelve-month margin (review of item 6)."""
+    accumulates (cumulative to date, last 12 months) holds no monthly flows to add up: it gives no twelve-month margin (review of item 6).
+    The entry's basis is yearly (a fiscal year's figure, as the reconciliation reads a twelve-month sum), so the Excel yearly sheets list it."""
     if any(rec["basis"] in (CUMULATIVE, "last_12_months") for rec in (ebitda, rev)):
         return _missing(metric, EBITDA_MONTHLY_REASON, ["ebitda"])
     e_by, r_by = {}, {}
@@ -984,7 +985,7 @@ def _ebitda_margin_of_full_year(metric: str, ebitda: Dict, rev: Dict, as_of: pd.
     if not revenue:
         return _missing(metric, "revenue is zero in the period")
     cells = [e_by[year][months[0]][1] + ":" + e_by[year][months[-1]][1], r_by[year][months[0]][1] + ":" + r_by[year][months[-1]][1]]
-    return _entry(metric, period=str(year), basis="monthly", unit="rate", value=sum(e_by[year][m][0] for m in months) / revenue,
+    return _entry(metric, period=str(year), basis="yearly", unit="rate", value=sum(e_by[year][m][0] for m in months) / revenue,
                   label="full year, sum of 12 months", detail=NEGATIVE_COSTS if ebitda.get("negated") else None,
                   source=_source(ebitda, cells, with_notes(f"{NAMES[metric]} = the sum of the ebitda row over the sum of the revenue row, twelve months of one fiscal year", ebitda)))
 

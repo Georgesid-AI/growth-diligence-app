@@ -7,6 +7,7 @@ New cleanup items go in this file, not in session logs (CLAUDE.md rule 33). One 
 - [ ] Golden test: cover the legacy engine blocks (arr, yearly_basis) the map feeds, and a monthly file with an EBITDA row (cleanup PR 6 added the rule, the golden fixtures do not exercise it).
 - [ ] Deck-claim timeout: the results stage polls 24 times at 5 s; the engine stage never answers "running" today, so its timeout message is untested end to end (cleanup PR 6 added the text).
 - [ ] Period headers: "Q1 FY26" and "FY26 Q1" (a quarter with an FY-prefixed two-digit year) parse to no period, so such a column leaves the series; "Q1 2026", "2026 Q1" and "Q1-26" parse (found in the review of cleanup PR 6, item 6).
+- [ ] EBITDA margin from a cumulative_to_date row: the cell at the fiscal year-end month is the full-year figure (EBITDA over revenue of that cell); not built (George, 2026-11-04, review of cleanup PR 6, item 6).
 - [ ] Appendix D: the footnote of a stored dataset with an older type (pnl, revenue, crm) is still taken from the stored type, not from the reading; check whether an old audit can still list a monthly revenue file under the P&L category.
 
 ## Moved from session logs ("Process change to propose")
