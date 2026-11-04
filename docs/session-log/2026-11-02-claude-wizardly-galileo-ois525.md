@@ -3,4 +3,4 @@ Deleted: the old export blocks of Appendix C with OLD_CLAIMS off (Headline, By S
 Decided: one pure module (app/report_text.py) writes the missing-data reason, the request roles, the anomaly applicability and the Appendix D file kinds from the role table, so the memo, the verdict gaps, the report page and the export share one builder; reasons are applied at read time (the stored results and the engine are untouched); a flag is applicable when its source rows (revenue) or deals_source (CRM) exist.
 Slow or unclear: build_table skips a row with no series, so a mapped row without cells reads as unmapped; whether a rated growth line, which does use thresholds, keeps the benchmark label (kept).
 Root cause: each memo section carried its own template sentence, written before the role engine, so none of them looked at the map; rule: a sentence that says a row is missing is built by report_text.missing_reason from the table, never typed.
-Process change: when an engine path is replaced, grep every user-facing string of the old path in the same PR and pin the list in a "none of" test.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

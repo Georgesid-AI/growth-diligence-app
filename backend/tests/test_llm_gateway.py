@@ -276,11 +276,11 @@ class FakeAdapter:
     text_tokens = None            # what count_tokens reports for the structure text alone (None: input_tokens)
     image_tokens = 0              # what the page images add to a call's count and bill (a call with images only)
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None, prior=None):
+    def complete(self, *, model, system, user_payload, max_tokens, json_schema, cache_system=False, images=None, prior=None):
         self.calls += 1
         self.payloads.append(user_payload)
         self.requests = getattr(self, "requests", []) + [
-            {"model": model, "max_tokens": max_tokens, "temperature": temperature, "json_schema": json_schema,
+            {"model": model, "max_tokens": max_tokens, "json_schema": json_schema,
              "cache_system": cache_system, "system": system, "images": images, "prior": prior}]
         if self._raise_with is not None:
             raise self._raise_with
@@ -986,11 +986,12 @@ def test_adapter_refuses_to_run_without_a_key(monkeypatch):
     assert exc.value.reason == "provider_not_configured"
 
 
-def test_temperature_is_withheld_from_models_that_reject_it():
-    """Sampling params were removed on current Opus/Sonnet: sending temperature
-    to claude-opus-5 is a 400, so the adapter must omit it."""
-    assert gateway.DEFAULT_MODEL not in gateway.MODELS_ACCEPTING_TEMPERATURE
-    assert gateway.STEP_CONFIG["growth_engine"]["temperature"] == 0.2
+def test_no_sampling_parameter_exists_anywhere():
+    """No current model accepts sampling parameters: the adapter signature, the step configs and the module hold none, and a request carries none."""
+    import inspect
+    assert not hasattr(gateway, "MODELS_ACCEPTING_TEMPERATURE")
+    assert "temperature" not in inspect.signature(gateway.AnthropicAdapter.complete).parameters
+    assert not any("temperature" in cfg for cfg in gateway.STEP_CONFIG.values())
 
 
 def test_only_growth_engine_has_a_prompt():

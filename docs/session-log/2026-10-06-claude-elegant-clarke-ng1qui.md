@@ -2,4 +2,4 @@
 Deleted: nothing; the guard leaves a header out with no mark, so no prompt bump (v5/r8 stays free for #45/#47). Optimized: the guard reuses #48's _next_to over the page's boxes instead of a second geometry rule.
 Decided: the guard covers KPI panels only, because on roadmaps it changed moz p2 and tea p11 headers; next_to is computed in the parser as cell ids, because only it sees every box of the page; a cell with no next_to gets no header from another box, because a wrong label is worse than a missing one.
 Slow or unclear: the 2026-10-06 report token counts are in no tracked file, issue or PR, so the cost estimate is calibrated on #47's $1.02; the digit rule also drops 4 tea p11 items ("Go2Market", "Web3", "Q1-Q2"), so tea p11's item list is not unchanged.
-Process change: paste each live run's token and cost lines into the issue or PR it ran for, so the next estimate starts from them.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

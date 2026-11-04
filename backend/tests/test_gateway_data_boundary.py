@@ -3736,7 +3736,7 @@ def test_the_provider_adapter_refuses_what_the_masker_would_have_removed(monkeyp
     monkeypatch.setattr(adapter, "_ensure_client", lambda: pytest.fail("a request was built for an unmasked payload"))
     for payload in ("mail jane.roe@example.org", "iban DE89 3704 0044 0532 0130 00", "tax AB123456789", "call +44 20 7946 0958"):
         with pytest.raises(gateway.GatewayError) as caught:
-            adapter.complete(model="m", system="s", user_payload=payload, max_tokens=10, temperature=None, json_schema={})
+            adapter.complete(model="m", system="s", user_payload=payload, max_tokens=10, json_schema={})
         assert caught.value.reason == "unmasked_personal_data"
         with pytest.raises(gateway.GatewayError):
             adapter.count_tokens(model="m", system=None, user_payload=payload, json_schema=None)
@@ -3834,7 +3834,7 @@ def test_a_failed_sheet_reading_keeps_the_raw_replies_as_sent_and_nothing_of_the
         assert leak not in logged, f"{leak!r} in a log line"
     assert "check=schema" in logged and "fields=header_row" in logged
     with pytest.raises(gateway.GatewayError):
-        gateway.AnthropicAdapter(api_key="k").complete(model=sr.MODEL, system="s", user_payload="{}", max_tokens=5, temperature=None, json_schema=None,
+        gateway.AnthropicAdapter(api_key="k").complete(model=sr.MODEL, system="s", user_payload="{}", max_tokens=5, json_schema=None,
                                                        prior=[{"role": "assistant", "content": f"see {sr.EMAIL}"}])
 
 

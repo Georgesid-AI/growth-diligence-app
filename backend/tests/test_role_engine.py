@@ -216,7 +216,7 @@ def test_customer_level_and_crm_metrics_still_say_they_need_their_files():
 
 def test_the_engine_output_passes_the_contract_and_carries_the_version():
     r = run(monthly_report() + yearly_pnl())
-    assert r["contract_version"] == metrics.CONTRACT_VERSION == 18
+    assert r["contract_version"] == metrics.CONTRACT_VERSION == 19
     metrics.MetricsPayload.model_validate(r)
     assert metrics.safe_problems(r) == []
 
@@ -920,3 +920,173 @@ def test_the_three_way_split_does_not_fire_when_the_year_states_r_and_d_or_g_and
     trend = {x["metric"]: {v["period"]: v for v in x["values"]} for x in r["role_metrics"]["pnl_trend"]["rows"]}
     assert "2025" not in trend["sm_share"] and not trend[f"{stated}_share"]["2025"]["estimate"]
     assert "2025" not in trend[other.replace("_expense", "_share")]
+
+
+# --- cleanup PR 6, item 4: a monthly revenue file with no yearly P&L says why yearly revenue is not computed, not "needs a revenue row" ----------
+
+def test_yearly_revenue_from_a_monthly_file_only_says_it_needs_a_yearly_pnl_not_a_revenue_row():
+    from app import report_text
+    files = monthly_report()
+    r = run(files)
+    m = metric(r, "yearly_revenue")
+    assert m["status"] == "needs_row" and m["reason"] == "needs a yearly P&L; the revenue file is monthly"
+    table = re_.build_table(files)
+    text = report_text.missing_reason(table, ["revenue"], m["reason"])
+    assert text.endswith("not computed: needs a yearly P&L; the revenue file is monthly"), text
+    assert "needs a revenue row" not in text
+
+
+# --- cleanup PR 6, item 6: EBITDA margin needs a yearly or quarterly P&L row, or a full year of monthly values; never one month ----------------
+
+def _monthly_ebitda_file(periods, ebitda):
+    rows = [row(4, "revenue", [100] * len(periods), periods), row(5, "ebitda", ebitda, periods)]
+    return [file_of("sales sheet", [sheet("Sales", rows)])]
+
+
+def test_a_single_month_ebitda_margin_from_a_monthly_file_is_not_reported():
+    r = run(_monthly_ebitda_file(MONTHS[12:18], [-10] * 6))        # six months of 2026: no full year
+    m = metric(r, "ebitda_margin")
+    assert m["status"] == "needs_row" and m["value"] is None
+    assert m["reason"] == "needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"
+
+
+def test_twelve_monthly_ebitda_values_of_a_full_year_give_that_years_margin_from_the_sums():
+    from app import yearly_sheets
+    r = run(_monthly_ebitda_file(MONTHS, [-10 + i for i in range(18)]))
+    m = metric(r, "ebitda_margin")
+    assert m["status"] == "computed" and m["period"] == "2025"
+    assert m["value"] == pytest.approx(sum(-10 + i for i in range(12)) / 1200)
+    assert m["basis"] == "yearly" and m["label"] == "full year, sum of 12 months", "a fiscal year's figure, listed with the yearly metrics"
+    excel = {name: rows for name, _, rows, _ in yearly_sheets.sheets(r, "EUR")}
+    row_ = next(x for x in excel[yearly_sheets.METRICS_SHEET] if x[0] == "EBITDA margin")
+    assert row_[1] == "2025" and row_[2] == m["value"] and row_[3] == "sales sheet · Sales!B5:M5, B4:M4" and row_[4] == "no"
+    assert "twelve months of one fiscal year" in row_[5]
+
+
+def test_a_yearly_or_quarterly_ebitda_row_is_still_read():
+    yearly = file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000, 2_000], ["2024", "2025"], basis="yearly"),
+                                          row(5, "ebitda", [-100, -50], ["2024", "2025"], basis="yearly")], granularity="yearly")])
+    assert metric(run([yearly]), "ebitda_margin")["value"] == pytest.approx(-0.025)
+    q = ["2026-Q1", "2026-Q2"]
+    quarterly = file_of("pnl", [sheet("P&L", [row(4, "revenue", [500, 500], q, basis="quarterly"),
+                                             row(5, "ebitda", [-50, -25], q, basis="quarterly")], granularity="quarterly")])
+    assert metric(run([quarterly]), "ebitda_margin")["value"] == pytest.approx(-0.05)
+
+
+# --- cleanup PR 6, item 5: Appendix D lists a monthly revenue/ARR file under "Monthly revenue or ARR report", not under the P&L category -----
+
+def test_a_monthly_revenue_file_with_only_an_ebitda_row_is_listed_as_a_revenue_report_not_a_pnl():
+    from app import ic_memo, report_text
+    monthly = file_of("sales sheet", [sheet("Sales", [row(4, "revenue", [100] * 18, MONTHS), row(5, "arr", [1_200] * 18, MONTHS),
+                                                      row(6, "ebitda", [-10] * 18, MONTHS)])])
+    pnl = file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000], ["2025"], basis="yearly"), row(5, "cost_of_revenue", [300], ["2025"], basis="yearly")],
+                                granularity="yearly")])
+    table = re_.build_table([monthly, pnl])
+    files = report_text.memo_files([{"file": "sales sheet", "dtype": "file"}, {"file": "pnl", "dtype": "file"}], table)
+    by_category = {c["category"]: c["files"] for c in ic_memo.evidence_categories(files, [])}
+    assert by_category["P&L and budget vs actuals"] == ["pnl (P&L)"]
+    assert ic_memo.category_files("revenue_report", files, []) == ["sales sheet (Sales)"]
+
+
+# --- review of item 6: the twelve months follow the audit's fiscal year-end, the revenue is the same twelve months of the same series, a row that
+# accumulates is never summed, the sign is kept, a quarterly row is read in the reader's own calendar-quarter form, and no other path prints a month
+
+def _ebitda_months(periods, ebitda, revenue=None, *, rev_basis="monthly", ebitda_basis="monthly", rev_plan_from=None):
+    revenue = revenue or [100] * len(periods)
+    rev = row(4, "revenue", revenue, periods, basis=rev_basis)
+    if rev_plan_from is not None:                   # a mixed revenue row: the months from `rev_plan_from` sit in its plan series
+        rev = {**row(4, "revenue", revenue[:rev_plan_from], periods[:rev_plan_from], basis=rev_basis), "actual_plan": "mixed",
+               "plan_series": series(revenue[rev_plan_from:], periods[rev_plan_from:], first_row=4, col0=2 + rev_plan_from)}
+    return [file_of("sales sheet", [sheet("Sales", [rev, row(5, "ebitda", ebitda, periods, basis=ebitda_basis)])])]
+
+
+def test_the_twelve_months_of_the_ebitda_margin_are_the_audits_fiscal_year_not_the_calendar_year():
+    ebitda = [-20] * 6 + [-10 + i for i in range(12)]           # Jan–Jun 2025: −20 each; Jul 2025–Jun 2026: −10 … 1
+    m = metric(run(_ebitda_months(MONTHS, ebitda), fye=6), "ebitda_margin")
+    assert m["status"] == "computed" and m["period"] == "2026" and m["label"] == "full year, sum of 12 months"
+    assert m["value"] == pytest.approx(sum(-10 + i for i in range(12)) / 1200), "July 2025 to June 2026, never the calendar year 2025"
+    assert m["source"]["cells"] == ["H5:S5", "H4:S4"], "the cells of the fiscal year's first and last month, EBITDA then revenue"
+    calendar = metric(run(_ebitda_months(MONTHS, ebitda)), "ebitda_margin")
+    assert calendar["period"] == "2025" and calendar["value"] == pytest.approx((-20 * 6 + sum(-10 + i for i in range(6))) / 1200)
+
+
+@pytest.mark.parametrize("fye, periods", [(6, MONTHS[:15]), (12, MONTHS[:11]), (12, MONTHS[1:13])])
+def test_a_fiscal_year_short_of_a_month_gives_no_ebitda_margin_and_says_why(fye, periods):
+    """Jan 2025 to Mar 2026 under a June year-end (nine months of FY2026, six of FY2025), eleven months of 2025, and Feb 2025 to Jan 2026 (no
+    twelve months of one fiscal year, though twelve months in a row)."""
+    m = metric(run(_ebitda_months(periods, [-10] * len(periods)), fye=fye), "ebitda_margin")
+    assert m["status"] == "needs_row" and m["value"] is None and m["period"] is None
+    assert m["reason"] == "needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"
+
+
+def test_a_fiscal_year_whose_last_month_is_after_the_as_of_month_is_not_complete():
+    m = metric(run(_ebitda_months(MONTHS[:12], [-10] * 12), as_of="2025-11"), "ebitda_margin")
+    assert m["status"] == "needs_row" and m["reason"] == "needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"
+
+
+def test_the_revenue_of_the_margin_is_the_same_twelve_months_of_the_actual_series():
+    # the revenue row's December sits in its plan series: the year is not twelve actual months of both rows
+    m = metric(run(_ebitda_months(MONTHS[:12], [-10] * 12, rev_plan_from=11)), "ebitda_margin")
+    assert m["status"] == "needs_row" and m["reason"] == "needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"
+    # revenue that stops a month short of the EBITDA row
+    files = _ebitda_months(MONTHS[:12], [-10] * 12)
+    files[0]["file_map"]["sheets"][0]["rows"][0] = row(4, "revenue", [100] * 11, MONTHS[:11])
+    assert metric(run(files), "ebitda_margin")["status"] == "needs_row"
+    # the revenue is summed over the same twelve months, not the revenue row's own longer span
+    revenue = [100 + 10 * i for i in range(18)]
+    m = metric(run(_ebitda_months(MONTHS, [-10] * 18, revenue)), "ebitda_margin")
+    assert m["value"] == pytest.approx(-120 / sum(revenue[:12]))
+
+
+@pytest.mark.parametrize("ebitda_basis, rev_basis", [("cumulative_to_date", "cumulative_to_date"), ("last_12_months", "monthly"),
+                                                      ("monthly", "last_12_months")])
+def test_a_row_that_accumulates_is_never_summed_into_a_twelve_month_margin(ebitda_basis, rev_basis):
+    """A cumulative-to-date or last-12-months row is not twelve monthly flows: its cells cannot be added up; the metric says what it needs."""
+    m = metric(run(_ebitda_months(MONTHS[:12], [-10 * (i + 1) for i in range(12)], [100 * (i + 1) for i in range(12)],
+                                  ebitda_basis=ebitda_basis, rev_basis=rev_basis)), "ebitda_margin")
+    assert m["status"] == "needs_row" and m["value"] is None
+    assert m["reason"] == "needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"
+
+
+def test_the_sign_of_the_ebitda_row_is_kept_in_every_path():
+    loss = metric(run(_ebitda_months(MONTHS[:12], [-10] * 12)), "ebitda_margin")
+    assert loss["value"] == pytest.approx(-0.1) and loss["detail"] is None, "EBITDA is a profit line, never flipped as a negated cost"
+    profit = metric(run(_ebitda_months(MONTHS[:12], [10] * 12)), "ebitda_margin")
+    assert profit["value"] == pytest.approx(0.1)
+    # a P&L that prints every cost as a negative: the sum of twelve EBITDA months keeps the printed sign, as the yearly row does
+    with_costs = _ebitda_months(MONTHS[:12], [-10] * 12)
+    with_costs[0]["file_map"]["sheets"][0]["rows"].append(row(6, "opex", [-90] * 12, MONTHS[:12]))
+    assert metric(run(with_costs), "ebitda_margin")["value"] == pytest.approx(-0.1)
+    yearly = file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000], ["2025"], basis="yearly"), row(5, "ebitda", [-100], ["2025"], basis="yearly"),
+                                          row(6, "opex", [-900], ["2025"], basis="yearly")], granularity="yearly")])
+    assert metric(run([yearly]), "ebitda_margin")["value"] == pytest.approx(-0.1)
+
+
+def test_a_quarterly_row_is_read_by_the_quarter_the_reader_writes_and_cut_at_the_as_of_month():
+    """The reader labels a quarter by the calendar quarter of its last month ("Q1 2026" under a June year-end is 2025-Q3), so the engine's
+    end month of a quarter needs no fiscal shift; the latest quarter at or before the as-of month is the one read."""
+    from app import checks
+    assert checks.period_in_form(checks.header_period("Q1 2026", 6), "2000-Q1") == "2025-Q3"
+    assert re_._end_month("2025-Q3", 6) == pd.Period("2025-09", "M") == pd.Period(checks.header_period("Q1 2026", 6)["end"], "M")
+    q = ["2025-Q3", "2025-Q4", "2026-Q1", "2026-Q2", "2026-Q3"]
+    quarterly = file_of("pnl", [sheet("P&L", [row(4, "revenue", [500] * 5, q, basis="quarterly"),
+                                             row(5, "ebitda", [-50, -40, -30, -20, -10], q, basis="quarterly")], granularity="quarterly")])
+    m = metric(run([quarterly], fye=6), "ebitda_margin")
+    assert m["period"] == "2026-Q2" and m["value"] == pytest.approx(-0.04) and m["basis"] == "quarterly", "April–June 2026, the last quarter at the as-of month"
+    assert metric(run([quarterly], as_of="2026-03", fye=6), "ebitda_margin")["period"] == "2026-Q1"
+
+
+def test_no_other_path_prints_a_single_month_ebitda_margin():
+    """Six months of a monthly file: the memo's Appendix C tables, the Excel yearly sheets, the P&L trend and the Data gaps text print no EBITDA
+    margin value, only the reason."""
+    from app import ic_memo, report_text, yearly_sheets
+    files = _ebitda_months(MONTHS[12:18], [-10] * 6)
+    r = run(files)
+    assert all("EBITDA margin" not in str(row) for _, _, rows in ic_memo.role_tables(r, "EUR") for row in rows)
+    assert all("EBITDA margin" not in str(row) for _, _, rows, _ in yearly_sheets.sheets(r, "EUR"))
+    assert r["role_metrics"]["pnl_trend"] is None
+    reasons = {x["key"]: x["reason"] for x in re_.missing_reasons(r["role_metrics"])}
+    assert reasons["ebitda_margin"] == "needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"
+    shown = report_text.apply_reasons(r, re_.build_table(files))
+    text = next(m["reason"] for m in shown["role_metrics"]["metrics"] if m["metric"] == "ebitda_margin")
+    assert text.endswith("not computed: needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"), text

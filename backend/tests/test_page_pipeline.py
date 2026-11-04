@@ -282,7 +282,7 @@ class Truncating(t.FakeAdapter):
         self.limit = limit
         self.truncated = 0
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
+    def complete(self, *, model, system, user_payload, max_tokens, json_schema, cache_system=False, images=None):
         if json.loads(user_payload)["text"].count("Traction") > self.limit:
             self.calls += 1
             self.truncated += 1
@@ -290,7 +290,7 @@ class Truncating(t.FakeAdapter):
             error.tokens = (self.input_tokens, max_tokens)
             raise error
         return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
-                                temperature=temperature, json_schema=json_schema, cache_system=cache_system, images=images)
+                                json_schema=json_schema, cache_system=cache_system, images=images)
 
 
 def test_a_batch_whose_reply_is_cut_at_the_output_limit_is_split_and_read_again(monkeypatch):
@@ -335,8 +335,7 @@ def test_the_adapter_raises_truncated_with_the_billed_tokens_when_the_provider_s
                                usage=usage)
     adapter._client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: response))
     with pytest.raises(gateway.GatewayError) as cut:
-        adapter.complete(model=gateway.STRUCTURE_MODEL, system="S", user_payload="{}", max_tokens=4000, temperature=None,
-                         json_schema={}, cache_system=True)
+        adapter.complete(model=gateway.STRUCTURE_MODEL, system="S", user_payload="{}", max_tokens=4000, json_schema={}, cache_system=True)
     assert cut.value.reason == "truncated" and cut.value.tokens == (5000, 4000)
     assert "page_claims" not in str(cut.value), "the cut reply is not quoted"
 

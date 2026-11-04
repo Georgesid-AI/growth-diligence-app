@@ -2,4 +2,4 @@
 Deleted: nothing. Optimized: nothing; the files are committed as received. Decided: keep the run's own file names (consistency_2026-10-06), because the diagnostic's heading names that stem.
 Agreement: 17 of 147 items disagree; 5 are front-b p12's tenure values, which lost their wrong headers and went people (Verified) in pass 1, not_a_metric in passes 2-3; 5 are roadmap figures dated by pairs that vary; 7 are on cell lines this PR left unchanged (clevergig p7 4, moz p20 2, moz p21 1). Live/fake on the same head: input 0.992, output 1.172.
 Slow or unclear: the diagnostic lists only unverified and disagreeing items, so p15's two funds-raised figures and p16's 12 axis-date figures (one label in every pass) cannot be told apart between dropped and Verified, and without #51's diagnostic the drop cannot be split item by item.
-Process change: let --diagnostic also list the items labelled alike in every pass, with that label, so a stable wrong Verified row shows.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.

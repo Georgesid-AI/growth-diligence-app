@@ -59,6 +59,7 @@ DECK_METRICS = {"revenue": "revenue", "arr": "arr", "mrr": "mrr", "customers": "
 RECONCILE_ROLES = ("revenue", "arr", "mrr", "customers", "ebitda", "cash", "headcount")
 RECONCILE_TOLERANCE = 0.005         # money within 0.5 %, as the cell checks (app/checks.py); a count exact
 CUMULATIVE = "cumulative_to_date"
+MONTHLY_ONLY_REASON = "needs a yearly P&L; the revenue file is monthly"
 
 
 AN = ("mrr", "rnd")         # read letter by letter: "an mrr row"
@@ -930,7 +931,7 @@ def stock(metric: str, role: str, unit: str, table, as_of, fye) -> Dict:
 
 def share(metric: str, role: str, table, as_of, fye) -> Dict:
     """A cost line (or EBITDA) over revenue, in the latest period both rows hold with the same granularity."""
-    cost = (cost_row(table, role, "yearly") or cost_row(table, role, "monthly")) if role in COST_ROLES else (pick(table, role, "yearly") or pick(table, role, "monthly"))
+    cost = (cost_row(table, role, "yearly") or cost_row(table, role, "monthly")) if role in COST_ROLES else (pick(table, role, "yearly") or pick(table, role, "quarterly") or pick(table, role, "monthly"))
     rev = pick(table, "revenue", cost["granularity"]) if cost else pick(table, "revenue")
     missing = [r for r, found in (("revenue", rev), (role, cost)) if found is None]
     if missing:
@@ -943,6 +944,8 @@ def share(metric: str, role: str, table, as_of, fye) -> Dict:
                      if m is not None and m <= as_of))
     if not shared:
         return _missing(metric, f"the revenue row and the {role} row share no period at or before the as-of month")
+    if metric == "ebitda_margin" and cost["granularity"] == "monthly":
+        return _ebitda_margin_of_full_year(metric, cost, rev, as_of, fye)
     m = shared[-1]
     rv = next(v for p, v in rev["actual"].items() if _end_month(p, fye) == m)
     cv = next(v for p, v in cost["actual"].items() if _end_month(p, fye) == m)
@@ -957,6 +960,34 @@ def share(metric: str, role: str, table, as_of, fye) -> Dict:
 
 def _fiscal_year(month: pd.Period, fye: int) -> int:
     return month.year if fye == 12 or month.month <= fye else month.year + 1
+
+
+EBITDA_MONTHLY_REASON = "needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"
+
+
+def _ebitda_margin_of_full_year(metric: str, ebitda: Dict, rev: Dict, as_of: pd.Period, fye: int) -> Dict:
+    """EBITDA margin from monthly rows: the latest fiscal year with all twelve months in both rows at or before the as-of month, the sum of the
+    EBITDA months over the sum of the revenue months. A single month is not a margin of the business (cleanup PR 6, item 6). A row that
+    accumulates (cumulative to date, last 12 months) holds no monthly flows to add up: it gives no twelve-month margin (review of item 6).
+    The entry's basis is yearly (a fiscal year's figure, as the reconciliation reads a twelve-month sum), so the Excel yearly sheets list it."""
+    if any(rec["basis"] in (CUMULATIVE, "last_12_months") for rec in (ebitda, rev)):
+        return _missing(metric, EBITDA_MONTHLY_REASON, ["ebitda"])
+    e_by, r_by = {}, {}
+    for rec, by in ((ebitda, e_by), (rev, r_by)):
+        for month, value, cell in _months(rec, "actual", as_of, fye):
+            by.setdefault(_fiscal_year(month, fye), {})[month] = (value, cell)
+    full = sorted(y for y in e_by if len(e_by[y]) == 12 and set(e_by[y]) == set(r_by.get(y, {})))
+    if not full:
+        return _missing(metric, EBITDA_MONTHLY_REASON, ["ebitda"])
+    year = full[-1]
+    months = sorted(e_by[year])
+    revenue = sum(r_by[year][m][0] for m in months)
+    if not revenue:
+        return _missing(metric, "revenue is zero in the period")
+    cells = [e_by[year][months[0]][1] + ":" + e_by[year][months[-1]][1], r_by[year][months[0]][1] + ":" + r_by[year][months[-1]][1]]
+    return _entry(metric, period=str(year), basis="yearly", unit="rate", value=sum(e_by[year][m][0] for m in months) / revenue,
+                  label="full year, sum of 12 months", detail=NEGATIVE_COSTS if ebitda.get("negated") else None,
+                  source=_source(ebitda, cells, with_notes(f"{NAMES[metric]} = the sum of the ebitda row over the sum of the revenue row, twelve months of one fiscal year", ebitda)))
 
 
 def _cite_cells(rec: Dict, cells: List[str], home: Dict) -> List[str]:
@@ -1214,8 +1245,10 @@ def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Di
         return {"file": s.get("file"), "sheet": s.get("sheet"), "row": (s.get("row_numbers") or [0])[0] if s.get("row_numbers") else 0,
                 "cells": cells, "rule": with_notes(rule, *recs, names={**PLAN_ONLY_NAMES, "cost_of_revenue": "Cost of revenue"} if len(roles) > 1 else None)}
     if last is None:
+        # A revenue row that is read but monthly is not a missing revenue row: the yearly metrics need a yearly P&L (cleanup PR 6, item 4).
+        monthly_only = pick(table, "revenue") is not None
         for metric in ("yearly_revenue", "gross_margin", "yearly_cac_payback"):
-            put(metric, _missing(metric))
+            put(metric, _missing(metric, MONTHLY_ONLY_REASON) if monthly_only and metric == "yearly_revenue" else _missing(metric))
         return
     period = last["period"]
     sm_plan_only = sm_reason(table, period)

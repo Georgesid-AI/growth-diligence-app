@@ -329,10 +329,11 @@ class Notes:
             self.texts.append(text)
         return f"[^{self.texts.index(text) + 1}]"
 
-    def source(self, analysis: str, key: str, source: Optional[dict] = None, rule: Optional[str] = None) -> str:
-        """analysis · source key · file · sheet · rows · rule"""
+    def source(self, analysis: str, source: Optional[dict] = None, rule: Optional[str] = None) -> str:
+        """analysis · file · sheet · rows · rule. The analysis is the metric's plain name as the memo body writes it; an internal result key never
+        appears in a footnote (cleanup PR 6)."""
         s = source or {}
-        parts = [analysis, key, s.get("file"), s.get("sheet"), s.get("rows"), rule or s.get("rule")]
+        parts = [analysis, s.get("file"), s.get("sheet"), s.get("rows"), rule or s.get("rule")]
         return self.add(" · ".join(str(p) for p in parts if p))
 
     def anomaly_flags(self, anomalies: Optional[dict]) -> str:
@@ -340,8 +341,8 @@ class Notes:
         file or sheet name (a source of "no rows" names nothing that was read)."""
         scope = report_text.anomaly_scope(anomalies)
         if not (scope["revenue"] or scope["crm"]):
-            return self.add("Anomaly Flags · anomalies · no revenue lines or CRM deals read")
-        return self.source("Anomaly Flags", "anomalies", (anomalies or {}).get("source"))
+            return self.add("Anomaly Flags · no revenue lines or CRM deals read")
+        return self.source("Anomaly Flags", (anomalies or {}).get("source"))
 
     def register(self, ranks: Iterable[int] = ()) -> str:
         ranks = sorted(ranks)
@@ -555,13 +556,13 @@ def role_summary(results: dict, ccy: Optional[str], notes: "Notes") -> List[str]
             continue
         name = metric["label"].capitalize() if metric["metric"] == "growth" and metric.get("label") else metric["name"]
         lines.append(f"- {name}: {_role_text(metric['unit'], metric['value'], ccy)} ({metric['period']})"
-                     f"{notes.source(metric['name'], metric['metric'], _role_source(metric))}")
+                     f"{notes.source(metric['name'], _role_source(metric))}")
     by_year = rm.get("growth_by_year") or []
     if by_year:
         last = by_year[-1]
         unverified = f" ({last['deck_note']})" if last.get("deck_note") else ""
         lines.append(f"- Growth by year: {last['period']} {fmt.fmt_pct(last['growth'])} on the year before{unverified}"
-                     f"{notes.source('Growth by year', 'growth_by_year', _role_source({'source': last['source']}))}")
+                     f"{notes.source('Growth by year', _role_source({'source': last['source']}))}")
     return [f"As of {rm['as_of_month']}:", *lines] if lines else []
 
 
@@ -638,9 +639,9 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
             sources = "; ".join(f"{s['file']} {s['where']} {fmt.fmt_currency(s['value'], ccy)}" for s in r["sources"])
             gap = f"difference {fmt.fmt_currency(r['gap'], ccy)}" + (f" ({fmt.fmt_pct(r['gap_pct'])})" if r.get("gap_pct") is not None else "")
             out.append(f"Revenue {r['period']} differs across the sources: {sources}; {gap}"
-                       f"{notes.source('Revenue reconciliation', 'role_metrics.reconciliation', {'rows': sources})}")
+                       f"{notes.source('Revenue reconciliation', {'rows': sources})}")
     reconciled = [r for r in recon if r["status"] in ("differs", "agrees_rounded")]
-    out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation', 'role_metrics.reconciliation')}"
+    out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation')}"
             for r in recon if r["status"] == "agrees_rounded"]
     anomalies = [a for a in report_text.anomaly_rows(results.get("anomalies")) if a["count"]]
     out += [f"{a['label']}: {fmt.fmt_count(a['count'])}{notes.anomaly_flags(results.get('anomalies'))}"
@@ -768,11 +769,11 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         src = rec.get("source") or {}
         side = src.get("revenue_file") or {}
         recon = (f"Revenue file and P&L differ by {pct} over {rec.get('first')}–{rec.get('last')}"
-                 f"{notes.source('Revenue reconciliation', 'revenue_reconciliation.gap_pct', side, (src.get('pnl') or {}).get('rule'))}")
+                 f"{notes.source('Revenue reconciliation', side, (src.get('pnl') or {}).get('rule'))}")
     else:
         years = integrity_mod.revenue_years(results)
         counted = integrity_mod._role_reconciliation(results) if years else None
-        recon = f"Revenue reconciliation: {counted['finding']}{notes.source('Revenue reconciliation', 'role_metrics.reconciliation', {'rows': counted['source']})}" \
+        recon = f"Revenue reconciliation: {counted['finding']}{notes.source('Revenue reconciliation', {'rows': counted['source']})}" \
             if counted else None
     anomalies = (f"{flags} anomaly flags{notes.anomaly_flags(results.get('anomalies'))}"
                  if flags is not None else NO_FLAGS_APPLY if results.get("anomalies") else "anomaly flags not computed")
@@ -793,10 +794,10 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         arr, nrr, churn = results.get("arr") or {}, results.get("nrr") or {}, results.get("gross_churn") or {}
         periods = results.get("metric_periods") or {}
         at = lambda block: f" ({periods[block]['last']})" if block in periods else ""      # each figure's own period  # noqa: E731
-        growth = (f"ARR {fmt.fmt_currency(arr.get('value'), ccy)}{at('arr')}{notes.source('Monthly MRR by Segment', 'arr.value', arr.get('source'))}, "
-                  f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{at('nrr')}{notes.source('NRR', 'nrr.overall_pct', nrr.get('source'))}, "
+        growth = (f"ARR {fmt.fmt_currency(arr.get('value'), ccy)}{at('arr')}{notes.source('Monthly MRR by Segment', arr.get('source'))}, "
+                  f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{at('nrr')}{notes.source('NRR', nrr.get('source'))}, "
                   f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}{at('gross_churn')}"
-                  f"{notes.source('Gross revenue churn', 'gross_churn.overall_pct', churn.get('source'))}.{notes.add(S17)}")
+                  f"{notes.source('Gross revenue churn', churn.get('source'))}.{notes.add(S17)}")
     rel, grow = rated["data_reliability"], rated["growth_engine"]
     rule = lambda r: f" {r['rule']}{' (' + vd.BENCHMARK + ')' if r['benchmark'] else ''}."            # noqa: E731
     score = [["Data reliability", rel["rating"] or vd.NOT_RATED, reliability + rule(rel), reliability_evidence],
@@ -811,7 +812,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         out += [f"## {plan_lines.HEADING}"]
         if trend_table:
             out += [_table(*trend_table) + notes.add("What the plan assumes · yearly values with their cells in Appendix C"), ""]
-        out += [f"- {item['text']}{notes.source(plan_lines.HEADING, None, {'file': item['file'], 'sheet': item['sheet'], 'rows': ', '.join(cell_ranges(item['cells']))})}"
+        out += [f"- {item['text']}{notes.source(plan_lines.HEADING, {'file': item['file'], 'sheet': item['sheet'], 'rows': ', '.join(cell_ranges(item['cells']))})}"
                 for item in assumed]
         out += [""]
 
@@ -833,20 +834,20 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
             flagged.append(f"{b['text']}{notes.register([by_id[b['claim_id']]['rank']])}")
             listed.append(b["claim_id"])
         elif b.get("kind") == "revenue_reconciliation":
-            flagged.append(f"{b['text']}{notes.source('Revenue reconciliation', 'revenue_reconciliation', (b.get('citation') or {}).get('revenue_file'))}")
+            flagged.append(f"{b['text']}{notes.source('Revenue reconciliation', (b.get('citation') or {}).get('revenue_file'))}")
         else:
             flagged.append(b["text"])
     # A sheet with a metrics block and a dated list that do not sum to each other (revenue-file-recognition.md section 6.7)
     recognition = results.get("recognition") or {}
     if recognition.get("cross_check") == "mismatch":
         flagged.append(_tables_differ(recognition, results)
-                       + notes.source("Revenue file recognition", "recognition", (results.get("revenue_series") or {}).get("source")))
+                       + notes.source("Revenue file recognition", (results.get("revenue_series") or {}).get("source")))
     # Every Verified beat outside tolerance, so a large beat stays visible (amended 2026-10-13, George), and every row whose
     # Definition check the analyst answered Yes (claim-matching.md section 4.1), each once
     flagged += [f"{vd.flag_text(r)}{notes.register([r['rank']])}" for r in vd.flagged_rows(rows, listed)]
     if narrative:
         flagged += [f"{item}{notes.add('growth-engine narrative, AI call log')}" for item in narrative.get("worth_flagging") or ()]
-    flagged += [f"{item['text']}{notes.source(plan_lines.HEADING, None, {'file': item['file'], 'sheet': item['sheet'], 'rows': ', '.join(cell_ranges(item['cells']))})}"
+    flagged += [f"{item['text']}{notes.source(plan_lines.HEADING, {'file': item['file'], 'sheet': item['sheet'], 'rows': ', '.join(cell_ranges(item['cells']))})}"
                 for item in assumed if item["kind"] == "plan_to_date" and item["beyond_tolerance"]]        # a plan-to-date gap beyond tolerance is also flagged
     if not claims:          # PR 4f: the role engine's own findings; nothing qualifies, the section says so
         flagged += role_flags(results, integrity, ccy, notes)
@@ -859,10 +860,10 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     for g in gaps[:5]:
         date = f" Target date: {g['target_date']}." if g["target_date"] else ""
         asked = f" Requested: {str(g['requested']).rstrip('.')}." if g.get("requested") else ""
-        out += [f"- {g['item']}: {g['why']}{asked}{date}{notes.source('Missing Data', 'missing_data')}"]
+        out += [f"- {g['item']}: {g['why']}{asked}{date}{notes.source('Missing Data')}"]
     if len(gaps) > 5:
-        out += [f"and {len(gaps) - 5} more in Appendix B{notes.source('Missing Data', 'missing_data')}"]
-    out += [f"- {q}{notes.source('Questions for management', 'questions_for_management')}" for q in vd.management_questions(results)]
+        out += [f"and {len(gaps) - 5} more in Appendix B{notes.source('Missing Data')}"]
+    out += [f"- {q}{notes.source('Questions for management')}" for q in vd.management_questions(results)]
     unmeasured = vd.unmeasured_claims(rows)
     if unmeasured:
         out += [f"- {len(unmeasured)} {'claim is' if len(unmeasured) == 1 else 'claims are'} never tested against data; the reason for each is in Appendix B"
@@ -907,14 +908,14 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         app += [title, _table(header, body), ""]
     for t in memo_tables(tables, claims):
         block = SHEET_BLOCKS.get(t["sheet"], ())
-        cite = "".join(notes.anomaly_flags(results.get(b)) if b == "anomalies" else notes.source(t["sheet"], b, (results.get(b) or {}).get("source"))
+        cite = "".join(notes.anomaly_flags(results.get(b)) if b == "anomalies" else notes.source(t["sheet"], (results.get(b) or {}).get("source"))
                        for b in block if (results.get(b) or {}).get("source"))
         width = max(len(r) for r in t["rows"])
         rows_ = [r + [""] * (width - len(r)) for r in t["rows"]]
         app += [f"{t['sheet']}{cite}", _table(rows_[0], rows_[1:]), ""]
     app += deck_actuals.appendix_lines(rows, results)        # deck-actuals.md section 3: the details block of each metric, from stored data
     if claims and rec.get("available") and rec.get("by_month"):          # the role reconciliation above holds the years
-        cite = notes.source("Revenue reconciliation", "revenue_reconciliation.by_month", (rec.get("source") or {}).get("revenue_file"))
+        cite = notes.source("Revenue reconciliation", (rec.get("source") or {}).get("revenue_file"))
         app += [f"Revenue reconciliation by month{cite}",
                 _table(["Month", "Revenue file", "P&L", "Gap", "Gap %"],
                        [[m["month"], fmt.fmt_currency(m["revenue_file"], ccy), fmt.fmt_currency(m["pnl"], ccy),

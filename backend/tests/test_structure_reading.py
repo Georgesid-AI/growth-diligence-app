@@ -291,7 +291,7 @@ def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_st
     result, adapter = _read(_db())
     assert result.status == "read" and result.model == "claude-sonnet-5-5" == gateway.STRUCTURE_MODEL
     request, = adapter.requests
-    assert request["model"] == "claude-sonnet-5-5" and request["temperature"] is None
+    assert request["model"] == "claude-sonnet-5-5" and "temperature" not in request
     assert request["max_tokens"] == gateway.STRUCTURE_MAX_TOKENS
     assert set(request["json_schema"]["properties"]) == {"type", "labels", "pairs"}, "a deck structure is labelled"
     assert "claude-sonnet-5-5" in gateway.MODEL_PRICING_USD, "the pinned model has a price entry"
@@ -756,8 +756,7 @@ def test_the_adapter_sends_no_tools_and_no_temperature_to_the_provider(monkeypat
 
     adapter = gateway.AnthropicAdapter(api_key="test")
     adapter._client = type("C", (), {"messages": Messages()})()
-    adapter.complete(model=gateway.STRUCTURE_MODEL, system="s", user_payload="u", max_tokens=10, temperature=None,
-                     json_schema={"type": "object"})
+    adapter.complete(model=gateway.STRUCTURE_MODEL, system="s", user_payload="u", max_tokens=10, json_schema={"type": "object"})
     assert "tools" not in sent and "temperature" not in sent and sent["output_config"]["format"]["type"] == "json_schema"
 
 
@@ -788,8 +787,7 @@ def test_the_adapter_raises_on_a_refusal_stop_reason():
     adapter = gateway.AnthropicAdapter(api_key="test")
     adapter._client = type("C", (), {"messages": Messages()})()
     with pytest.raises(gateway.GatewayError) as exc:
-        adapter.complete(model=gateway.STRUCTURE_MODEL, system="s", user_payload="u", max_tokens=10, temperature=None,
-                         json_schema={"type": "object"})
+        adapter.complete(model=gateway.STRUCTURE_MODEL, system="s", user_payload="u", max_tokens=10, json_schema={"type": "object"})
     assert exc.value.reason == "model_refused"
 
 
@@ -1242,14 +1240,14 @@ class RecordedAdapter(t.FakeAdapter):
         super().__init__()
         self.fixtures = _fixtures()
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
+    def complete(self, *, model, system, user_payload, max_tokens, json_schema):
         sent = json.loads(user_payload)
         reply = next((f["reply"] for f in self.fixtures if f["type"] == sent["type"] and f["match"] in sent["text"]),
                      None) or (unlabelled(sent) if sent["type"] != "column_mapping" else {"type": sent["type"], "items": []})
         self._replies = [json.dumps(reply)]
         self.calls_before = self.calls
         return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
-                                temperature=temperature, json_schema=json_schema)
+                                json_schema=json_schema)
 
 
 REVENUE = "Customer,Invoice Date,Amount,Currency\nAcme Retail,2025-01-31,100,EUR\nBeta Stores,2025-02-28,200,EUR\n"
@@ -1476,15 +1474,15 @@ def column_dates(sent):
 class ColumnDatesAdapter(RecordedAdapter):
     """A roadmap read with column_dates, whatever its text; every other structure as RecordedAdapter reads it."""
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
+    def complete(self, *, model, system, user_payload, max_tokens, json_schema):
         sent = json.loads(user_payload)
         if sent["type"] != "roadmap":
             return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
-                                    temperature=temperature, json_schema=json_schema)
+                                    json_schema=json_schema)
         self._replies = [json.dumps(column_dates(sent))]
         self.calls_before = self.calls
         return t.FakeAdapter.complete(self, model=model, system=system, user_payload=user_payload,
-                                      max_tokens=max_tokens, temperature=temperature, json_schema=json_schema)
+                                      max_tokens=max_tokens, json_schema=json_schema)
 
 
 def _moz_p2_roadmap_rows(monkeypatch):

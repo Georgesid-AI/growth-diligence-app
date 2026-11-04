@@ -54,7 +54,7 @@ class Gauge(t.FakeAdapter):
         self.limited = False
         self.lock = threading.Lock()
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
+    def complete(self, *, model, system, user_payload, max_tokens, json_schema, cache_system=False, images=None):
         page = page_of(user_payload)
         with self.lock:
             self.running += 1
@@ -72,7 +72,7 @@ class Gauge(t.FakeAdapter):
             if page in self.failing:
                 raise gateway.GatewayError("provider_error", "no", 500, "api_error")
             return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
-                                    temperature=temperature, json_schema=json_schema, cache_system=cache_system, images=images)
+                                    json_schema=json_schema, cache_system=cache_system, images=images)
         finally:
             with self.lock:
                 self.running -= 1
@@ -176,7 +176,7 @@ def test_the_adapter_sends_the_system_prompt_with_a_cache_control_block_for_a_pa
 
     adapter = gateway.AnthropicAdapter(api_key="not-a-key")
     adapter._client = SimpleNamespace(messages=SimpleNamespace(create=create))
-    adapter.complete(model=gateway.STRUCTURE_MODEL, system="S", user_payload="{}", max_tokens=10, temperature=None, json_schema={}, cache_system=True)
+    adapter.complete(model=gateway.STRUCTURE_MODEL, system="S", user_payload="{}", max_tokens=10, json_schema={}, cache_system=True)
     assert sent["system"] == [{"type": "text", "text": "S", "cache_control": {"type": "ephemeral"}}]
 
 

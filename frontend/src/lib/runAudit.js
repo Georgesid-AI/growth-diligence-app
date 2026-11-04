@@ -16,6 +16,12 @@ export const RUN_LABEL = "Run audit";
 export const RETRY_LABEL = "Retry stage";
 // The Run audit buttons of Upload & Mapping are slightly larger than the standard button (h-9 px-4 text-sm) (George, 2026-10-27).
 export const RUN_BUTTON_CLASS = "h-11 px-6 text-base";
+// The message when a stage is still running after the last poll: the stage that failed and what was still running (never one text for all).
+export const TIMEOUT_MESSAGES = {
+  mapping: "Reading files timed out while the files were still being read. Retry this stage.",
+  engine: "Calculating results timed out while computing metrics. Retry this stage.",
+  claims: "Calculating results timed out while reading deck claims. Retry this stage.",
+};
 export const POLL_MS = 5000;
 export const MAX_POLLS = 24;
 
@@ -103,7 +109,7 @@ export async function runAudit({ api, auditId, pick = { data: [], decks: [] }, f
           await wait(POLL_MS);
           result = await api.runStage(auditId, key);
         }
-        if (result.status === "running") result = { ...result, status: "failed", message: "The decks are taking longer than expected to read. Retry this stage." };
+        if (result.status === "running") result = { ...result, status: "failed", message: TIMEOUT_MESSAGES[key] };
       }
     } catch (e) {
       result = { status: "failed", message: detailOf(e, "This stage could not be completed. Retry it; nothing already done is lost.") };

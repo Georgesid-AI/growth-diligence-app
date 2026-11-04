@@ -1,6 +1,7 @@
 """PR 4f: memo and report builder cleanup. Nine items, synthetic maps only (no real figures, no company names): the old claims path leaves the
 memo, and the missing-data text, the data requests and Appendix D are written from the stored map.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -383,5 +384,18 @@ def test_the_anomalies_footnote_names_no_sheet_when_nothing_was_read():
     empty["anomalies"].pop("deals_source", None)
     anomalies = {"sheet": "Anomalies", "rows": [["Flag", "Count", "Detail"], ["Months with negative MRR", "Not applicable", ""]]}
     text = build(empty, maps(), tables=[anomalies])
-    assert "Anomaly Flags · anomalies · no revenue lines or CRM deals read" in text
+    assert "Anomaly Flags · no revenue lines or CRM deals read" in text
     assert "Sheet1" not in text and "no rows" not in text
+
+
+# --- cleanup PR 6, item 2: Appendix D footnotes name the metric as the memo body does, never an internal key ------------------------------------
+
+INTERNAL_KEYS = ("role_metrics", "reconciliation.", "nrr.overall_pct", "arr.value", "gross_churn", "missing_data", "anomalies", "growth_by_year",
+                 "questions_for_management", "revenue_reconciliation", "by_month", "gap_pct", " · recognition")
+
+
+def test_appendix_d_footnotes_carry_no_internal_key(memo_text):
+    defs = [ln for ln in memo_text.split("Footnotes")[-1].splitlines() if ln.startswith("[^")]
+    assert defs, "the memo has footnotes"
+    bad = [ln for ln in defs if any(k in ln for k in INTERNAL_KEYS) or re.search(r"\b[a-z]+_[a-z_]+\b", ln)]
+    assert not bad, bad

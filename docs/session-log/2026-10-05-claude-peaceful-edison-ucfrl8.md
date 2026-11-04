@@ -2,4 +2,4 @@
 Deleted: 135 unlisted ISO codes from the schema sent on every call (kept server-side only to check unit_other).
 Optimized: output schema 2,560 to 1,703 characters; the diagnostic reuses the run's own readings, with no new report keys.
 Slow/unclear: the schema token count and today's output tokens per read could not be measured (no API key); the cache key does not include the schema, so "invalidates the cache" holds in content, not by key.
-Process change: a task that changes the output schema should say whether stored readings must miss, since the structure cache key does not cover the schema.
+Process change to propose: moved to docs/pr6-cleanup.md or docs/pr6-cleanup-archive.md.
