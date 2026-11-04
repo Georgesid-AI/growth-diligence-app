@@ -120,7 +120,7 @@ describe("the two blocks under the Check results sentence", () => {
     const fxBox = q("fx-settings");
     expect(q("setting-currency").nextElementSibling).toBe(fxBox);
     expect(fxBox.textContent).toContain("no FX rates — single-currency assumed");
-    expect(q("fx-help").textContent).toBe("All figures are reported in your reporting currency. Add a rate for each other currency used in your files or decks. Without rates, all amounts are treated as already in the reporting currency, so foreign-currency amounts enter totals unconverted. The app does not fetch rates; each rate applies to all periods.");
+    expect(q("fx-help").textContent).toBe("All figures are reported in your reporting currency. Add a rate for each other currency used in your files or decks. With no rates set, every amount is treated as already in the reporting currency. Once any rate is set, amounts in a currency without a rate are left out of the totals and flagged. The app does not fetch rates; each rate applies to all periods.");
     expect(fxBox.lastElementChild.contains(q("fx-help"))).toBe(true);
   });
 
