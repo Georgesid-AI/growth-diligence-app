@@ -216,7 +216,7 @@ def test_customer_level_and_crm_metrics_still_say_they_need_their_files():
 
 def test_the_engine_output_passes_the_contract_and_carries_the_version():
     r = run(monthly_report() + yearly_pnl())
-    assert r["contract_version"] == metrics.CONTRACT_VERSION == 18
+    assert r["contract_version"] == metrics.CONTRACT_VERSION == 19
     metrics.MetricsPayload.model_validate(r)
     assert metrics.safe_problems(r) == []
 
@@ -920,3 +920,63 @@ def test_the_three_way_split_does_not_fire_when_the_year_states_r_and_d_or_g_and
     trend = {x["metric"]: {v["period"]: v for v in x["values"]} for x in r["role_metrics"]["pnl_trend"]["rows"]}
     assert "2025" not in trend["sm_share"] and not trend[f"{stated}_share"]["2025"]["estimate"]
     assert "2025" not in trend[other.replace("_expense", "_share")]
+
+
+# --- cleanup PR 6, item 4: a monthly revenue file with no yearly P&L says why yearly revenue is not computed, not "needs a revenue row" ----------
+
+def test_yearly_revenue_from_a_monthly_file_only_says_it_needs_a_yearly_pnl_not_a_revenue_row():
+    from app import report_text
+    files = monthly_report()
+    r = run(files)
+    m = metric(r, "yearly_revenue")
+    assert m["status"] == "needs_row" and m["reason"] == "needs a yearly P&L; the revenue file is monthly"
+    table = re_.build_table(files)
+    text = report_text.missing_reason(table, ["revenue"], m["reason"])
+    assert text.endswith("not computed: needs a yearly P&L; the revenue file is monthly"), text
+    assert "needs a revenue row" not in text
+
+
+# --- cleanup PR 6, item 6: EBITDA margin needs a yearly or quarterly P&L row, or a full year of monthly values; never one month ----------------
+
+def _monthly_ebitda_file(periods, ebitda):
+    rows = [row(4, "revenue", [100] * len(periods), periods), row(5, "ebitda", ebitda, periods)]
+    return [file_of("sales sheet", [sheet("Sales", rows)])]
+
+
+def test_a_single_month_ebitda_margin_from_a_monthly_file_is_not_reported():
+    r = run(_monthly_ebitda_file(MONTHS[12:18], [-10] * 6))        # six months of 2026: no full year
+    m = metric(r, "ebitda_margin")
+    assert m["status"] == "needs_row" and m["value"] is None
+    assert m["reason"] == "needs an EBITDA row at yearly or quarterly granularity, or twelve months of one year"
+
+
+def test_twelve_monthly_ebitda_values_of_a_full_year_give_that_years_margin_from_the_sums():
+    r = run(_monthly_ebitda_file(MONTHS, [-10 + i for i in range(18)]))
+    m = metric(r, "ebitda_margin")
+    assert m["status"] == "computed" and m["period"] == "2025"
+    assert m["value"] == pytest.approx(sum(-10 + i for i in range(12)) / 1200)
+
+
+def test_a_yearly_or_quarterly_ebitda_row_is_still_read():
+    yearly = file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000, 2_000], ["2024", "2025"], basis="yearly"),
+                                          row(5, "ebitda", [-100, -50], ["2024", "2025"], basis="yearly")], granularity="yearly")])
+    assert metric(run([yearly]), "ebitda_margin")["value"] == pytest.approx(-0.025)
+    q = ["2026-Q1", "2026-Q2"]
+    quarterly = file_of("pnl", [sheet("P&L", [row(4, "revenue", [500, 500], q, basis="quarterly"),
+                                             row(5, "ebitda", [-50, -25], q, basis="quarterly")], granularity="quarterly")])
+    assert metric(run([quarterly]), "ebitda_margin")["value"] == pytest.approx(-0.05)
+
+
+# --- cleanup PR 6, item 5: Appendix D lists a monthly revenue/ARR file under "Monthly revenue or ARR report", not under the P&L category -----
+
+def test_a_monthly_revenue_file_with_only_an_ebitda_row_is_listed_as_a_revenue_report_not_a_pnl():
+    from app import ic_memo, report_text
+    monthly = file_of("sales sheet", [sheet("Sales", [row(4, "revenue", [100] * 18, MONTHS), row(5, "arr", [1_200] * 18, MONTHS),
+                                                      row(6, "ebitda", [-10] * 18, MONTHS)])])
+    pnl = file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000], ["2025"], basis="yearly"), row(5, "cost_of_revenue", [300], ["2025"], basis="yearly")],
+                                granularity="yearly")])
+    table = re_.build_table([monthly, pnl])
+    files = report_text.memo_files([{"file": "sales sheet", "dtype": "file"}, {"file": "pnl", "dtype": "file"}], table)
+    by_category = {c["category"]: c["files"] for c in ic_memo.evidence_categories(files, [])}
+    assert by_category["P&L and budget vs actuals"] == ["pnl (P&L)"]
+    assert ic_memo.category_files("revenue_report", files, []) == ["sales sheet (Sales)"]

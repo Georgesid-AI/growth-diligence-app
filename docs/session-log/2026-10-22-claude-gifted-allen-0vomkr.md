@@ -3,4 +3,4 @@ Deleted: nothing; the title skip stays the default of list_items and only page_c
 Decided: list_items(titles=True) for page_check only (other steps keep the boundary); "+" before a scale and the T / trillion scale go into the shared figure reader (redact.NUMBER, verify._SCALE_WORD), so the rules and the page read agree; a line holding its own figure leaves date_sources. Hand-built grids with the text of the named rows, no deck files (rule 15).
 Slow or unclear: the compare script takes over two minutes, so it cannot run inside the default tool timeout; ruff 0.16.8 was not in the venv and was installed with pip.
 Root cause: page_check reused list_items, which was written for structures where a title is a label, and verify.figures had a scale list shorter than claims._SCALE; rule that prevents it: a scale added to one reader is added to both, and a new reader of cells gets a test per row of the analysis that names it.
-Process change to propose: a --compare-only flag on compare_pipelines.py that prints the matched totals per pass, so before/after counts need no markdown diff.
+Process change to propose: moved to docs/pr6-cleanup.md.

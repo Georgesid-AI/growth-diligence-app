@@ -201,7 +201,7 @@
           "revenue"
         ],
         "period": null,
-        "reason": "needs a revenue row",
+        "reason": "needs a yearly P&L; the revenue file is monthly",
         "source": null,
         "status": "needs_row",
         "unit": null,

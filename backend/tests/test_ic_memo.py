@@ -115,7 +115,7 @@ def test_the_run_a_memo_fits_1500_words_and_every_number_in_sections_1_to_6_has_
         if numbers:
             assert re.search(r"\[\^\d+\]", line), f"a number without a footnote: {line!r}"
     assert "[^1]: claim register, #1, #3, #5, #6, #7" in text      # two FY2023 ARR figures conflict: neither is in the five until one is chosen
-    assert re.search(r"\[\^\d+\]: Monthly MRR by Segment · arr.value · revenue.csv · CSV · rows 2–71", memo())
+    assert re.search(r"\[\^\d+\]: Monthly MRR by Segment · revenue.csv · CSV · rows 2–71", memo())
 
 
 def test_the_date_line_is_the_only_line_the_number_check_skips():

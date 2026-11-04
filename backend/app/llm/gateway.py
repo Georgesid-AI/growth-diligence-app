@@ -102,10 +102,6 @@ MODEL_PRICING_USD = {
 }
 DEFAULT_MODEL = "claude-sonnet-5-5"
 
-# Sampling parameters were removed on the current Opus/Sonnet generation: sending
-# `temperature` to those models is a 400. Only models listed here get it.
-MODELS_ACCEPTING_TEMPERATURE = {"claude-haiku-4-5"}
-
 def run_model() -> str:
     """The one model every step in a run uses.
 
@@ -129,7 +125,6 @@ STEP_CONFIG = {
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
         "max_tokens": 4000,
-        "temperature": 0.2,
         "enabled": True,
     },
     # The data inventory (A1) and data integrity (A2): written from the engine's stored output through
@@ -139,7 +134,6 @@ STEP_CONFIG = {
         "prompt": "data_inventory",
         "windows": [],
         "max_tokens": 3000,
-        "temperature": 0.2,
         "max_words": 250,
         "verdicts": (),
         "enabled": True,
@@ -148,7 +142,6 @@ STEP_CONFIG = {
         "prompt": "data_integrity",
         "windows": [],
         "max_tokens": 3000,
-        "temperature": 0.2,
         "max_words": 300,
         "verdicts": step_payloads.DATA_INTEGRITY_VERDICTS,
         "enabled": True,
@@ -159,7 +152,6 @@ STEP_CONFIG = {
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
         "max_tokens": 3000,
-        "temperature": 0.2,
         "enabled": False,
     },
     "cac_efficiency": {
@@ -168,7 +160,6 @@ STEP_CONFIG = {
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [4],
         "max_tokens": 3000,
-        "temperature": 0.2,
         "enabled": False,
     },
     "path_to_plan": {
@@ -177,7 +168,6 @@ STEP_CONFIG = {
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
         "max_tokens": 3000,
-        "temperature": 0.2,
         "enabled": False,
     },
 }
@@ -573,7 +563,6 @@ class AnthropicAdapter:
         system: str,
         user_payload: str,
         max_tokens: int,
-        temperature: Optional[float],
         json_schema: Optional[dict],
         cache_system: bool = False,
         images: Optional[List[bytes]] = None,
@@ -609,9 +598,6 @@ class AnthropicAdapter:
             # Structured output is what makes strict parsing viable: the first
             # content block is guaranteed to be schema-valid JSON.
             kwargs["output_config"] = {"format": {"type": "json_schema", "schema": json_schema}}
-        # Current Opus/Sonnet models reject sampling params with a 400.
-        if temperature is not None and model in MODELS_ACCEPTING_TEMPERATURE:
-            kwargs["temperature"] = temperature
 
         try:
             response = client.messages.create(**kwargs)
@@ -1313,7 +1299,6 @@ async def _call_with_retries(adapter, config, prompt, outbound, sleep):
                     system=system,
                     user_payload=user_payload,
                     max_tokens=config["max_tokens"],
-                    temperature=config.get("temperature"),
                     json_schema=schema,
                 )
             except (RetryableProviderError, GatewayError):
@@ -2003,7 +1988,7 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
             try:
                 reply, in_tok, out_tok = await _to_thread(
                     adapter.complete, model=model, system=system if system is not None else prompt.text, user_payload=payload,
-                    max_tokens=max_tokens, temperature=0 if structure_type == SHEET_READING else None, json_schema=schema, **cached)
+                    max_tokens=max_tokens, json_schema=schema, **cached)
             except (RetryableProviderError, GatewayError):
                 raise
             except Exception as raw:
@@ -2514,7 +2499,7 @@ async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, slee
         while True:
             try:
                 reply, in_tok, out_tok = await _to_thread(adapter.complete, model=model, system=system, user_payload=payload,
-                                                          max_tokens=REVIEWER_MAX_TOKENS, temperature=0, json_schema=None,
+                                                          max_tokens=REVIEWER_MAX_TOKENS, json_schema=None,
                                                           **({"prior": prior} if prior else {}))
             except Exception as raw:
                 err = raw if isinstance(raw, GatewayError) else _classify_provider_error(raw)

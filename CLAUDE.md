@@ -131,6 +131,7 @@
     spends usage on nothing. A session ends when its report is posted; nothing may keep it
     alive after that.
 30. Never commit local file paths, user names or machine folder names. Before every commit, run git grep --cached -iE '/Users/|/home/[a-z]|Mobile Documents|\.codex' -- . ':(exclude)CLAUDE.md' (the staged files; CLAUDE.md itself is excluded because this rule names the strings) and remove any match.
+33. New cleanup items go in docs/pr6-cleanup.md, not in session logs. The log's sixth line then names the item added there (or "none"), not a proposal in prose.
     
 ## Rule: which decisions to bring to George
 19. Decide engineering questions yourself: rule wording, limits measured from data, test design,

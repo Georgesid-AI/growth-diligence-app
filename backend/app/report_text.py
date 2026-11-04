@@ -279,6 +279,11 @@ P_AND_L_ROLES = ("cost_of_revenue", "sales_marketing", "rnd", "ga", "opex", "ebi
 REVENUE_REPORT_ROLES = ("revenue", "arr", "mrr")
 
 
+def _stray_ebitda(r: dict) -> bool:
+    """An EBITDA row on a monthly sheet is a line of a monthly report, not a P&L: it alone does not make its file a P&L (cleanup PR 6)."""
+    return r["role"] == "ebitda" and r.get("granularity") == "monthly"
+
+
 def file_kinds(table: List[dict]) -> Dict[str, dict]:
     """{file: {"sheet", "kinds"}} for every file the stored readings map: "pnl" when a cost or profit row is mapped, "revenue_report" when a
     revenue, ARR or MRR row is and no cost row is, "headcount" when a headcount row is. A file with none of them has no kind."""
@@ -286,6 +291,8 @@ def file_kinds(table: List[dict]) -> Dict[str, dict]:
     for r in table:
         entry = out.setdefault(r["file"], {"sheet": r["sheet"], "kinds": []})
         for kind, roles in (("pnl", P_AND_L_ROLES), ("revenue_report", REVENUE_REPORT_ROLES), ("headcount", ("headcount",))):
+            if kind == "pnl" and _stray_ebitda(r):
+                continue
             if r["role"] in roles and kind not in entry["kinds"]:
                 entry["kinds"].append(kind)
     for entry in out.values():          # a file with cost or profit rows is a P&L, listed there; it is not also a revenue report
@@ -304,7 +311,7 @@ def read_files(table: List[dict], skip: Iterable[str] = ()) -> List[dict]:
         if name in skip:
             continue
         rows = [r for r in table if r["file"] == name]
-        pnl = [r for r in rows if r["role"] in P_AND_L_ROLES]
+        pnl = [r for r in rows if r["role"] in P_AND_L_ROLES and not _stray_ebitda(r)]
         out.append({"dtype": "pnl" if pnl else "reading", "file": name, "sheet": (pnl or rows)[0]["sheet"], "kinds": kinds[name]["kinds"]})
     return out
 

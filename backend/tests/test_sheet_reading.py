@@ -120,13 +120,13 @@ def redaction_map(db):
     return asyncio.run(redaction.get_map(db, "a1"))
 
 
-def test_the_sheet_reading_and_its_retry_go_out_with_temperature_zero():
-    """The gateway hands the adapter temperature 0 on the call and on the fix retry (the adapter withholds it from models that reject it)."""
+def test_the_sheet_reading_and_its_retry_go_out_with_no_sampling_parameter():
+    """Neither the call nor the fix retry carries a sampling parameter."""
     bad = file_map()
     bad["sheets"][0]["sheet"] = "Another sheet"
     result, adapter = read(audit_db(), adapter=t.FakeAdapter(replies=[json.dumps(bad), json.dumps(file_map())]))
     assert result.status == "read" and adapter.calls == 2, "the first reply fails validation, the retry is read"
-    assert [r["temperature"] for r in adapter.requests] == [0, 0]
+    assert all("temperature" not in r for r in adapter.requests)
 
 
 def test_changed_prompt_text_is_a_new_reading_even_under_the_same_version_label():

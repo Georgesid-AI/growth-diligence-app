@@ -1,0 +1,6 @@
+2026-11-04, claude/brave-mccarthy-ejq3sv
+Deleted: the temperature argument, MODELS_ACCEPTING_TEMPERATURE, the six temperature: 0.2 step configs and the sampling comment; the engine key from every Appendix D footnote; the one "decks are taking longer" text for all stages; the process-change lines of 315 session logs (moved to docs/pr6-cleanup.md).
+Decided: contract 19 (yearly revenue reason, EBITDA margin rule); EBITDA margin from monthly rows is the sum of a full fiscal year, never one month, and a quarterly EBITDA row is now read (it was skipped before); an EBITDA row alone on a monthly sheet no longer makes its file a P&L in Appendix D; yearly revenue was not computed from monthly rows (no value change asked), the reason is stated instead.
+Slow or unclear: no artefact was supplied for items 5 and 6, so the failing tests are built from synthetic maps (a monthly sheet with an EBITDA row); the stored-dtype path of item 5 is not reproduced and is listed in docs/pr6-cleanup.md.
+Root cause and rule: footnotes took the engine's key as text and one timeout text served three stages; rule 23 (contract bump) and the golden test caught the reason-string change.
+Process change to propose: added to docs/pr6-cleanup.md (golden fixtures for the EBITDA rule); rule 33 sends new items there.

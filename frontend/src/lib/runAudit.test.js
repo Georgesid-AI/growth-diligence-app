@@ -71,6 +71,19 @@ test("a deck that never finishes reading fails the stage instead of waiting for 
   expect(out).toEqual({ stopped: "claims", status: "failed" });
 });
 
+test("a results stage that times out names the stage and what was still running, never 'the decks are taking longer'", async () => {
+  const run = async (key) => {
+    const { api } = mk({ [key]: () => ({ stage: key, status: "running" }) });
+    const seen = [];
+    await runAudit({ api, auditId: "a1", from: key, wait: async () => {}, onUpdate: (k, r) => seen.push(r) });
+    return seen.at(-1).message;
+  };
+  expect(await run("claims")).toBe("Calculating results timed out while reading deck claims. Retry this stage.");
+  expect(await run("engine")).toBe("Calculating results timed out while computing metrics. Retry this stage.");
+  expect(await run("mapping")).toBe("Reading files timed out while the files were still being read. Retry this stage.");
+  for (const key of ["claims", "engine", "mapping"]) expect(await run(key)).not.toMatch(/taking longer/);
+});
+
 test("a network failure on a stage reads as a message, not a stack", async () => {
   const { api } = mk({ engine: () => { throw new Error("Network Error"); } });
   const seen = [];

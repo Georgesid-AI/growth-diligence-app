@@ -2,4 +2,4 @@
 Deleted: the open-question list (now a table of decisions taken) and "Other has no free text" from the decided list.
 Decided: the per-month reconciliation table sits on Diagnostics with the window total last, and only the total decides the blocker; the "Other" note is refused on the server rather than rewritten, and headers count as values so it matches the privacy section; the note is kept only in the usage counters, the code stays selected and the note clears; the CLAUDE.md lines are final word for word in §6.4.
 Slow or unclear: "the reconciliation evidence table" named a table that did not exist, so its place (Diagnostics) and its columns (S22) were chosen here and put up for approval with the new strings S20–S22.
-Process change: when a decision adds an on-screen element, name its page in the same line, so the spec follows without a placement choice.
+Process change to propose: moved to docs/pr6-cleanup.md.

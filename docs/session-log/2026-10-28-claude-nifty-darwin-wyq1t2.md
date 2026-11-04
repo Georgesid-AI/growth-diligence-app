@@ -4,4 +4,4 @@ Decided: the candidate write is an upsert on (audit_id, deck_id, structure_key, 
 Slow or unclear: the live run's server log was not available, so which two triggers overlapped is read from the code, not observed; "Medium and Low wait" is true only before the first Calculate, after it the spec's rule (matched, no review flag) stands.
 Root cause and rule: `process_deck_pages` reads the deck's rows once and inserts with no key or claim on the deck, and two background tasks (the upload's and a settle or Map task from `process_waiting_decks_safely`, which selects decks still "waiting" and never marks them "reading") can run on one deck; a write that can run twice is keyed on what it writes.
 Lock (George, 2026-10-28): `process_waiting_decks` claims a deck with one conditional update "waiting" to "reading" and returns it to "waiting" on failure; the upload task and Run audit already mark "reading" before they queue.
-Process change to propose: a test per background task that runs it twice at once on the same deck and asserts the stored rows, so a new trigger cannot add a second writer unseen.
+Process change to propose: moved to docs/pr6-cleanup.md.

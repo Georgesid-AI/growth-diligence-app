@@ -551,7 +551,7 @@ def test_the_jobs_call_cap_is_the_first_reading_plus_the_one_schema_retry_and_it
     reread = json.dumps({"type": "sheet_reading", "text": "t", "recheck": [{"item": "r3", "reason": "x"}]})
 
     def call(counter, payload):
-        return counter.complete(model="m", system="s", user_payload=payload, max_tokens=1, temperature=0, json_schema=None)
+        return counter.complete(model="m", system="s", user_payload=payload, max_tokens=1, json_schema=None)
 
     # The first reading and the one schema-validation retry go through, and their tokens add up.
     counter = runner.OneCall(t.FakeAdapter(replies=[good]))

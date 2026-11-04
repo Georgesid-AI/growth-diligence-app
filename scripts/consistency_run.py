@@ -214,7 +214,7 @@ class FakeAdapter:
         sent = len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)
         return sent // self.CHARS_PER_TOKEN
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
+    def complete(self, *, model, system, user_payload, max_tokens, json_schema, cache_system=False, images=None):
         from app.structures import redact
         sent = json.loads(user_payload)
         reply = next((f["reply"] for f in self.fixtures if f["type"] == sent["type"] and f["match"] in sent["text"]),
@@ -262,7 +262,7 @@ class PageReplayAdapter:
         sent = len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)
         return sent // self.CHARS_PER_TOKEN
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
+    def complete(self, *, model, system, user_payload, max_tokens, json_schema, cache_system=False, images=None):
         self.calls += 1
         sent = json.loads(user_payload)
         claims = claims_as_read([c for f in self.fixtures if f["match"] in sent["text"] for c in f["claims"]])
@@ -290,7 +290,7 @@ class SpendGuard:
             self._counted = counted             # the whole call's count, which the gateway takes last, just before the call
         return counted
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False, images=None):
+    def complete(self, *, model, system, user_payload, max_tokens, json_schema, cache_system=False, images=None):
         from app.llm import gateway
         counted = self._counted if self._counted is not None else (len(system or "") + len(user_payload)) // 2 + 1
         self._counted = None
@@ -302,7 +302,7 @@ class SpendGuard:
         self.calls += 1
         try:
             reply, tokens_in, tokens_out = self.inner.complete(
-                model=model, system=system, user_payload=user_payload, max_tokens=max_tokens, temperature=temperature,
+                model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
                 json_schema=json_schema, cache_system=cache_system, **({"images": images} if images else {}))
         except gateway.GatewayError as exc:
             cut = getattr(exc, "tokens", None)                  # a reply cut at max_tokens ("truncated") is billed too

@@ -2,4 +2,4 @@
 Deleted: nothing; the item list, verifier and prompt are unchanged, so no prompt or release bump. Optimized: the paragraph rule reuses the KPI wrap words and the 200-character cell limit.
 Decided: join in the parser rather than merge pairs in the verifier, because a merge by box and date would collapse tea p11's bullets, which share one date; a capital after a full stop continues a paragraph, because two moz p2 paragraphs hold two sentences (cost: a list whose items end in full stops joins); a paragraph over 200 characters keeps its lines, because dropping it as prose would remove rows shown today.
 Slow or unclear: the first fetch failed on the missing branch ref and left main stale, so the branch started without #54 and was reset; "tea p11 keeps its rows" holds under --fake (no recorded reply), but in a live reading 20 tea p11 lines lose a Label from another box, as the issue's second rule asks.
-Process change: let --fake also print each timeline's approval rows (count, milestones, Label from), so a "rows unchanged" check needs no scratch script.
+Process change to propose: moved to docs/pr6-cleanup.md.
