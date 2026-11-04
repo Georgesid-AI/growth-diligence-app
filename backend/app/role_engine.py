@@ -171,10 +171,16 @@ def _total(rec: Optional[Dict], key: str = "actual") -> float:
     return sum(v for v, _ in (rec[key].values() if rec else ()))
 
 
+def _counts(rec: Dict, role: str) -> bool:
+    """A row a role is summed from: any row of a cost role (a part row with no total row is summed, a part under a total is skipped by its
+    parent), an unsegmented row of any other role."""
+    return role in COST_ROLES or rec["segment"] is None
+
+
 def costs_negative(table: List[Dict], role: str, key: str = "actual") -> bool:
     """True when the cost rows of the role carry the opposite sign to revenue (a P&L that prints costs as negatives). Compared on the sums of
     the rows' cells of the series `key` (actual, or plan); without a revenue row a negative cost sum is read against a positive revenue."""
-    cost = sum(_total(r, key) for r in table if r["role"] == role and r["segment"] is None)
+    cost = sum(_total(r, key) for r in table if r["role"] == role and _counts(r, role))
     rev = _total(pick(table, "revenue", "yearly", key) or pick(table, "revenue", None, key), key)
     return cost < 0 if not rev else (cost < 0) != (rev < 0) and cost != 0
 
@@ -187,11 +193,12 @@ def cost_row(table: List[Dict], role: str, granularity: Optional[str] = None) ->
 
 
 def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, many: bool = True, key: str = "actual") -> Optional[Dict]:
-    """One synthetic row for a role that the sheet spreads over several rows (sales and marketing as two lines): the total rows (no segment, no
-    parent row of the same role with a value in the series) of one sheet and granularity, added period by period; each summed cell cites every row's cell ("B6+B7").
+    """One synthetic row for a role that the sheet spreads over several rows (sales and marketing as two lines): every row mapped to a cost role
+    (any other role: its unsegmented rows) except a row whose parent row is mapped to the same role and holds a value in the series, of one sheet and
+    granularity, added period by period; part rows with no total row are summed; each summed cell cites every row's cell ("B6+B7").
     One row is returned as it is. A cost role is returned in absolute values when it carries the opposite sign to revenue. `key` is the series read:
     "actual", or "plan" for the plan years."""
-    rows = [r for r in table if r["role"] == role and r[key] and r["segment"] is None
+    rows = [r for r in table if r["role"] == role and r[key] and _counts(r, role)
             and (granularity is None or r["granularity"] == granularity)]
     if not rows:
         return None
@@ -218,7 +225,7 @@ def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, ma
 def plan_only_reason(table: List[Dict], role: str = "sales_marketing", period: Optional[str] = None) -> Optional[str]:
     """The reason for rows of a cost split (S&M, R&D, G&A) that exist and hold no actual value (in the period, when given): the split sits in plan
     years only. None when no such row exists, or one holds an actual value."""
-    rows = [r for r in table if r["role"] == role and r["segment"] is None and (r["actual"] or r["plan"])]
+    rows = [r for r in table if r["role"] == role and _counts(r, role) and (r["actual"] or r["plan"])]
     if not rows or any(period in r["actual"] if period else r["actual"] for r in rows):
         return None
     return PLAN_ONLY.format(name=PLAN_ONLY_NAMES[role])
@@ -1013,10 +1020,17 @@ def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Di
         else:
             role_metrics["metrics"].append(entry)
 
-    def src(rule: str) -> Dict:
+    def src(rule: str, *roles: str) -> Dict:
+        """The source of a yearly entry: the revenue cells and, for each cost role named, every cell summed into its value for the year."""
         s = last["source"]
+        cells = list(last.get("revenue_cells") or [])
+        home = {"file": s.get("file"), "sheet": s.get("sheet")}
+        for role in roles:
+            rec = cost_row(table, role, "yearly")
+            if rec is not None and last["period"] in rec["actual"]:
+                cells += [_cell_of(rec, c, home) for c in rec["actual"][last["period"]][1].split("+")]
         return {"file": s.get("file"), "sheet": s.get("sheet"), "row": (s.get("row_numbers") or [0])[0] if s.get("row_numbers") else 0,
-                "cells": list(last.get("revenue_cells") or []), "rule": rule}
+                "cells": cells, "rule": rule}
     if last is None:
         for metric in ("yearly_revenue", "gross_margin", "yearly_cac_payback"):
             put(metric, _missing(metric))
@@ -1051,11 +1065,11 @@ def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Di
         put("yearly_cac_payback", _entry("yearly_cac_payback", period=period, basis="yearly", unit="months", value=last["cac_payback_months"],
                                          label=last.get("cac_payback_label") or "yearly, revenue-based",
                                          detail=note("cost_of_revenue", "sales_marketing"),
-                                         source=src("CAC payback = 12 × S&M ÷ (new revenue × gross margin), yearly")))
+                                         source=src("CAC payback = 12 × S&M ÷ (new revenue × gross margin), yearly", "sales_marketing", "cost_of_revenue")))
     sm = last.get("sm_pct_revenue")
     if sm is not None and "sm_share" in by_name and role_metrics["metrics"][by_name["sm_share"]]["status"] != "computed":
         put("sm_share", _entry("sm_share", period=period, basis="yearly", unit="rate", value=sm, label=YEARLY_LABEL, detail=note("sales_marketing"),
-                               source=src("S&M share = S&M ÷ revenue")))
+                               source=src("S&M share = S&M ÷ revenue", "sales_marketing")))
     elif sm is None and "sm_share" in by_name and role_metrics["metrics"][by_name["sm_share"]]["status"] != "computed":
         reason = sm_reason(table, period)
         if reason:
@@ -1080,6 +1094,16 @@ def _margin_note(table: List[Dict], period: str, revenue: float, computed: float
     return None
 
 
+YEARLY_REQUESTS = {
+    "sm_share": "a P&L with S&M rows (or an S&M total row) in the actual years",
+    "yearly_cac_payback": "a P&L with S&M rows (or an S&M total row) in the actual years, and revenue and cost of revenue for the year before",
+    "rnd_share": "a P&L with an R&D row in the actual years",
+    "ga_share": "a P&L with a G&A row in the actual years",
+    "rnd_expense": "a P&L with the R&D/G&A split in the actual years",
+    "ga_expense": "a P&L with the R&D/G&A split in the actual years",
+}
+
+
 def missing_reasons(role_metrics: Optional[Dict]) -> List[Dict]:
     """[{"metric": name, "reason", "needs": [roles]}]: one line per metric the map could not give, with the one reason its entry carries. The
     report page lists them at the top and the Data gaps table lists the same lines, so the text is the same in both. Ending ARR is the legacy
@@ -1089,5 +1113,5 @@ def missing_reasons(role_metrics: Optional[Dict]) -> List[Dict]:
         if (m["status"] == "computed" and not m.get("estimate")) or m["metric"] in ("ending_arr", "reconciliation") or m["metric"] in seen:
             continue            # an estimate stays on the list: the data request for the actual split does not go away with it
         seen.add(m["metric"])
-        out.append({"metric": m["name"], "reason": m["reason"], "needs": m["needs"]})
+        out.append({"metric": m["name"], "key": m["metric"], "reason": m["reason"], "needs": m["needs"]})
     return out

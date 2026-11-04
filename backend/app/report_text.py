@@ -77,7 +77,7 @@ def role_state(table: List[dict], role: str) -> str:
     recs = _recs(table, role)
     if not recs:
         return "no_values" if _unread(table, role) else "unmapped"
-    totals = [r for r in recs if r["segment"] is None]
+    totals = [r for r in recs if r["segment"] is None or role in role_engine.COST_ROLES]       # a cost role's part rows are summed: they are its rows
     if not totals:
         return "segments"
     if not any(r["actual"] and r.get("actual_plan") != "plan" for r in totals):
@@ -138,7 +138,7 @@ def _state_text(table: List[dict], role: str, state: str) -> Optional[str]:
     if state == "segments":
         segs = [r for r in _recs(table, role)]
         names = ", ".join(dict.fromkeys(r["segment"] for r in segs if r["segment"]))
-        return (f"{_role_name(role)} mapped as {len(segs)} segment rows ({names}); the calculation uses one total row")
+        return f"{_role_name(role)} is mapped by segment only ({names}); no total row"
     return None
 
 

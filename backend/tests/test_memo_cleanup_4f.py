@@ -233,8 +233,8 @@ def test_a_role_mapped_in_plan_columns_only_says_so_and_names_the_files_total_la
     assert reasons(labelled)["sm_share"] == "S&M split only in plan years; actual years carry Total operating costs only"
 
 
-def test_a_role_mapped_as_segment_rows_only_names_the_segments_and_the_total_row_limit():
-    assert reasons()["rnd_share"] == "R&D mapped as 2 segment rows (Core, Labs); the calculation uses one total row"
+def test_a_cost_role_mapped_as_part_rows_only_is_summed_and_gives_no_segment_reason():
+    assert "rnd_share" not in reasons(), "R&D as two part rows is their sum"
 
 
 def test_a_role_mapped_with_actuals_but_no_value_names_its_cells_and_the_engine_status():

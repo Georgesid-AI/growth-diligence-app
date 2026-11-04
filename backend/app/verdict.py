@@ -422,6 +422,12 @@ def is_gap(item: dict) -> bool:
     return item.get("status") == "Missing" and _gap_analysis(str(item.get("metric") or "")) is not None
 
 
+def _yearly_request(key: Optional[str]) -> str:
+    """What resolves a yearly P&L row, in words: "A P&L with ..." (role_engine.YEARLY_REQUESTS); "" for any other metric."""
+    text = role_engine.YEARLY_REQUESTS.get(key or "", "")
+    return text[:1].upper() + text[1:]
+
+
 def data_gaps(results: Optional[dict], rows: List[dict], top5_ids: List[str], target_dates: Optional[dict] = None,
               table: Optional[List[dict]] = None, old_claims: bool = True) -> List[dict]:
     """What the company cannot measure: one row per Missing Data item that names an analysis, ordered by the top-5 claims it
@@ -452,8 +458,8 @@ def data_gaps(results: Optional[dict], rows: List[dict], top5_ids: List[str], ta
         reason = miss["reason"] if miss["reason"][-1:] in ".!?" else miss["reason"] + "."
         out.append({"item": miss["metric"], "analysis": miss["metric"], "claims": [], "ranks": [], "blocks_top5": 0,
                     "why": f"Blocks {miss['metric']}. {reason}",
-                    "requested": report_text.request_line(report_text.request_roles(table, miss["needs"])) or "",
-                    "request_roles": report_text.request_roles(table, miss["needs"]),
+                    "requested": _yearly_request(miss.get("key")) or report_text.request_line(report_text.request_roles(table, miss["needs"])) or "",
+                    "request_roles": report_text.request_roles(table, miss["needs"]), "yearly_request": bool(_yearly_request(miss.get("key"))),
                     "target_date": target_dates.get(miss["metric"]), "index": index})
     out.sort(key=lambda g: (-g["blocks_top5"], -len(g["claims"]), g["index"]))
     return out
