@@ -184,6 +184,29 @@ async def checks_for(db, audit_id: str) -> List[dict]:
     return await db[CHECKS].find({"audit_id": audit_id}, {"_id": 0}).to_list(1000)
 
 
+async def purge_file(db, audit_id: str, file_hash: str) -> Dict[str, int]:
+    """Remove one file from one audit (the analyst's Remove): this audit's use of the file's readings, its check outcome, its cards and the overrides
+    made on its readings go, and a reading no audit uses any more goes with its rereads. The audit's reviewer record is derived from all its files
+    and is dropped, to be made again by the next review. Another audit's use of the same reading stays."""
+    keys = {c.get("reading_key") for c in await db[CHECKS].find({"audit_id": audit_id, "file_hash": file_hash}, {"_id": 0, "reading_key": 1}).to_list(100)}
+    keys |= {r["key"] for r in await db[READINGS].find({"file_hash": file_hash}, {"_id": 0, "key": 1}).to_list(1000)
+             if await db[USES].find_one({"audit_id": audit_id, "key": r["key"]}, {"_id": 0, "key": 1})}
+    keys.discard(None)
+    checks = await db[CHECKS].delete_many({"audit_id": audit_id, "file_hash": file_hash})
+    cards = await db[CARDS].delete_many({"audit_id": audit_id, "source.file_hash": file_hash})
+    reviews = await db[REVIEWS].delete_many({"audit_id": audit_id})
+    uses = overrides = readings = rereads = 0
+    for key in sorted(keys):
+        overrides += getattr(await db[OVERRIDES].delete_many({"audit_id": audit_id, "reading": key}), "deleted_count", 0)
+        uses += getattr(await db[USES].delete_many({"audit_id": audit_id, "key": key}), "deleted_count", 0)
+        if await db[USES].count_documents({"key": key}) == 0:
+            readings += getattr(await db[READINGS].delete_many({"key": key}), "deleted_count", 0)
+            rereads += getattr(await db[REREADS].delete_many({"reading": key}), "deleted_count", 0)
+    return {"reading_uses": uses, "reading_checks": getattr(checks, "deleted_count", 0), "reading_overrides": overrides,
+            "reading_reviews": getattr(reviews, "deleted_count", 0), "reading_cards": getattr(cards, "deleted_count", 0),
+            "readings": readings, "reading_rereads": rereads}
+
+
 async def purge_audit(db, audit_id: str) -> Dict[str, int]:
     """Delete audit (rule 22): this audit's uses, checks and overrides go, and a reading no audit uses any more goes with its rereads.
     A reading another audit still uses stays for it."""

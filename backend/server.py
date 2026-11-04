@@ -770,7 +770,18 @@ async def _refresh_as_of(audit_id: str) -> None:
 
 
 
-async def _ingest(audit_id: str, upload: UploadFile, background: BackgroundTasks):
+async def _remove_dataset(audit_id: str, file_hash: str) -> Optional[dict]:
+    """Delete one stored spreadsheet and what the audit holds of its reading; then the audit's as-of month and results follow the files left."""
+    if not await db.datasets.find_one({"audit_id": audit_id, "file_hash": file_hash}, {"_id": 1}):
+        return None
+    await db.datasets.delete_many({"audit_id": audit_id, "file_hash": file_hash})
+    purged = await readings_mod.purge_file(db, audit_id, file_hash)
+    await _refresh_as_of(audit_id)
+    await _mark_stale_and_maybe_recompute(audit_id)
+    return {"readings_purged": purged}
+
+
+async def _ingest(audit_id: str, upload: UploadFile, background: BackgroundTasks, replace: bool = False):
     """A spreadsheet in: stored as it is (its sheets, kept to read the file again) and read by the sheet reader after the response
     (read-check-review.md section 3). No type is asked, no column is mapped and nothing waits for an answer: the map is the reading."""
     a = await db.audits.find_one({"id": audit_id})
@@ -790,6 +801,11 @@ async def _ingest(audit_id: str, upload: UploadFile, background: BackgroundTasks
     existing = await db.datasets.find_one({"audit_id": audit_id, "file_hash": digest}, {"_id": 0, "recognition_sheets": 0})
     if existing:
         return {**_file_view(existing), "status": "same_file"}
+    same_name = await db.datasets.find({"audit_id": audit_id, "file": filename}, {"_id": 0, "file_hash": 1}).to_list(50)
+    if same_name and not replace:
+        raise HTTPException(409, SAME_NAME)
+    for old in same_name:
+        await _remove_dataset(audit_id, old["file_hash"])
     doc = {"audit_id": audit_id, "dtype": FILE_DTYPE, "file": filename, "file_hash": digest, "size_bytes": len(content), "ext": ext,
            "sheets": len(sheets), "row_count": sum(len(s.frame) for s in sheets), "uploaded_at": usage_mod.now(),
            "recognition_sheets": rec.pack_sheets(sheets)}
@@ -907,10 +923,45 @@ def _parse_time(value):
 
 
 
+SAME_NAME = "A file with this name is already stored. Replace it?"
+
+
 @api.post("/audits/{audit_id}/datasets/upload")
-async def upload_chat_file(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...)):
-    """One spreadsheet: stored and read by the sheet reader (read-check-review.md section 3). No type, no mapping, no answer to wait for."""
-    return await _ingest(audit_id, file, background)
+async def upload_chat_file(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...), replace: bool = False):
+    """One spreadsheet: stored and read by the sheet reader (read-check-review.md section 3). No type, no mapping, no answer to wait for.
+    A file with the name of one already stored (another content) is refused with 409 unless `replace` is true; then the stored one is removed
+    first, as Remove does, and the new file takes its place."""
+    return await _ingest(audit_id, file, background, replace)
+
+
+@api.delete("/audits/{audit_id}/datasets/{file_hash}")
+async def remove_dataset(audit_id: str, file_hash: str):
+    """Remove one spreadsheet from the audit: the stored file and everything read from it for this audit (the analyst's Remove)."""
+    removed = await _remove_dataset(audit_id, file_hash)
+    if removed is None:
+        raise HTTPException(404, "File not found")
+    return {"removed": file_hash, **removed}
+
+
+@api.post("/audits/{audit_id}/datasets/{file_hash}/reread")
+async def reread_dataset(audit_id: str, file_hash: str, background: BackgroundTasks):
+    """Read the stored file again, without a new upload: the reading step runs on the stored sheets and its outcome replaces the file's earlier one
+    (a failed reading is never served from the store)."""
+    a = await db.audits.find_one({"id": audit_id})
+    if not a:
+        raise HTTPException(404, "Audit not found")
+    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": file_hash})
+    if not ds:
+        raise HTTPException(404, "File not found")
+    if ds.get("read_state") == "reading":
+        raise HTTPException(409, "The file is being read")
+    sheets = rec.unpack_sheets(ds.get("recognition_sheets") or [])
+    if not sheets:
+        raise HTTPException(400, "The stored file holds no sheet to read")
+    if a.get("structure_reading_consent") is not True:
+        raise HTTPException(400, "Tick the consent to read this file")
+    await _queue_workbook_read(a, audit_id, sheets, file_hash, ds.get("file") or "", background)
+    return {"status": "queued", "file_hash": file_hash}
 
 
 
@@ -1402,6 +1453,19 @@ def _reading(candidate: dict) -> tuple:
 def _first_page(candidate: dict) -> int:
     pages = [s.get("slide", s.get("page")) for s in candidate.get("sources") or []]
     return min((p for p in pages if isinstance(p, int)), default=0)
+
+
+@api.post("/audits/{audit_id}/decks/{deck_id}/reread")
+async def reread_deck(audit_id: str, deck_id: str, background: BackgroundTasks):
+    """Read the stored deck again, without a new upload (the pages already read are served from the cache; the rest are read now)."""
+    deck = await db[decks.TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "ai_status": 1})
+    if not deck:
+        raise HTTPException(404, "Deck not found")
+    if deck.get("ai_status") in ("reading", "waiting"):
+        raise HTTPException(409, "The deck is being read")
+    await structures._deck_status(db, audit_id, deck_id, "reading")
+    background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
+    return {"status": "queued", "deck_id": deck_id}
 
 
 @api.delete("/audits/{audit_id}/decks/{deck_id}")

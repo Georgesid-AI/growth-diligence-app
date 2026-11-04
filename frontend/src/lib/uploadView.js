@@ -46,6 +46,11 @@ export const DECK_CARD = {
 };
 export const UPLOAD_LABEL = "Upload";
 export const REMOVE_LABEL = "Remove";
+export const REMOVE_CONFIRM = "deletes this file and all its claims, including reviewed ones";
+export const REREAD_LABEL = "Re-read";
+export const REREAD_FAILED_LABEL = "Re-read failed files";
+export const REPLACE_LABEL = "Replace";
+export const replaceLine = (name) => `A file named ${name} is already stored. Replace it?`;
 
 export const headerText = (audit) => `Company: ${audit.company_name} · ${audit.reporting_currency || "EUR"}`;
 

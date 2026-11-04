@@ -10,6 +10,7 @@ import * as api from "@/lib/api";
  */
 jest.mock("@/lib/api", () => ({
   getDatasets: jest.fn(), getDecks: jest.fn(), getReview: jest.fn(), uploadChatFile: jest.fn(), uploadDeck: jest.fn(), removeDeck: jest.fn(),
+  removeDataset: jest.fn(), rereadDataset: jest.fn(), rereadDeck: jest.fn(),
   runStage: jest.fn(), reportUsage: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -116,7 +117,7 @@ describe("one line per file, with its stage tag", () => {
     expect(row.querySelector('[data-testid="file-time"]').textContent).toBe("Elapsed 0:03");
     expect(row.querySelector('[data-testid="file-sub"]')).toBeNull();
     expect(row.querySelector('[data-testid="file-name"]').textContent).toBe("Testco_Revenue.xlsx");
-    expect(row.querySelector('[data-testid="file-remove"]')).toBeNull();           // a stored spreadsheet has no remove route yet
+    expect(row.querySelector('[data-testid="file-remove"]').textContent).toBe("Remove");     // a stored spreadsheet is removed like a deck
   });
 
   test("Reading the sheet: the muted line says usually 1–3 minutes", async () => {
@@ -178,17 +179,99 @@ describe("one line per file, with its stage tag", () => {
     expect(q("deck-file").querySelector('[data-testid="file-time"]').textContent).toBe("Elapsed 0:20");
   });
 
-  test("Remove on a deck asks first, then removes it", async () => {
-    api.removeDeck.mockResolvedValue({});
-    await mount({ decks: [DECK()] });
-    await act(async () => { q("deck-file").querySelector('[data-testid="file-remove"]').click(); });
+  const CONFIRM = "Remove – deletes this file and all its claims, including reviewed ones · Cancel";
+  const click = async (el) => { await act(async () => { el.click(); }); };
+
+  test.each([["deck", "deck-file", () => DECK(), "removeDeck", "d1"], ["data file", "sheet-file", () => SHEET(), "removeDataset", "h1"]])(
+    "Remove on a %s turns the same link, in place, into the confirmation; Remove there deletes", async (_, rowId, make, call, id) => {
+      api[call].mockResolvedValue({});
+      await mount(rowId === "deck-file" ? { decks: [make()] } : { sheets: [make()] });
+      const row = q(rowId);
+      const before = row.querySelectorAll("a").length;
+      await click(row.querySelector('[data-testid="file-remove"]'));
+      expect(api[call]).not.toHaveBeenCalled();
+      expect(row.querySelector('[data-testid="file-remove"]')).toBeNull();                       // the link is replaced, not kept beside it
+      expect(row.querySelector('[data-testid="file-remove-confirm"]').textContent).toBe(CONFIRM);
+      expect(row.querySelectorAll("li, p, button").length).toBe(0);                              // no second line, no second button
+      expect(row.querySelectorAll("a").length).toBe(before + 1);                                 // Remove and Cancel stand where the one link stood
+      if (rowId === "deck-file") api.getDecks.mockResolvedValue({ decks: [], candidates: [] }); else api.getDatasets.mockResolvedValue([]);
+      await click(row.querySelector('[data-testid="file-remove-yes"]'));
+      await act(async () => { await Promise.resolve(); });
+      expect(api[call]).toHaveBeenCalledWith("a1", id);
+      expect(q(rowId)).toBeNull();
+    });
+
+  test.each([["deck-file", { decks: [DECK()] }], ["sheet-file", { sheets: [SHEET()] }]])("Cancel in the confirmation of %s restores the link and removes nothing", async (rowId, files) => {
+    await mount(files);
+    const row = q(rowId);
+    await click(row.querySelector('[data-testid="file-remove"]'));
+    await click(row.querySelector('[data-testid="file-remove-cancel"]'));
+    expect(row.querySelector('[data-testid="file-remove"]').textContent).toBe("Remove");
+    expect(row.querySelector('[data-testid="file-remove-confirm"]')).toBeNull();
     expect(api.removeDeck).not.toHaveBeenCalled();
-    expect(q("remove-deck-confirm").textContent).toContain("This deletes the deck and all its claims");
-    api.getDecks.mockResolvedValue({ decks: [], candidates: [] });
-    await act(async () => { q("remove-deck-yes").click(); });
-    await act(async () => { await Promise.resolve(); });
-    expect(api.removeDeck).toHaveBeenCalledWith("a1", "d1");
-    expect(q("deck-file")).toBeNull();
+    expect(api.removeDataset).not.toHaveBeenCalled();
+  });
+});
+
+describe("recovering a failed file without deleting the audit", () => {
+  const FAILED = (over = {}) => SHEET({ read_state: "failed", file: "bad.xlsx", file_hash: "hb", ...over });
+  const click = async (el) => { await act(async () => { el.click(); }); await act(async () => { await Promise.resolve(); }); };
+
+  test("a failed data file has Re-read, which reads the stored file again; a processed file has none", async () => {
+    api.rereadDataset.mockResolvedValue({});
+    await mount({ sheets: [FAILED(), SHEET()] });
+    const rows = all("sheet-file");
+    expect(rows[0].querySelector('[data-testid="file-reread"]').textContent).toBe("Re-read");
+    expect(rows[1].querySelector('[data-testid="file-reread"]')).toBeNull();
+    await click(rows[0].querySelector('[data-testid="file-reread"]'));
+    expect(api.rereadDataset).toHaveBeenCalledWith("a1", "hb");
+    expect(api.uploadChatFile).not.toHaveBeenCalled();
+  });
+
+  test("a failed deck has Re-read too", async () => {
+    api.rereadDeck.mockResolvedValue({});
+    await mount({ decks: [DECK({ ai_status: "not_read" })] });
+    await click(q("deck-file").querySelector('[data-testid="file-reread"]'));
+    expect(api.rereadDeck).toHaveBeenCalledWith("a1", "d1");
+  });
+
+  test("Re-read failed files shows from two failed files, above the lists, and re-reads each", async () => {
+    api.rereadDataset.mockResolvedValue({});
+    api.rereadDeck.mockResolvedValue({});
+    await mount({ sheets: [FAILED()], decks: [DECK({ ai_status: "not_read" })] });
+    expect(q("reread-failed-link").textContent).toBe("Re-read failed files");
+    expect(follows("reread-failed-link", "sheet-card")).toBe(true);
+    await click(q("reread-failed-link"));
+    expect(api.rereadDataset).toHaveBeenCalledWith("a1", "hb");
+    expect(api.rereadDeck).toHaveBeenCalledWith("a1", "d1");
+  });
+
+  test("with one failed file there is no Re-read failed files button", async () => {
+    await mount({ sheets: [FAILED(), SHEET()] });
+    expect(q("reread-failed")).toBeNull();
+  });
+
+  test("a file with a stored name asks one line before it replaces it; Replace uploads with replace, Cancel uploads nothing", async () => {
+    api.uploadChatFile.mockResolvedValue({ status: "ok" });
+    await mount({ sheets: [SHEET()] });
+    await pickFiles("sheet-file-input", [new File(["x"], "Testco_Revenue.xlsx")]);
+    expect(api.uploadChatFile).not.toHaveBeenCalled();
+    expect(q("replace-confirm").textContent).toBe("A file named Testco_Revenue.xlsx is already stored. Replace it? Replace · Cancel");
+    await click(q("replace-cancel"));
+    expect(q("replace-confirm")).toBeNull();
+    expect(api.uploadChatFile).not.toHaveBeenCalled();
+    await pickFiles("sheet-file-input", [new File(["x"], "Testco_Revenue.xlsx")]);
+    await click(q("replace-yes"));
+    expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
+    expect(api.uploadChatFile.mock.calls[0][2]).toEqual({ replace: true });
+  });
+
+  test("a new name uploads at once, with no question", async () => {
+    api.uploadChatFile.mockResolvedValue({ status: "ok" });
+    await mount({ sheets: [SHEET()] });
+    await pickFiles("sheet-file-input", [new File(["x"], "other.xlsx")]);
+    expect(q("replace-confirm")).toBeNull();
+    expect(api.uploadChatFile.mock.calls[0][2]).toEqual({ replace: false });
   });
 });
 

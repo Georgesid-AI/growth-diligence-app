@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import ReadingResults, { SourceLink } from "@/components/ReadingResults";
 import { changeReading, downloadReading, getAudit, getReading, updateAudit } from "@/lib/api";
-import { MONTHS, DEFAULT_FISCAL_YEAR_END, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfEvidenceLine, parseMonthYear } from "@/lib/auditForm";
+import { MONTHS, DEFAULT_FISCAL_YEAR_END, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfDisplay, asOfEvidenceLine, parseMonthYear } from "@/lib/auditForm";
 import { monthName, shortMonth } from "@/lib/periods";
 import { describeRequestError } from "@/lib/requestError";
 import {
@@ -17,15 +17,41 @@ import { PLACEHOLDER, fmtCount } from "@/lib/format";
  */
 const EMPTY = { files: [], tables: { confirmed: [], rejected: [], cannot_check: [] }, counts: { confirmed: 0, rejected: 0, cannot_check: 0 }, cards: [], review: {} };
 
-function InlineChange({ label, placeholder, onSave, testid, type = "text" }) {
+/**
+ * The state of one change menu: it opens with the current value in it (the detected value, or the last one saved), Save stays off until the value
+ * differs from the current one, and Cancel puts the current value back and closes it. `same(a, b)` says when two spellings are one value.
+ */
+function useChange(current, same, onSave) {
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState("");
-  if (!open) return <a href="#change" data-testid={testid} onClick={(e) => { e.preventDefault(); setOpen(true); }}>Change</a>;
+  const [value, setValue] = useState(current);
+  const close = () => { setOpen(false); setValue(current); };
+  const unchanged = same(String(value).trim(), String(current).trim()) || !String(value).trim();
+  return {
+    open, value, setValue, unchanged,
+    show: () => { setValue(current); setOpen(true); },
+    cancel: close,
+    save: async () => { if (await onSave(String(value).trim())) setOpen(false); },
+  };
+}
+const sameText = (a, b) => a === b;
+const sameMonth = (a, b) => a === b || (parseMonthYear(a) != null && parseMonthYear(a) === parseMonthYear(b));
+
+function SaveCancel({ menu, testid }) {
+  return (
+    <>
+      <button type="button" className="btn quiet" data-testid={`${testid}-save`} disabled={menu.unchanged} onClick={menu.save}>Save</button>
+      <a href="#cancel" data-testid={`${testid}-cancel`} onClick={(e) => { e.preventDefault(); menu.cancel(); }}>Cancel</a>
+    </>
+  );
+}
+
+function InlineChange({ label, placeholder, current = "", same = sameText, onSave, testid, type = "text" }) {
+  const menu = useChange(current, same, onSave);
+  if (!menu.open) return <a href="#change" data-testid={testid} onClick={(e) => { e.preventDefault(); menu.show(); }}>Change</a>;
   return (
     <span>
-      <input aria-label={label} type={type} placeholder={placeholder} value={value} onChange={(e) => setValue(e.target.value)} data-testid={`${testid}-input`} />
-      <button type="button" className="btn quiet" data-testid={`${testid}-save`} disabled={!value.trim()}
-        onClick={async () => { if (await onSave(value.trim())) { setOpen(false); setValue(""); } }}>Save</button>
+      <input aria-label={label} type={type} placeholder={placeholder} value={menu.value} onChange={(e) => menu.setValue(e.target.value)} data-testid={`${testid}-input`} />
+      <SaveCancel menu={menu} testid={testid} />
     </span>
   );
 }
@@ -41,21 +67,23 @@ export function reportingPeriodText(audit, period) {
   return audit.as_of_month ? monthName(audit.as_of_month) : "—";
 }
 
-/** One audit setting on its own line: "Label: value" and a Change link that opens a select in place; picking a value saves it. */
+/** One audit setting on its own line: "Label: value" and a Change link that opens a select in place, on the current value; Save stores a different one. */
 function SettingLine({ label, value, options, current, testid, help, onSave }) {
-  const [open, setOpen] = useState(false);
+  const menu = useChange(current, sameText, onSave);
   return (
     <p className="setting" data-testid={testid}>
       <span className="k">{label}:</span><span data-testid={`${testid}-value`}>{value}</span>
-      {!open
-        ? <a href="#change" data-testid={`${testid}-change`} onClick={(e) => { e.preventDefault(); setOpen(true); }}>Change</a>
+      {!menu.open
+        ? <a href="#change" data-testid={`${testid}-change`} onClick={(e) => { e.preventDefault(); menu.show(); }}>Change</a>
         : (
-          <select aria-label={label} value={current} data-testid={`${testid}-select`} autoFocus
-            onChange={async (e) => { if (await onSave(e.target.value)) setOpen(false); }}>
-            {options.map(([v, text]) => <option key={v} value={v}>{text}</option>)}
-          </select>
+          <>
+            <select aria-label={label} value={menu.value} data-testid={`${testid}-select`} autoFocus onChange={(e) => menu.setValue(e.target.value)}>
+              {options.map(([v, text]) => <option key={v} value={v}>{text}</option>)}
+            </select>
+            <SaveCancel menu={menu} testid={testid} />
+          </>
         )}
-      {open && help && <span className="help" data-testid={`${testid}-help`}>{help}</span>}
+      {menu.open && help && <span className="help" data-testid={`${testid}-help`}>{help}</span>}
     </p>
   );
 }
@@ -88,7 +116,7 @@ export function SettingsBlocks({ audit, files, period, onAsOf, onChange, onSetti
             {asOf ? `${monthName(asOf)}${audit.as_of_by === "analyst" ? " (set by analyst)" : ""}` : "not determined"}
             {(evidence.text || evidence.confirmed) && <span data-testid="assumption-as-of-evidence"> — {evidence.text}{evidence.confirmed && <> {evidence.confirmed}</>}</span>}
           </span>
-          <InlineChange label="As-of month" placeholder="Jun 2021" testid="assumptions-change" onSave={onAsOf} />
+          <InlineChange label="As-of month" placeholder="Jun 2021" testid="assumptions-change" current={asOfDisplay(asOf)} same={sameMonth} onSave={onAsOf} />
           {sheets.map((f) => <SheetAnchors key={f.file_hash} file={f} audit={audit} onAsOf={onAsOf} onChange={onChange} />)}
         </div>
       </div>
@@ -145,16 +173,16 @@ function SheetAnchors({ file, audit, onAsOf, onChange }) {
         <>
           <span className="k">Last actual</span>
           <span data-testid="anchor-as-of">{a.as_of ? `${lastActualText(a.as_of.month, file.summary.granularity)} — ${splitEvidence(a.as_of.evidence).text}${of}` : `not determined${of}`}</span>
-          <InlineChange label="As-of month" placeholder="Jun 2021" testid="anchor-as-of-change" onSave={onAsOf} />
+          <InlineChange label="As-of month" placeholder="Jun 2021" testid="anchor-as-of-change" current={a.as_of ? shortMonth(a.as_of.month) : ""} same={sameMonth} onSave={onAsOf} />
         </>
       )}
       <span className="k">Revenue row</span>
       <span data-testid="anchor-revenue">{a.revenue_row ? `Row ${a.revenue_row.row}, ${a.revenue_row.label}, ${a.revenue_row.basis}${of}` : `not found${of}`}</span>
-      <InlineChange label="Revenue row" placeholder="Row number" type="number" testid="anchor-revenue-change"
+      <InlineChange label="Revenue row" placeholder="Row number" type="number" testid="anchor-revenue-change" current={a.revenue_row ? String(a.revenue_row.row) : ""}
         onSave={(v) => change({ what: "revenue_row", sheet, row: Number(v) })} />
       <span className="k">Actual / plan</span>
       <span data-testid="anchor-boundary">{a.actual_plan ? `actual to column ${a.actual_plan.last_actual}, plan from ${a.actual_plan.plan_from}${of}` : `not determined${of}`}</span>
-      <InlineChange label="Last actual column" placeholder="AP" testid="anchor-boundary-change"
+      <InlineChange label="Last actual column" placeholder="AP" testid="anchor-boundary-change" current={a.actual_plan?.last_actual || ""}
         onSave={(v) => change({ what: "boundary", sheet: a.actual_plan?.sheet || sheet, column: v })} />
     </>
   );
