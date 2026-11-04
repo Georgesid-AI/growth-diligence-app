@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 17         # 17: role_metrics gains the metrics rnd_expense and ga_expense and the flag `estimate` (R&D and G&A from the plan split applied to actual OPEX, labelled as an estimate, read by no rating) and the block `pnl_trend` (the yearly P&L trend with the cells of every value, read by the memo's "What the plan assumes"); results stored under 16 read "Stale – re-run audit". 16: the engine on the map (docs/design/read-check-review.md section 16, PR 4): the new server-only block `role_metrics` (every metric by role: computed or "needs a <role> row"; plan to date; the same metric and period across files and decks); the yearly payback reasons name the role row they need; results stored under 15 read "Stale – re-run audit".
+CONTRACT_VERSION = 18         # 18: role_metrics gains the metric sm_expense (S&M of the latest actual year, an estimate: OPEX split three ways by the pooled plan shares of S&M, R&D and G&A when the actual year carries OPEX only; flagged, labelled and read by no rating) and the trend's S&M share can carry the estimate flag; results stored under 17 read "Stale – re-run audit". 17: role_metrics gains the metrics rnd_expense and ga_expense and the flag `estimate` (R&D and G&A from the plan split applied to actual OPEX, labelled as an estimate, read by no rating) and the block `pnl_trend` (the yearly P&L trend with the cells of every value, read by the memo's "What the plan assumes"); results stored under 16 read "Stale – re-run audit". 16: the engine on the map (docs/design/read-check-review.md section 16, PR 4): the new server-only block `role_metrics` (every metric by role: computed or "needs a <role> row"; plan to date; the same metric and period across files and decks); the yearly payback reasons name the role row they need; results stored under 15 read "Stale – re-run audit".
                               # 15: the file map (docs/design/read-check-review.md section 4, PR 2): `FileMap` joins this file as the one schema of a reading, for sheets and decks (a row may name its variance columns: actual | budget | variance per period), and the as-of month comes from the reader's checked evidence (the rules' boundary-cue path and last-unmarked-column fallback are gone); no engine block changes, and results stored under 14 read "Stale – re-run audit".
                               # 14: P&L lines (docs/design/pnl-lines.md): the new server-only block `pnl_lines` (findings of the sum, recompute and sign checks, plan cells with implied against observed rate) and `yearly_basis.years.cac_payback_label` ("yearly, revenue-based"); S&M leaves out the sub-lines mapped to overhead (internal events); results stored under 13 read "Stale – re-run audit".
                               # 13: deck actuals (docs/design/deck-actuals.md, 2026-10-28): `yearly_basis.years[].revenue_cells` names the cells a deck figure is reconciled with; results stored under 12 read "Stale – re-run audit".
@@ -797,7 +797,7 @@ class FileMap(MapBlock):
 # The engine on the map (docs/design/read-check-review.md section 16): every metric by the role of the rows it reads. Server-only.
 # ---------------------------------------------------------------------------
 ROLE_METRICS = ("ending_arr", "mrr_series", "monthly_churn", "customers", "growth", "plan_to_date", "yearly_revenue", "gross_margin", "sm_share",
-                "yearly_cac_payback", "rnd_share", "ga_share", "rnd_expense", "ga_expense", "opex_share", "ebitda_margin", "bookings", "cash", "headcount", "reconciliation")
+                "yearly_cac_payback", "rnd_share", "ga_share", "sm_expense", "rnd_expense", "ga_expense", "opex_share", "ebitda_margin", "bookings", "cash", "headcount", "reconciliation")
 
 
 class RoleSource(Block):
@@ -824,7 +824,7 @@ class RoleMetric(Block):
     label: Optional[str] = None
     detail: Optional[str] = None
     source: Optional[RoleSource] = None
-    estimate: bool = False          # an estimate (R&D, G&A from the plan split applied to actual OPEX): shown with its label and method, read by no rating
+    estimate: bool = False          # an estimate (S&M, R&D, G&A from the plan split applied to actual OPEX): shown with its label and method, read by no rating
 
 
 class PlanToDate(Block):
@@ -872,7 +872,7 @@ class GrowthYear(Block):
 
 class TrendValue(Block):
     """One value of the yearly P&L trend: a revenue, a margin or a share of one fiscal year, with the cells it was computed from. `estimate` is an
-    R&D or G&A value from the plan split applied to actual OPEX."""
+    S&M, R&D or G&A value from the plan split applied to actual OPEX (contract 17: R&D and G&A; 18: the three-way split adds S&M)."""
     period: str
     kind: Literal["actual", "plan"]
     value: float = Field(allow_inf_nan=False)
@@ -952,7 +952,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[17]
+    contract_version: Literal[18]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]

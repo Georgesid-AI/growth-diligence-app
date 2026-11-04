@@ -116,8 +116,7 @@ def lines(results: dict, ccy: Optional[str]) -> List[Dict]:
 
 
 def table(trend: Optional[Dict], ccy: Optional[str]):
-    """(header, rows) of the yearly trend: one row per metric, actual years first, then plan years; an estimate carries its label."""
-    from .role_engine import ESTIMATE_LABEL
+    """(header, rows) of the yearly trend: one row per metric, actual years first, then plan years; an estimate carries the suffix ", estimate" (the full label is in the Estimates block and the method text)."""
     if not trend:
         return None
     header = ["Metric", *[p["period"] + (" (plan)" if p["kind"] == "plan" else "") for p in trend["periods"]]]
@@ -127,6 +126,6 @@ def table(trend: Optional[Dict], ccy: Optional[str]):
         cells = []
         for p in trend["periods"]:
             v = by_period.get(p["period"] + p["kind"])
-            cells.append(MISSING if v is None else _shown(row["unit"], v["value"], ccy) + (f" ({ESTIMATE_LABEL})" if v["estimate"] else ""))
+            cells.append(MISSING if v is None else _shown(row["unit"], v["value"], ccy) + (ESTIMATE_WORD if v["estimate"] else ""))
         rows.append([row["name"], *cells])
     return header, rows
