@@ -100,3 +100,90 @@ def test_every_yearly_pnl_gap_names_the_data_that_resolves_it(name):
     assert name in gaps, sorted(gaps)
     assert gaps[name]["requested"].strip(), name
     assert "P&L" in gaps[name]["requested"] and gaps[name]["requested"][0].isupper()
+
+
+# ---------------------------------------------------------------------------
+# A cost role the engine could not compute names the cells of every row it sums, never "()"
+# ---------------------------------------------------------------------------
+def test_a_cost_role_of_part_rows_the_engine_cannot_compute_names_the_cells_of_every_part():
+    # S&M parts hold 2026 only: no period at or before the as-of month is shared with revenue, so the engine gives no value
+    parts = [row(10 + i, "sales_marketing", [base], ["2026"], basis="yearly", segment=name) for i, (name, base) in enumerate(zip(PARTS, BASE))]
+    files = [file_of("pnl", [sheet("P&L", [row(4, "revenue", [1_000, 1_500, 2_400, 3_000], YEARS + ["2026"], basis="yearly"), *parts], granularity="yearly")])]
+    table = role_engine.build_table(files)
+    reason = report_text.missing_reason(table, ["revenue", "sales_marketing"], "the revenue row and the sales_marketing row share no period at or before the as-of month")
+    assert "()" not in reason, reason
+    assert "S&M row read (P&L!B10, B11, B12, B13, B14, B15, B16, B17)" in reason, reason
+
+
+# ---------------------------------------------------------------------------
+# The total-row guard: a row that equals the sum of the other rows of the role (within 1 %) is the total; its parts are not counted twice
+# ---------------------------------------------------------------------------
+TOTAL_NOTE = "8 rows summed to the total row; parts not counted twice"
+
+
+def unlinked_total(values=(400, 500, 600), plan=(700, 800, 900)):
+    return both(9, "sales_marketing", list(values), list(plan))
+
+
+def test_an_unlinked_total_row_is_read_as_the_total_and_its_parts_are_skipped():
+    table = role_engine.build_table(pnl([unlinked_total(), *part_rows()]))
+    rec = role_engine.cost_row(table, "sales_marketing", "yearly")
+    assert rec["actual"]["2025"] == (600, "D9") and rec["actual"]["2023"] == (400, "B9"), "the total's cell, not the parts'"
+    assert rec["note"] == TOTAL_NOTE
+    plan = role_engine.sum_role(table, "sales_marketing", "yearly", key="plan")
+    assert plan["plan"]["2026"] == (700, "F9") and plan["note"] == TOTAL_NOTE, "the plan series is read on its own"
+
+
+def test_the_guard_needs_three_rows_of_the_role():
+    rows = [both(9, "rnd", [100, 100, 100], [1, 1, 1]), both(10, "rnd", [100, 100, 100], [1, 1, 1])]
+    table = role_engine.build_table(pnl(sm_rows=rows))
+    rec = role_engine.cost_row(table, "rnd", "yearly")
+    assert rec["actual"]["2025"] == (200, "D9+D10") and not rec.get("note"), "two equal rows are two rows, never a total and its part"
+
+
+def test_the_guard_reads_within_one_percent_and_not_beyond():
+    close = [unlinked_total((403, 504, 605)), *part_rows()]                                   # 0.7 % above the parts
+    rec = role_engine.cost_row(role_engine.build_table(pnl(close)), "sales_marketing", "yearly")
+    assert rec["actual"]["2025"] == (605, "D9") and rec["note"] == TOTAL_NOTE
+    far = [unlinked_total((410, 510, 610)), *part_rows()]                                     # 1.7 % above the parts in 2025
+    rec = role_engine.cost_row(role_engine.build_table(pnl(far)), "sales_marketing", "yearly")
+    assert rec["actual"]["2025"] == (1_210, "D9+" + "+".join(f"D{n}" for n in range(10, 18))) and not rec.get("note")
+
+
+def test_the_guard_needs_one_row_that_is_the_sum_and_no_other():
+    rows = [both(9, "rnd", [10, 10, 10], [1, 1, 1]), both(10, "rnd", [10, 10, 10], [1, 1, 1]), both(11, "rnd", [0, 0, 0], [0, 0, 0])]
+    rec = role_engine.cost_row(role_engine.build_table(pnl(sm_rows=rows)), "rnd", "yearly")
+    assert rec["actual"]["2025"] == (20, "D9+D10+D11") and not rec.get("note"), "two rows each equal the others' sum: no total is read"
+
+
+def test_the_guard_runs_after_the_parent_rule():
+    # the total links 2 of its 8 parts; the 6 unlinked parts and the total remain, and the total still equals their sum ... it does not: it
+    # equals the sum of all 8, so the unlinked 6 plus the total are summed, as the rule as given reads
+    parts = part_rows()
+    parts[0]["parent_row"] = parts[1]["parent_row"] = 9
+    rec = role_engine.cost_row(role_engine.build_table(pnl([unlinked_total(), *parts])), "sales_marketing", "yearly")
+    assert not rec.get("note") and rec["actual"]["2025"] == (600 + 600 - 15 - 30, "D9+" + "+".join(f"D{n}" for n in range(12, 18)))
+
+
+def test_the_total_cell_is_cited_and_the_note_is_in_the_method_text_of_the_share_the_payback_and_the_estimate():
+    r = run(pnl([unlinked_total(), *part_rows()]))
+    sm = metric(r, "sm_share")
+    assert sm["value"] == pytest.approx(600 / 2_400) and sm["source"]["cells"].count("D9") == 1
+    assert not {f"D{n}" for n in range(10, 18)} & set(sm["source"]["cells"]) and sm["source"]["rule"].endswith("; " + TOTAL_NOTE), sm["source"]["rule"]
+    cac = metric(r, "yearly_cac_payback")
+    assert cac["status"] == "computed" and "D9" in cac["source"]["cells"] and not {f"D{n}" for n in range(10, 18)} & set(cac["source"]["cells"])
+    assert TOTAL_NOTE in cac["source"]["rule"], cac["source"]["rule"]
+    rnd = metric(r, "rnd_expense")
+    assert rnd["estimate"] is True and rnd["value"] == pytest.approx((1_000 - 600) * 2 / 3), rnd["reason"]
+    assert "D9" in rnd["source"]["cells"] and not {f"D{n}" for n in range(10, 18)} & set(rnd["source"]["cells"])
+    assert TOTAL_NOTE in rnd["source"]["rule"] and "Checks passed: (a)" in rnd["source"]["rule"], rnd["source"]["rule"]
+
+
+def test_without_the_guard_an_unlinked_plan_total_would_fail_check_a():
+    """The plan S&M of the estimate: with the total and its parts both summed, S&M + R&D + G&A would be twice OPEX − R&D − G&A and check (a)
+    would fail; the guard reads the total alone and the check passes."""
+    r = run(pnl([unlinked_total(), *part_rows()]))
+    assert metric(r, "ga_expense")["status"] == "computed" and "check (a)" not in str(metric(r, "ga_expense")["reason"])
+    for m in run(pnl([unlinked_total(plan=(1_400, 1_600, 1_800)), *part_rows()]))["role_metrics"]["metrics"]:
+        if m["metric"] == "ga_expense":
+            assert m["status"] != "computed" and "check (a) failed" in m["reason"], "a plan total that is not the parts' sum is summed with them, and the check says so"

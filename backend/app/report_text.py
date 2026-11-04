@@ -96,15 +96,19 @@ def unmapped_roles(table: List[dict], roles: Iterable[str]) -> List[str]:
 
 
 def _cells(table: List[dict], role: str) -> str:
-    """"Report!B10:M10": the cells of the role's row (its longest total row), as a range."""
+    """"Report!B10:M10": the cells of the role's row (its longest total row), as a range; for a cost role, the cells of every row the engine sums
+    (role_engine.cost_row: the part rows too, a total and its parts never both), row by row."""
     from .ic_memo import cell_ranges
-    totals = [r for r in _recs(table, role) if r["segment"] is None and r["actual"]]
-    if not totals:
+    recs = [r for r in _recs(table, role) if r["actual"] and (r["segment"] is None or role in role_engine.COST_ROLES)]
+    if not recs:
         return ""
-    rec = max(totals, key=lambda r: len(r["actual"]))
-    refs = [cell for _, cell in rec["actual"].values()]
-    text = ", ".join(cell_ranges(refs))
-    return f"{rec['sheet']}!{text}" if rec.get("sheet") and text else text
+    if role in role_engine.COST_ROLES:
+        summed = role_engine.cost_row(recs, role, "yearly") or role_engine.cost_row(recs, role, "monthly") or role_engine.cost_row(recs, role)
+        rows = [r for r in recs if (r["file"], r["sheet"]) == (summed["file"], summed["sheet"]) and r["row"] in (summed.get("rows") or [summed["row"]])]
+    else:
+        rows = [max(recs, key=lambda r: len(r["actual"]))]
+    text = ", ".join(part for rec in rows for part in cell_ranges([cell for _, cell in rec["actual"].values()]))
+    return f"{rows[0]['sheet']}!{text}" if rows[0].get("sheet") and text else text
 
 
 def _total_label(table: List[dict]) -> str:
