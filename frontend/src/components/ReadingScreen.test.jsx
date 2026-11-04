@@ -102,6 +102,8 @@ describe("the two blocks under the Check results sentence", () => {
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "3");
       sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    expect(api.updateAudit).not.toHaveBeenCalled();                  // picking a value only fills the menu; Save stores it
+    await act(async () => { q("setting-fy-save").click(); });
     expect(api.updateAudit).toHaveBeenCalledWith("a1", { fiscal_year_end: 3 });
     await act(async () => { q("setting-currency-change").click(); });
     expect(q("setting-currency-select")).not.toBeNull();
@@ -238,6 +240,63 @@ describe("the two blocks under the Check results sentence", () => {
     });
     await act(async () => { q("anchor-revenue-change-save").click(); });
     expect(api.changeReading).toHaveBeenCalledWith("a1", "h1", { what: "revenue_row", sheet: "Sales", row: 14 });
+  });
+});
+
+describe("every change menu opens on the current value", () => {
+  const setValue = async (el, v) => {
+    const proto = el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
+      el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+    });
+  };
+  const CASES = [
+    ["as-of month", "assumptions-change", "assumptions-change-input", "May 2022", "Jun 2021"],
+    ["last actual", "anchor-as-of-change", "anchor-as-of-change-input", "May 2022", "Jun 2021"],
+    ["revenue row", "anchor-revenue-change", "anchor-revenue-change-input", "11", "14"],
+    ["actual / plan column", "anchor-boundary-change", "anchor-boundary-change-input", "AP", "AQ"],
+    ["reporting currency", "setting-currency-change", "setting-currency-select", "EUR", "USD"],
+    ["fiscal year-end", "setting-fy-change", "setting-fy-select", "12", "3"],
+  ];
+  // The last actual row shows only when another file set the as-of month.
+  const AUDIT_OTHER_FILE = { ...AUDIT, as_of_file: "other.xlsx" };
+  const stem = (link) => (link.startsWith("setting-") ? link.replace(/-change$/, "") : link);       // a setting line names its parts by the setting, an inline change by its link
+
+  test.each(CASES)("%s: opens with the current value, Save is off until it differs, Cancel puts the current value back", async (_, link, field, current, other) => {
+    await show(REGISTER, AUDIT_OTHER_FILE);
+    await act(async () => { q(link).click(); });
+    const input = q(field);
+    expect(input.value).toBe(current);
+    const save = q(`${stem(link)}-save`);
+    expect(save.disabled).toBe(true);
+    await setValue(input, other);
+    expect(q(`${stem(link)}-save`).disabled).toBe(false);
+    await setValue(q(field), current);
+    expect(q(`${stem(link)}-save`).disabled).toBe(true);               // back on the current value: nothing to save
+    await setValue(q(field), other);
+    await act(async () => { q(`${stem(link)}-cancel`).click(); });
+    expect(q(field)).toBeNull();
+    await act(async () => { q(link).click(); });
+    expect(q(field).value).toBe(current);                               // Cancel restored the current value
+    expect(q(`${stem(link)}-save`).disabled).toBe(true);
+  });
+
+  test("a value the analyst saved earlier is the one the menu opens on", async () => {
+    await show(REGISTER, { ...AUDIT, as_of_month: "2021-06-30", as_of_by: "analyst", fiscal_year_end: 3, reporting_currency: "USD" });
+    await act(async () => { q("assumptions-change").click(); });
+    expect(q("assumptions-change-input").value).toBe("Jun 2021");
+    await act(async () => { q("setting-fy-change").click(); });
+    expect(q("setting-fy-select").value).toBe("3");
+    await act(async () => { q("setting-currency-change").click(); });
+    expect(q("setting-currency-select").value).toBe("USD");
+  });
+
+  test("the same month typed another way is still no change", async () => {
+    await show();
+    await act(async () => { q("assumptions-change").click(); });
+    await setValue(q("assumptions-change-input"), "2022-05");
+    expect(q("assumptions-change-save").disabled).toBe(true);
   });
 });
 

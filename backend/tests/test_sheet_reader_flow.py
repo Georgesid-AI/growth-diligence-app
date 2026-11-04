@@ -328,3 +328,82 @@ def test_the_deck_list_carries_the_seconds_the_page_read_has_run(flow):
                                       "read_finished_at": "2026-11-02T10:01:22+00:00", "ai_status": "read"})
     deck = flow.get(f"/api/audits/{AUDIT}/decks").json()["decks"][0]
     assert deck["read_elapsed"] == 72 and "reading_since" not in deck and "read_finished_at" not in deck
+
+
+def datasets_of(client):
+    return client.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"]
+
+
+def test_re_read_replaces_the_result_of_a_failed_file_without_a_new_upload(flow):
+    flow.state["adapter"] = Router(None)
+    upload(flow, MONTHLY, monthly())
+    view = datasets_of(flow)[0]
+    assert view["read_state"] == "failed" and not flow.db[readings.CHECKS].docs
+    flow.state["adapter"] = Router(good_map())
+    got = flow.post(f"/api/audits/{AUDIT}/datasets/{view['file_hash']}/reread")
+    assert got.status_code == 200 and got.json()["status"] == "queued"
+    assert len(flow.db.datasets.docs) == 1, "no second copy of the file"
+    after = datasets_of(flow)[0]
+    assert after["file_hash"] == view["file_hash"] and after["read_state"] == "done"
+    assert [c["status"] for c in flow.db[readings.CHECKS].docs] == ["read"], "the one result of the file is the new one"
+    assert audit_of(flow)["as_of_month"] == "2025-06-30" and audit_of(flow)["sheet_reads_pending"] == 0
+    assert flow.state["adapter"].sheet_calls == 1
+
+
+def test_re_read_of_a_file_not_stored_or_without_consent_is_refused(flow):
+    assert flow.post(f"/api/audits/{AUDIT}/datasets/nope/reread").status_code == 404
+    flow.db["audits"].docs[0]["structure_reading_consent"] = False
+    upload(flow, MONTHLY, monthly())
+    assert flow.post(f"/api/audits/{AUDIT}/datasets/{datasets_of(flow)[0]['file_hash']}/reread").status_code == 400
+
+
+def test_remove_on_a_data_file_deletes_it_and_what_the_audit_read_from_it(flow):
+    upload(flow, MONTHLY, monthly())
+    digest = datasets_of(flow)[0]["file_hash"]
+    assert audit_of(flow)["as_of_month"] == "2025-06-30"
+    gone = flow.delete(f"/api/audits/{AUDIT}/datasets/{digest}")
+    assert gone.status_code == 200 and gone.json()["removed"] == digest
+    assert datasets_of(flow) == []
+    for name in (readings.CHECKS, readings.USES, readings.READINGS, readings.CARDS, readings.REVIEWS):
+        assert not flow.db[name].docs, name
+    assert audit_of(flow)["as_of_month"] is None, "the as-of month the file set goes with it"
+    assert flow.delete(f"/api/audits/{AUDIT}/datasets/{digest}").status_code == 404
+
+
+def test_remove_keeps_the_reading_another_audit_still_uses(flow):
+    upload(flow, MONTHLY, monthly())
+    digest = datasets_of(flow)[0]["file_hash"]
+    key = flow.db[readings.USES].docs[0]["key"]
+    flow.db[readings.USES].docs.append({"audit_id": "other", "key": key, "at": "x"})
+    flow.delete(f"/api/audits/{AUDIT}/datasets/{digest}")
+    assert [u["audit_id"] for u in flow.db[readings.USES].docs] == ["other"] and len(flow.db[readings.READINGS].docs) == 1
+
+
+def test_a_file_with_a_stored_name_and_other_content_needs_replace_and_then_takes_its_place(flow):
+    upload(flow, MONTHLY, monthly())
+    first = datasets_of(flow)[0]["file_hash"]
+    changed = monthly() + b"\n"
+    refused = upload(flow, MONTHLY, changed)
+    assert refused.status_code == 409 and "already stored" in refused.json()["detail"]
+    assert [d["file_hash"] for d in datasets_of(flow)] == [first], "a refused upload changes nothing"
+    done = upload(flow, MONTHLY, changed, replace="true")
+    assert done.status_code == 200
+    now = datasets_of(flow)
+    assert len(now) == 1 and now[0]["file_hash"] != first
+    assert [c["file_hash"] for c in flow.db[readings.CHECKS].docs] == [now[0]["file_hash"]]
+
+
+def test_re_read_of_a_deck_marks_it_reading_and_queues_the_read_and_a_deck_being_read_is_refused(flow, monkeypatch):
+    asked = []
+
+    async def fake(db, audit_id, deck_id):
+        asked.append(deck_id)
+        return "read"
+
+    monkeypatch.setattr(server.structures, "process_deck_safely", fake)
+    flow.db["deck_text"].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "deck.pdf", "format": "pdf", "page_unit": "page", "pages": 3,
+                                      "uploaded_at": "2026-11-02T10:00:00+00:00", "ai_status": "not_read"})
+    assert flow.post(f"/api/audits/{AUDIT}/decks/nope/reread").status_code == 404
+    assert flow.post(f"/api/audits/{AUDIT}/decks/d1/reread").status_code == 200
+    assert asked == ["d1"] and flow.db["deck_text"].docs[0]["ai_status"] == "reading"
+    assert flow.post(f"/api/audits/{AUDIT}/decks/d1/reread").status_code == 409 and asked == ["d1"]

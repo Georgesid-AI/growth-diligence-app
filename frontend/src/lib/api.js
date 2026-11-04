@@ -41,13 +41,17 @@ export const computeAudit = (id) => api.post(`/audits/${id}/compute`).then((r) =
 // Upload (docs/design/read-check-review.md section 3): one file at a time, stored and read by the sheet reader; no type, no mapping.
 // A read that gets no answer for UPLOAD_TIMEOUT_MS is given up, so the file can be attached again (a hung request left it stuck).
 export const UPLOAD_TIMEOUT_MS = 120000;
-export const uploadChatFile = (id, file) => {
+export const uploadChatFile = (id, file, { replace = false } = {}) => {
   const fd = new FormData();
   fd.append("file", file);
   return api
-    .post(`/audits/${id}/datasets/upload`, fd, { timeout: UPLOAD_TIMEOUT_MS, headers: { "Content-Type": "multipart/form-data" } })
+    .post(`/audits/${id}/datasets/upload`, fd, { timeout: UPLOAD_TIMEOUT_MS, headers: { "Content-Type": "multipart/form-data" }, params: replace ? { replace: true } : undefined })
     .then((r) => r.data);
 };
+// File recovery: remove a stored spreadsheet, or read a stored spreadsheet or deck again without a new upload.
+export const removeDataset = (id, fileHash) => api.delete(`/audits/${id}/datasets/${fileHash}`).then((r) => r.data);
+export const rereadDataset = (id, fileHash) => api.post(`/audits/${id}/datasets/${fileHash}/reread`).then((r) => r.data);
+export const rereadDeck = (id, deckId) => api.post(`/audits/${id}/decks/${deckId}/reread`).then((r) => r.data);
 export const getDatasets = (id) => api.get(`/audits/${id}/datasets`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data.datasets);
 export const getBlockers = (id) => api.get(`/audits/${id}/blockers`).then((r) => r.data.blockers);
 // Usage counters: the screen the analyst is on, or the extension of a file the browser refused. Never a name or a value.

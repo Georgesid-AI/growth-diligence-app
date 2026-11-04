@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import RunAuditPanel from "@/components/RunAuditPanel";
-import { getDatasets, getDecks, removeDeck, reportUsage, uploadChatFile, uploadDeck } from "@/lib/api";
+import { getDatasets, getDecks, removeDataset, removeDeck, rereadDataset, rereadDeck, reportUsage, uploadChatFile, uploadDeck } from "@/lib/api";
 import { ALLOWED_EXTENSIONS, S7B_XLS_REFUSED, extensionOf } from "@/lib/chatUpload";
-import { DECK_ACCEPT, REMOVE_DECK_CONFIRM, isDeckFile } from "@/lib/deckClaims";
+import { DECK_ACCEPT, isDeckFile } from "@/lib/deckClaims";
 import {
-  DECK_CARD, HEADER_TEXT, PROCESSING_LINK, PROCESSING_SECTIONS, PROCESSING_TITLE, REMOVE_LABEL, SHEET_CARD, UPLOAD_LABEL,
-  deckBusy, deckLine, headerText, sheetBusy, sheetLine,
+  DECK_CARD, HEADER_TEXT, PROCESSING_LINK, PROCESSING_SECTIONS, PROCESSING_TITLE, REMOVE_CONFIRM, REMOVE_LABEL, REPLACE_LABEL, REREAD_FAILED_LABEL,
+  REREAD_LABEL, SHEET_CARD, UPLOAD_LABEL, deckBusy, deckLine, headerText, replaceLine, sheetBusy, sheetLine,
 } from "@/lib/uploadView";
 
 /**
@@ -48,18 +48,44 @@ function Card({ kind, title, lines, muted, drop, note, accept, onFiles, refusal,
   );
 }
 
-function FileRow({ name, line, onRemove, removeLabel = REMOVE_LABEL, confirm, testid }) {
+/**
+ * One file's line. Remove turns into its own confirmation in place: "Remove – deletes this file and all its claims, including reviewed ones · Cancel",
+ * where Remove deletes and Cancel puts the link back (no second line, no second button). A line with no `confirmRemove` removes at the first click.
+ */
+function FileRow({ name, line, onRemove, confirmRemove, onReread, testid }) {
+  const [asking, setAsking] = useState(false);
+  const remove = !onRemove ? <span />
+    : asking
+      ? (
+        <span className="rm" data-testid="file-remove-confirm">
+          <a href="#remove" data-testid="file-remove-yes" onClick={(e) => { e.preventDefault(); onRemove(); }}>{REMOVE_LABEL}</a>
+          {" – "}{REMOVE_CONFIRM}{" · "}
+          <a href="#cancel" data-testid="file-remove-cancel" onClick={(e) => { e.preventDefault(); setAsking(false); }}>Cancel</a>
+        </span>
+      )
+      : <a href="#remove" className="rm" data-testid="file-remove" onClick={(e) => { e.preventDefault(); if (confirmRemove) setAsking(true); else onRemove(); }}>{REMOVE_LABEL}</a>;
   return (
     <li data-testid={testid} data-tone={line.tone}>
       <span className="fi"><FileIcon /></span>
       <span className="fn" data-testid="file-name">{name}</span>
       <span className={`tag ${line.tone === "done" ? "done" : line.tone === "bad" ? "bad" : ""}`} data-testid="file-tag">{line.tag}</span>
       <span className="time" data-testid="file-time">{line.time}</span>
-      {onRemove ? <a href="#remove" className="rm" data-testid="file-remove" onClick={(e) => { e.preventDefault(); onRemove(); }}>{removeLabel}</a> : <span />}
+      {remove}
+      {onReread && <a href="#reread" className="rm" data-testid="file-reread" onClick={(e) => { e.preventDefault(); onReread(); }}>{REREAD_LABEL}</a>}
       {line.sub && <span className="sub muted" data-testid="file-sub">{line.sub}</span>}
       {line.summary && <span className="sum summary" data-testid="file-summary">{line.summary}</span>}
-      {confirm}
     </li>
+  );
+}
+
+/** The one-line question when a file's name is already stored: "A file named X is already stored. Replace it? Replace · Cancel". */
+function ReplaceLine({ entry, onAnswer }) {
+  return (
+    <p className="line" data-testid="replace-confirm">
+      {replaceLine(entry.file.name)}{" "}
+      <a href="#replace" data-testid="replace-yes" onClick={(e) => { e.preventDefault(); onAnswer(entry, true); }}>{REPLACE_LABEL}</a>{" · "}
+      <a href="#cancel" data-testid="replace-cancel" onClick={(e) => { e.preventDefault(); onAnswer(entry, false); }}>Cancel</a>
+    </p>
   );
 }
 
@@ -69,7 +95,7 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
   const [decks, setDecks] = useState([]);
   const [local, setLocal] = useState([]);             // files on their way up, or refused by the server: {id, kind, file, local: {state, startedAt, message}}
   const [refusal, setRefusal] = useState({ sheet: null, deck: null });
-  const [confirming, setConfirming] = useState(null);
+  const [replacing, setReplacing] = useState([]);       // files whose name is already stored, waiting for the analyst: [{id, file (File)}]
   const [processing, setProcessing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const alive = useRef(true);
@@ -108,10 +134,10 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
   useEffect(() => { if (!running) setReadClock((c) => (c.start != null && c.end == null ? { ...c, end: Date.now() } : c)); }, [running]);
 
   const fail = (id, message) => setLocal((all) => all.map((l) => (l.id === id ? { ...l, local: { ...l.local, state: "failed", message } } : l)));
-  const send = (kind, file, id) => {
+  const send = (kind, file, id, replace = false) => {
     queue.current[kind] = queue.current[kind].then(async () => {
       try {
-        if (kind === "sheet") await uploadChatFile(auditId, file); else await uploadDeck(auditId, file);
+        if (kind === "sheet") await uploadChatFile(auditId, file, { replace }); else await uploadDeck(auditId, file);
         if (alive.current) setLocal((all) => all.filter((l) => l.id !== id));
         await refresh();
         onChanged?.();
@@ -132,6 +158,14 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
         reportUsage(auditId, { rejected_extension: ext || "other" });
         continue;
       }
+      if (stored.some((r) => r.file === file.name && !r.local) && kind === "sheet") {      // the same name: one line asks before it replaces the stored file
+        setReplacing((all) => [...all.filter((x) => x.file.name !== file.name), { id: `r${nextLocal++}`, file }]);
+        continue;
+      }
+      if (kind === "deck" && decks.some((d) => d.file === file.name)) {
+        setReplacing((all) => [...all.filter((x) => x.file.name !== file.name), { id: `r${nextLocal++}`, file, deck: true }]);
+        continue;
+      }
       const id = `l${nextLocal++}`;
       setReadClock((c) => (c.start == null || c.end != null ? { start: Date.now(), end: null } : c));
       setLocal((all) => [...all, { id, kind, file: file.name, local: { state: "uploading", startedAt: Date.now() } }]);
@@ -139,12 +173,33 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
     }
   };
 
+  const startUpload = (kind, file, replace) => {
+    const id = `l${nextLocal++}`;
+    setReadClock((c) => (c.start == null || c.end != null ? { start: Date.now(), end: null } : c));
+    setLocal((all) => [...all, { id, kind, file: file.name, local: { state: "uploading", startedAt: Date.now() } }]);
+    send(kind, file, id, replace);
+  };
+  const answerReplace = (entry, yes) => {
+    setReplacing((all) => all.filter((x) => x.id !== entry.id));
+    if (yes) startUpload(entry.deck ? "deck" : "sheet", entry.file, true);
+  };
+
   const removeLocal = (id) => setLocal((all) => all.filter((l) => l.id !== id));
-  const removeStoredDeck = async (deckId) => {
-    try { await removeDeck(auditId, deckId); } catch (e) { /* the deck stays listed */ }
-    setConfirming(null);
-    await refresh();
-    onChanged?.();
+  const afterChange = async () => { await refresh(); onChanged?.(); };
+  const removeStored = async (call, id) => {
+    try { await call(auditId, id); } catch (e) { /* the file stays listed */ }
+    await afterChange();
+  };
+  const reread = async (call, id) => {
+    try { await call(auditId, id); } catch (e) { /* the file keeps its line; the next refresh shows where it stands */ }
+    await afterChange();
+  };
+  const failedSheets = stored.filter((v) => sheetLine(v, now).tone === "bad");        // the files the page shows as Not processed
+  const failedDecks = decks.filter((d) => deckLine(d, now).tone === "bad");
+  const failedCount = failedSheets.length + failedDecks.length;
+  const rereadFailed = async () => {
+    await Promise.all([...failedSheets.map((v) => rereadDataset(auditId, v.file_hash).catch(() => null)), ...failedDecks.map((d) => rereadDeck(auditId, d.deck_id).catch(() => null))]);
+    await afterChange();
   };
 
   return (
@@ -164,13 +219,22 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
         </div>
       )}
 
+      {failedCount >= 2 && (
+        <p className="line" data-testid="reread-failed">
+          <a href="#reread-failed" className="rm" data-testid="reread-failed-link" onClick={(e) => { e.preventDefault(); rereadFailed(); }}>{REREAD_FAILED_LABEL}</a>
+        </p>
+      )}
+
       <Card kind="sheet" title={SHEET_CARD.title} lines={[SHEET_CARD.line]} drop={SHEET_CARD.drop} accept={PICKER_SHEET}
         onFiles={(f) => takeFiles("sheet", f)} refusal={refusal.sheet}>
+        {replacing.filter((x) => !x.deck).map((x) => <ReplaceLine key={x.id} entry={x} onAnswer={answerReplace} />)}
         {sheets.length > 0 && (
           <ul className="files" data-testid="sheet-files">
             {sheets.map((v) => (
               <FileRow key={v.file_hash || v.id} testid="sheet-file" name={v.file} line={sheetLine(v, now)}
-                onRemove={v.local?.state === "failed" ? () => removeLocal(v.id) : undefined} />
+                onRemove={v.local ? (v.local.state === "failed" ? () => removeLocal(v.id) : undefined) : () => removeStored(removeDataset, v.file_hash)}
+                confirmRemove={!v.local}
+                onReread={!v.local && sheetLine(v, now).tone === "bad" ? () => reread(rereadDataset, v.file_hash) : undefined} />
             ))}
           </ul>
         )}
@@ -178,18 +242,14 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
 
       <Card kind="deck" title={DECK_CARD.title} lines={[DECK_CARD.line, DECK_CARD.muted]} drop={DECK_CARD.drop} note={DECK_CARD.note} accept={DECK_ACCEPT}
         onFiles={(f) => takeFiles("deck", f)} refusal={refusal.deck}>
+        {replacing.filter((x) => x.deck).map((x) => <ReplaceLine key={x.id} entry={x} onAnswer={answerReplace} />)}
         {deckRows.length > 0 && (
           <ul className="files" data-testid="deck-files">
             {deckRows.map((d) => (
               <FileRow key={d.deck_id || d.id} testid="deck-file" name={d.file} line={deckLine(d, now)}
-                onRemove={d.local ? (d.local.state === "failed" ? () => removeLocal(d.id) : undefined) : () => setConfirming(d.deck_id)}
-                confirm={confirming && confirming === d.deck_id && (
-                  <span className="sum" data-testid="remove-deck-confirm">
-                    {REMOVE_DECK_CONFIRM}{" "}
-                    <a href="#yes" data-testid="remove-deck-yes" onClick={(e) => { e.preventDefault(); removeStoredDeck(d.deck_id); }}>{REMOVE_LABEL}</a>{" · "}
-                    <a href="#cancel" data-testid="remove-deck-cancel" onClick={(e) => { e.preventDefault(); setConfirming(null); }}>Cancel</a>
-                  </span>
-                )} />
+                onRemove={d.local ? (d.local.state === "failed" ? () => removeLocal(d.id) : undefined) : () => removeStored(removeDeck, d.deck_id)}
+                confirmRemove={!d.local}
+                onReread={!d.local && deckLine(d, now).tone === "bad" ? () => reread(rereadDeck, d.deck_id) : undefined} />
             ))}
           </ul>
         )}
