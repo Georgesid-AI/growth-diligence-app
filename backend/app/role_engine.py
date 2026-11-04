@@ -967,7 +967,10 @@ EBITDA_MONTHLY_REASON = "needs an EBITDA row at yearly or quarterly granularity,
 
 def _ebitda_margin_of_full_year(metric: str, ebitda: Dict, rev: Dict, as_of: pd.Period, fye: int) -> Dict:
     """EBITDA margin from monthly rows: the latest fiscal year with all twelve months in both rows at or before the as-of month, the sum of the
-    EBITDA months over the sum of the revenue months. A single month is not a margin of the business (cleanup PR 6, item 6)."""
+    EBITDA months over the sum of the revenue months. A single month is not a margin of the business (cleanup PR 6, item 6). A row that
+    accumulates (cumulative to date, last 12 months) holds no monthly flows to add up: it gives no twelve-month margin (review of item 6)."""
+    if any(rec["basis"] in (CUMULATIVE, "last_12_months") for rec in (ebitda, rev)):
+        return _missing(metric, EBITDA_MONTHLY_REASON, ["ebitda"])
     e_by, r_by = {}, {}
     for rec, by in ((ebitda, e_by), (rev, r_by)):
         for month, value, cell in _months(rec, "actual", as_of, fye):
