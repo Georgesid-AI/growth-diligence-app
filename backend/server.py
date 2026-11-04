@@ -42,6 +42,7 @@ from app import claim_groups
 from app import access as access_mod
 from app import ic_memo
 from app import report_text
+from app import yearly_sheets
 from app import integrity as integrity_mod
 from app import verdict as verdict_mod
 from app import decks
@@ -2970,7 +2971,9 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 kinds[lab(f"{L} S&M used", unit=cur)] = fmt.CURRENCY
             table_sheet(xw, "CAC by Quarter", pd.DataFrame(cac_rows), kinds)
         else:
-            pd.DataFrame([{"Quarter": "(P&L not provided)"}]).to_excel(xw, sheet_name="CAC by Quarter", index=False)
+            # A yearly P&L was read: the true reason, not "not provided" (app/yearly_sheets.py)
+            pd.DataFrame([{"Quarter": (f"({yearly_sheets.NEEDS_MONTHLY_PNL})" if yearly_sheets.yearly_pnl_read(r) else "(P&L not provided)")}]).to_excel(
+                xw, sheet_name="CAC by Quarter", index=False)
 
         # Path to plan
         ap = r.get("acv_path") or {}
@@ -3079,9 +3082,12 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
             (a["label"], report_text.NOT_APPLICABLE if a["count"] is None else a["count"], a["detail"]) for a in report_text.anomaly_rows(an)]
         pd.DataFrame(an_rows, columns=["Flag", "Count", "Detail"]).to_excel(xw, sheet_name="Anomalies", index=False)
 
+        # The yearly P&L work: metrics, estimates, trend and what the plan assumes (app/yearly_sheets.py)
+        for sheet in yearly_sheets.sheets(r, ccy):
+            yearly_sheets.write(xw, sheet)
         # Missing data
         md = [{k: ("; ".join(f"{t}: {', '.join(f) or 'no usable rows'}" for t, f in v.items())
-                   if k == "absent_fields" else v) for k, v in m.items()} for m in (r.get("missing_data") or [])]
+                   if k == "absent_fields" else v) for k, v in yearly_sheets.missing_reason(r, m).items()} for m in (r.get("missing_data") or [])]
         (pd.DataFrame(md) if md else pd.DataFrame([{"metric": "(none — all computed)"}])).to_excel(
             xw, sheet_name="Missing Data", index=False)
         pd.DataFrame(sorted(fmt.GLOSSARY.items()), columns=["Term", "Definition"]).to_excel(

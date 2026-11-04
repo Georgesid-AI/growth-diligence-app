@@ -10,7 +10,7 @@ Amended 2026-10-15 (docs/specs/evidence-labels.md §4): the memo summary counts 
 brackets; an Inconclusive row needs a gate like an Unverified one.
 Amended 2026-10-25 (George, review of PR #180, docs/design/simplified-flow.md): no confirmation is needed and no export is refused for a missing
 input. The five are selected by the app (value at stake, then normalised shortfall) and are in force at once; the analyst's Change replaces
-them and nothing confirms them. The verdict is always computed, never blocked. The memo refuses only on the number check, the 1,500 words and
+them and nothing confirms them. The verdict is always computed, never blocked. The memo refuses only on the number check and
 the contract (§7.1): not for an unconfirmed top 5, a blocked verdict, the number of key gates, a rating, a judgment or a thesis sentence. The key
 gates are the gates of the non-Verified claims among the five, never padded and never marked by hand. The ratings are computed. §3 (key mark),
 §6.1 (confirm, W23, W24), §6.3, §6.4 (Confirm, ratings and thesis inputs), §7.1 and Q2, Q5 are read as this paragraph says; W9, W9b, W23 and W24
@@ -199,7 +199,7 @@ No new analysis: every part is a register row, a gap row or a stored input.
 ### 7.1 File
 `GET /audits/{id}/memo.md` downloads `{company}_ic_memo.md` (text/markdown). It is built on request and never stored.
 Amended 2026-10-25: it is refused, nothing is written and the reason is named (W19) only when the results fail MetricsPayload (§9), a
-number is not in the stored data (§7.4), or the text has more than 1,500 words (§7.5). There is no refusal for an unconfirmed top 5, a
+number is not in the stored data (§7.4). There is no refusal for an unconfirmed top 5, a
 blocked verdict, the number of key gates, a missing rating, judgment or thesis sentence.
 
 ### 7.2 Sections, in this order (W15)
@@ -280,9 +280,10 @@ A table cell of Appendix C that the stored data does not hold passes only as the
 their count.
 
 ### 7.5 Word count
-Words are whitespace-separated tokens holding a letter or a digit, counted from the title to the end of section 6.
-Table pipes and heading marks are not words; a footnote marker counts as one word; appendices are excluded. 1,500
-words pass; 1,501 are refused, and the refusal shows the count (W19).
+Words are whitespace-separated tokens holding a letter or a digit, counted from the title to the end of section 6, narrative text only:
+every table (Scorecard, trend table, evidence tables) and the title line are left out (Prompt 0, "Word limits apply to narrative text only").
+A footnote marker counts as one word; appendices are excluded. The word count never blocks the download (2026-11-04): over 1,500 words the
+memo is exported and one line under the title reads "Memo text: N words (limit 1,500)"; at 1,500 or fewer there is no line.
 
 ## 8. Cost panel
 > **Withdrawn for testers (18 Oct 2026, usage-and-allowance.md §9).** The Audit page section and Appendix D no longer show this table; `by_step` stays in the call log and the owner's figures. W20 is not rendered.
@@ -315,7 +316,7 @@ Every new test is first shown failing on a deliberate violation (rule 11).
 | Gate: the gate is not saved without a date; a no-metric row needs the metric name and direction; a sixth key gate is refused; a key gate on an unsaved gate is refused; with fewer than 3 saved gates every gate is key | `test_verdict.py` |
 | Gaps: the gap list; an item computed from another file is a request, not a gap; the single-type table against `FIELD_DEFS`; a date after the review is refused | `test_verdict.py` |
 | The memo refuses a number absent from the stored results (a narrative paragraph and a thesis sentence carrying "37%") and lists it; a number in a budget decision passes, cited "set by the analyst" | `test_ic_memo.py` |
-| The memo refuses 1,501 words, shows the count and passes 1,500; appendices are not counted | `test_ic_memo.py` |
+| The memo exports at 1,504 narrative words with the "Memo text" line and with no line at 1,400 plus a table; appendices and tables are not counted | `test_ic_memo.py` |
 | Four "Not assessed" rows, never a rating, even when one is stored | `test_ic_memo.py` |
 | Evidence categories: revenue, CRM, P&L and a deck give 4 of 7; revenue only gives 1 of 7 | `test_ic_memo.py` |
 | W24 in the summary; the appendix titles A–D; every number in sections 1–6 has a footnote resolved in Appendix D | `test_ic_memo.py` |
