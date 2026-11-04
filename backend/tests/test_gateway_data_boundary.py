@@ -3294,7 +3294,11 @@ def test_deck_page_reads_log_and_store_page_numbers_and_counts_only(monkeypatch,
     assert {"read_progress", "reading_since", "skipped_pages", "unread_pages", "retry_pages"}.isdisjoint(decks.GATEWAY_READABLE_FIELDS)
     assert doc["skipped_pages"] == [2] and doc["unread_pages"] == [3]
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("page ")]
-    assert lines == [f"page 3 not read: run_id={AUDIT} deck_id=d1 status=not_read reason=-"]
+    # A page the provider call failed on logs the spreadsheet step's reason fields (reason, HTTP status, error type, the sanitised message); the
+    # deck record keeps the status, the type and the plain-words sentence only, never the message.
+    assert lines == [f"page 3 not read: run_id={AUDIT} deck_id=d1 reason=provider_error status=500 type=api_error message=-"]
+    failed, = [r for r in doc["page_reads"] if r["status"] != "read"]
+    assert set(failed["provider"]) == {"status", "type", "plain"}
     for needle in ("Traction", "Paying Users", "150,000", "Zero2Hero"):
         assert needle not in json.dumps({k: doc[k] for k in ("skipped_pages", "unread_pages", "retry_pages")}) + " ".join(lines)
 

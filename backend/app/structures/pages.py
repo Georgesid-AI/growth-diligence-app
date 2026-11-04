@@ -459,6 +459,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     page_count = deck.get("pages") or (max(by_page) if by_page else None)
     reviewed = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "file": deck["file"]}, {"_id": 0}).to_list(100000)
     reads, sent, stopped_message = [], [], None
+    shown = {}          # the provider's logged message of a failed page read, by its pages: logged, never stored
     # Diagnostics lines of the pages read so far; a page read again replaces its lines. `fresh`: the ids of the rows this run wrote, so a later
     # page with the same text never replaces them.
     run = RunState(reviewed, list(deck.get("diagnostics") or []))
@@ -503,6 +504,10 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
             # The deck line's two masking counts (read-check-review.md section 8): numbers only, never what was removed.
             entry["masked"] = {"personal": redact.personal_count(result.masked),
                                "names": result.masked.get("customer", 0) + result.masked.get("company", 0)}
+        if result.provider:
+            # A page the provider call failed on: the status, the error type and the plain-words sentence (the message only reaches the log).
+            entry["provider"] = {k: result.provider.get(k) for k in ("status", "type", "plain")}
+            shown[tuple(numbers)] = result.provider.get("message") or "-"
         if result.rejected:
             entry["rejected"] = result.rejected
             for page in numbers:        # the validator's reason (closed words), never the reply text
@@ -520,7 +525,13 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     for entry in reads:
         if entry["status"] != "read":
             for n in entry["pages"]:
-                # Codes only (rule 17): the page, the status and the reason word.
+                # Codes only (rule 17): the page, the status and the reason word; for a provider failure the same fields as the spreadsheet step's
+                # "structure not read" line (reason, HTTP status, error type, the provider's message as logged).
+                provider = entry.get("provider")
+                if provider:
+                    logger.warning("page %d not read: run_id=%s deck_id=%s reason=provider_error status=%s type=%s message=%s", n, audit_id,
+                                   deck_id, provider.get("status") or "-", provider.get("type") or "-", shown.get(tuple(entry["pages"]), "-"))
+                    continue
                 logger.warning("page %d not read: run_id=%s deck_id=%s status=%s reason=%s", n, audit_id, deck_id, entry["status"],
                                entry["reason"] if entry["reason"] in ("timeout", "stopped") else "-")
     missing = any(r["reason"] == gateway.PROMPT_MISSING_TEXT for r in reads)

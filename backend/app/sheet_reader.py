@@ -71,7 +71,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     except asyncio.TimeoutError:
         return {"status": "not_read", "reason": gateway.NOT_READ}
     if first.status != "read" or not first.file_map:
-        return {"status": first.status, "reason": first.reason or gateway.NOT_READ}
+        return {"status": first.status, "reason": first.reason or gateway.NOT_READ, "provider": first.provider}
     cells = checks.Cells(first.payload)
     total = _cited(first.file_map)
     await stage("checking_cells", checked=0, total=total)

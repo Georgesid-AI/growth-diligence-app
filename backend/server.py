@@ -24,6 +24,7 @@ from schemas import metrics as contract
 from app import as_of as as_of_mod
 from app import readings as readings_mod
 from app import sheet_reader
+from app.logfmt import configure_logging
 from app import reading_export
 from app import reviewer
 from app import register
@@ -99,7 +100,7 @@ api = APIRouter(prefix="/api", dependencies=[Depends(access_guard)])
 
 install_secret_redaction()      # no key can reach a log line, message or traceback
 logger = logging.getLogger("growth")
-logging.basicConfig(level=logging.INFO)
+configure_logging()          # ISO UTC timestamp on every line (app/logfmt.py)
 
 # ---------------------------------------------------------------------------
 # Dataset field definitions (normalized names + fuzzy-match aliases): app/column_rules.py
@@ -829,7 +830,8 @@ async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filena
             return
         doc = await sheet_reader.read_file(db, a, sheets, digest, filename, _fiscal_year_end(a), on_stage=_stage_writer(audit_id, digest))
         status = doc.get("status", "not_read")
-        await _finish_read(audit_id, digest, status == "read")
+        await _finish_read(audit_id, digest, status == "read", rows_mapped=doc.get("rows_mapped", 0) if status == "read" else 0,
+                           error=(doc.get("provider") or {}).get("plain"))
         await _usage_update(audit_id, lambda u: u["steps"].setdefault("sheet_reading", {}).__setitem__(
             status, u["steps"]["sheet_reading"].get(status, 0) + 1))
         await _refresh_as_of(audit_id)
@@ -854,10 +856,12 @@ def _stage_writer(audit_id: str, digest: str):
     return write
 
 
-async def _finish_read(audit_id: str, digest: str, ok: bool) -> None:
-    """The file's reading ended: "done" when the reader returned a reading, else "failed" (the upload stands, rule 20)."""
+async def _finish_read(audit_id: str, digest: str, ok: bool, rows_mapped: int = 0, error: Optional[str] = None) -> None:
+    """The file's reading ended: "done" when the reader returned a reading, else "failed" (the upload stands, rule 20). `rows_mapped`: the rows the
+    reading mapped (a file with none is not processed on the Upload page); `error`: the provider failure in plain words, when that was the cause."""
     await db.datasets.update_one({"audit_id": audit_id, "file_hash": digest},
-                                 {"$set": {"read_state": "done" if ok else "failed", "read_finished_at": usage_mod.now()}, "$unset": {"read_stage": ""}})
+                                 {"$set": {"read_state": "done" if ok else "failed", "read_finished_at": usage_mod.now(), "rows_mapped": rows_mapped,
+                                           "read_error": error}, "$unset": {"read_stage": ""}})
 
 
 async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str, filename: str,
@@ -899,6 +903,7 @@ def _file_view(ds: dict) -> dict:
         view.update({"read_state": ds["read_state"], "read_stage": ds.get("read_stage"), "read_checked": ds.get("read_checked"),
                      "read_total": ds.get("read_total"), "read_matched": ds.get("read_matched"), "read_items": ds.get("read_items"),
                      "read_elapsed": max(0, int((end - start).total_seconds())) if start else None,
+                     "rows_mapped": ds.get("rows_mapped"), "read_error": ds.get("read_error"),
                      "read_checking_elapsed": max(0, int((end - checking).total_seconds())) if checking else None})
     return view
 
@@ -1314,6 +1319,9 @@ async def list_deck_candidates(audit_id: str):
         reads = d.pop("page_reads", None) or []
         d["pages_read"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") == "read")
         d["pages_rejected"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") not in ("read", "stopped"))
+        # The one provider failure that stopped every page, in plain words (insufficient credit, key, rate limit, model); none when any page was read.
+        failed = [(r.get("provider") or {}).get("plain") for r in reads if r.get("status") != "read"]
+        d["read_error"] = failed[0] if failed and not d["pages_read"] and len(set(failed)) == 1 else None
         # What masking took out of the page text sent (George, 2026-10-29, review of PR 204): counts only.
         d["personal_removed"] = sum((r.get("masked") or {}).get("personal", 0) for r in reads)
         d["names_replaced"] = sum((r.get("masked") or {}).get("names", 0) for r in reads)
