@@ -199,7 +199,7 @@ def test_the_total_cell_is_cited_and_the_note_is_in_the_method_text_of_the_share
     rnd = metric(r, "rnd_expense")
     assert rnd["estimate"] is True and rnd["value"] == pytest.approx((1_000 - 600) * 2 / 3), rnd["reason"]
     assert "D9" in rnd["source"]["cells"] and not {f"D{n}" for n in range(10, 18)} & set(rnd["source"]["cells"])
-    assert TOTAL_NOTE in rnd["source"]["rule"] and "Checks passed: (a)" in rnd["source"]["rule"], rnd["source"]["rule"]
+    assert TOTAL_NOTE not in rnd["source"]["rule"] and "Checks passed: (a)" in rnd["source"]["rule"], "the S&M total-row note is not R&D's"
 
 
 def test_without_the_guard_an_unlinked_plan_total_would_fail_check_a():

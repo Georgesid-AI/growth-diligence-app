@@ -664,7 +664,7 @@ def test_r_and_d_and_g_and_a_are_estimated_from_the_plan_split_applied_to_actual
 def test_the_data_request_for_the_actual_split_stays_with_the_estimate():
     r = run(split_pnl())
     lines = {x["metric"]: x for x in re_.missing_reasons(r["role_metrics"])}
-    assert lines["R&D expense"]["reason"] == "R&D split only in plan years; actual years carry OPEX total only"
+    assert lines["R&D expense"]["reason"] == "Estimated (plan split applied to actual OPEX); actual split requested"
     assert lines["G&A expense"]["needs"] == ["ga"]
 
 
@@ -861,7 +861,7 @@ def test_the_three_way_estimates_are_no_rating_input_and_cac_payback_stays_missi
     assert cac["status"] == "needs_row" and cac["value"] is None and cac["estimate"] is False
     assert "S&M expense" not in str(integrity.assess(r, 0, []))
     lines = {x["metric"]: x for x in re_.missing_reasons(r["role_metrics"])}
-    assert lines["S&M expense"]["reason"] == "S&M split only in plan years; actual years carry OPEX total only"
+    assert lines["S&M expense"]["reason"] == "Estimated (plan split applied to actual OPEX); actual split requested"
     assert "R&D expense" in lines and "G&A expense" in lines and "S&M share of revenue" in lines, "the data requests for the actual split stay"
 
 
