@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import ReadingResults, { SourceLink } from "@/components/ReadingResults";
+import FxEditor from "@/components/FxEditor";
 import { changeReading, downloadReading, getAudit, getReading, updateAudit } from "@/lib/api";
 import { MONTHS, DEFAULT_FISCAL_YEAR_END, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfDisplay, asOfEvidenceLine, parseMonthYear } from "@/lib/auditForm";
 import { monthName, shortMonth } from "@/lib/periods";
@@ -89,7 +90,7 @@ function SettingLine({ label, value, options, current, testid, help, onSave }) {
 }
 
 /** Audit settings and Detected layout and calculation inputs: the two blocks under the Check results sentence (docs/design/audit-page-mockup.html). */
-export function SettingsBlocks({ audit, files, period, onAsOf, onChange, onSetting }) {
+export function SettingsBlocks({ audit, files, period, onAsOf, onChange, onSetting, onFxSaved }) {
   const asOf = audit.as_of_month;
   const evidence = splitEvidence(asOfEvidenceLine(audit));
   const sheets = files.filter((f) => f.kind === "sheet");
@@ -99,12 +100,14 @@ export function SettingsBlocks({ audit, files, period, onAsOf, onChange, onSetti
       <div className="block" data-testid="audit-settings">
         <h3>Audit settings</h3>
         <p className="muted">Set for this audit, not read from the files.</p>
-        <SettingLine label="Reporting currency" testid="setting-currency" value={audit.reporting_currency || "EUR"} current={audit.reporting_currency || "EUR"}
-          options={REPORTING_CURRENCIES.map((c) => [c, c])} help={SETUP_HELP.reporting_currency}
-          onSave={(v) => onSetting("reporting_currency", { reporting_currency: v })} />
         <SettingLine label="Fiscal year-end" testid="setting-fy" value={MONTHS[fy - 1]} current={String(fy)}
           options={MONTHS.map((m, i) => [String(i + 1), m])} help={SETUP_HELP.fiscal_year_end}
           onSave={(v) => onSetting("fiscal_year_end", { fiscal_year_end: Number(v) }, "Fiscal year-end saved; claim periods re-mapped")} />
+        <div style={{ height: "1.2em" }} data-testid="setting-gap" aria-hidden="true" />
+        <SettingLine label="Reporting currency" testid="setting-currency" value={audit.reporting_currency || "EUR"} current={audit.reporting_currency || "EUR"}
+          options={REPORTING_CURRENCIES.map((c) => [c, c])} help={SETUP_HELP.reporting_currency}
+          onSave={(v) => onSetting("reporting_currency", { reporting_currency: v })} />
+        <FxEditor key={audit.reporting_currency || "EUR"} audit={audit} onSaved={onFxSaved} />
       </div>
       <div className="block" data-testid="detected-layout">
         <h3>Detected layout and calculation inputs</h3>
@@ -280,7 +283,7 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
     <div className="reading" data-testid="reading-screen">
       <h1 className="section" data-testid="results-heading">Check results</h1>
       <p className="lead" data-testid="results-lead">{LEAD}</p>
-      <SettingsBlocks audit={audit} files={view.files} period={view.period} onAsOf={onAsOf} onChange={changed} onSetting={onSetting} />
+      <SettingsBlocks audit={audit} files={view.files} period={view.period} onAsOf={onAsOf} onChange={changed} onSetting={onSetting} onFxSaved={changed} />
       <nav className="tabs" aria-label="Files" data-testid="file-tabs">
         <a href="#all" className={current ? "" : "on"} data-testid="tab-all" onClick={(e) => { e.preventDefault(); setTab("all"); }}>
           All <span>{fmtCount(view.files.reduce((n, f) => n + (f.summary?.confirmed || 0), 0))}</span>
