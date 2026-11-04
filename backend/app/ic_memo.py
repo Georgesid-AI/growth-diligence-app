@@ -20,7 +20,6 @@ from app import deck_actuals, disclosure
 from app import formatting as fmt
 from app import integrity as integrity_mod
 from app import plan_lines
-from app.role_engine import ESTIMATE_LABEL
 from app import report_text
 from app import verdict as vd
 from schemas import metrics as contract
@@ -600,7 +599,7 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
         out.append(("Yearly P&L trend", ["Metric", "Year", "Value", "Cells"],
                     [[r["name"], v["period"] + (" (plan)" if v["kind"] == "plan" else ""),
                       (fmt.fmt_currency(v["value"], ccy) if r["unit"] == "money" else fmt.fmt_pct(v["value"]))
-                      + (", estimate" if v["estimate"] else ""), _trend_cells(trend, v)]
+                      + (plan_lines.ESTIMATE_WORD if v["estimate"] else ""), _trend_cells(trend, v)]
                      for r in trend["rows"] for v in r["values"]]))
     plan = rm.get("plan_to_date")
     if plan:

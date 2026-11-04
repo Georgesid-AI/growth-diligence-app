@@ -872,7 +872,7 @@ class GrowthYear(Block):
 
 class TrendValue(Block):
     """One value of the yearly P&L trend: a revenue, a margin or a share of one fiscal year, with the cells it was computed from. `estimate` is an
-    R&D or G&A value from the plan split applied to actual OPEX."""
+    S&M, R&D or G&A value from the plan split applied to actual OPEX (contract 17: R&D and G&A; 18: the three-way split adds S&M)."""
     period: str
     kind: Literal["actual", "plan"]
     value: float = Field(allow_inf_nan=False)

@@ -583,7 +583,7 @@ def yearly_input(table, as_of, fye) -> Optional[Dict]:
 ESTIMATE_LABEL = "Estimate – plan split applied to actual OPEX"
 SPLIT_FIELDS = {"rnd": "R&D", "ga": "G&A"}
 SPLIT_TOLERANCE = 0.01         # check (a): S&M + R&D + G&A = OPEX within 1 % in every plan year
-SPLIT_STABLE = 0.10            # check (b): R&D ÷ (R&D + G&A) within 10 points across the plan years
+SPLIT_STABLE = 0.10            # check (b): R&D ÷ (R&D + G&A) (two-way), each share of S&M + R&D + G&A (three-way) within 10 points across the plan years
 NO_ESTIMATE = "No estimate: "
 # A plan row of a P&L is often a `forecast` row that names its line by its metric ("Plan: R&D"): the role its line has.
 FORECAST_LINES = {None: "revenue", "revenue": "revenue", "cost_of_revenue": "cost_of_revenue", "sm_expense": "sales_marketing", "rnd_expense": "rnd",

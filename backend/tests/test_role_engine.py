@@ -890,3 +890,33 @@ def test_the_two_way_split_is_chosen_when_actual_s_and_m_exists():
     rnd = metric(r, "rnd_expense")
     assert rnd["value"] == pytest.approx(1_000 * 1_300 / 2_200) and "r = 59%" in rnd["source"]["rule"]
     assert not [m for m in r["role_metrics"]["metrics"] if m["metric"] == "sm_expense"]
+
+
+def test_the_pooled_shares_are_computed_on_the_summed_plan_s_and_m_rows_and_cite_every_plan_cell():
+    """Review of PR 232, point 5: a plan that spreads S&M over two part rows (600 + 400, 700 + 500) gives the same share as one row of 1,000 and
+    1,200, and every cell of both rows is cited, with the actual OPEX cell and the R&D, G&A and OPEX plan cells."""
+    rows = [r for r in three_way(plan_revenue=True)[0]["file_map"]["sheets"][0]["rows"] if r["role"] != "sales_marketing"]
+    rows += [row(10, "sales_marketing", [600, 700], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True),
+             row(16, "sales_marketing", [400, 500], PLAN_YEARS, basis="yearly", actual_plan="plan", plan=True)]
+    r = run([file_of("p", [sheet("P&L", rows, granularity="yearly")])])
+    sm = metric(r, "sm_expense")
+    assert sm["status"] == "computed" and sm["estimate"] is True and sm["value"] == pytest.approx(1_900 * 2_200 / 4_400)
+    assert {"D5", "B10", "B16", "C10", "C16", "B11", "C11", "B12", "C12", "B13", "C13"} <= set(sm["source"]["cells"])
+    assert "S&M 2,200" in sm["source"]["rule"], "the share is the sum of both rows over the plan years"
+    trend = {x["metric"]: {v["period"]: v for v in x["values"]} for x in r["role_metrics"]["pnl_trend"]["rows"]}
+    assert trend["sm_share"]["2025"]["estimate"] and {"B10", "B16", "C10", "C16"} <= set(trend["sm_share"]["2025"]["cells"])
+
+
+@pytest.mark.parametrize("stated", ["rnd", "ga"])
+def test_the_three_way_split_does_not_fire_when_the_year_states_r_and_d_or_g_and_a(stated):
+    """Review of PR 232, point 1: the three-way split applies to a year with the OPEX total and none of S&M, R&D and G&A. A year that states R&D
+    (or G&A) and no S&M gets the stated value, no S&M estimate, and the other line carries the S&M gap, in the metrics and in the trend."""
+    rows = [*three_way(plan_revenue=True)[0]["file_map"]["sheets"][0]["rows"], row(20, stated, [100, 150, 480], YEARS, basis="yearly")]
+    r = run([file_of("p", [sheet("P&L", rows, granularity="yearly")])])
+    other = "ga_expense" if stated == "rnd" else "rnd_expense"
+    assert not [m for m in r["role_metrics"]["metrics"] if m["metric"] == "sm_expense"]
+    assert metric(r, f"{stated}_expense")["value"] == 480 and metric(r, f"{stated}_expense")["estimate"] is False
+    assert "S&M for 2025" in failed(r, other)
+    trend = {x["metric"]: {v["period"]: v for v in x["values"]} for x in r["role_metrics"]["pnl_trend"]["rows"]}
+    assert "2025" not in trend["sm_share"] and not trend[f"{stated}_share"]["2025"]["estimate"]
+    assert "2025" not in trend[other.replace("_expense", "_share")]
