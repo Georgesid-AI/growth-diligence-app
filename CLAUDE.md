@@ -155,6 +155,9 @@
     collection, saved mappings and stored files included.
 23. Any change to engine output fields changes backend/schemas/metrics.py and the contract test
     (backend/tests/test_interface_contracts.py) in the same PR. Spec: docs/specs/interface-contracts.md.
+    Any change to what the engine writes into `role_metrics` (a value, a reason string, a cell, a note, a flag) bumps `CONTRACT_VERSION` and
+    regenerates `backend/tests/golden/role_metrics_<contract>.json` in the same PR (`backend/tests/test_role_metrics_golden.py`, command in its
+    docstring); the test fails with "stored results changed" when the output differs and the version is unchanged.
 24. A PR is not ready for review until the checks (.github/workflows/tests.yml) are green.
 
 ## Testing
