@@ -640,6 +640,8 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
             gap = f"difference {fmt.fmt_currency(r['gap'], ccy)}" + (f" ({fmt.fmt_pct(r['gap_pct'])})" if r.get("gap_pct") is not None else "")
             out.append(f"Revenue {r['period']} differs across the sources: {sources}; {gap}"
                        f"{notes.source('Revenue reconciliation', {'rows': sources})}")
+    out += [f"{f['text'][:1].upper()}{f['text'][1:]}{notes.add('mapping, ' + f['file'] + ' · ' + f['sheet']) if f.get('file') else ''}"
+            for f in (results.get("role_metrics") or {}).get("mapping_flags") or ()]
     reconciled = [r for r in recon if r["status"] in ("differs", "agrees_rounded")]
     out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation')}"
             for r in recon if r["status"] == "agrees_rounded"]

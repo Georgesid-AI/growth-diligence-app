@@ -421,7 +421,8 @@ def check_variance(smap: Dict, row: Dict, sheet: SheetCells) -> Dict:
 
 
 def check_parts(smap: Dict, parent: int, children: List[Dict], parent_row: Optional[Dict], sheet: SheetCells) -> Dict:
-    """Parts that name a row as their total sum to it, column by column; the first column that does not is the reason."""
+    """Parts that name a row as their total sum to it, column by column; the first column that does not is the reason. Absolute values are compared:
+    a total with the opposite sign to its parts (costs printed as negatives under positive parts) is not a disagreement."""
     key = f"parts:{smap['sheet']}:{parent}"
     base = {"key": key, "kind": "parts", "sheet": smap["sheet"], "cell": (parent_row or {}).get("cells"), "row": parent}
     part_rows = [c["row"] for c in children]
@@ -432,7 +433,7 @@ def check_parts(smap: Dict, parent: int, children: List[Dict], parent_row: Optio
             continue
         compared += 1
         total, parts = vals[-1], vals[:-1]
-        if abs(sum(parts) - total) > MONEY_TOLERANCE * abs(total) + EXACT:
+        if abs(abs(sum(parts)) - abs(total)) > MONEY_TOLERANCE * abs(total) + EXACT:
             return {**base, "outcome": REJECTED, "reason": R_PARTS.format(
                 refs=", ".join(ref_of(r, col) for r in part_rows), sum=shown(sum(parts)), ref=ref_of(parent, col), value=shown(total))}
     return {**base, "outcome": CONFIRMED if compared else CANNOT, "reason": None if compared else C_LAYOUT}

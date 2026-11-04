@@ -56,7 +56,6 @@ YEARLY_LABEL = "yearly"
 FORM = {"monthly": "month", "quarterly": "quarter", "yearly": "year"}
 DECK_METRICS = {"revenue": "revenue", "arr": "arr", "mrr": "mrr", "customers": "customers", "headcount": "headcount", "cash": "cash",
                 "ebitda": "ebitda"}      # a role's name in the deck reader's closed metric list
-RECONCILE_ROLES = ("revenue", "arr", "mrr", "customers", "ebitda", "cash", "headcount")
 RECONCILE_TOLERANCE = 0.005         # money within 0.5 %, as the cell checks (app/checks.py); a count exact
 CUMULATIVE = "cumulative_to_date"
 MONTHLY_ONLY_REASON = "needs a yearly P&L; the revenue file is monthly"
@@ -1098,24 +1097,60 @@ def precision_unit(precision: float) -> str:
     return _POWERS.get(int(round(precision)), fmt.fmt_number(precision))
 
 
+def _total_rows(table: List[Dict], role: str) -> Dict[Tuple, List[Dict]]:
+    """{(file, sheet): [the rows of the role that are a sheet's own figure]}: unsegmented rows with an actual series, minus a part row (its parent row
+    is mapped to the same role in the sheet and holds values). More than one row left means two rows of one role with no parent link."""
+    out: Dict[Tuple, List[Dict]] = {}
+    for rec in table:
+        if rec["role"] == role and rec["segment"] is None and rec["actual"]:
+            out.setdefault((rec["file"], rec["sheet"]), []).append(rec)
+    for key, rows in out.items():
+        numbers = {r["row"] for r in rows}
+        out[key] = [r for r in rows if r["parent"] not in numbers] or rows
+    return out
+
+
+def _best(rows: List[Dict], table: List[Dict]) -> Dict:
+    """The row a role is read from among a sheet's rows: the longer series, then file order (as `pick`)."""
+    return max(rows, key=lambda r: (len(r["actual"]), -table.index(r)))
+
+
+def mapping_flags(table: List[Dict]) -> List[Dict]:
+    """[{"role", "file", "sheet", "rows", "used_row", "text"}]: one flag for each sheet and role (cost roles are summed, so left out) that holds two or
+    more rows with no parent link: "two rows mapped as customers (rows 23, 24); the calculation uses row 23"."""
+    out = []
+    for role in dict.fromkeys(r["role"] for r in table):
+        if role in COST_ROLES or role == "forecast":
+            continue
+        for (file, sheet_), rows in _total_rows(table, role).items():
+            if len(rows) < 2:
+                continue
+            used = _best(rows, table)
+            numbers = sorted(r["row"] for r in rows)
+            count = {2: "two", 3: "three", 4: "four"}.get(len(numbers), str(len(numbers)))
+            out.append({"role": role, "file": file, "sheet": sheet_, "rows": numbers, "used_row": used["row"],
+                        "text": f"{count} rows mapped as {role} (rows {', '.join(str(n) for n in numbers)}); the calculation uses row {used['row']}"})
+    return out
+
+
 def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, currency: Optional[str] = None) -> List[Dict]:
-    """[{"metric", "period", "basis", "status", "gap", "gap_pct", "sources": [{"kind", "file", "where", "value"}]}] for every metric and period
-    that two or more sources state: a sheet row (as the file states it, or the sum of its months for a year), a deck figure. Sources on another
-    basis or in another currency are not compared. Actual only, to the as-of month."""
+    """[{"metric", "period", "basis", "status", "gap", "gap_pct", "sources": [{"kind", "file", "where", "value"}]}] for every year of revenue that
+    two or more sources state. Yearly revenue only (ARR, customers and the like are not reconciled). A source is a sheet of a file (its total row, or a
+    year of its monthly row summed) or a deck page, never a row: part rows and a second row of the same role are not separate sources.
+    Sources in another currency are not compared. Actual only, to the as-of month."""
     seen: Dict[Tuple[str, str], List[Dict]] = {}
 
     def add(metric, period, kind, file, where, value, basis, ccy, precision=0.0):
         seen.setdefault((metric, period), []).append({"kind": kind, "file": file, "where": where, "value": value, "basis": basis, "currency": ccy,
                                                       "precision": precision or 0.0})
-    for rec in table:
-        if rec["role"] not in RECONCILE_ROLES or rec["segment"] is not None:
-            continue
+    for rows in _total_rows(table, "revenue").values():
+        rec = _best(rows, table)
         for period, (value, cell) in rec["actual"].items():
             end = _end_month(period, fye)
-            if end is not None and end <= as_of:
-                add(rec["role"], period, "file", rec["file"], f"{rec['sheet']}!{cell}", value, _period_basis(period, rec["basis"], rec["granularity"]),
+            if re.fullmatch(r"\d{4}", period) and end is not None and end <= as_of:
+                add("revenue", period, "file", rec["file"], f"{rec['sheet']}!{cell}", value, _period_basis(period, rec["basis"], rec["granularity"]),
                     rec["currency"])
-        if rec["role"] == "revenue" and rec["granularity"] == "monthly" and rec["basis"] not in (CUMULATIVE, "last_12_months"):
+        if rec["granularity"] == "monthly" and rec["basis"] not in (CUMULATIVE, "last_12_months"):
             by_year: Dict[int, List] = {}
             for month, value, cell in _months(rec, "actual", as_of, fye):
                 year = month.year if fye == 12 else (month.year + 1 if month.month > fye else month.year)
@@ -1127,11 +1162,13 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
     chosen, also = _one_deck_figure_per_year(deck, as_of, fye)
     for fig in chosen:
         role, period = DECK_METRICS[fig["metric"]], fig["period"]
-        basis = "yearly" if re.fullmatch(r"\d{4}", period) else "monthly" if re.fullmatch(r"\d{4}-\d{2}", period) else "quarterly"
+        if role != "revenue" or not re.fullmatch(r"\d{4}", period):
+            continue
+        basis = "yearly"
         add(role, period, "deck", fig.get("file"), f"page {fig['page']}", fig["value"], basis, fig.get("currency"), fig.get("precision"))
     out = []
     for (metric, period), items in sorted(seen.items()):
-        if len(items) < 2 or len({i["kind"] + str(i["file"]) + i["where"] for i in items}) < 2:
+        if len(items) < 2 or len({(i["kind"], str(i["file"]), i["where"].rsplit("!", 1)[0]) for i in items}) < 2:
             continue
         if len({i["basis"] for i in items}) > 1:
             continue                    # a month and a year, a flow and a cumulative figure, are not the same figure
@@ -1146,8 +1183,8 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
         else:
             gap = max(values) - min(values)
             ref = max(abs(v) for v in values)
-            tolerance = 0 if metric in ("customers", "headcount") else RECONCILE_TOLERANCE
-            entry["gap"], entry["gap_pct"] = gap, (gap / ref if ref else None)
+            tolerance = RECONCILE_TOLERANCE
+            entry["gap"], entry["gap_pct"] = gap, (gap / ref if ref else None)       # over the largest value: never over zero, never over the smallest
             coarse = max(i["precision"] for i in items)
             if gap == 0:
                 entry["status"] = "agrees"
@@ -1213,7 +1250,8 @@ def compute(table: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: 
     by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye, deck), on_error, lambda e: [])
     trend = _guarded("pnl_trend", lambda: pnl_trend(table, as_of, fye), on_error, lambda e: None)
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
-                             "growth_by_year": by_year, "pnl_trend": trend},
+                             "growth_by_year": by_year, "pnl_trend": trend,
+                             "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: [])},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}
 
