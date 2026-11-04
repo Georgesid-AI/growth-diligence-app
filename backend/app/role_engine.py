@@ -165,18 +165,59 @@ NEGATIVE_COSTS = "costs shown as negative"
 PLAN_ONLY_NAMES = {"sales_marketing": "S&M", "rnd": "R&D", "ga": "G&A"}
 PLAN_ONLY = "{name} split only in plan years; actual years carry OPEX total only"
 SM_PLAN_ONLY = PLAN_ONLY.format(name="S&M")
+TOTAL_TOLERANCE = 0.01          # the total-row guard: a row within 1 % of the sum of the role's other rows is their total
+TOTAL_NOTE = "{n} rows summed to the total row; parts not counted twice"
 
 
 def _total(rec: Optional[Dict], key: str = "actual") -> float:
     return sum(v for v, _ in (rec[key].values() if rec else ()))
 
 
+def _counts(rec: Dict, role: str) -> bool:
+    """A row a role is summed from: any row of a cost role (a part row with no total row is summed, a part under a total is skipped by its
+    parent), an unsegmented row of any other role."""
+    return role in COST_ROLES or rec["segment"] is None
+
+
 def costs_negative(table: List[Dict], role: str, key: str = "actual") -> bool:
     """True when the cost rows of the role carry the opposite sign to revenue (a P&L that prints costs as negatives). Compared on the sums of
     the rows' cells of the series `key` (actual, or plan); without a revenue row a negative cost sum is read against a positive revenue."""
-    cost = sum(_total(r, key) for r in table if r["role"] == role and r["segment"] is None)
+    cost = sum(_total(r, key) for r in table if r["role"] == role and _counts(r, role))
     rev = _total(pick(table, "revenue", "yearly", key) or pick(table, "revenue", None, key), key)
     return cost < 0 if not rev else (cost < 0) != (rev < 0) and cost != 0
+
+
+def _total_row(rows: List[Dict], key: str) -> Optional[Dict]:
+    """The total-row guard, for 3 or more rows of a role: the one row whose value equals, in every period it holds, the sum of the other rows'
+    values of that period within TOTAL_TOLERANCE (a row of zeros is no total). None when no row or more than one row is that sum: the reader
+    left a total unlinked only when exactly one row adds up."""
+    if len(rows) < 3:
+        return None
+    found = []
+    for r in rows:
+        if not any(v for v, _ in r[key].values()):
+            continue
+        others = [sum(o[key][p][0] for o in rows if o is not r and p in o[key]) for p in r[key]]
+        if all(abs(v - total) <= TOTAL_TOLERANCE * abs(v) for (v, _), total in zip(r[key].values(), others)):
+            found.append(r)
+    return found[0] if len(found) == 1 else None
+
+
+def notes(*recs: Optional[Dict], names: Optional[Dict[str, str]] = None) -> List[str]:
+    """The method notes of the rows (the total-row guard's), once each; with `names` ({role: name}) each note is prefixed by its row's role name,
+    for a method text that reads more than one cost role."""
+    out: List[str] = []
+    for rec in recs:
+        if rec and rec.get("note"):
+            text = f"{names[rec['role']]}: {rec['note']}" if names and rec["role"] in names else rec["note"]
+            if text not in out:
+                out.append(text)
+    return out
+
+
+def with_notes(rule: str, *recs: Optional[Dict], names: Optional[Dict[str, str]] = None) -> str:
+    """The method text with the rows' notes after it, "; "-joined."""
+    return "; ".join([rule, *notes(*recs, names=names)])
 
 
 def cost_row(table: List[Dict], role: str, granularity: Optional[str] = None) -> Optional[Dict]:
@@ -187,38 +228,48 @@ def cost_row(table: List[Dict], role: str, granularity: Optional[str] = None) ->
 
 
 def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, many: bool = True, key: str = "actual") -> Optional[Dict]:
-    """One synthetic row for a role that the sheet spreads over several rows (sales and marketing as two lines): the total rows (no segment, no
-    parent row of the same role with a value in the series) of one sheet and granularity, added period by period; each summed cell cites every row's cell ("B6+B7").
+    """One synthetic row for a role that the sheet spreads over several rows (sales and marketing as two lines): every row mapped to a cost role
+    (any other role: its unsegmented rows) except a row whose parent row is mapped to the same role and holds a value in the series, of one sheet and
+    granularity, added period by period; part rows with no total row are summed; each summed cell cites every row's cell ("B6+B7").
     One row is returned as it is. A cost role is returned in absolute values when it carries the opposite sign to revenue. `key` is the series read:
-    "actual", or "plan" for the plan years."""
-    rows = [r for r in table if r["role"] == role and r[key] and r["segment"] is None
+    "actual", or "plan" for the plan years. The total-row guard (`_total_row`) runs before the parent rule, on every row of the role in the
+    series: among 3 or more rows of a cost role, a row that equals the sum of all the others within 1 % is their total, linked or not; the total
+    alone is read, and the row carries the `note` the method texts print."""
+    rows = [r for r in table if r["role"] == role and r[key] and _counts(r, role)
             and (granularity is None or r["granularity"] == granularity)]
     if not rows:
         return None
-    # A total and its parts are never both summed: a part is skipped only when its parent row holds a value in the series being summed. A
-    # plan-only total leaves its parts in the actual sum, a total with no series at all the same.
-    numbers = {(r["file"], r["sheet"], r["row"]) for r in table if r["role"] == role and r[key]}
-    rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers] or rows
     best = max(((r["file"], r["sheet"]) for r in rows), key=lambda k: sum(len(r[key]) for r in rows if (r["file"], r["sheet"]) == k))
     rows = [r for r in rows if (r["file"], r["sheet"]) == best]
+    # The total-row guard runs first, on every row of the role in the series, linked or not: a row that equals the sum of all the others is the
+    # total; its cell alone is cited and no part is counted twice. Without one, a total and its parts are still never both summed: a part is
+    # skipped when its parent row holds a value in the series being summed. A plan-only total leaves its parts in the actual sum, a total with
+    # no series at all the same.
+    note = None
+    total = _total_row(rows, key) if role in COST_ROLES else None
+    if total is not None:
+        note, rows = TOTAL_NOTE.format(n=len(rows) - 1), [total]
+    else:
+        numbers = {(r["file"], r["sheet"], r["row"]) for r in table if r["role"] == role and r[key]}
+        rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers] or rows
     if not many:
         rows = [max(rows, key=lambda r: len(r[key]))]
     negate = role in COST_ROLES and costs_negative(table, role, key)
     if len(rows) == 1 and not negate:
-        return rows[0]
+        return {**rows[0], "note": note} if note else rows[0]
     actual: Dict[str, Tuple[float, str]] = {}
     for period in sorted({p for r in rows for p in r[key]}):
         have = [r[key][period] for r in rows if period in r[key]]
         value = sum(v for v, _ in have)
         actual[period] = (abs(value) if negate else value, "+".join(c for _, c in have))
     return {**rows[0], key: actual, "label": None, "labels": [r.get("label") for r in rows if r.get("label")], "negated": negate,
-            "row": rows[0]["row"], "rows": [r["row"] for r in rows]}
+            "row": rows[0]["row"], "rows": [r["row"] for r in rows], "note": note}
 
 
 def plan_only_reason(table: List[Dict], role: str = "sales_marketing", period: Optional[str] = None) -> Optional[str]:
     """The reason for rows of a cost split (S&M, R&D, G&A) that exist and hold no actual value (in the period, when given): the split sits in plan
     years only. None when no such row exists, or one holds an actual value."""
-    rows = [r for r in table if r["role"] == role and r["segment"] is None and (r["actual"] or r["plan"])]
+    rows = [r for r in table if r["role"] == role and _counts(r, role) and (r["actual"] or r["plan"])]
     if not rows or any(period in r["actual"] if period else r["actual"] for r in rows):
         return None
     return PLAN_ONLY.format(name=PLAN_ONLY_NAMES[role])
@@ -548,12 +599,13 @@ def _cell_of(rec: Dict, cell: str, home: Dict) -> str:
 
 def plan_view(table: List[Dict]) -> List[Dict]:
     """The table as the plan reads it: every row that has plan cells, and each `forecast` row of a line (revenue, cost of revenue, S&M, R&D, G&A,
-    OPEX, EBITDA) again under the role of its line with its values as the plan series (a forecast row keeps them in either series)."""
+    OPEX, EBITDA) again under the role of its line with its values as the plan series (a forecast row keeps them in either series). A forecast
+    row with a segment label enters like any other plan row: a cost line's parts are summed by sum_role, any other line's are left out by pick."""
     out = [r for r in table if r["plan"]]
     for r in table:
         role = FORECAST_LINES.get(r["metric"]) if r["role"] == "forecast" else None
         values = r["plan"] or r["actual"]
-        if role and values and r["segment"] is None:
+        if role and values:
             out.append({**r, "role": role, "plan": values})
     return out
 
@@ -596,7 +648,8 @@ def plan_split(table: List[Dict], view: List[Dict]):
         shown = ", ".join(f"{py} {fmt.fmt_pct(v)}" for py, v in r_by_year.items())
         return None, (f"check (b) failed – the R&D share of R&D + G&A moves {fmt.fmt_number(spread * 100)} points across the plan years "
                       f"({shown}; limit 10 points)")
-    return {"r": rd_sum / (rd_sum + ga_sum), "rd": rd_sum, "ga": ga_sum, "years": years, "cells": cells, "home": home}, None
+    return {"r": rd_sum / (rd_sum + ga_sum), "rd": rd_sum, "ga": ga_sum, "years": years, "cells": cells, "home": home,
+            "notes": notes(*parts.values(), names={**PLAN_ONLY_NAMES, "opex": "OPEX"})}, None
 
 
 def _actual_years(rec: Dict, as_of, fye) -> List[str]:
@@ -621,7 +674,7 @@ def split_expense(metric: str, role: str, table, as_of, fye) -> Dict:
         value, cell = own["actual"][year]
         return _entry(metric, period=year, basis="yearly", unit="money", value=value, label=YEARLY_LABEL,
                       detail=NEGATIVE_COSTS if own.get("negated") else None,
-                      source=_source(own, cell.split("+"), f"{name} expense = the {role} row of the fiscal year"))
+                      source=_source(own, cell.split("+"), with_notes(f"{name} expense = the {role} row of the fiscal year", own)))
 
     def no(reason: str, needs=None) -> Dict:
         return _entry(metric, status="needs_row", reason=NO_ESTIMATE + reason, needs=_flat(needs or (role,)))
@@ -647,6 +700,7 @@ def split_expense(metric: str, role: str, table, as_of, fye) -> Dict:
             f"× {name} share of R&D + G&A r = {fmt.fmt_pct(r)}{'' if role == 'rnd' else ' (G&A: 1 − r)'}; r from the plan years "
             f"{', '.join(split['years'])} (R&D {_n(split['rd'])}, G&A {_n(split['ga'])}) [{', '.join(split['cells'])}]. "
             f"Checks passed: (a) S&M + R&D + G&A = OPEX within 1% in every plan year; (b) r within 10 points across the plan years.")
+    rule = "; ".join([rule, *dict.fromkeys([*notes(opex, sm, names={**PLAN_ONLY_NAMES, "opex": "OPEX"}), *split["notes"]])])
     src = {"file": opex["file"], "sheet": opex["sheet"], "row": opex["row"], "cells": [*op_cells, *sm_cells, *split["cells"]], "rule": rule}
     return _entry(metric, period=year, basis="yearly", unit="money", value=non_sm * share_, label=ESTIMATE_LABEL, estimate=True,
                   reason=plan_only_reason(table, role) or f"{name} split not in the actual years", needs=[role],
@@ -766,7 +820,7 @@ def share(metric: str, role: str, table, as_of, fye) -> Dict:
     label = YEARLY_LABEL if cost["granularity"] == "yearly" else None
     return _entry(metric, period=next(p for p in cost["actual"] if _end_month(p, fye) == m), basis=cost["granularity"], unit="rate", value=value,
                   label=label, detail=NEGATIVE_COSTS if cost.get("negated") else None,
-                  source=_source(cost, [*cv[1].split("+"), rv[1]], f"{NAMES[metric]} = the {role} row ÷ the revenue row in the same period"))
+                  source=_source(cost, [*cv[1].split("+"), rv[1]], with_notes(f"{NAMES[metric]} = the {role} row ÷ the revenue row in the same period", cost)))
 
 
 def _fiscal_year(month: pd.Period, fye: int) -> int:
@@ -1013,10 +1067,19 @@ def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Di
         else:
             role_metrics["metrics"].append(entry)
 
-    def src(rule: str) -> Dict:
+    def src(rule: str, *roles: str) -> Dict:
+        """The source of a yearly entry: the revenue cells and, for each cost role named, every cell summed into its value for the year."""
         s = last["source"]
+        cells = list(last.get("revenue_cells") or [])
+        home = {"file": s.get("file"), "sheet": s.get("sheet")}
+        recs = []
+        for role in roles:
+            rec = cost_row(table, role, "yearly")
+            if rec is not None and last["period"] in rec["actual"]:
+                cells += [_cell_of(rec, c, home) for c in rec["actual"][last["period"]][1].split("+")]
+                recs.append(rec)
         return {"file": s.get("file"), "sheet": s.get("sheet"), "row": (s.get("row_numbers") or [0])[0] if s.get("row_numbers") else 0,
-                "cells": list(last.get("revenue_cells") or []), "rule": rule}
+                "cells": cells, "rule": with_notes(rule, *recs, names={**PLAN_ONLY_NAMES, "cost_of_revenue": "Cost of revenue"} if len(roles) > 1 else None)}
     if last is None:
         for metric in ("yearly_revenue", "gross_margin", "yearly_cac_payback"):
             put(metric, _missing(metric))
@@ -1051,11 +1114,11 @@ def fill_yearly(role_metrics: Dict, table: List[Dict], yearly_basis: Optional[Di
         put("yearly_cac_payback", _entry("yearly_cac_payback", period=period, basis="yearly", unit="months", value=last["cac_payback_months"],
                                          label=last.get("cac_payback_label") or "yearly, revenue-based",
                                          detail=note("cost_of_revenue", "sales_marketing"),
-                                         source=src("CAC payback = 12 × S&M ÷ (new revenue × gross margin), yearly")))
+                                         source=src("CAC payback = 12 × S&M ÷ (new revenue × gross margin), yearly", "sales_marketing", "cost_of_revenue")))
     sm = last.get("sm_pct_revenue")
     if sm is not None and "sm_share" in by_name and role_metrics["metrics"][by_name["sm_share"]]["status"] != "computed":
         put("sm_share", _entry("sm_share", period=period, basis="yearly", unit="rate", value=sm, label=YEARLY_LABEL, detail=note("sales_marketing"),
-                               source=src("S&M share = S&M ÷ revenue")))
+                               source=src("S&M share = S&M ÷ revenue", "sales_marketing")))
     elif sm is None and "sm_share" in by_name and role_metrics["metrics"][by_name["sm_share"]]["status"] != "computed":
         reason = sm_reason(table, period)
         if reason:
@@ -1080,6 +1143,16 @@ def _margin_note(table: List[Dict], period: str, revenue: float, computed: float
     return None
 
 
+YEARLY_REQUESTS = {
+    "sm_share": "a P&L with S&M rows (or an S&M total row) in the actual years",
+    "yearly_cac_payback": "a P&L with S&M rows (or an S&M total row) in the actual years, and revenue and cost of revenue for the year before",
+    "rnd_share": "a P&L with an R&D row in the actual years",
+    "ga_share": "a P&L with a G&A row in the actual years",
+    "rnd_expense": "a P&L with the R&D/G&A split in the actual years",
+    "ga_expense": "a P&L with the R&D/G&A split in the actual years",
+}
+
+
 def missing_reasons(role_metrics: Optional[Dict]) -> List[Dict]:
     """[{"metric": name, "reason", "needs": [roles]}]: one line per metric the map could not give, with the one reason its entry carries. The
     report page lists them at the top and the Data gaps table lists the same lines, so the text is the same in both. Ending ARR is the legacy
@@ -1089,5 +1162,5 @@ def missing_reasons(role_metrics: Optional[Dict]) -> List[Dict]:
         if (m["status"] == "computed" and not m.get("estimate")) or m["metric"] in ("ending_arr", "reconciliation") or m["metric"] in seen:
             continue            # an estimate stays on the list: the data request for the actual split does not go away with it
         seen.add(m["metric"])
-        out.append({"metric": m["name"], "reason": m["reason"], "needs": m["needs"]})
+        out.append({"metric": m["name"], "key": m["metric"], "reason": m["reason"], "needs": m["needs"]})
     return out

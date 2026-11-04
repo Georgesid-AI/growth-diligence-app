@@ -950,7 +950,7 @@ def _one_line_per_file(gaps: List[dict]) -> List[str]:
     for g in gaps:
         roles += [r for r in g.get("request_roles") or () if r not in roles]
         text = str(g.get("requested") or "").rstrip(".")
-        if text and not g.get("request_roles") and text not in others:
+        if text and not g.get("request_roles") and not g.get("yearly_request") and text not in others:      # a yearly P&L row's own wording is the table's
             others.append(text)
     line = report_text.request_line(roles)
     return [*([line] if line else []), *others]
