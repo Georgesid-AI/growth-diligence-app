@@ -406,7 +406,13 @@ async def apply_reply(db, audit_id: str, deck_id: str, deck: Dict, run: RunState
         run.reviewed.remove(c)
     if stale:
         run.known = _python_cells(run.reviewed)
+    # A cell whose reading the analyst chose (a "reading" correction applied, docs/design/reading-consistency.md): the chosen row stands,
+    # whichever reading it took, and this reply's read of the cell is not listed again beside it (a Re-read, a Run audit, a new upload).
+    chosen = {_cell_key(c) for c in run.reviewed if c.get("structure_key") == key
+              and any(e.get("field") == "reading" and e.get("state") == "applied" for e in c.get("corrections") or [])}
     for candidate, page in rows:
+        if candidate["cell"] is not None and _cell_key(candidate) in chosen:
+            continue
         if candidate["cell"] is not None and \
                 value_match(candidate["value"], candidate["value_high"], run.known.get(_cell_key(candidate), ())):
             continue                    # this cell already lists the value, or a range holding it

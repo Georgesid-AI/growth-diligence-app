@@ -598,8 +598,8 @@ AWAITING = "{n} {figures} await confirmation"
 
 
 def awaiting_text(results: Optional[dict]) -> Optional[str]:
-    """"N figures await confirmation" when the two reads of a file or a page disagree on figures a rating reads (role_metrics.awaiting_confirmation),
-    else None. The ratings use confirmed or agreed figures only (docs/design/reading-consistency.md)."""
+    """"N figures await confirmation" when the two reads of a file or a page disagree on a row or a figure (role_metrics.awaiting_confirmation,
+    every one counted whatever its role), else None. The ratings use confirmed or agreed figures only (docs/design/reading-consistency.md)."""
     n = (((results or {}).get("role_metrics") or {}).get("awaiting_confirmation") or {}).get("count") or 0
     return (AWAITING.format(n=n, figures="figures") if n != 1 else "1 figure awaits confirmation") if n else None
 

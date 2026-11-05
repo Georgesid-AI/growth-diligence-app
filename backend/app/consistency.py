@@ -99,6 +99,16 @@ def pending(consistency: Optional[Dict], overrides: List[Dict]) -> List[Dict]:
     return [i for i in (consistency or {}).get("items") or [] if i["key"] not in done]
 
 
+def held_rows(file_map: Dict, waiting: List[Dict]) -> List[str]:
+    """The "sheet:row" keys of the rows the calculations hold out while an item waits (review of commit 2, 2026-11-05): the row of a row item,
+    and every row of a sheet with a pending sheet-level item (the sheet only one read gives, or a layout field the reads disagree on: the
+    rows' series and the as-of month are read under that layout, so they are in doubt with it)."""
+    sheets = {i["sheet"] for i in waiting if i["kind"] in ("sheet", "field")}
+    out = [f"{i['sheet']}:{i['row']}" for i in waiting if i["kind"] == "row"]
+    out += [f"{s['sheet']}:{r['row']}" for s in file_map.get("sheets") or [] if s["sheet"] in sheets for r in s.get("rows") or []]
+    return list(dict.fromkeys(out))
+
+
 def _sheet_index(file_map: Dict, name: str) -> Optional[int]:
     return next((i for i, s in enumerate(file_map.get("sheets") or []) if s["sheet"] == name), None)
 
@@ -127,10 +137,13 @@ async def decide(db, audit_id: str, file_hash: str, key: str, pick: str, who: st
     si = _sheet_index(effective, item["sheet"])
     why = WHY_SECOND if pick == "second" else WHY
     if item["kind"] == "sheet":
+        # Picking the second reading of a sheet only the first gave removes the sheet; of a sheet only the second gave adds it.
         path, old = "sheets", [s["sheet"] for s in effective.get("sheets") or []]
         new = list(effective.get("sheets") or [])
         if pick == "second" and si is None:
             new.append(next(s for s in second["file_map"]["sheets"] if s["sheet"] == item["sheet"]))
+        elif pick == "second" and item["second"] is None:
+            new = [s for s in new if s["sheet"] != item["sheet"]]
     elif si is None:
         raise DecisionRefused("The sheet is not in the reading.")
     elif item["kind"] == "field":

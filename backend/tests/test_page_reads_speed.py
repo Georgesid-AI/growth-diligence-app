@@ -43,32 +43,45 @@ def page_of(user_payload):
 
 
 class Gauge(t.FakeAdapter):
-    """Counts the calls in flight at once; every call holds for `hold` seconds. `limit_at` calls answer 429 once (the rate limit)."""
+    """Counts the calls in flight at once; every call holds for `hold` seconds. `rate_limit_on` pages answer 429 once (the rate limit).
+    With `first_hold`, the calls started before the limit is lowered hold that long instead, except the one that answers 429: it answers
+    after `hold`, so the gateway lowers the limit (before it retries the page) while every other call of the first wave is still running,
+    and no worker picks a page in between. The retry's arrival marks the moment the limit holds (`limited`): `after_limit` is, for each
+    call started from then on, the number of such calls in flight at its start, the call itself included; the calls started before finish
+    beside them and are not counted. The count then depends on the pipeline's workers, not on the runner's clock (flaky under the parallel
+    suite, fixed 2026-11-05)."""
 
-    def __init__(self, hold=0.05, rate_limit_on=(), slow=(), failing=()):
+    def __init__(self, hold=0.05, rate_limit_on=(), slow=(), failing=(), first_hold=None):
         super().__init__(replies=[EMPTY])
         self.hold, self.rate_limit_on, self.slow, self.failing = hold, set(rate_limit_on), set(slow), set(failing)
-        self.running = self.peak = 0
+        self.first_hold = hold if first_hold is None else first_hold
+        self.running = self.peak = self.running_after = 0
         self.seen = []
         self.after_limit = []
-        self.limited = False
+        self.rate_limited = False          # the 429 was answered
+        self.limited = False               # the page it was answered on came back: the limit is lowered
         self.lock = threading.Lock()
 
     def complete(self, *, model, system, user_payload, max_tokens, json_schema, cache_system=False, images=None):
         page = page_of(user_payload)
         with self.lock:
+            if page in self.rate_limit_on and self.rate_limited and page in self.seen:
+                self.limited = True
+            after = self.limited
             self.running += 1
             self.peak = max(self.peak, self.running)
             self.seen.append(page)
-            if self.limited:
-                self.after_limit.append(self.running)
+            if after:
+                self.running_after += 1
+                self.after_limit.append(self.running_after)
         try:
             if page in self.slow:
                 time.sleep(self.slow_for)
-            time.sleep(self.hold)
-            if page in self.rate_limit_on and not self.limited:
-                self.limited = True
+            if page in self.rate_limit_on and not self.rate_limited:
+                time.sleep(self.hold)
+                self.rate_limited = True
                 raise gateway.RetryableProviderError("429", 429, "rate_limit_error")
+            time.sleep(self.hold if after else self.first_hold)
             if page in self.failing:
                 raise gateway.GatewayError("provider_error", "no", 500, "api_error")
             return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
@@ -76,6 +89,8 @@ class Gauge(t.FakeAdapter):
         finally:
             with self.lock:
                 self.running -= 1
+                if after:
+                    self.running_after -= 1
 
     slow_for = 0.6
 
@@ -108,12 +123,14 @@ def test_one_by_one_is_still_what_the_scripts_get_by_default():
 
 def test_after_a_rate_limit_error_four_pages_at_a_time_for_the_rest_of_the_deck():
     parsed = many_pages(24)
-    adapter = Gauge(rate_limit_on={3})
+    # The first wave holds 0.5 s, ten times the 429 and its retry: the seven others are still running when the limit is lowered (the
+    # retry makes the eighth in flight), and no worker picks a page before it is.
+    adapter = Gauge(rate_limit_on={3}, first_hold=0.5)
     reads = read(_page_db(parsed), parsed, adapter, parallel=pipeline.PARALLEL_PAGES)
     assert pipeline.PARALLEL_AFTER_RATE_LIMIT == 4 and adapter.limited and adapter.peak == 8, "eight at first"
-    # The calls already running when the 429 was seen finish (up to eight beside the first ones after it); the last eight calls of the deck
-    # start long after, and run beside at most 3 others.
-    assert max(adapter.after_limit[-8:]) <= 4, "for the rest of the deck, never more than four at once"
+    # Every call started once the retried page came back was started under the lowered limit: the calls already running finish beside
+    # them, and never more than four of the new ones run at once, whatever the runner's clock.
+    assert len(adapter.after_limit) >= 8 and max(adapter.after_limit) <= 4, "for the rest of the deck, never more than four at once"
     assert all(r.status == "read" for _, r in reads), "the 429 is retried by the gateway; every page is read"
 
 

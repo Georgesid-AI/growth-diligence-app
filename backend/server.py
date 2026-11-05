@@ -2653,14 +2653,15 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
         reading = await db[readings_mod.READINGS].find_one({"key": check.get("reading_key")}, {"_id": 0})
         if not reading:
             continue
-        file_map = readings_mod.effective(reading["file_map"], await readings_mod.overrides_for(db, audit_id, reading["key"]))
+        overrides = await readings_mod.overrides_for(db, audit_id, reading["key"])
+        file_map = readings_mod.effective(reading["file_map"], overrides)
         items = [i for i in check.get("items") or [] if str(i.get("key", "")).startswith("row:")]
-        waiting = consistency_mod.pending(check.get("consistency"), await readings_mod.overrides_for(db, audit_id, reading["key"]))
+        waiting = consistency_mod.pending(check.get("consistency"), overrides)
         labels = {f"{sh['sheet']}:{ln['row']}": ln.get("label") for sh in check.get("lines") or [] for ln in sh.get("lines") or []}
         files.append({"file": check.get("file"), "file_hash": check.get("file_hash"), "file_map": file_map, "labels": labels,
                       "rejected": [i["key"] for i in items if i["outcome"] == checks_mod.REJECTED],
                       "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT],
-                      "uncertain": [f"{i['sheet']}:{i['row']}" for i in waiting if i["kind"] == "row"]})
+                      "uncertain": consistency_mod.held_rows(file_map, waiting)})
     deck = [{**f, "file": d["file"], "page": f["source"]["page"]} for d in await deck_figures.checked(db, audit_id) for f in d["figures"]
             if f["outcome"] != checks_mod.REJECTED]
     # "unread": mapped rows with no series, for the report text only (report_text); the engine reads "table" alone

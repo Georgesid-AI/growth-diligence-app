@@ -389,3 +389,77 @@ def test_every_uncertain_row_and_figure_counts_whatever_its_role_or_metric():
     assert rows == {"count": 1, "rows": 1, "figures": 0}, "a cash row is no role a rating reads, and still counts"
     deck = [{"metric": "ebitda", "period": "2025", "value": 5.0, "uncertain": True, "file": "d", "page": 1}]
     assert run(held_report(held=()), as_of="2026-06", deck=deck)["role_metrics"]["awaiting_confirmation"] == {"count": 1, "rows": 0, "figures": 1}
+
+
+# ---------------------------------------------------------------------------
+# Review of commit 2 (2026-11-05): a sheet-level item holds the sheet's rows; picking the second read of a sheet it lacks removes the sheet;
+# a confirmed deck reading survives a Re-read of the deck
+# ---------------------------------------------------------------------------
+def second_without_the_sheet():
+    return {**good_map(), "figures": [], "sheets": []}
+
+
+def test_the_rows_of_a_sheet_only_the_first_read_gives_are_held_out_of_the_engine_until_the_sheet_is_confirmed(flow):
+    flow.state["adapter"] = TwoReads(good_map(), second_without_the_sheet())
+    upload(flow, MONTHLY, monthly())
+    item, = checks_doc(flow)["consistency"]["items"]
+    assert item["kind"] == "sheet" and item["second"] is None
+    inputs = asyncio.run(server._role_inputs(AUDIT, flow.db["audits"].docs[0]))
+    assert [r["uncertain"] for r in inputs["table"] if r["role"] == "revenue"] == [True], "a row the second read did not give is uncertain"
+    assert role_engine.awaiting_confirmation(inputs["table"], [])["rows"] == 1
+    assert decide(flow, item["key"], "first").status_code == 200
+    inputs = asyncio.run(server._role_inputs(AUDIT, flow.db["audits"].docs[0]))
+    assert [r["uncertain"] for r in inputs["table"] if r["role"] == "revenue"] == [False]
+
+
+def test_the_rows_of_a_sheet_whose_layout_the_reads_disagree_on_are_held_until_the_layout_is_confirmed(flow):
+    # The last actual column: the as-of month and the actual/plan split come from it, and a difference flags no row of its own.
+    boundary = {"column": "F", "period": "2025-05", "evidence": []}
+    flow.state["adapter"] = TwoReads(good_map(), {**good_map(), "sheets": [{**good_map()["sheets"][0], "last_actual": boundary}]})
+    upload(flow, MONTHLY, monthly())
+    item, = checks_doc(flow)["consistency"]["items"]
+    assert item["kind"] == "field" and item["name"] == "last_actual"
+    inputs = asyncio.run(server._role_inputs(AUDIT, flow.db["audits"].docs[0]))
+    assert [r["uncertain"] for r in inputs["table"] if r["role"] == "revenue"] == [True], "the row's series and the as-of month are read under the layout"
+    assert decide(flow, item["key"], "first").status_code == 200
+    inputs = asyncio.run(server._role_inputs(AUDIT, flow.db["audits"].docs[0]))
+    assert [r["uncertain"] for r in inputs["table"] if r["role"] == "revenue"] == [False]
+
+
+def test_picking_the_second_reading_of_a_sheet_the_second_read_does_not_give_removes_the_sheet(flow):
+    flow.state["adapter"] = TwoReads(good_map(), second_without_the_sheet())
+    upload(flow, MONTHLY, monthly())
+    item, = checks_doc(flow)["consistency"]["items"]
+    assert decide(flow, item["key"], "second").status_code == 200
+    stored = flow.db[readings.READINGS].docs[0]
+    effective = readings.effective(stored["file_map"], asyncio.run(readings.overrides_for(flow.db, AUDIT)))
+    assert effective["sheets"] == [], "the second reading: no such sheet"
+    assert len(stored["file_map"]["sheets"]) == 1, "the stored reading is never edited"
+    assert register(flow)["files"][0]["consistency"]["uncertain"] == []
+
+
+def test_a_confirmed_deck_reading_survives_a_re_read_of_the_deck(monkeypatch, second_page_read):
+    from app import structures
+    db, adapter = read_deck(monkeypatch, [FIRST, DIFFERENT])
+    monkeypatch.setattr(server, "db", db)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    revenue = next(r for r in rows_of(db) if r["claim_type"] == "revenue")
+    got = client.post(f"/api/audits/{DECK_AUDIT}/decks/candidates/{revenue['id']}/correction",
+                      json={"index": len(revenue["corrections"]) - 1, "action": "choose", "option": 1})
+    assert got.status_code == 200 and got.json()["value"] == 160000 and got.json()["status"] == "approved"
+    # Re-read: both stored reads are served, no call is made, and the analyst's choice stands as the one revenue row.
+    asyncio.run(structures.process_deck(db, DECK_AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert adapter.calls == 2, "both reads of the page are stored: nothing is read again"
+    again = [r for r in rows_of(db) if r["claim_type"] == "revenue"]
+    assert [(r["value"], r["status"], checker.READING_UNCERTAIN in r["flags"]) for r in again] == [(160000, "approved", False)], \
+        "the uncertain card does not come back beside the confirmed figure"
+    margin = [r for r in rows_of(db) if r["claim_type"] == "gross_margin"]
+    assert [checker.READING_UNCERTAIN in r["flags"] for r in margin] == [True], "what was not chosen still waits"
+    # Undo, then Re-read: the card comes back once, with both readings, and nothing beside it.
+    kept, = again
+    undone = client.post(f"/api/audits/{DECK_AUDIT}/decks/candidates/{kept['id']}/correction", json={"index": len(kept["corrections"]) - 1, "action": "undo"})
+    assert undone.status_code == 200 and undone.json()["status"] == "pending"
+    asyncio.run(structures.process_deck(db, DECK_AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    back = [r for r in rows_of(db) if r["claim_type"] == "revenue"]
+    assert [(r["value"], r["status"], checker.READING_UNCERTAIN in r["flags"]) for r in back] == [(150000, "pending", True)]
+    assert [o["set"]["value"] for o in back[0]["corrections"][-1]["options"]] == [150000, 160000] and adapter.calls == 2
