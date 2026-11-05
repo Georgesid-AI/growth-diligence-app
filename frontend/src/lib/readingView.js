@@ -222,8 +222,18 @@ export function rowsText(item) {
   return `rows ${parts.join(", ")}`;
 }
 
-const rowValue = (c, f) => {
-  if (f === "series" || f === "plan_series") return c.periods != null ? `${c.periods} periods` : "different values";
+const SERIES = ["series", "plan_series"];
+const figure = (v) => (v == null ? "none" : fmtCount(v));
+
+/** "2021-03: 12,000 / 12,500 · 3 of 30 periods differ": the first period where the two reads differ with both values, and how many differ. */
+export function seriesDiffText(d) {
+  return `${d.period}: ${figure(d.first)} / ${figure(d.second)} · ${d.differing} of ${d.total} period${d.total === 1 ? "" : "s"} differ`;
+}
+
+const rowValue = (item, c, f, side) => {
+  const d = SERIES.includes(f) ? item.series_diff?.[f] : null;
+  if (d) return `${d.period}: ${figure(d[side])}`;
+  if (SERIES.includes(f)) return c.periods != null ? `${c.periods} periods` : "different values";
   return c[f] ?? "none";
 };
 
@@ -234,12 +244,14 @@ export function readingsText(item, side) {
   if (item.kind !== "row") return c == null ? "not in this reading" : String(c);
   if (!c) return "not in this reading";
   if ((item.fields || []).includes("row")) return [c.role, c.metric, c.cells].filter(Boolean).join(" · ");
-  return (item.fields || []).map((f) => `${fieldWord(f)} ${rowValue(c, f)}`).join(" · ");
+  return (item.fields || []).map((f) => `${fieldWord(f)} ${rowValue(item, c, f, side)}`).join(" · ");
 }
 
 /** What differs, in plain words: "role, parent row". */
 export function differsText(item) {
-  if (item.kind === "row" || item.kind === "figure") return (item.fields || []).map(fieldWord).join(", ");
+  if (item.kind === "row" || item.kind === "figure") {
+    return (item.fields || []).map((f) => (item.series_diff?.[f] ? `${fieldWord(f)} (${seriesDiffText(item.series_diff[f])})` : fieldWord(f))).join(", ");
+  }
   return item.kind === "field" ? item.field : "sheet";
 }
 

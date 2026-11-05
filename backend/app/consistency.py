@@ -12,6 +12,7 @@ The analyst picks one candidate: a dated override record (`readings.add_override
 edited. An item is pending until an override of its key exists. No cell value of the file is read here beyond the series the readings already hold.
 """
 import json
+import re
 from typing import Dict, List, Optional
 
 from . import readings
@@ -28,6 +29,41 @@ ROW_FIELDS = ("role", "metric", "series", "plan_series", "parent_row", "unit", "
 
 def _segment_flag(row: Dict) -> bool:
     return bool((row.get("segment") or "").strip())
+
+
+SERIES_FIELDS = ("series", "plan_series")
+REL_TOLERANCE, ABS_TOLERANCE = 0.005, 1.0       # two values are equal within 0.5% or 1 unit (George, 2026-11-05)
+
+
+def _period(p) -> str:
+    """A period in one form: "2021-3" is "2021-03" (a formatting difference is none)."""
+    text = str(p).strip()
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})", text)
+    return f"{m.group(1)}-{int(m.group(2)):02d}" if m else text
+
+
+def _same_value(a, b) -> bool:
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        x, y = float(a), float(b)
+    except (TypeError, ValueError):
+        return str(a).strip() == str(b).strip()
+    gap = abs(x - y)
+    return gap <= ABS_TOLERANCE or gap <= REL_TOLERANCE * max(abs(x), abs(y))
+
+
+def series_diff(first: Optional[Dict], second: Optional[Dict]) -> Optional[Dict]:
+    """None when two series are equal (every period matches, every value within the tolerance); else the first period (in time) where they
+    differ with both values (None where a read lacks the period), the number of periods that differ and the number of periods in both."""
+    def table(s):
+        return {_period(p): v for p, v in zip((s or {}).get("periods") or [], (s or {}).get("values") or [])}
+    a, b = table(first), table(second)
+    periods = sorted({*a, *b})
+    bad = [p for p in periods if p not in a or p not in b or not _same_value(a[p], b[p])]
+    if not bad:
+        return None
+    return {"period": bad[0], "first": a.get(bad[0]), "second": b.get(bad[0]), "differing": len(bad), "total": len(periods)}
 
 
 def _signature(row: Dict) -> Dict:
@@ -84,15 +120,18 @@ def compare(first: Dict, second: Dict) -> List[Dict]:
             ra, rb = rows_a.get(number), rows_b.get(number)
             if ra is not None and rb is not None:
                 sa, sb = _signature(ra), _signature(rb)
-                if sa == sb:
+                diffs = {f: d for f in SERIES_FIELDS if (d := series_diff(sa[f], sb[f]))}
+                differing = [f for f in ROW_FIELDS if (f in diffs if f in SERIES_FIELDS else sa[f] != sb[f])]
+                if not differing:
                     continue
-                differing = [f for f in ROW_FIELDS if sa[f] != sb[f]]
             else:
-                differing = ["row"]
+                differing, diffs = ["row"], {}
             item = {"key": row_key(name, number), "kind": "row", "sheet": name, "row": number, "rows": [number], "fields": differing,
                     "first": row_view(ra), "second": row_view(rb)}
+            if diffs:
+                item["series_diff"] = diffs
             # Rows of one sheet with identical candidate pairs are one item with one pick (second pass, A5); the position of a row (its cells) is no part of the pair.
-            same = json.dumps([differing, _pair(item["first"]), _pair(item["second"])], sort_keys=True, default=str)
+            same = json.dumps([differing, _pair(item["first"]), _pair(item["second"]), diffs], sort_keys=True, default=str)
             if same in groups:
                 groups[same]["rows"].append(number)
             else:
