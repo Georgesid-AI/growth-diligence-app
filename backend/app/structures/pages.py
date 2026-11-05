@@ -21,6 +21,7 @@ numbers and cell ids), the checked items without any text, the batch's metadata;
 """
 import asyncio
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
@@ -57,6 +58,12 @@ def sendable_pages(grids: List[Dict]) -> List[Dict]:
     return out
 
 
+def second_read_enabled() -> bool:
+    """Whether each page is read twice (the consistency read, docs/design/reading-consistency.md). On by default; PAGE_SECOND_READ=0 turns the
+    second read off for a deployment that must hold the page-read cost down. The tests of the single read switch it off (tests/conftest.py)."""
+    return os.environ.get("PAGE_SECOND_READ", "1").strip() != "0"
+
+
 def batches(grids: List[Dict], per_call: int = PAGES_PER_CALL) -> List[List[Dict]]:
     """The sendable pages in consecutive groups of at most per_call pages."""
     pages = sendable_pages(grids)
@@ -78,7 +85,7 @@ def skipped_pages(grids: List[Dict], page_count: Optional[int] = None) -> List[i
 
 async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_for=None,
                      adapter=None, sleep=None, use_cache: bool = True, per_call: int = PAGES_PER_CALL, skip=(), parallel: int = 1,
-                     page_timeout: float = PAGE_TIMEOUT_SECONDS, progress=None) -> List[Tuple[List[Dict], object]]:
+                     page_timeout: float = PAGE_TIMEOUT_SECONDS, progress=None, seconds: Optional[Dict] = None) -> List[Tuple[List[Dict], object]]:
     """[(grids of the call, StructureRead)] in page order, for every page of a deck that may go, `per_call` pages to a call and up to
     `parallel` calls at a time. The audit's deck read (process_deck_pages) asks for one page per call (the unit of the panel's "page n
     not read" and of a retry) and PARALLEL_PAGES at a time; the scripts keep the former five pages, one call after another. The first 429 the provider answers lowers it to
@@ -89,7 +96,9 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
     cap stops reading, the calls not yet started are marked stopped without a call. `use_cache=False` (a consistency pass) asks the
     model again for pages this audit already read. `progress(done, total)` is awaited after each call. `image_for(page)` is an async
     function giving the PNG of a page, or None when the file cannot be drawn (LibreOffice absent, page count differs, no stored file):
-    that page then goes as text alone, as before, and is never "not read" for that reason."""
+    that page then goes as text alone, as before, and is never "not read" for that reason. `seconds`, when given, is filled with the
+    consistency read of each page that was read ({tuple(page numbers): StructureRead}): the same page, text and image, read a second time
+    (docs/design/reading-consistency.md); a page whose second read failed or timed out has none, and its first read stands unflagged."""
     queue = [b for b in batches(grids, per_call)
              if not all(page_grids_mod.page_number(p["grid"]) in set(skip) for p in b)]
     total = len(queue)
@@ -99,13 +108,13 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
     def lower():
         state["limit"] = min(state["limit"], PARALLEL_AFTER_RATE_LIMIT)
 
-    async def read_one(batch, numbers):
+    async def read_one(batch, numbers, second=False):
         images = [await image_for(n) for n in numbers] if image_for else None
         if images is not None and any(i is None for i in images):
             images = None
         return await gateway.read_structure(
             db, audit_id, batch_text(batch), PAGE_CLAIMS, deck_id=deck_id, pages=numbers, adapter=adapter, sleep=sleep,
-            use_cache=use_cache, on_rate_limit=lower, images=images)
+            use_cache=use_cache, on_rate_limit=lower, images=images, second_read=second)
 
     async def one(batch):
         grids_of = [p["grid"] for p in batch]
@@ -122,6 +131,16 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
             return [r for part in (batch[:half], batch[half:]) for r in await one(part)]
         if result.status == "stopped":
             state["stopped"] = result.reason
+        if seconds is not None and result.status == "read":
+            try:
+                again = await asyncio.wait_for(read_one(batch, numbers, second=True), page_timeout)
+            except Exception as exc:        # a timeout or an error: the first read stands, the page is compared with nothing
+                logger.warning("page second read not completed: run_id=%s deck_id=%s pages=%s reason=%s", audit_id, deck_id, numbers, type(exc).__name__)
+            else:
+                if again.status == "read":
+                    seconds[tuple(numbers)] = again
+                elif again.status == "stopped":
+                    state["stopped"] = again.reason
         return [(grids_of, result)]
 
     async def worker(index):
@@ -283,14 +302,69 @@ class RunState:
         self.diagnostics, self.fresh = diagnostics, set()
 
 
+UNCERTAIN_KEY = "_uncertain"        # on a claim dict between merge_reads and apply_reply only; never stored
+
+
+def _read_key(claim: Dict) -> Tuple:
+    """What two reads must agree on for a figure to stand: the page, the metric, the period and the value."""
+    value = claim.get("value")
+    return (page_check.split_cell_id(claim.get("value_cell"))[0], claim.get("metric"), claim.get("period"), None if value is None else round(float(value), 6))
+
+
+def _reading_option(claim: Dict, year_end: int) -> Dict:
+    """One candidate of an uncertain figure as a button of the card: the words (metric, value, period) and the row fields choosing it sets."""
+    from . import _target_date
+    from .. import formatting as fmt
+    period = claim.get("period")
+    target = _target_date(period)
+    found = claims.period_range(period, year_end) if period else None
+    text = " · ".join(str(x) for x in (claim.get("metric"), None if claim.get("value") is None else fmt.fmt_number(claim["value"]), period) if x)
+    return {"value": text, "ref": text, "set": {"claim_type": claims.PAGE_CLAIM_TYPE.get(claim["metric"], claim["metric"]), "value": claim.get("value"),
+                                                "value_high": claim.get("value_high"), "target_date": target, "period_text": period if target else None,
+                                                "period_start": (found or (None, None))[0], "period_end": (found or (None, None))[1]}}
+
+
+def merge_reads(first: List[Dict], second: Optional[List[Dict]], year_end: int = 12) -> List[Dict]:
+    """The claims of a page read twice. A claim both reads give with the same metric, period and value stands as it is. Any other claim, one
+    that only one read gives or that the other read gives with another metric, period or value, is kept (the first read's, else the second's)
+    with `_uncertain`: the readings of the two reads that are present, as options. A claim of the second read that pairs with a first-read claim on
+    the same cell is the other candidate of that one claim; the rest are claims of their own. Without a second read nothing is marked."""
+    if second is None:
+        return list(first)
+    pool, out, differing = list(second), [], []
+    for claim in first:
+        match = next((c for c in pool if _read_key(c) == _read_key(claim)), None)
+        if match is not None:
+            pool.remove(match)
+            out.append(claim)
+        else:
+            differing.append(claim)
+    for claim in differing:
+        other = next((c for c in pool if c.get("value_cell") == claim.get("value_cell")), None)
+        if other is not None:
+            pool.remove(other)
+        out.append({**claim, UNCERTAIN_KEY: [_reading_option(c, year_end) for c in (claim, other) if c is not None]})
+    out += [{**c, UNCERTAIN_KEY: [_reading_option(c, year_end)]} for c in pool]
+    return out
+
+
+def mark_uncertain(row: Dict, options: List[Dict]) -> Dict:
+    """The row with the review flag READING_UNCERTAIN and a correction that waits: one button per reading. Choosing sets the row to that reading and
+    removes the flag (server: answer_correction); nothing is chosen for the analyst. Undo brings the card back with the first reading's values."""
+    entry = {"field": "reading", "reason": checker.READING_UNCERTAIN, "original": None, "undo": dict(options[0]["set"]), "state": "choose", "options": options}
+    return {**row, "flags": list(row.get("flags") or []) + [checker.READING_UNCERTAIN], "corrections": list(row.get("corrections") or []) + [entry]}
+
+
 async def apply_reply(db, audit_id: str, deck_id: str, deck: Dict, run: RunState, by_page: Dict, year_end: int, page_count: Optional[int],
-                      key: str, numbers: List[int], reply_claims: List[Dict]) -> Dict:
+                      key: str, numbers: List[int], reply_claims: List[Dict], second_claims: Optional[List[Dict]] = None) -> Dict:
     """Check the model's claims of one stored or new page reply against the pages' grids (Python only: no model call), write the rows and
     store the checked items with the normaliser version. Returns the counts of the checks (matched, unmatched, dropped, periods_corrected,
-    flagged). The one path of a page read and of the checking again of a reply stored under an older normaliser (renormalise_audit)."""
+    flagged). The one path of a page read and of the checking again of a reply stored under an older normaliser (renormalise_audit).
+    `second_claims` is the consistency read of the same pages: a figure the two reads do not both give with the same metric, period and value
+    is stored with the review flag READING_UNCERTAIN and both readings as buttons (merge_reads)."""
     from ..claim_matching import entered_by_python
     from . import _cell_key, _python_cells, analyst_copy, rules_copy, store_candidate, value_match
-    claims_of = page_check.by_page(reply_claims)
+    claims_of = page_check.by_page(merge_reads(reply_claims, second_claims, year_end))
     checked_all, counts = [], {"matched": 0, "unmatched": 0, "dropped": 0, "periods_corrected": 0, "flagged": 0}
     # A claim on a page the document does not have (the gateway checks every cited cell against the text sent, so this is a
     # guard, not an expected path): one row with the model's values, flagged, never matched (checker rule 4).
@@ -299,18 +373,22 @@ async def apply_reply(db, audit_id: str, deck_id: str, deck: Dict, run: RunState
     diagnostics_new = []
     for page in numbers:
         grid = by_page[page]
-        checked = checker.check(grid, claims_of.get(page, []), year_end, checker.page_blocks(deck.get("blocks") or [], grid),
-                                deck["file"])
+        here = claims_of.get(page, [])
+        checked = checker.check(grid, here, year_end, checker.page_blocks(deck.get("blocks") or [], grid), deck["file"])
         for k in counts:
             counts[k] += checked[k]
-        checked_all += [{**c, "page": page} for c in checked["items"]]
-        for item in checked["items"]:
+        cells = {page_check._id(c) for c in grid["cells"]}
+        marks = [c.get(UNCERTAIN_KEY) for c in here if c["value_cell"] in cells]         # checker.check keeps the claims on this page's cells, in order
+        checked_all += [{k: v for k, v in c.items() if k != UNCERTAIN_KEY} | {"page": page} for c in checked["items"]]
+        for number, item in enumerate(checked["items"]):
             if item["drop"]:            # a derived figure, a launch date with no product, a quoted figure: no row, one Diagnostics line (George, 2026-10-26)
                 counts["dropped"] += 1
                 diagnostics_new.append({"page": page, "kind": item["drop"], "metric": item["metric"], "value": item.get("value"),
                                         "period": item.get("period")})
                 continue
             row, log = corrected_row(item, grid, deck, year_end, page)
+            if number < len(marks) and marks[number]:
+                row = mark_uncertain(row, marks[number])
             rows.append((row, page))
             diagnostics_new += log
     counts["flagged"] += sum(1 for row, _ in rows if checker.review_flags(row["flags"]) and row["cell"] is None)
@@ -328,7 +406,13 @@ async def apply_reply(db, audit_id: str, deck_id: str, deck: Dict, run: RunState
         run.reviewed.remove(c)
     if stale:
         run.known = _python_cells(run.reviewed)
+    # A cell whose reading the analyst chose (a "reading" correction applied, docs/design/reading-consistency.md): the chosen row stands,
+    # whichever reading it took, and this reply's read of the cell is not listed again beside it (a Re-read, a Run audit, a new upload).
+    chosen = {_cell_key(c) for c in run.reviewed if c.get("structure_key") == key
+              and any(e.get("field") == "reading" and e.get("state") == "applied" for e in c.get("corrections") or [])}
     for candidate, page in rows:
+        if candidate["cell"] is not None and _cell_key(candidate) in chosen:
+            continue
         if candidate["cell"] is not None and \
                 value_match(candidate["value"], candidate["value_high"], run.known.get(_cell_key(candidate), ())):
             continue                    # this cell already lists the value, or a range holding it
@@ -432,8 +516,10 @@ async def _check_deck_again(db, audit_id: str, deck_id: str, replies: List[Dict]
     done = 0
     for reply in replies:
         numbers = [int(n) for n in reply.get("pages") or ([reply["page"]] if reply.get("page") else [])]
+        again = await db[gateway.STRUCTURES_COLLECTION].find_one({"audit_id": audit_id, "key": reply["second_key"]}, {"_id": 0, "output": 1}) \
+            if reply.get("second_key") else None
         await apply_reply(db, audit_id, deck_id, deck, run, by_page, int((audit or {}).get("fiscal_year_end") or 12), page_count,
-                          reply["key"], numbers, reply["output"]["claims"])
+                          reply["key"], numbers, reply["output"]["claims"], (again or {}).get("output", {}).get("claims"))
         done += 1
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"diagnostics": run.diagnostics}})
     return done
@@ -496,8 +582,9 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         undrawn.append(page)
         return None
 
+    seconds: Dict = {}
     for batch, result in await read_pages(db, audit_id, deck_id, grids, image_for if permitted else None, adapter, sleep,
-                                          per_call=1, skip=done_before, parallel=PARALLEL_PAGES, progress=progress):
+                                          per_call=1, skip=done_before, parallel=PARALLEL_PAGES, progress=progress, seconds=seconds if second_read_enabled() else None):
         numbers = [page_grids_mod.page_number(g) for g in batch]
         entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
         if result.masked:
@@ -517,7 +604,14 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         if result.status == "read":
             if not result.cache_hit:
                 sent.append({"pages": numbers, "type": PAGE_CLAIMS, "at": datetime.now(timezone.utc).isoformat()})
-            counts = await apply_reply(db, audit_id, deck_id, deck, run, by_page, year_end, page_count, result.key, numbers, result.claims)
+            again = seconds.get(tuple(numbers))
+            if again is not None:
+                if not again.cache_hit:
+                    sent.append({"pages": numbers, "type": PAGE_CLAIMS, "at": datetime.now(timezone.utc).isoformat(), "read": 2})
+                # The first reply names its second, so a check again of the stored reply (renormalise_audit) compares the two as before.
+                await db[gateway.STRUCTURES_COLLECTION].update_one({"audit_id": audit_id, "key": result.key}, {"$set": {"second_key": again.key}})
+            counts = await apply_reply(db, audit_id, deck_id, deck, run, by_page, year_end, page_count, result.key, numbers, result.claims,
+                                       again.claims if again is not None else None)
             entry.update(counts)
             logger.info("pages checked: run_id=%s deck_id=%s pages=%d matched=%d unmatched=%d dropped=%d flagged=%d", audit_id,
                         deck_id, len(numbers), counts["matched"], counts["unmatched"], counts["dropped"], counts["flagged"])

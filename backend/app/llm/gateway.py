@@ -1023,6 +1023,7 @@ async def log_call(
     content_hash: Optional[str] = None, deck_id: Optional[str] = None,
     http_status: Optional[int] = None, error_type: Optional[str] = None, structure_type: Optional[str] = None,
     image_tokens: int = 0, image_cost_usd: float = 0.0, file_hash: Optional[str] = None, refused_input_tokens: Optional[int] = None,
+    read_no: Optional[int] = None,
 ) -> None:
     """Append to llm_calls.
 
@@ -1032,12 +1033,12 @@ async def log_call(
     the payload does NOT hold, so it cannot echo the computed figures back. A
     structure reading call adds the content hash of the text sent (never the
     text) and the deck it came from (CLAUDE.md rule 17). A provider error adds
-    its HTTP status and error type, never its message. A file reading adds the file's hash (the per-file cap counts by it); a call a cap refused adds
+    its HTTP status and error type, never its message. A file reading adds the file's hash (the per-file cap counts by it); a sheet or page read adds `read_no` (1 the first read, 2 the consistency read); a call a cap refused adds
     the input tokens it would have sent (`refused_input_tokens`, the provider's count).
     """
     extra = {k: v for k, v in (("content_hash", content_hash), ("deck_id", deck_id), ("http_status", http_status),
                                ("error_type", error_type), ("structure_type", structure_type), ("file_hash", file_hash),
-                               ("refused_input_tokens", refused_input_tokens)) if v is not None}
+                               ("refused_input_tokens", refused_input_tokens), ("read_no", read_no)) if v is not None}
     await db[CALLS_COLLECTION].insert_one({**extra,
         "run_id": run_id,
         "step": step,
@@ -2048,7 +2049,7 @@ async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
-    fiscal_year_end: int = 12, reread_of: Optional[Any] = None, on_stage=None,
+    fiscal_year_end: int = 12, reread_of: Optional[Any] = None, on_stage=None, second_read: bool = False,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2060,7 +2061,7 @@ async def read_structure(
 
         consent -> boundary and redaction check -> cache (audit, key) -> token count of the text and
         its item list (4,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
-        (not for a column mapping) -> token cap (400,000 per audit, with the whole call's input) -> provider
+        (not for a column mapping) -> token cap (600,000 per audit, with the whole call's input) -> provider
         -> schema, type and item id check (one reask) -> store -> log
 
     A column mapping is exempt from the daily spend cap (chat-upload.md section 4.2, 2026-10-17), and so is a page read
@@ -2088,6 +2089,11 @@ async def read_structure(
     reading in masked space (`file_map`) and the masked text (`payload`, in memory only) for the checks. A file over SHEET_READING_INPUT_CAP
     tokens is refused with a message; nothing is cut or sampled.
 
+    `second_read` (SHEET_READING and PAGE_CLAIMS) is the consistency read: the same input, the same prompt and model, read a second time and kept
+    apart from the first (a sheet's in `reading_second_reads`, a page's under a key of its own, type `page_claims_second`). A stored second read
+    is served with no call, so a file or page read before only makes the one new call; a failed second read stores nothing and never touches the
+    first. Both reads log their tokens per call (`read_no` 1 and 2) and, for a sheet, the file's hash.
+
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
     stands. The output is not Verified here: the caller joins each label to Python's item and
     verifies it.
@@ -2096,6 +2102,7 @@ async def read_structure(
     sleep = sleep or asyncio.sleep
     if structure_type not in STRUCTURE_TYPES and structure_type not in (PAGE_CLAIMS, SHEET_READING):
         return _structure_result("not_read", structure_type, f"unknown structure type {structure_type!r}")
+    read_no = 2 if second_read else (1 if structure_type in (SHEET_READING, PAGE_CLAIMS) and not recheck else None)
     context = await load_structure_context(db, audit_id)
     if context.get("structure_reading_consent") is not True:
         return _structure_result("no_consent", structure_type, "AI-assisted reading is off for this audit")
@@ -2166,7 +2173,7 @@ async def read_structure(
     if price_model(model) not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)
     tag = (prompt.version if isinstance(prompt, SimpleNamespace) else prompt_store.cache_tag(prompt))
-    key = structure_key(text, structure_type, tag, model, images)
+    key = structure_key(text, structure_type, tag + (":second" if second_read else ""), model, images)
     digest = content_hash(text)
     base = {"key": key, "prompt_version": prompt.version, "model": model}
     system = prompt.text
@@ -2179,14 +2186,17 @@ async def read_structure(
     if structure_type == SHEET_READING:
         # Stored once, keyed on the file and the versions (section 9): the reading of this file is looked up before anything is counted
         # or sent. A hit makes no provider call, whichever audit of the account asked first; another account reads the file again. A second reading of rejected items is stored beside it.
-        kept = await readings.get_reread(db, reading_key, recheck_items, recheck_id) if recheck else await readings.get(db, account, file_hash, prompt_hash, model)
+        if second_read:
+            kept = await readings.get_second(db, reading_key)
+        else:
+            kept = await readings.get_reread(db, reading_key, recheck_items, recheck_id) if recheck else await readings.get(db, account, file_hash, prompt_hash, model)
         if kept:
             await readings.use(db, audit_id, reading_key)
-            await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
+            await log_call(db, read_no=read_no, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model, input_tokens=0, output_tokens=0,
                            estimated_cost_usd=0.0, cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id,
                            structure_type=structure_type)
             logger.info("sheet reading stored: run_id=%s step=%s hash=%s", audit_id, STRUCTURE_STEP, digest)
-            stored_map = kept["output"] if recheck else kept["file_map"]
+            stored_map = kept["output"] if recheck and not second_read else kept["file_map"]
             return _structure_result("read", structure_type, cache_hit=True, masked=masked_counts, payload=text, reading_key=reading_key,
                                      file_map=_mask_map(stored_map, context.get("company_name"), mapping), **base)
         if reread_of and not recheck:
@@ -2195,7 +2205,7 @@ async def read_structure(
     elif use_cache:
         hit = await cache.get_structure(db, audit_id, key)
         if hit:
-            await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
+            await log_call(db, read_no=read_no, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=model, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
             logger.info("structure cache hit: run_id=%s step=%s hash=%s type=%s", audit_id, STRUCTURE_STEP, digest, structure_type)
@@ -2213,7 +2223,7 @@ async def read_structure(
     if structure_type == SHEET_READING:
         input_cap, max_tokens = SHEET_READING_INPUT_CAP, SHEET_READING_MAX_TOKENS
     try:
-        # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
+        # The 4,000-token cap is on the structure text plus its item list; the 600,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, on_rate_limit, model=model, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > input_cap:
@@ -2231,7 +2241,7 @@ async def read_structure(
         # Codes, and on a 4xx the provider's message, capped: it names schema and request faults and carries no file content
         # (_logged_provider_message). Never the exception's own text, a request body, a key or the prompt.
         code, status, kind = exc.reason, exc.status, exc.error_type
-        await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
+        await log_call(db, read_no=read_no, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
                        input_tokens=0, output_tokens=0, estimated_cost_usd=0.0, cache_hit=False, status=code,
                        content_hash=digest, deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
         shown = _message_field(exc, text, system, user_payload, prompt.text)
@@ -2277,7 +2287,7 @@ async def read_structure(
                 token = None
         except guards.GuardRefusal as refusal:
             refusal.input_tokens = counted          # what the refused call would have sent, kept on the row and on the log line
-            await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
+            await log_call(db, read_no=read_no, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=model, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0, refused_input_tokens=counted,
                            cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id, structure_type=structure_type)
             log_refusal(structure_type or STRUCTURE_STEP, audit_id, refusal)         # the one line of a cap refusal: no "structure not read" line beside it
@@ -2298,7 +2308,7 @@ async def read_structure(
             shown = _message_field(exc, text, system, user_payload, prompt.text)
             image_billed = min(billed[0], image_tokens * getattr(exc, "billed_calls", 0))
             image_cost = estimate_cost_usd(model, image_billed, 0)
-            await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
+            await log_call(db, read_no=read_no, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=model, input_tokens=billed[0], output_tokens=billed[1],
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
                            deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type,
@@ -2324,9 +2334,10 @@ async def read_structure(
                 # record for diagnosis; the record is not a reading: it is never served and the next read of the file replaces it.
                 replies = list(getattr(exc, "replies", None) or [])
                 logger.warning("sheet reading not read: run_id=%s hash=%s reason=%s replies=%d", audit_id, digest, reason, len(replies))
-                await readings.put_failed(db, key=reading_key, reread=bool(recheck), items=recheck_items, account=account, file_hash=file_hash,
-                                          prompt_version=prompt.version, model=model, reason=reason, replies=replies, recheck_id=recheck_id or "")
-                await readings.use(db, audit_id, reading_key)
+                if not second_read:         # the first reading's record is never replaced by a failed second read
+                    await readings.put_failed(db, key=reading_key, reread=bool(recheck), items=recheck_items, account=account, file_hash=file_hash,
+                                              prompt_version=prompt.version, model=model, reason=reason, replies=replies, recheck_id=recheck_id or "")
+                    await readings.use(db, audit_id, reading_key)
             return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, reason,
                                      input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, rejected=rejected,
                                      provider=_provider_info(exc, text, system, user_payload, prompt.text),
@@ -2346,7 +2357,10 @@ async def read_structure(
                 from .. import series as series_mod        # series imports the checks, which import this module's package
                 output = series_mod.attach(output, text, fiscal_year_end)       # the row series, written once with the reading (step a of PR 3)
             restored = redaction.restore_deep(output, mapping)
-            if recheck:
+            if second_read:
+                await readings.put_second(db, reading=reading_key, prompt_version=prompt.version, model=model, file_map=restored,
+                                          input_tokens=in_tok, output_tokens=out_tok, cost=cost)
+            elif recheck:
                 await readings.put_reread(db, reading=reading_key, items=recheck_items, reason=recheck_id, prompt_version=prompt.version, model=model,
                                           output=restored, input_tokens=in_tok, output_tokens=out_tok, cost=cost)
             else:
@@ -2354,10 +2368,10 @@ async def read_structure(
                                    input_tokens=in_tok, output_tokens=out_tok, cost=cost)
                 await readings.use(db, audit_id, reading_key)
         else:
-            await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
+            await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=f"{structure_type}_second" if second_read else structure_type,
                                    model_type=model_type, output=stored, prompt_version=prompt.version,
                                    input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page, pages=pages, model=model)
-        await log_call(db, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
+        await log_call(db, read_no=read_no, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version, model=model,
                        input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, cache_hit=False,
                        status="ok", content_hash=digest, deck_id=deck_id, structure_type=structure_type,
                        image_tokens=image_billed, image_cost_usd=image_cost)

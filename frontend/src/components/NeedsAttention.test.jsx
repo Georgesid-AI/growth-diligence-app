@@ -223,3 +223,18 @@ test("one Sales card per deck asks revenue or bookings and the answer is sent fo
     expect(api.answerSales).toHaveBeenCalledWith("a1", "d1", "bookings");
   } finally { await done(); }
 });
+
+// --- a figure the two page reads disagree on (docs/design/reading-consistency.md) ------------------------------------------------------------
+test("a figure the two readings disagree on offers each reading as a button, says why, and has no Keep (that would pick the first for the analyst)", async () => {
+  api.answerCorrection.mockResolvedValue({});
+  const uncertain = claim("U1", { flags: ["reading uncertain"], corrections: [{ field: "reading", reason: "reading uncertain", original: null, state: "choose",
+    options: [{ value: "revenue · 150,000 · 2025" }, { value: "revenue · 160,000 · 2025" }] }] });
+  const { host, done } = await mount([uncertain]);
+  try {
+    expect(q(host, "attention-claim-flags").textContent).toBe("the two readings of this page disagree on this figure, so it is not used until you choose the right one".replace(/^t/, "T"));
+    expect([...host.querySelectorAll('[data-testid="attention-correction"]')].map((b) => b.textContent)).toEqual(["revenue · 150,000 · 2025", "revenue · 160,000 · 2025"]);
+    expect(q(host, "attention-keep")).toBeNull();
+    await act(async () => { host.querySelectorAll('[data-testid="attention-correction"]')[0].click(); });
+    expect(api.answerCorrection).toHaveBeenCalledWith("a1", "U1", { index: 0, action: "choose", option: 0 });
+  } finally { await done(); }
+});

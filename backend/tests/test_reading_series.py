@@ -87,7 +87,7 @@ def test_the_series_are_written_once_with_the_reading_and_equal_the_builder(flow
     snapshot = copy.deepcopy(stored)
     upload(flow, MONTHLY, monthly())
     assert len(flow.db[readings.READINGS].docs) == 1 and flow.db[readings.READINGS].docs[0] == snapshot
-    assert flow.state["adapter"].sheet_calls == 1
+    assert flow.state["adapter"].sheet_calls == 2, "the reading and the consistency read; the second upload made none"
 
 
 def _payload(flow):

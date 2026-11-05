@@ -28,6 +28,7 @@ from app.logfmt import configure_logging
 from app import reading_export
 from app import reviewer
 from app import register
+from app import consistency as consistency_mod
 from app import cards as cards_mod
 from app import checks as checks_mod
 from app import flags
@@ -1086,6 +1087,24 @@ async def change_reading(audit_id: str, file_hash: str, body: ReadingChange):
     return {"overrides": len(made)}
 
 
+class UncertainDecision(BaseModel):
+    model_config = {"extra": "forbid"}
+    key: str = Field(min_length=1, max_length=600)
+    pick: Literal["first", "second"]
+
+
+@api.post("/audits/{audit_id}/readings/{file_hash}/uncertain")
+async def decide_uncertain(audit_id: str, file_hash: str, body: UncertainDecision):
+    """The analyst's pick of one candidate of a "Reading uncertain – confirm" item (docs/design/reading-consistency.md): a dated override record; the
+    stored reading is not edited. Nothing is picked automatically."""
+    try:
+        made = await consistency_mod.decide(db, audit_id, file_hash, body.key, body.pick)
+    except consistency_mod.DecisionRefused as exc:
+        raise HTTPException(400, str(exc))
+    await _mark_stale_and_maybe_recompute(audit_id)
+    return {"override": made["id"], "key": body.key, "pick": body.pick}
+
+
 async def _review_safely(audit_id: str, force: bool = False) -> None:
     """The reviewer for one audit (read-check-review.md section 7; app/reviewer.py), after the audit's files are read and its calculations ran. A
     failure of any kind leaves the register as it is (rule 20) and is logged by its type only."""
@@ -1789,6 +1808,9 @@ async def answer_correction(audit_id: str, candidate_id: str, payload: Correctio
                 inputs[candidate_id] = kept
             changes.update(claim_inputs=inputs, status="pending", auto_accepted=False, flags=[*(current.get("flags") or []), entry["reason"]])
             entry["state"] = "choose"
+        if entry.get("field") == "reading":       # a confirmed reading goes back to waiting: the first reading's values, the flag asks again
+            changes.update(status="pending", auto_accepted=False, flags=[*(current.get("flags") or []), entry["reason"]])
+            entry["state"] = "choose"
     else:
         options = entry.get("options") or []
         if entry.get("state") != "choose" or payload.option is None or payload.option >= len(options):
@@ -1802,7 +1824,7 @@ async def answer_correction(audit_id: str, candidate_id: str, payload: Correctio
             inputs[candidate_id] = {**inputs.get(candidate_id, {}), "segment": chosen["segment"]}
             changes["claim_inputs"] = inputs
         entry.update(state="applied", corrected=chosen["value"])
-        if entry.get("field") != "segment":       # a segment keeps its options: Undo brings the card back
+        if entry.get("field") not in ("segment", "reading"):       # a segment or a reading keeps its options: Undo brings the card back
             entry.pop("options", None)
     entries[payload.index] = entry
     changes["corrections"] = entries
@@ -2631,12 +2653,15 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
         reading = await db[readings_mod.READINGS].find_one({"key": check.get("reading_key")}, {"_id": 0})
         if not reading:
             continue
-        file_map = readings_mod.effective(reading["file_map"], await readings_mod.overrides_for(db, audit_id, reading["key"]))
+        overrides = await readings_mod.overrides_for(db, audit_id, reading["key"])
+        file_map = readings_mod.effective(reading["file_map"], overrides)
         items = [i for i in check.get("items") or [] if str(i.get("key", "")).startswith("row:")]
+        waiting = consistency_mod.pending(check.get("consistency"), overrides)
         labels = {f"{sh['sheet']}:{ln['row']}": ln.get("label") for sh in check.get("lines") or [] for ln in sh.get("lines") or []}
         files.append({"file": check.get("file"), "file_hash": check.get("file_hash"), "file_map": file_map, "labels": labels,
                       "rejected": [i["key"] for i in items if i["outcome"] == checks_mod.REJECTED],
-                      "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT]})
+                      "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT],
+                      "uncertain": consistency_mod.held_rows(file_map, waiting)})
     deck = [{**f, "file": d["file"], "page": f["source"]["page"]} for d in await deck_figures.checked(db, audit_id) for f in d["figures"]
             if f["outcome"] != checks_mod.REJECTED]
     # "unread": mapped rows with no series, for the report text only (report_text); the engine reads "table" alone

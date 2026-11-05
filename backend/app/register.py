@@ -13,7 +13,7 @@ Numbers are raw here, at full precision; the screen formats them (one formatter,
 import re
 from typing import Dict, List, Optional
 
-from . import cards, checks, deck_figures, lines as lines_mod, readings
+from . import cards, checks, consistency, deck_figures, lines as lines_mod, readings
 from .structures import redact
 
 USED_IN = {"revenue": "Revenue series", "arr": "ARR", "mrr": "MRR series", "new_arr": "New MRR by quarter", "churn_rate": "Churn by month",
@@ -145,6 +145,8 @@ def reporting_period(files: List[Dict]) -> Optional[Dict]:
 def deck_rows(deck: Dict) -> Dict[str, List[Dict]]:
     out: Dict[str, List[Dict]] = {"confirmed": [], "rejected": [], "cannot_check": []}
     for f in deck["figures"]:
+        if f.get("uncertain"):
+            continue                    # the two page reads disagree: listed on the deck's tab for confirmation, in no table until chosen
         row = {"key": f["key"], "kind": "deck_figure", "metric": f.get("metric"), "value": f.get("value"), "unit": f.get("unit"),
                "currency": f.get("currency"), "period": f.get("period"), "label": f.get("label"), "basis": None, "actual_plan": f.get("actual_plan"), "row_role": None,
                "source": {"file": deck.get("file"), "deck_id": deck["deck_id"], "page": f["source"]["page"]}, "reason": f.get("reason"), "note": None}
@@ -239,7 +241,9 @@ async def build(db, audit_id: str) -> Dict:
                                   "confirmed": len(rows["confirmed"]), "rejected": len(rows["rejected"]),
                                   "cannot_check": len(rows["cannot_check"]), **privacy_counts(doc.get("masked"))},
                       "notes": notes["file"],
-                      "anchors": anchors(doc, effective, shown, overrides), "lines": shown, "overrides": len(overrides)})
+                      "anchors": anchors(doc, effective, shown, overrides), "lines": shown, "overrides": len(overrides),
+                      "consistency": {"status": (doc.get("consistency") or {}).get("status"), "reason": (doc.get("consistency") or {}).get("reason"),
+                                      "label": consistency.UNCERTAIN, "uncertain": consistency.pending(doc.get("consistency"), overrides)}})
     deck_docs = {d["deck_id"]: d for d in await db["deck_text"].find({"audit_id": audit_id}, {"_id": 0, "blocks": 0, "structures": 0, "layout": 0}).to_list(100)}
     for deck in await deck_figures.checked(db, audit_id):
         rows = deck_rows(deck)
@@ -254,9 +258,11 @@ async def build(db, audit_id: str) -> Dict:
                                   "confirmed": n["confirmed"], "rejected": n["rejected"], "cannot_check": n["cannot_check"],
                                   "personal_removed": masked["personal"], "company_coded": masked["names"],
                                   "skipped_pages": meta.get("skipped_pages") or []},
-                      "anchors": {"figures": {"read": len(deck["figures"]), "found_on_page": n["confirmed"], "from_image": n["cannot_check"]}},
+                      "anchors": {"figures": {"read": len(deck["figures"]), "found_on_page": n["confirmed"], "from_image": n["cannot_check"],
+                                              "awaiting_confirmation": sum(1 for f in deck["figures"] if f.get("uncertain"))}},
                       "figures": [{"key": f["key"], "metric": f.get("metric"), "value": f.get("value"), "unit": f.get("unit"), "currency": f.get("currency"),
-                                   "period": f.get("period"), "label": f.get("label"), "page": f["source"]["page"], "outcome": f["outcome"]}
+                                   "period": f.get("period"), "label": f.get("label"), "page": f["source"]["page"], "outcome": f["outcome"],
+                                   "id": f.get("id"), "uncertain": bool(f.get("uncertain")), "reading": f.get("reading")}
                                   for f in deck["figures"]]})
     review = max(stored, key=lambda r: r.get("created_at") or "", default=None)
     status = (review or {}).get("status")

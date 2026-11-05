@@ -49,7 +49,8 @@
     "source ambiguous, noted": "more than one label or period fits this figure; the reading of the page is kept",
     "no label read": "the only label on the page is its title, so no label was read for this figure",
     "source not associated": "no label or period on the page can be tied to this figure",
-    "extraction incomplete": "part of the page could not be read, so the figure may be elsewhere"
+    "extraction incomplete": "part of the page could not be read, so the figure may be elsewhere",
+    "reading uncertain": "the two readings of this page disagree on this figure, so it is not used until you choose the right one"
   },
   "year_label_below": "the year label printed below the figure is {year}"
 }

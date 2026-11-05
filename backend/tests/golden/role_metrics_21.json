@@ -1,7 +1,13 @@
 {
   "monthly": {
     "as_of_month": "2026-06",
+    "awaiting_confirmation": {
+      "count": 0,
+      "figures": 0,
+      "rows": 0
+    },
     "growth_by_year": [],
+    "mapping_flags": [],
     "metrics": [
       {
         "basis": "monthly",
@@ -426,6 +432,11 @@
   },
   "yearly": {
     "as_of_month": "2026-06",
+    "awaiting_confirmation": {
+      "count": 0,
+      "figures": 0,
+      "rows": 0
+    },
     "growth_by_year": [
       {
         "deck_note": null,
@@ -462,6 +473,7 @@
         "value": 2400.0
       }
     ],
+    "mapping_flags": [],
     "metrics": [
       {
         "basis": null,

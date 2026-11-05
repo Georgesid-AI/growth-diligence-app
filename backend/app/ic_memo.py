@@ -640,6 +640,8 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
             gap = f"difference {fmt.fmt_currency(r['gap'], ccy)}" + (f" ({fmt.fmt_pct(r['gap_pct'])})" if r.get("gap_pct") is not None else "")
             out.append(f"Revenue {r['period']} differs across the sources: {sources}; {gap}"
                        f"{notes.source('Revenue reconciliation', {'rows': sources})}")
+    out += [f"{f['text'][:1].upper()}{f['text'][1:]}{notes.add('mapping, ' + f['file'] + ' · ' + f['sheet']) if f.get('file') else ''}"
+            for f in (results.get("role_metrics") or {}).get("mapping_flags") or ()]
     reconciled = [r for r in recon if r["status"] in ("differs", "agrees_rounded")]
     out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation')}"
             for r in recon if r["status"] == "agrees_rounded"]
@@ -737,6 +739,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
         verbatim = [f"{ANALYST_NOTE}: {ic['note']}{notes.analyst()}"]
         out += verbatim
     out += [""]
+    waiting = vd.awaiting_text(results)
+    if waiting:         # once: the ratings in the Scorecard say it too, on their own lines (docs/design/reading-consistency.md)
+        out += [f"{waiting[:1].upper()}{waiting[1:]} (the two readings differ); the ratings use confirmed or agreed figures only.", ""]
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
             *(["Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"] if claims else [])]

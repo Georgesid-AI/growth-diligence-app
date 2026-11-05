@@ -102,7 +102,7 @@ def test_the_expected_map_is_a_valid_file_map_and_the_ideal_reading_agrees_with_
 @pytest.mark.parametrize("fixture", [f for f in SHEETS if f["name"] != "testco_pnl"], ids=[n for n in IDS if n != "testco_pnl"])
 def test_the_ideal_reading_of_each_workbook_is_confirmed_cell_by_cell_and_gives_the_expected_month(fixture):
     doc, adapter, _ = run(fixture)
-    assert doc["status"] == "read" and adapter.reads == 1
+    assert doc["status"] == "read" and adapter.reads == 2
     rejected = [i for i in doc["items"] if i["outcome"] == checks.REJECTED]
     assert rejected == [], [(i["key"], i["reason"]) for i in rejected]
     assert doc["month"] == fixture["expected_map"]["as_of_month"], doc["evidence"]
@@ -155,7 +155,7 @@ def test_a_reading_that_moves_the_boundary_one_period_is_rejected_by_the_checks_
 def test_the_ideal_reading_of_the_test_companys_pnl_is_confirmed_with_its_periods_down_the_sheet():
     fixture = next(f for f in SHEETS if f["name"] == "testco_pnl")
     doc, adapter, _ = run(fixture)
-    assert doc["status"] == "read" and adapter.reads == 1
+    assert doc["status"] == "read" and adapter.reads == 2
     by_key = {i["key"]: i for i in doc["items"]}
     assert by_key["periods:CSV"]["outcome"] == checks.CONFIRMED, "the first and last month sit in column A, down the sheet"
     assert by_key["figure:CSV:C15:revenue"]["outcome"] == checks.CONFIRMED, "June 2024's neighbour: the period of C15 is the A15 cell of its row"

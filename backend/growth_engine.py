@@ -9,6 +9,7 @@ carries a `source` reference (file / sheet / rows).
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -802,6 +803,12 @@ def compute_revenue_series(rev: pd.DataFrame, billing_terms: dict, fx: dict, as_
 
 
 
+def gap_fraction(gap: float, *values: float) -> Optional[float]:
+    """A difference as a fraction of the largest of the values compared (absolute): never of the smallest, never of zero (None then)."""
+    largest = max((abs(v) for v in values), default=0)
+    return gap / largest if largest else None
+
+
 RECONCILIATION_TOLERANCE_PCT = 0.02    # a window gap above this fraction (2%) is a blocker (chat-upload.md section 6.2)
 RECONCILIATION_MAX_MONTHS = 12
 
@@ -836,23 +843,24 @@ def compute_revenue_reconciliation(series: dict, month_rows: dict, pnl: pd.DataF
         s.add_rows(rows)
         return s.to_dict(rule)
 
-    def pct(gap, base):
-        return None if not base else _round(gap / base, 4)
+    def pct(gap, a, b):
+        frac = gap_fraction(gap, a, b)
+        return None if frac is None else _round(frac, 4)
 
     by_month = []
     for m in window:
         gap = file_by_month[m] - pnl_by_month[m]
         by_month.append({
             "month": m, "revenue_file": _round(file_by_month[m]), "pnl": _round(pnl_by_month[m]), "gap": _round(gap),
-            "gap_pct": pct(gap, pnl_by_month[m]),
+            "gap_pct": pct(gap, file_by_month[m], pnl_by_month[m]),
             "source": {"revenue_file": ref(rev_src, (month_rows or {}).get(m, []), "Revenue by month, as in the revenue series"),
                        "pnl": ref(pnl_src, pnl_rows.get(m, []), "P&L revenue column")}})
     file_total = sum(file_by_month[m] for m in window)
     pnl_total = sum(pnl_by_month[m] for m in window)
     gap = file_total - pnl_total
-    gap_pct = pct(gap, pnl_total)
-    # A P&L total of 0 has no percentage ("—"); a file total against it is still a mismatch.
-    blocker = (abs(gap) / abs(pnl_total) > RECONCILIATION_TOLERANCE_PCT) if pnl_total else bool(round(file_total, 2))
+    gap_pct = pct(gap, file_total, pnl_total)
+    # Both totals 0 has no percentage ("—"); a file total against a P&L total of 0 is a difference of 100 % of the largest value.
+    blocker = (abs(gap) / max(abs(file_total), abs(pnl_total)) > RECONCILIATION_TOLERANCE_PCT) if (file_total or pnl_total) else False
     all_file = sorted({r for m in window for r in (month_rows or {}).get(m, [])})
     all_pnl = sorted({r for m in window for r in pnl_rows.get(m, [])})
     return {
@@ -2187,7 +2195,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                 "reason": f"The calculation stopped on an unexpected {type(exc).__name__}; reported as Missing, not estimated",
                 "unlocked_by": "Not computable from the data as supplied; the server log has the run id", "file": yearly.get("file")})
     if mapped is not None and mapped["role_metrics"] is not None:
-        role_engine.fill_yearly(mapped["role_metrics"], roles["table"], results.get("yearly_basis"))
+        role_engine.fill_yearly(mapped["role_metrics"], role_engine.confirmed_rows(roles["table"]), results.get("yearly_basis"))
+        role_engine.mark_awaiting(mapped["role_metrics"]["metrics"], roles["table"])
         results["role_metrics"] = mapped["role_metrics"]
     if statement:
         try:

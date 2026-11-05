@@ -172,3 +172,23 @@ export function actualPlanText(value) {
   const next = m ? colNumber(m[1]) + 1 : 0;
   return m ? `actuals through column ${m[1]}, plan from ${colLetters(next)}` : value;
 }
+
+/** "Reading uncertain – confirm" (docs/design/reading-consistency.md): the label of an item the two reads of a file or a page disagree on. */
+export const UNCERTAIN_LABEL = "Reading uncertain – confirm";
+/** The words of one candidate of an uncertain item, from its closed fields; "not in this reading" when the read gave nothing. */
+export function candidateText(item, side) {
+  const c = item[side];
+  if (item.kind === "row") {
+    if (!c) return "not in this reading";
+    // A unit, currency or basis the reads disagree on is named with its value, so two readings of one role are told apart (2026-11-05).
+    const named = (item.fields || []).filter((f) => ["unit", "currency", "basis"].includes(f)).map((f) => `${f} ${c[f] ?? "none"}`);
+    return [c.role, c.metric, c.cells, c.segment ? "a segment" : null, c.parent_row ? `part of row ${c.parent_row}` : null, ...named].filter(Boolean).join(" · ");
+  }
+  return c == null ? "not in this reading" : String(c);
+}
+/** The title of an uncertain item: a row, a sheet-level field or a whole sheet. */
+export function uncertainTitle(item) {
+  if (item.kind === "row") return `${item.sheet}, row ${item.row}${item.fields?.length ? ` (${item.fields.join(", ")} differ)` : ""}`;
+  if (item.kind === "field") return `${item.sheet}: ${item.field}`;
+  return `Sheet ${item.sheet}`;
+}

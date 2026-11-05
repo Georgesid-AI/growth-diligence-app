@@ -3,7 +3,7 @@
 Five independent brakes, all backed by Mongo so they hold across workers:
 
   * a hard per-run call cap on narrative calls (the 16th is refused, never queued or retried);
-  * a per-audit token cap on structure reading calls (400,000 billed tokens, input and output);
+  * a per-audit token cap on structure reading calls (600,000 billed tokens, input and output);
   * a monthly AI allowance per tester link (every call, column mappings included: usage-and-allowance.md);
   * a daily spend ceiling across all runs (column mappings are exempt but counted: chat-upload.md section 4.2);
   * a per-run+step advisory lock, so a second request that arrives while one is
@@ -32,12 +32,12 @@ LOCKS_COLLECTION = "llm_locks"
 MAX_CALLS_PER_RUN = 15             # narrative calls only
 DEFAULT_DAILY_SPEND_CAP_USD = 5.00
 STRUCTURE_STEP = "structures"      # the step every structure reading call is logged and locked under
-STRUCTURE_TOKEN_CAP = 400_000      # billed input and output tokens per audit, deck structure and page calls only (not a file reading, not the reviewer)
+STRUCTURE_TOKEN_CAP = 600_000      # billed input and output tokens per audit, deck structure and page calls only (not a file reading, not the reviewer)
 SHEET_READING_TYPE = "sheet_reading"   # structure_type of a file reading: counted per file against FILE_TOKEN_CAP, never against the audit's cap
 DEFAULT_FILE_TOKEN_CAP = 400_000   # billed input and output tokens per file, its readings and re-reads (env FILE_TOKEN_CAP); replaces the per-audit cap for files
 REVIEWER_STEP_TYPE = "reviewer"    # structure_type of the reviewer's calls: counted against REVIEWER_TOKEN_CAP, never against the reading cap
 DEFAULT_REVIEWER_TOKEN_CAP = 80_000  # billed input and output tokens per audit, reviewer call only (env REVIEWER_TOKEN_CAP)
-STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 400,000-token limit. The remaining "
+STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 600,000-token limit. The remaining "
                          "structures were read by Python only.")
 FILE_CAP_MESSAGE = "This file reached its reading limit; it was not read again."
 

@@ -1131,7 +1131,7 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
                                          "reviewer_token_cap_reached", "call_cap_exceeded"}
     db = _structure_db()
     db["llm_calls"].docs.append({"run_id": STRUCTURE_AUDIT["id"], "step": "structures", "cache_hit": False,
-                                 "input_tokens": 398000, "output_tokens": 0, "estimated_cost_usd": 0.0,
+                                 "input_tokens": 598000, "output_tokens": 0, "estimated_cost_usd": 0.0,
                                  "timestamp": "2026-10-05T00:00:00"})
     with caplog.at_level(logging.DEBUG):
         _send(db, GOOD_ITEMS)
@@ -1145,7 +1145,7 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
     assert [line.split("reason=")[1].split(" ")[0] for line in lines] == ["token_cap", "spend_cap"]
     assert all(re.search(r"input=\d+$", line) for line in lines), "the refused input token estimate is on the line"
     assert [c["refused_input_tokens"] > 0 for c in db["llm_calls"].docs if c.get("status") == "structure_token_cap_reached"] == [True]
-    for needle in ("Revenue", "£1,200,000", "400,000-token", "spent today", "$"):
+    for needle in ("Revenue", "£1,200,000", "600,000-token", "spent today", "$"):
         assert needle not in "".join(lines), f"{needle!r} was logged"
 
 
@@ -3211,7 +3211,7 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
                              "matches analyst claim", "basis and scenario disagree", "basis conflicts with period",
                              "cell corrected", "sign not on page", "period from page heading", "period from another cell",
                              "period is a range", "growth dated to start year", "label mismatch", "sources disagree", "source ambiguous",
-                             "source not associated", "extraction incomplete", "source ambiguous, noted", "no label read")
+                             "source not associated", "extraction incomplete", "source ambiguous, noted", "no label read", "reading uncertain")
     assert (checker.DERIVED_FIGURE, checker.LAUNCH_NO_PRODUCT, checker.NO_PRINTED_SOURCE, checker.QUOTED_FIGURE) == \
         ("derived figure, not a claim", "launch date without product name", "no printed source", "quoted figure, not a company claim"), \
         "the Diagnostics kinds of a dropped claim are closed words (George, 2026-10-26; no printed source, source association 2026-10-26)"
@@ -4034,3 +4034,37 @@ def test_the_yearly_pnl_trend_sits_in_the_server_only_role_metrics_block():
     from schemas.metrics import RoleMetrics, PnlTrend
     assert "pnl_trend" in RoleMetrics.model_fields and "rows" in PnlTrend.model_fields
     assert not {"pnl_trend", "periods"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
+
+
+# --- reading consistency (docs/design/reading-consistency.md): the second read of a sheet and of a page holds the same boundary as the first --------
+def test_the_second_page_read_and_the_second_sheet_read_store_and_log_no_text_and_no_new_key(monkeypatch, second_page_read):
+    import json as _json
+    from test_reading_consistency import DIFFERENT, FIRST, LINES, read_deck
+    db, adapter = read_deck(monkeypatch, [FIRST, DIFFERENT])
+    assert adapter.calls == 2
+    stored = _json.dumps({name: col.docs for name, col in db._cols.items() if name not in ("deck_text", "datasets", "deck_candidates", "candidates")}, default=str)
+    for _x, _y, _size, line in LINES:
+        assert line not in stored, "no line of the page is stored beside the second read"
+    assert "_uncertain" not in stored, "the marker lives between the merge and the row only"
+    assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd", "image_tokens", "image_cost_usd",
+                          "cache_hit", "status", "unmatched_numbers", "timestamp", "content_hash", "deck_id", "http_status", "error_type", "structure_type",
+                          "file_hash", "refused_input_tokens", "read_no"} for c in db["llm_calls"].docs)
+    second = [d for d in db["llm_structures"].docs if d["type"] == "page_claims_second"]
+    assert second and set(second[0]) >= {"output", "content_hash", "input_tokens", "output_tokens"} and "text" not in second[0]
+
+
+def test_a_second_sheet_read_record_holds_the_file_map_and_counts_only():
+    from app import readings
+    assert readings.SECOND_READS in readings.COLLECTIONS
+    doc = asyncio_run(readings.put_second(_FakeDbForSecond(), reading="k", prompt_version="v", model="m", file_map={"sheets": []}, input_tokens=5, output_tokens=2, cost=0.1))
+    assert set(doc) == {"reading", "prompt_version", "model", "file_map", "input_tokens", "output_tokens", "estimated_cost_usd", "created_at"}
+
+
+def asyncio_run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def _FakeDbForSecond():
+    import test_llm_gateway as _t
+    return _t.FakeDB()

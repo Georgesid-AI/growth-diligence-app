@@ -13,7 +13,7 @@ import path from "path";
  */
 jest.mock("@/lib/api", () => ({
   getReading: jest.fn(), decideCard: jest.fn(), changeReading: jest.fn(), getCell: jest.fn(), getDeckPage: jest.fn(), downloadReading: jest.fn(),
-  getAudit: jest.fn(), updateAudit: jest.fn(), saveFx: jest.fn(),
+  getAudit: jest.fn(), updateAudit: jest.fn(), saveFx: jest.fn(), decideUncertain: jest.fn(), answerCorrection: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
