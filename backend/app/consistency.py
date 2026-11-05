@@ -3,7 +3,7 @@
 A spreadsheet is read twice, on the same input, with the same prompt and model (gateway.read_structure, `second_read`). The first read is the
 stored reading; the second is stored beside it (readings.put_second). Here the two file maps are compared, in code:
 
-    * a row both reads give with the same role, metric, series (actual and plan), segment flag and parent row is stored as it is;
+    * a row both reads give with the same role, metric, series (actual and plan), segment flag, parent row, unit, currency and basis is stored as it is;
     * a row that differs, or that only one read gives, stays stored with the first read's values and is marked "Reading uncertain – confirm" on
       the mapping page with both candidates; nothing is picked automatically;
     * a sheet-level field that differs (granularity, header row, last actual column) is marked the same way on the Detected layout block.
@@ -20,7 +20,8 @@ PICKS = ("first", "second")
 WHY = "uncertain: kept the first reading"
 WHY_SECOND = "uncertain: picked the second reading"
 SHEET_FIELDS = ("granularity", "header_row", "last_actual")      # last_actual compares its column
-ROW_FIELDS = ("role", "metric", "series", "plan_series", "segment", "parent_row")
+# unit, currency and basis added 2026-11-05 (George): they are read into the figures (the fx, the form of the series), so a difference is one.
+ROW_FIELDS = ("role", "metric", "series", "plan_series", "segment", "parent_row", "unit", "currency", "basis")
 
 
 def _segment_flag(row: Dict) -> bool:
@@ -29,7 +30,8 @@ def _segment_flag(row: Dict) -> bool:
 
 def _signature(row: Dict) -> Dict:
     return {"role": row.get("role"), "metric": row.get("metric"), "series": row.get("series"), "plan_series": row.get("plan_series"),
-            "segment": _segment_flag(row), "parent_row": row.get("parent_row")}
+            "segment": _segment_flag(row), "parent_row": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency"),
+            "basis": row.get("basis")}
 
 
 def row_view(row: Optional[Dict]) -> Optional[Dict]:
@@ -37,6 +39,7 @@ def row_view(row: Optional[Dict]) -> Optional[Dict]:
     if row is None:
         return None
     return {"role": row.get("role"), "metric": row.get("metric"), "basis": row.get("basis"), "cells": row.get("cells"),
+            "unit": row.get("unit"), "currency": row.get("currency"),
             "segment": _segment_flag(row), "parent_row": row.get("parent_row"),
             "periods": len((row.get("series") or {}).get("periods") or []) + len((row.get("plan_series") or {}).get("periods") or [])}
 

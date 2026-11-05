@@ -58,6 +58,12 @@ describe("the words of an uncertain item", () => {
     expect(uncertainTitle(rowItem)).toBe("Sales, row 23 (metric differ)");
     expect(candidateText(rowItem, "first")).toBe("customers · customers · B23:AP23");
     expect(candidateText({ ...rowItem, first: null }, "first")).toBe("not in this reading");
+    // A difference in unit, currency or basis (George, 2026-11-05) is named on each button, so two readings of one role are told apart.
+    const money = { ...rowItem, fields: ["currency"], first: { ...rowItem.first, unit: "money", currency: "EUR" }, second: { ...rowItem.first, unit: "money", currency: "USD" } };
+    expect(candidateText(money, "first")).toBe("customers · customers · B23:AP23 · currency EUR");
+    expect(candidateText(money, "second")).toBe("customers · customers · B23:AP23 · currency USD");
+    const basis = { ...rowItem, fields: ["basis", "unit"], first: { ...rowItem.first, basis: "monthly", unit: "count" }, second: { ...rowItem.first, basis: "yearly", unit: null } };
+    expect(candidateText(basis, "second")).toBe("customers · customers · B23:AP23 · basis yearly · unit none");
     expect(uncertainTitle(fieldItem)).toBe("Sales: granularity");
     expect(candidateText(fieldItem, "second")).toBe("quarterly");
   });

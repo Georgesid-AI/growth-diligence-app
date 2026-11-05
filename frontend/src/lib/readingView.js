@@ -180,7 +180,9 @@ export function candidateText(item, side) {
   const c = item[side];
   if (item.kind === "row") {
     if (!c) return "not in this reading";
-    return [c.role, c.metric, c.cells, c.segment ? "a segment" : null, c.parent_row ? `part of row ${c.parent_row}` : null].filter(Boolean).join(" · ");
+    // A unit, currency or basis the reads disagree on is named with its value, so two readings of one role are told apart (2026-11-05).
+    const named = (item.fields || []).filter((f) => ["unit", "currency", "basis"].includes(f)).map((f) => `${f} ${c[f] ?? "none"}`);
+    return [c.role, c.metric, c.cells, c.segment ? "a segment" : null, c.parent_row ? `part of row ${c.parent_row}` : null, ...named].filter(Boolean).join(" · ");
   }
   return c == null ? "not in this reading" : String(c);
 }

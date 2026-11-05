@@ -11,7 +11,7 @@ A model reading is not repeatable, so what a read gives is checked against a sec
 The first read is the stored reading, as before. The second is stored beside it in `reading_second_reads` (insert-only, one per reading; model JSON output
 with the series, tokens and cost; no cell text). `app/consistency.py` compares the two file maps:
 
-* a row both reads give with the same role, metric, series (actual and plan), segment flag and parent row is stored as it is;
+* a row both reads give with the same role, metric, series (actual and plan), segment flag, parent row, unit, currency and basis is stored as it is (unit, currency and basis added 2026-11-05, George: they are read into the figures, so a difference is one; each candidate button names the differing value);
 * a row that differs, or that only one read gives, stays stored with the first read's values and is marked "Reading uncertain – confirm" on the file's tab,
   with both candidates;
 * a sheet-level field that differs (granularity, header row, last actual column) or a sheet only one read gives is marked the same way on the Detected

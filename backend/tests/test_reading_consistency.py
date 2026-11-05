@@ -463,3 +463,17 @@ def test_a_confirmed_deck_reading_survives_a_re_read_of_the_deck(monkeypatch, se
     back = [r for r in rows_of(db) if r["claim_type"] == "revenue"]
     assert [(r["value"], r["status"], checker.READING_UNCERTAIN in r["flags"]) for r in back] == [(150000, "pending", True)]
     assert [o["set"]["value"] for o in back[0]["corrections"][-1]["options"]] == [150000, 160000] and adapter.calls == 2
+
+
+@pytest.mark.parametrize("field, other", [("unit", "count"), ("currency", "USD"), ("basis", "yearly")])
+def test_two_reads_that_differ_on_a_rows_unit_currency_or_basis_flag_the_row_with_both_candidates(flow, field, other):
+    """George, 2026-11-05: a difference in unit, currency or basis is read into the figures (the fx, the form of the series), so it is a
+    disagreement like one on the role or the metric."""
+    flow.state["adapter"] = TwoReads(good_map(), with_row(good_map(), **{field: other}))
+    upload(flow, MONTHLY, monthly())
+    item, = checks_doc(flow)["consistency"]["items"]
+    assert item["key"] == f"uncertain:row:{SHEET}:4" and item["fields"] == [field]
+    assert (item["first"][field], item["second"][field]) == (good_map()["sheets"][0]["rows"][0][field], other), "both candidates carry the field"
+    inputs = asyncio.run(server._role_inputs(AUDIT, flow.db["audits"].docs[0]))
+    assert [r["uncertain"] for r in inputs["table"] if r["role"] == "revenue"] == [True]
+    assert decide(flow, item["key"], "second").status_code == 200 and effective_row(flow)[field] == other
