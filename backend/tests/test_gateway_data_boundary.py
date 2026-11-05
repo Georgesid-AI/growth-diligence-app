@@ -4069,3 +4069,21 @@ def asyncio_run(coro):
 def _FakeDbForSecond():
     import test_llm_gateway as _t
     return _t.FakeDB()
+
+
+# --- results stage ordering (2026-11-05): the completeness record and the claims and results log lines hold counts and page numbers only -------------
+def test_the_completeness_record_and_the_run_log_lines_hold_page_numbers_and_counts_only(monkeypatch, second_page_read, caplog):
+    import logging
+    import json as _json
+    from test_reading_consistency import FIRST, LINES, SAME, read_deck
+    caplog.set_level(logging.INFO)
+    db, _ = read_deck(monkeypatch, [FIRST, SAME])
+    record = db["deck_text"].docs[0]["claims_record"]
+    assert set(record) == {"expected", "first", "second", "second_required", "missing", "at", "unreadable"}
+    assert all(isinstance(n, int) for key in ("expected", "first", "second", "missing") for n in record[key]), "page numbers, never a line of a page"
+    assert set(db["deck_text"].docs[0]["page_reads"][0]) >= {"pages", "status", "second"}
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "claims run:" in logged
+    for _x, _y, _size, line in LINES:
+        assert line not in logged and line not in _json.dumps(record), "no deck text in the log or the record"
+    assert "deck.pdf" not in "\n".join(m for m in logged.splitlines() if m.startswith("claims run:")), "the deck is named by its id, not its file name"

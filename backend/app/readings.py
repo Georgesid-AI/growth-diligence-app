@@ -200,6 +200,22 @@ async def save_checks(db, audit_id: str, file_hash: str, doc: dict) -> None:
     await db[CHECKS].insert_one({**doc, "audit_id": audit_id, "file_hash": file_hash, "checked_at": _now()})
 
 
+async def latest_at(db, audit_id: str) -> Optional[str]:
+    """The newest time a reading of this audit was made, read again or overridden: the audit's use of a reading, the reading itself, its consistency
+    read, its re-reads (the analyst's and the reviewer's) and every override of the audit (a confirmation pick, an analyst's Change, a reviewer's
+    correction, a typed as-of month). An ISO string, or None when the audit uses no reading. Results built before it are older than the latest
+    reading (run_audit.results_older)."""
+    uses = await db[USES].find({"audit_id": audit_id}, {"_id": 0, "key": 1, "at": 1}).to_list(1000)
+    keys = [u["key"] for u in uses if u.get("key")]
+    stamps = [u.get("at") for u in uses]
+    stamps += [o.get("at") for o in await db[OVERRIDES].find({"audit_id": audit_id}, {"_id": 0, "at": 1}).to_list(100000)]
+    if keys:
+        for collection, field, name in ((READINGS, "key", "created_at"), (SECOND_READS, "reading", "created_at"), (REREADS, "reading", "created_at")):
+            stamps += [d.get(name) for d in await db[collection].find({field: {"$in": keys}}, {"_id": 0, name: 1}).to_list(10000)]
+    stamps = [s for s in stamps if s]
+    return max(stamps) if stamps else None
+
+
 async def checks_for(db, audit_id: str) -> List[dict]:
     return await db[CHECKS].find({"audit_id": audit_id}, {"_id": 0}).to_list(1000)
 

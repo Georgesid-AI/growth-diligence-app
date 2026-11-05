@@ -21,7 +21,6 @@ numbers and cell ids), the checked items without any text, the batch's metadata;
 """
 import asyncio
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
@@ -32,7 +31,7 @@ from ..decks import render
 from ..llm import gateway
 from ..llm.schemas import PAGE_CLAIMS
 from . import association
-from . import checker, page_check, redact
+from . import checker, completeness, page_check, redact
 
 logger = logging.getLogger("growth.structures")
 
@@ -61,7 +60,7 @@ def sendable_pages(grids: List[Dict]) -> List[Dict]:
 def second_read_enabled() -> bool:
     """Whether each page is read twice (the consistency read, docs/design/reading-consistency.md). On by default; PAGE_SECOND_READ=0 turns the
     second read off for a deployment that must hold the page-read cost down. The tests of the single read switch it off (tests/conftest.py)."""
-    return os.environ.get("PAGE_SECOND_READ", "1").strip() != "0"
+    return completeness.second_read_required()
 
 
 def batches(grids: List[Dict], per_call: int = PAGES_PER_CALL) -> List[List[Dict]]:
@@ -85,7 +84,7 @@ def skipped_pages(grids: List[Dict], page_count: Optional[int] = None) -> List[i
 
 async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_for=None,
                      adapter=None, sleep=None, use_cache: bool = True, per_call: int = PAGES_PER_CALL, skip=(), parallel: int = 1,
-                     page_timeout: float = PAGE_TIMEOUT_SECONDS, progress=None, seconds: Optional[Dict] = None) -> List[Tuple[List[Dict], object]]:
+                     page_timeout: float = PAGE_TIMEOUT_SECONDS, progress=None, seconds: Optional[Dict] = None, on_page=None) -> List[Tuple[List[Dict], object]]:
     """[(grids of the call, StructureRead)] in page order, for every page of a deck that may go, `per_call` pages to a call and up to
     `parallel` calls at a time. The audit's deck read (process_deck_pages) asks for one page per call (the unit of the panel's "page n
     not read" and of a retry) and PARALLEL_PAGES at a time; the scripts keep the former five pages, one call after another. The first 429 the provider answers lowers it to
@@ -98,7 +97,9 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
     function giving the PNG of a page, or None when the file cannot be drawn (LibreOffice absent, page count differs, no stored file):
     that page then goes as text alone, as before, and is never "not read" for that reason. `seconds`, when given, is filled with the
     consistency read of each page that was read ({tuple(page numbers): StructureRead}): the same page, text and image, read a second time
-    (docs/design/reading-consistency.md); a page whose second read failed or timed out has none, and its first read stands unflagged."""
+    (docs/design/reading-consistency.md); a page whose second read failed or timed out has none, and its first read stands unflagged.
+    `on_page(grids, result, again)` is awaited as soon as a call is finished, with its second read (or None): what a page gave is stored page by
+    page, so a batch that stops leaves the pages already read stored (results stage ordering, 2026-11-05)."""
     queue = [b for b in batches(grids, per_call)
              if not all(page_grids_mod.page_number(p["grid"]) in set(skip) for p in b)]
     total = len(queue)
@@ -116,21 +117,27 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
             db, audit_id, batch_text(batch), PAGE_CLAIMS, deck_id=deck_id, pages=numbers, adapter=adapter, sleep=sleep,
             use_cache=use_cache, on_rate_limit=lower, images=images, second_read=second)
 
+    async def finished(grids_of, result, again=None):
+        if on_page:
+            await on_page(grids_of, result, again)
+        return [(grids_of, result)]
+
     async def one(batch):
         grids_of = [p["grid"] for p in batch]
         numbers = [page_grids_mod.page_number(g) for g in grids_of]
         if state["stopped"] is not None:
-            return [(grids_of, gateway._structure_result("stopped", PAGE_CLAIMS, state["stopped"]))]
+            return await finished(grids_of, gateway._structure_result("stopped", PAGE_CLAIMS, state["stopped"]))
         try:
             result = await asyncio.wait_for(read_one(batch, numbers), page_timeout)
         except asyncio.TimeoutError:
             logger.warning("page not read: run_id=%s deck_id=%s pages=%s reason=timeout", audit_id, deck_id, numbers)
-            return [(grids_of, gateway._structure_result("not_read", PAGE_CLAIMS, "timeout"))]
+            return await finished(grids_of, gateway._structure_result("not_read", PAGE_CLAIMS, "timeout"))
         if result.status in ("too_large", "truncated") and len(batch) > 1:
             half = len(batch) // 2
             return [r for part in (batch[:half], batch[half:]) for r in await one(part)]
         if result.status == "stopped":
             state["stopped"] = result.reason
+        again = None
         if seconds is not None and result.status == "read":
             try:
                 again = await asyncio.wait_for(read_one(batch, numbers, second=True), page_timeout)
@@ -139,9 +146,11 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
             else:
                 if again.status == "read":
                     seconds[tuple(numbers)] = again
-                elif again.status == "stopped":
-                    state["stopped"] = again.reason
-        return [(grids_of, result)]
+                else:
+                    if again.status == "stopped":
+                        state["stopped"] = again.reason
+                    again = None
+        return await finished(grids_of, result, again)
 
     async def worker(index):
         # A worker above the current limit retires after its page; the first 429 lowers the limit mid-deck.
@@ -550,7 +559,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
-                                              {"_id": 0, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "blocks": 1, "layout": 1, "page_reads": 1, "retry_pages": 1,
+                                              {"_id": 0, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "blocks": 1, "layout": 1, "page_reads": 1, "retry_pages": 1, "claims_record": 1, "page_overrides": 1,
                                                "diagnostics": 1})
     if not audit or not deck:
         return NOT_READ
@@ -568,7 +577,12 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     run = RunState(reviewed, list(deck.get("diagnostics") or []))
     # A run that follows one that left pages to retry asks only for those pages; any other run reads the whole deck (the cache serves
     # the pages already read).
-    kept = [r for r in deck.get("page_reads") or [] if r.get("status") == "read"] if deck.get("retry_pages") else []
+    # A page whose second read is not stored is read again with the rest (its first read is cached): "done" needs the second read of every page
+    # read when the second read is on (results stage ordering, 2026-11-05).
+    # A run cut before its last write leaves no retry list but a record with pages missing: the retry resumes from the record too (review of #240).
+    second_on = second_read_enabled()
+    resume = deck.get("retry_pages") or completeness.still_missing(deck.get("claims_record"), deck.get("page_overrides"), second_on)
+    kept = [r for r in deck.get("page_reads") or [] if r.get("status") == "read" and (not second_on or r.get("second"))] if resume else []
     done_before = {n for r in kept for n in r.get("pages") or ()}
     skipped = skipped_pages(grids, page_count)
 
@@ -599,41 +613,67 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         undrawn.append(page)
         return None
 
+    expected = [page_grids_mod.page_number(p["grid"]) for p in sendable_pages(grids)]
+    began = datetime.now(timezone.utc)
     seconds: Dict = {}
-    for batch, result in await read_pages(db, audit_id, deck_id, grids, image_for if permitted else None, adapter, sleep,
-                                          per_call=1, skip=done_before, parallel=PARALLEL_PAGES, progress=progress, seconds=seconds if second_read_enabled() else None):
-        numbers = [page_grids_mod.page_number(g) for g in batch]
-        entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
-        if result.masked:
-            # The deck line's two masking counts (read-check-review.md section 8): numbers only, never what was removed.
-            entry["masked"] = {"personal": redact.personal_count(result.masked),
-                               "names": result.masked.get("customer", 0) + result.masked.get("company", 0)}
-        if result.provider:
-            # A page the provider call failed on: the status, the error type and the plain-words sentence (the message only reaches the log).
-            entry["provider"] = {k: result.provider.get(k) for k in ("status", "type", "plain")}
-            shown[tuple(numbers)] = result.provider.get("message") or "-"
-        if result.rejected:
-            entry["rejected"] = result.rejected
-            for page in numbers:        # the validator's reason (closed words), never the reply text
-                logger.warning("page %d: reply rejected (%s)", page, result.rejected)
-        if result.status == "stopped":
-            stopped_message = result.reason
-        if result.status == "read":
-            if not result.cache_hit:
-                sent.append({"pages": numbers, "type": PAGE_CLAIMS, "at": datetime.now(timezone.utc).isoformat()})
-            again = seconds.get(tuple(numbers))
-            if again is not None:
-                if not again.cache_hit:
-                    sent.append({"pages": numbers, "type": PAGE_CLAIMS, "at": datetime.now(timezone.utc).isoformat(), "read": 2})
-                # The first reply names its second, so a check again of the stored reply (renormalise_audit) compares the two as before.
-                await db[gateway.STRUCTURES_COLLECTION].update_one({"audit_id": audit_id, "key": result.key}, {"$set": {"second_key": again.key}})
-            counts = await apply_reply(db, audit_id, deck_id, deck, run, by_page, year_end, page_count, result.key, numbers, result.claims,
-                                       again.claims if again is not None else None)
-            entry.update(counts)
-            logger.info("pages checked: run_id=%s deck_id=%s pages=%d matched=%d unmatched=%d dropped=%d flagged=%d", audit_id,
-                        deck_id, len(numbers), counts["matched"], counts["unmatched"], counts["dropped"], counts["flagged"])
-        reads.append(entry)
-    for entry in reads:
+    lock = asyncio.Lock()
+
+    def ordered() -> List[Dict]:
+        """The entries in page order, as the sequential read gave them: the calls finish in any order, the stored list does not."""
+        return kept + sorted(reads, key=lambda r: min(r["pages"]) if r["pages"] else 0)
+
+    def record_now() -> Dict:
+        done = kept + reads
+        return completeness.claims_record(expected, [n for r in done if r["status"] == "read" for n in r["pages"]],
+                                       [n for r in done if r["status"] == "read" and r.get("second") for n in r["pages"]], second_on,
+                                       datetime.now(timezone.utc).isoformat(),
+                                       unreadable=[(n, r["status"]) for r in done if r["status"] in completeness.UNREADABLE for n in r["pages"]])
+
+    async def handle(batch, result, again) -> None:
+        """One call finished: its entry, its second read's link and its claims are stored at once, page by page, under a lock (the calls run in
+        parallel and share the run's rows). A batch that stops later leaves these pages stored and counted in the record."""
+        nonlocal stopped_message
+        async with lock:
+            numbers = [page_grids_mod.page_number(g) for g in batch]
+            entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
+            if result.masked:
+                # The deck line's two masking counts (read-check-review.md section 8): numbers only, never what was removed.
+                entry["masked"] = {"personal": redact.personal_count(result.masked),
+                                   "names": result.masked.get("customer", 0) + result.masked.get("company", 0)}
+            if result.provider:
+                # A page the provider call failed on: the status, the error type and the plain-words sentence (the message only reaches the log).
+                entry["provider"] = {k: result.provider.get(k) for k in ("status", "type", "plain")}
+                shown[tuple(numbers)] = result.provider.get("message") or "-"
+            if result.rejected:
+                entry["rejected"] = result.rejected
+                for page in numbers:        # the validator's reason (closed words), never the reply text
+                    logger.warning("page %d: reply rejected (%s)", page, result.rejected)
+            if result.status == "stopped":
+                stopped_message = result.reason
+            if result.status == "read":
+                entry["second"] = again is not None
+                if not result.cache_hit:
+                    sent.append({"pages": numbers, "type": PAGE_CLAIMS, "at": datetime.now(timezone.utc).isoformat()})
+                if again is not None:
+                    if not again.cache_hit:
+                        sent.append({"pages": numbers, "type": PAGE_CLAIMS, "at": datetime.now(timezone.utc).isoformat(), "read": 2})
+                    # The first reply names its second, so a check again of the stored reply (renormalise_audit) compares the two as before.
+                    await db[gateway.STRUCTURES_COLLECTION].update_one({"audit_id": audit_id, "key": result.key}, {"$set": {"second_key": again.key}})
+                counts = await apply_reply(db, audit_id, deck_id, deck, run, by_page, year_end, page_count, result.key, numbers, result.claims,
+                                           again.claims if again is not None else None)
+                entry.update(counts)
+                logger.info("pages checked: run_id=%s deck_id=%s pages=%d matched=%d unmatched=%d dropped=%d flagged=%d", audit_id,
+                            deck_id, len(numbers), counts["matched"], counts["unmatched"], counts["dropped"], counts["flagged"])
+            reads.append(entry)
+            change = {"page_reads": ordered(), "claims_record": record_now(), "diagnostics": run.diagnostics}
+            if result.status == "read":
+                change["claims_at"] = datetime.now(timezone.utc).isoformat()       # the newest claims a result can be built from
+            await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": change})
+
+    await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"claims_record": record_now()}})
+    await read_pages(db, audit_id, deck_id, grids, image_for if permitted else None, adapter, sleep, per_call=1, skip=done_before,
+                     parallel=PARALLEL_PAGES, progress=progress, seconds=seconds if second_on else None, on_page=handle)
+    for entry in ordered()[len(kept):]:
         if entry["status"] != "read":
             for n in entry["pages"]:
                 # Codes only (rule 17): the page, the status and the reason word; for a provider failure the same fields as the spreadsheet step's
@@ -652,11 +692,16 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1, "images_unavailable": 1, "images_need_file": 1})
     unread = sorted({n for r in reads if r["status"] != "read" for n in r["pages"]})
     # Run audit asks again for the pages a failure left unread, not for a page the cap, the size or a refusal will refuse again.
-    retry = sorted({n for r in reads if r["status"] in RETRY_STATUSES for n in r["pages"]})
+    retry = sorted({n for r in reads if r["status"] in RETRY_STATUSES for n in r["pages"]}
+                   | {n for r in reads if second_on and r["status"] == "read" and not r.get("second") for n in r["pages"]})
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {
-        "page_reads": kept + reads, "sent": list((previous or {}).get("sent") or []) + sent, "unread_pages": unread, "retry_pages": retry,
+        "page_reads": ordered(), "sent": list((previous or {}).get("sent") or []) + sent, "unread_pages": unread, "retry_pages": retry,
         "images_unavailable": bool(undrawn) or bool(kept and (previous or {}).get("images_unavailable")),     # a retry keeps the earlier pages' state
         "images_need_file": no_file or bool(kept and (previous or {}).get("images_need_file")),
-        "diagnostics": run.diagnostics}})
+        "diagnostics": run.diagnostics, "claims_record": record_now()}})
+    record = record_now()
+    logger.info("claims run: run_id=%s deck_id=%s first=%d/%d second=%d/%d missing=%s elapsed=%.1fs timeout=%ds", audit_id, deck_id, len(record["first"]),
+                len(record["expected"]), len(record["second"]), len(record["first"]), ",".join(str(n) for n in record["missing"]) or "-",
+                (datetime.now(timezone.utc) - began).total_seconds(), completeness.stage_timeout(len(record["expected"]), 2 if second_on else 1))
     return await _deck_status(db, audit_id, deck_id, overall, stopped_message or (gateway.PROMPT_MISSING_TEXT if overall == PROMPT_MISSING else
                                                                                 gateway.PAGE_READER_BLOCKED if overall == BLOCKED else None))

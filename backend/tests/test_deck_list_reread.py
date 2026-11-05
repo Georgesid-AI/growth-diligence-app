@@ -180,12 +180,8 @@ def test_a_page_reply_row_whose_reply_is_gone_still_makes_its_deck_re_read_neede
 # ---------------------------------------------------------------------------
 @pytest.fixture()
 def run_claims(monkeypatch):
-    async def nothing(*args, **kwargs):
-        return None
-
     async def entered(*args, **kwargs):
         return {"entered": 0, "open": 0, "turnover_open": 0}
-    monkeypatch.setattr(server, "_review_if_not_read", nothing)
     monkeypatch.setattr(server, "_enter_matched_claims", entered)
 
 

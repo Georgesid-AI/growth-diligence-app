@@ -624,6 +624,9 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
 
 
 NO_ANOMALIES = "No anomalies found in the files read."
+RESULTS_OLDER = "Results are older than the latest reading – run Calculating results again."          # run_audit.RESULTS_OLDER (this module imports no run_audit)
+PAGE_NOT_READ = "Deck {deck}: page {page} not read ({reason})"
+DECK_CLAIMS_MISSING = "Deck claims incomplete: the results were built without {deck}. Run Calculating results again."
 GAP_FLAGS = ("revenue_gap_then_resume", "revenue_missing_customer_id")      # the flags the integrity gaps check reads
 NO_FLAGS_APPLY = "anomaly flags not applicable (no revenue lines or CRM deals read)"
 
@@ -694,7 +697,8 @@ def allow_role_figures(allowed: "Allowed", results: dict) -> None:
 
 
 def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, files, decks, tables, today, integrity,
-           thesis: Dict[str, str], rated: dict, unresolved: List[str], drafted: Iterable[str] = (), claims: bool = True) -> Tuple[str, str]:
+           thesis: Dict[str, str], rated: dict, unresolved: List[str], drafted: Iterable[str] = (), claims: bool = True,
+           results_older: bool = False, missing_decks: Iterable[str] = (), skipped_pages: Iterable[dict] = ()) -> Tuple[str, str]:
     """(sections 1-6 with the title, the whole text) for one view of the thesis. `claims` False (OLD_CLAIMS off, PR 4): the report holds no
     claim register, no five-claims conclusion, no reasons, no key gates, no claim labels and no claim questions."""
     if not claims:
@@ -711,6 +715,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     # The date is the requested analysis date; the evidence end is the data's, never the as-of setting (dates-and-periods.md)
     out: List[str] = [f"# {TITLE.format(company=audit.get('company_name') or 'audit')}", f"Date: {today}",
                       f"Evidence to {fmt.evidence_to_text(results)}", ""]
+    if results_older:       # something was read after these results were built (results stage ordering, 2026-11-05)
+        out[3:3] = [RESULTS_OLDER, ""]
 
     # 1. Summary
     # claim-review-conclusion.md section 4: the heading, the conclusion, the scope sentence, the other contradictions and the computed
@@ -805,7 +811,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
                   f"{notes.source('Gross revenue churn', churn.get('source'))}.{notes.add(S17)}")
     rel, grow = rated["data_reliability"], rated["growth_engine"]
     rule = lambda r: f" {r['rule']}{' (' + vd.BENCHMARK + ')' if r['benchmark'] else ''}."            # noqa: E731
-    score = [["Data reliability", rel["rating"] or vd.NOT_RATED, reliability + rule(rel), reliability_evidence],
+    score = [["Data reliability", rel["rating"] or (vd.NOT_RATED_DECKS if rel.get("deck_incomplete") else vd.NOT_RATED), reliability + rule(rel), reliability_evidence],
              ["Growth engine", grow["rating"] or vd.NOT_RATED, growth + rule(grow), "ARR, NRR, gross revenue churn, CAC payback, ACV path"]]
     score += [[name, text, "", ""] for name, text in W17_NOT_ASSESSED]
     out += [f"## {HEADINGS[2]}", _table(["Area", "Rating", "Headline", "Key evidence"], score), ""]
@@ -853,7 +859,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     if narrative:
         flagged += [f"{item}{notes.add('growth-engine narrative, AI call log')}" for item in narrative.get("worth_flagging") or ()]
     flagged += [f"{item['text']}{notes.source(plan_lines.HEADING, {'file': item['file'], 'sheet': item['sheet'], 'rows': ', '.join(cell_ranges(item['cells']))})}"
-                for item in assumed if item["kind"] == "plan_to_date" and item["beyond_tolerance"]]        # a plan-to-date gap beyond tolerance is also flagged
+                for item in assumed if item["kind"] == "plan_to_date" and item["beyond_tolerance"]]
+    flagged += [DECK_CLAIMS_MISSING.format(deck=name) for name in missing_decks]
+    flagged += [PAGE_NOT_READ.format(deck=p['file'], page=p['page'], reason=p['reason']) for p in skipped_pages]        # continued without (George, 2026-11-05)        # results built without a deck that has figures        # a plan-to-date gap beyond tolerance is also flagged
     if not claims:          # PR 4f: the role engine's own findings; nothing qualifies, the section says so
         flagged += role_flags(results, integrity, ccy, notes)
         if not flagged:
@@ -1010,7 +1018,8 @@ def _tables_differ(recognition: dict, results: dict) -> str:
 
 def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: dict, gaps: List[dict], ic: dict,
                blockers: List[dict], narratives: List, files: List[dict], decks: List[dict], tables: List[dict],
-               today: str, integrity: Optional[dict] = None, claims: bool = True) -> str:
+               today: str, integrity: Optional[dict] = None, claims: bool = True, results_older: bool = False,
+               missing_decks: Iterable[str] = (), skipped_pages: Iterable[dict] = ()) -> str:
     """The IC memo as Markdown, or `MemoRefused` (section 7.1). Built on request from the functions of the register and the verdict;
     nothing is stored. `integrity`: the Data integrity assessment (integrity-coverage.md); None reads it from the results and the
     decks with no deck candidates."""
@@ -1023,7 +1032,7 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
     if integrity is None:
         integrity = integrity_mod.assess(results, deck_count=len(decks), candidates=[],
                                          fiscal_year_end=int((audit or {}).get("fiscal_year_end") or 12))
-    rated = vd.ratings(results, integrity, fmt.fmt_pct, fmt.fmt_months)
+    rated = vd.ratings(results, integrity, fmt.fmt_pct, fmt.fmt_months, list(missing_decks))
     # The deal thesis is a draft from computed text unless the analyst wrote a part (simplified-flow.md decision 6).
     draft = vd.default_thesis(audit, ver if claims else {}, key if claims else {}, lambda v: fmt.fmt_currency(v, results.get("reporting_currency")))
     written = {k: v for k, v in (ic.get("thesis") or {}).items() if k in vd.THESIS_PARTS and v} if claims else {}
@@ -1032,7 +1041,7 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
     unresolved = vd.unresolved_questions(gaps, int(ic.get("open_questions") or 0) if claims else 0, integrity, results)      # no claim questions with OLD_CLAIMS off
     common = dict(audit=audit, results=results, rows=rows, ver=ver, key=key, gaps=gaps, ic=ic, blockers=blockers,
                   narratives=narratives, files=files, decks=decks, tables=tables, today=today, integrity=integrity,
-                  rated=rated, unresolved=unresolved, drafted=drafted, claims=claims)
+                  rated=rated, unresolved=unresolved, drafted=drafted, claims=claims, results_older=results_older, missing_decks=list(missing_decks), skipped_pages=list(skipped_pages))
     # A number in a sentence the analyst wrote must be in the results, the register or the cost log: checked sentence by sentence.
     strict = allowed_numbers(audit, results, rows, gaps, ic, files, decks, thesis=True)
     bad = [t for part in written for t in unmatched(written[part], strict)]

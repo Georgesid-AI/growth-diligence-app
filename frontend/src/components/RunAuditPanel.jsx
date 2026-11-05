@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AlertTriangle, Check, Clock, Circle } from "lucide-react";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import * as apiModule from "@/lib/api";
-import { getDatasets, getDecks, getReview } from "@/lib/api";
+import { continueWithoutPages, getDatasets, getDecks, getReview } from "@/lib/api";
 import { setCalculatePressed } from "@/lib/chatUpload";
 import { RETRY_LABEL, RUN_LABEL, STAGES, firstStageNotDone, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
 import { OPEN_UNCERTAIN, UNCERTAIN_NOTICE_LINK, readiness, steps, uncertainNotice } from "@/lib/uploadView";
@@ -64,6 +64,13 @@ export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = 
     if (out.status === "done") nav(`/audit/${auditId}/dashboard`);
   }, [auditId, running, update, nav, onRunning, readState]);
 
+  // "Continue without page N": offered on the claims failure for a page that can never be read; stored on the server, then the stage runs again.
+  const offers = (stages.claims.status === "failed" && stages.claims.can_continue) || [];
+  const continueWithout = useCallback(async (offer) => {
+    try { await continueWithoutPages(auditId, offer.deck_id, offer.pages.map((p) => p.page)); } catch (e) { return; }
+    start("claims");
+  }, [auditId, start]);
+
   const ready = readiness(sheets, decks);
   // Calculating results follows the engine and claims stages of the run.
   const later = [stages.engine, stages.claims];
@@ -99,6 +106,12 @@ export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = 
       {failed && (
         <div className="stage-failed" data-testid={`stage-${failed.key}`} data-status="failed">
           {stages[failed.key].message && <p className="bad" role="alert" data-testid={`stage-${failed.key}-message`}>{stages[failed.key].message}</p>}
+          {offers.map((o) => (
+            <button key={o.deck_id} type="button" className="btn quiet" disabled={running} data-testid={`continue-without-${o.deck_id}`} onClick={() => continueWithout(o)}>
+              {`Continue without page ${o.pages.map((p) => p.page).join(", ")}`}
+            </button>
+          ))}
+          {offers.map((o) => <p key={`why-${o.deck_id}`} className="muted">{`${o.file}: ${o.pages.map((p) => `page ${p.page} ${p.reason}`).join("; ")}. Worth flagging will name it.`}</p>)}
           <button type="button" className="btn quiet" disabled={running} data-testid={`retry-${failed.key}`} onClick={() => start(failed.key)}>{RETRY_LABEL}</button>
           <p className="muted">Nothing already done is lost: Retry stage carries on from the stage that failed.</p>
         </div>

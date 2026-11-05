@@ -14,7 +14,7 @@ jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), updateAudit: jest.fn(), reportUsage: jest.fn(), getBlockers: jest.fn(),
   uploadChatFile: jest.fn(), uploadDeck: jest.fn(), runStage: jest.fn(), decideColumns: jest.fn(), changeDatasetType: jest.fn(),
   confirmForecastClaims: jest.fn(), saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(),
-  getDatasets: jest.fn(), getReview: jest.fn(), getDecks: jest.fn(),
+  getDatasets: jest.fn(), getReview: jest.fn(), getDecks: jest.fn(), continueWithoutPages: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({
@@ -77,7 +77,7 @@ test("one press runs the stages in order, sends no file (they went up when picke
   api.runStage.mockImplementation(async (id, key) => { order.push(`stage:${key}`); return { stage: key, status: "done" }; });
   await mount();
   await press("run-audit");
-  expect(order).toEqual(["stage:engine", "stage:claims"]);          // the file is stored and read: the run starts at the first stage not done
+  expect(order).toEqual(["stage:claims", "stage:engine"]);          // the file is stored and read: the run starts at the first stage not done
   expect(api.uploadChatFile).not.toHaveBeenCalled();
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
@@ -86,7 +86,7 @@ test("a run with nothing stored starts at the mapping stage, as before", async (
   api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" }));
   await mount();
   await press("run-audit");
-  expect(api.runStage.mock.calls.map((c) => c[1])).toEqual(["mapping", "engine", "claims"]);
+  expect(api.runStage.mock.calls.map((c) => c[1])).toEqual(["mapping", "claims", "engine"]);
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
@@ -171,8 +171,58 @@ test("a mapping confirmed or corrected after the last calculation makes the engi
   expect(tones()).toEqual(["done", "done"]);
   api.getReview.mockResolvedValue({ computed: true, engine_stale: true });          // the analyst changed a layout input since
   await press("run-audit");
-  expect(ranStages()).toEqual(["engine", "claims"]);
+  expect(ranStages()).toEqual(["engine"]);          // the deck claims are done: only the results are calculated again
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
+});
+
+test("results older than the latest reading offer the results step again (2026-11-05)", async () => {
+  allDone();
+  api.getReview.mockResolvedValue({ computed: true, engine_stale: true, results_older: true });
+  await mount();
+  await press("run-audit");
+  expect(ranStages()).toEqual(["engine"]);
+});
+
+test("a deck with pages missing from its claims is read again from those pages, then the results are calculated again", async () => {
+  allDone();
+  api.getDecks.mockResolvedValue({ decks: [{ ...DECK, claims_incomplete: true }], candidates: [{ id: "c1", status: "approved" }] });
+  api.getReview.mockResolvedValue({ computed: true, engine_stale: false });
+  await mount();
+  await press("run-audit");
+  expect(ranStages()).toEqual(["claims", "engine"]);
+});
+
+test("a claims failure on a page that can never be read offers Continue without page N; it stores the choice, runs the claims stage again and then the results", async () => {
+  allDone();
+  api.getDecks.mockResolvedValue({ decks: [{ ...DECK, claims_incomplete: true }], candidates: [] });
+  api.getReview.mockResolvedValue({ computed: false });
+  let failing = true;
+  const offer = { deck_id: "d1", file: "board.pptx", pages: [{ page: 3, reason: "too large for the token cap" }] };
+  api.runStage.mockImplementation(async (id, key) => (key === "claims" && failing
+    ? { stage: key, status: "failed", message: "Deck claims incomplete: 1 of 12 pages. Retry this stage.", can_continue: [offer] }
+    : { stage: key, status: "done" }));
+  api.continueWithoutPages.mockImplementation(async () => { failing = false; return {}; });
+  await mount();
+  await press("run-audit");
+  expect(q("stage-claims-message").textContent).toContain("Deck claims incomplete: 1 of 12 pages.");
+  expect(q("continue-without-d1").textContent).toBe("Continue without page 3");
+  expect(ranStages()).toEqual(["claims"]);
+  await press("continue-without-d1");
+  for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
+  expect(api.continueWithoutPages).toHaveBeenCalledWith("a1", "d1", [3]);
+  expect(ranStages()).toEqual(["claims", "claims", "engine"]);
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
+});
+
+test("a claims failure with nothing that can never be read offers only Retry stage", async () => {
+  allDone();
+  api.getDecks.mockResolvedValue({ decks: [{ ...DECK, claims_incomplete: true }], candidates: [] });
+  api.getReview.mockResolvedValue({ computed: false });
+  api.runStage.mockImplementation(async (id, key) => (key === "claims" ? { stage: key, status: "failed", message: "x", can_continue: [] } : { stage: key, status: "done" }));
+  await mount();
+  await press("run-audit");
+  expect(document.querySelector('[data-testid^="continue-without"]')).toBeNull();
+  expect(q("retry-claims")).not.toBeNull();
 });
 
 test("a second Run audit with nothing new sends no file and reads no deck again", async () => {
@@ -180,7 +230,7 @@ test("a second Run audit with nothing new sends no file and reads no deck again"
   await mount();
   await press("run-audit");
   await press("run-audit");
-  expect(ranStages()).toEqual(["claims", "claims"]);
+  expect(ranStages()).toEqual(["engine", "engine"]);
   expect(api.uploadDeck).not.toHaveBeenCalled();
   expect(api.uploadChatFile).not.toHaveBeenCalled();
 });

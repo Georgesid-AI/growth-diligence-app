@@ -93,10 +93,12 @@ def run_api(monkeypatch):
         from datetime import datetime, timezone
 
         from claim_matching_support import engine_results
+        latest = await server._latest_input_at(audit_id)
         results = engine_results(("revenue", "pnl", "crm"), audit.get("as_of_month"))
         await db.audits.update_one({"id": audit_id}, {"$set": {"results": results, "status": "computed", "metrics_stale": False,
                                                                 "setup_stale": False,
                                                                 "computed_at": datetime.now(timezone.utc).isoformat()}})
+        await server._store_results_basis(audit_id, latest)
         await server._enter_matched_claims(audit_id, await db.audits.find_one({"id": audit_id}))
         return results
     monkeypatch.setattr(server, "_compute_on_the_map", engine_from_the_sample_files)

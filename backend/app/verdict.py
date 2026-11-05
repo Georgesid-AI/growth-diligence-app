@@ -42,6 +42,7 @@ W10_NOT_COMPUTED = "No conclusion: compute the audit first."
 SELECTION_SENTENCE = "Selected by the app by value at stake; the analyst may change the selection"
 SELECTION_CHANGED = "Top 5 changed by the analyst — reset"
 NOT_RATED = "not rated – data missing"
+NOT_RATED_DECKS = "not rated – deck claims incomplete"
 BENCHMARK = "benchmark, not company data"
 DEFINITION_CONFIRMED = "Same metric and period confirmed by the analyst."
 GATE_TAGS = {cm.GATE_PROPOSED: "(proposed)", cm.GATE_SET: "(set by the analyst)"}
@@ -604,10 +605,14 @@ def awaiting_text(results: Optional[dict]) -> Optional[str]:
     return (AWAITING.format(n=n, figures="figures") if n != 1 else "1 figure awaits confirmation") if n else None
 
 
-def ratings(results: Optional[dict], integrity: Optional[dict], fmt_pct, fmt_months) -> dict:
+def ratings(results: Optional[dict], integrity: Optional[dict], fmt_pct, fmt_months, missing_decks=()) -> dict:
     """Both ratings. When figures await confirmation, each rating's line and rule say so (`awaiting`, "N figures await confirmation"): the rating
     itself was computed from confirmed or agreed figures only."""
     out = {"data_reliability": rate_reliability(integrity), "growth_engine": rate_growth(results, fmt_pct, fmt_months)}
+    if missing_decks:
+        # Results built with fewer deck sources than the audit has decks with figures: not rated (results stage ordering, 2026-11-05)
+        out["data_reliability"] = {"rating": None, "line": NOT_RATED_DECKS, "benchmark": False, "missing": ["deck claims"], "deck_incomplete": True,
+                                   "rule": f"{NOT_RATED_DECKS}: the results were built without {', '.join(missing_decks)}"}
     note = awaiting_text(results)
     if note:
         for r in out.values():

@@ -620,10 +620,10 @@ def test_run_audit_asks_the_reviewer_again_when_its_last_status_is_not_read_even
     router = start(flow, map_with("bookings"), review={"findings": []})
     assert _stage(flow, "engine")["status"] == "done"
     assert router.review_calls == 1 and _stored_review(flow)["status"] == "read"
-    _stage(flow, "claims")                                       # every stage done: Run audit now carries on from the last one
+    _stage(flow, "engine")                                       # every stage done: Run audit now carries on from the last one
     assert router.review_calls == 1, "a review that read is not asked again"
     _stored_review(flow)["status"] = last                        # the review the last run left behind did not read
-    assert _stage(flow, "claims")["status"] == "done"
+    assert _stage(flow, "engine")["status"] == "done"
     assert router.review_calls == 2 and _stored_review(flow)["status"] == "read", "the claims stage queued it; the calculations were not repeated"
     assert router.sheet_calls == 2, "no file was read again (the two reads of the upload only)"
 
@@ -632,7 +632,7 @@ def test_run_audit_asks_for_a_review_when_none_was_ever_stored(flow):
     router = start(flow, map_with("bookings"), review={"findings": []})
     flow.db["audits"].docs[0]["results"] = {"contract_version": 16}           # calculated before; no review document at all
     assert flow.db[readings.REVIEWS].docs == []
-    _stage(flow, "claims")
+    _stage(flow, "engine")
     assert router.review_calls == 1 and _stored_review(flow)["status"] == "read"
 
 
@@ -641,7 +641,7 @@ def test_the_reviewer_stays_off_when_it_has_no_prompt_and_run_audit_still_finish
     _stage(flow, "engine")
     flow.db["prompts"].docs[:] = [d for d in flow.db["prompts"].docs if d["name"] != "reviewer"]
     flow.db[readings.REVIEWS].docs[:] = []
-    assert _stage(flow, "claims")["status"] == "done"
+    assert _stage(flow, "engine")["status"] == "done"
     assert flow.db[readings.REVIEWS].docs == [], "no prompt, no review: the stage goes on without it"
 
 

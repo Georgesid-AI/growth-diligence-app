@@ -80,7 +80,7 @@ def test_the_rule_reads_the_review_flags_and_the_unmatched_suggestion_not_the_in
 def test_a_clean_claim_enters_and_a_flagged_or_unmatched_or_other_claim_waits_for_an_answer(run_api):
     prepared(run_api, claim("plain"), claim("flagged", flags=["axis tick"]), claim("unmatched", origin="ai", ai_status="unmatched"),
              claim("matched", origin="ai", ai_status="matched", flags=["cell corrected"]), claim("other", claim_type="other"))
-    res = stage(run_api, "claims")
+    res = stage(run_api, "engine")
     got = stored(run_api)
     assert [got[c]["status"] for c in ("plain", "flagged", "unmatched", "matched", "other")] == ["approved", "pending", "pending", "approved", "pending"]
     assert [bool(got[c].get("auto_accepted")) for c in ("plain", "flagged", "matched")] == [True, False, True]
@@ -95,7 +95,7 @@ def test_a_best_case_a_deck_inconsistency_and_a_claim_in_another_currency_enter_
     inconsistent = claim("incons", inconsistent_dates=["2023-12-31"], inconsistencies=[{"this": {"value": 190000}, "other": {"value": 150000}}])
     prepared(run_api, claim("plain"), usd, best, inconsistent)
     run_api.db["audits"].docs[0]["fx"] = {"EUR": 1.0, "USD": 1.1}
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     assert {c: stored(run_api)[c]["status"] for c in ("usd", "best", "incons")} == {"usd": "approved", "best": "approved", "incons": "approved"}
     row = registered(run_api)["best"]
     assert (row["evidence_label"], row["reason"]) == ("Unverified", cm.SCENARIO_NOTE.format(case="best")), "listed in the register as Unverified, as before"
@@ -103,7 +103,7 @@ def test_a_best_case_a_deck_inconsistency_and_a_claim_in_another_currency_enter_
 
 def test_a_beat_and_a_miss_and_a_definition_check_enter_too_the_tolerance_decides_the_label_not_the_entry(run_api):
     prepared(run_api, claim("beat", value=150000), claim("miss", value=250000), claim("ask", value=1000))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     assert {c: stored(run_api)[c]["status"] for c in ("beat", "miss", "ask")} == {"beat": "approved", "miss": "approved", "ask": "approved"}
     rows = registered(run_api)
     assert (rows["miss"]["evidence_label"], rows["ask"]["evidence_label"], rows["ask"]["definition_check"]) == ("Contradicted", None, "ask")
@@ -111,12 +111,12 @@ def test_a_beat_and_a_miss_and_a_definition_check_enter_too_the_tolerance_decide
 
 def test_a_turnover_claim_waits_for_its_revenue_or_volume_answer_then_enters(run_api):
     prepared(run_api, claim("plain"), claim("gmv", snippet="GMV EUR 900,000", value=900000))
-    res = stage(run_api, "claims")
+    res = stage(run_api, "engine")
     assert stored(run_api)["gmv"]["status"] == "pending" and stored(run_api)["plain"]["status"] == "approved"
     assert res["turnover_open"] == 1 and res["open"] == 1
     answered = run_api.put(f"/api/audits/{AUDIT}/claims/gmv/turnover", json={"as": "volume", "reason": "deck_says_processed_volume"})
     assert answered.status_code == 200, answered.text
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     assert stored(run_api)["gmv"]["status"] == "approved"
 
 
@@ -129,14 +129,14 @@ def test_the_register_and_the_deck_list_show_an_entered_claim_with_no_stored_cha
     on_list = listed(run_api)
     assert (on_list["plain"]["status"], on_list["plain"]["auto_accepted"], on_list["plain"]["auto_approval"]) == ("approved", True, "auto")
     assert on_list["flagged"]["status"] == "pending"
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     assert stored(run_api)["plain"]["status"] == "approved" and stored(run_api)["plain"]["auto_accepted"] is True
 
 
 def test_no_deck_means_no_claims_stage_counts(run_api):
     upload_files(run_api)
     stage(run_api, "engine")
-    res = stage(run_api, "claims")
+    res = stage(run_api, "engine")
     assert res["status"] == "done" and (res["entered"], res["open"]) == (0, 0)
 
 
@@ -153,7 +153,7 @@ def test_a_python_entered_claim_reads_auto_in_the_register_and_an_analyst_approv
 
 def test_editing_an_entered_claim_makes_it_an_analyst_edited_claim_and_removes_the_mark(run_api):
     prepared(run_api, claim("plain"))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     r = run_api.put(f"/api/audits/{AUDIT}/decks/candidates/plain", json={"value": 189000})
     assert r.status_code == 200, r.text
     assert not stored(run_api)["plain"].get("auto_accepted") and stored(run_api)["plain"]["status"] == "edited"
@@ -163,7 +163,7 @@ def test_editing_an_entered_claim_makes_it_an_analyst_edited_claim_and_removes_t
 @pytest.mark.parametrize("path", [("rejected", "approved"), ("rejected", "pending", "approved"), ("pending", "approved")])
 def test_rejecting_or_reopening_an_entered_claim_clears_the_mark_so_a_later_answer_reads_analyst(run_api, path):
     prepared(run_api, claim("plain"))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     for status in path:
         r = run_api.put(f"/api/audits/{AUDIT}/decks/candidates/plain", json={"status": status})
         assert r.status_code == 200, r.text
@@ -173,10 +173,10 @@ def test_rejecting_or_reopening_an_entered_claim_clears_the_mark_so_a_later_answ
 
 def test_a_rejected_claim_stays_stored_and_leaves_the_register_the_exclusion_control(run_api):
     prepared(run_api, claim("plain"), claim("other_one", value=199000))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     assert run_api.put(f"/api/audits/{AUDIT}/decks/candidates/plain", json={"status": "rejected"}).status_code == 200
     assert stored(run_api)["plain"]["status"] == "rejected" and "plain" not in registered(run_api) and "other_one" in registered(run_api)
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     assert stored(run_api)["plain"]["status"] == "rejected", "Python never enters a rejected claim again"
 
 
@@ -185,7 +185,7 @@ def test_the_baseline_csv_and_the_memo_register_show_auto(run_api):
     import csv
     import io
     prepared(run_api, claim("plain"))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     table = list(csv.reader(io.StringIO(run_api.get(f"/api/audits/{AUDIT}/claims.csv").text)))
     assert table[1][table[0].index("auto_approval")] == "auto"
     rows = copy.deepcopy(inputs()["rows"])
@@ -204,28 +204,28 @@ def test_the_baseline_csv_and_the_memo_register_show_auto(run_api):
 # --- e. a claim a check now asks about goes back to a card; an analyst's answer is never changed -------------------------------------------
 def test_an_entered_claim_a_check_now_asks_about_is_re_opened_with_a_note_and_an_answered_one_is_never_changed(run_api):
     prepared(run_api, claim("auto"), claim("manual"))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     for status in ("rejected", "approved"):             # the analyst's own answer on the second claim
         assert run_api.put(f"/api/audits/{AUDIT}/decks/candidates/manual", json={"status": status}).status_code == 200
     stored(run_api)["auto"]["flags"] = ["axis tick"]     # a re-read, a new file or a changed as-of month: a check now flags it
     stored(run_api)["manual"]["flags"] = ["axis tick"]
-    res = stage(run_api, "claims")
+    res = stage(run_api, "engine")
     got = stored(run_api)
     assert got["auto"]["status"] == "pending" and not got["auto"].get("auto_accepted") and got["auto"]["auto_note"] == NOTE
     assert got["manual"]["status"] == "approved", "an analyst's answer is never changed"
     assert res["reopened"] == 1 and listed(run_api)["auto"]["auto_note"] == NOTE
     assert "auto" not in registered(run_api)
     got["auto"]["flags"] = []
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     again = stored(run_api)["auto"]
     assert again["status"] == "approved" and again["auto_accepted"] is True and not again.get("auto_note"), "a later pass enters it again"
 
 
 def test_an_entered_claim_that_still_passes_stays_entered_after_a_re_run(run_api):
     prepared(run_api, claim("auto"))
-    stage(run_api, "claims")
     stage(run_api, "engine")
-    stage(run_api, "claims")
+    stage(run_api, "engine")
+    stage(run_api, "engine")
     assert stored(run_api)["auto"]["status"] == "approved" and stored(run_api)["auto"]["auto_accepted"] is True
 
 
@@ -244,7 +244,7 @@ def test_the_verdict_endpoint_counts_the_waiting_claims_and_the_open_definition_
     """simplified-flow.md section 1: an open question is a count on the explanation line, not a state; the count is the cards plus the open checks."""
     prepared(run_api, claim("plain", value=150000), claim("ask", value=1000), claim("flagged", flags=["axis tick"]),
              claim("unmatched", origin="ai", ai_status="unmatched"))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     assert registered(run_api)["ask"]["definition_check"] == "ask"
     body = run_api.get(f"/api/audits/{AUDIT}/verdict").json()
     assert body["verdict"]["status"] == "ok"
@@ -256,7 +256,7 @@ def test_the_verdict_endpoint_counts_the_waiting_claims_and_the_open_definition_
 # --- g. a row whose reason asks the analyst to set something is a question (George, 2026-10-25) --------------------------------------------
 def test_an_untested_row_that_asks_the_analyst_to_set_something_is_a_card_and_an_open_question(run_api):
     prepared(run_api, claim("plain", value=150000), claim("noperiod", target_date=None, period_text=None, snippet="ARR of €200,000"))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     row = registered(run_api)["noperiod"]
     assert (row["evidence_label"], row["reason"]) == ("Unverified", cm.PERIOD_NOT_READ)
     attention = run_api.get(f"/api/audits/{AUDIT}/decks").json()["attention"]

@@ -12,6 +12,7 @@ import logging
 import uuid
 from pathlib import Path
 from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
+from contextvars import ContextVar
 from typing import Dict, List, Literal, Optional
 
 import pandas as pd
@@ -1121,16 +1122,6 @@ async def _review_safely(audit_id: str, force: bool = False) -> None:
         logger.error("review failed: run_id=%s error=%s", audit_id, type(exc).__name__)
 
 
-async def _review_if_not_read(audit_id: str, background: BackgroundTasks) -> None:
-    """Queue the reviewer when the audit's last stored review is missing or its status is anything other than "read" (not_read, incomplete, none,
-    too_large, ...). A review that read is not asked again here: the engine stage asks for a new one only when the input changed (review_audit)."""
-    if await llm_gateway.reviewer_startup_problem(db) is not None:
-        return
-    last = await db[readings_mod.REVIEWS].find_one({"audit_id": audit_id}, {"_id": 0, "status": 1})
-    if last is None or last.get("status") != "read":
-        background.add_task(_review_safely, audit_id)
-
-
 @api.post("/audits/{audit_id}/review-readings")
 async def review_readings(audit_id: str, background: BackgroundTasks, force: bool = False):
     """Ask for the review of the audit's readings now (the reviewer also runs after the calculations of Run audit). One call per audit and input;
@@ -1321,7 +1312,7 @@ async def list_deck_candidates(audit_id: str):
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
                    "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "images_unavailable": 1, "images_need_file": 1, "diagnostics": 1,
-                   "reading_since": 1, "read_finished_at": 1}
+                   "reading_since": 1, "read_finished_at": 1, "claims_record": 1, "page_overrides": 1}
     # Opening the audit writes and deletes nothing (George, 2026-11-03, review of PR 225): the decks holding a page reply an older normaliser checked
     # are told "Re-read needed", and Run audit checks those replies again. A version check that fails never fails the list: the decks say "check failed".
     try:
@@ -1333,6 +1324,10 @@ async def list_deck_candidates(audit_id: str):
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     for d in found:
         d["reread_needed"], d["check_failed"] = d["deck_id"] in reread, check_failed
+        # The claims step's completeness record, as a flag and a count (results stage ordering, 2026-11-05): page numbers never leave the server here.
+        record = d.pop("claims_record", None)
+        d["claims_incomplete"] = bool(record) and not run_audit.record_complete(record, d.get("page_overrides")) and d.get("ai_status") not in ("blocked", "prompt_missing", "python_only")
+        d["claims_pages_missing"] = len(run_audit.still_missing(record, d.get("page_overrides")))
         # The deck panel's run log: status and the pages sent to the model (no text, no cost: usage-and-allowance.md section 9).
         d["sent_pages"] = sorted({p for s in d.pop("sent", None) or [] for p in ([s["page"]] if s.get("page") is not None else s.get("pages") or [])})
         # The panel's "AI read" counts (George, 2026-10-23): pages read and pages whose reply was rejected or not read; counts only.
@@ -1874,6 +1869,10 @@ def _apply_plan(found: list, plan: dict) -> list:
             for c in found]
 
 
+# What the last entering of claims reported in this request, so the results stage can answer with it (the calculations enter the claims themselves).
+_last_entered: ContextVar = ContextVar("last_entered", default=None)
+
+
 async def _enter_matched_claims(audit_id: str, audit: dict, found: Optional[list] = None) -> dict:
     """George, 2026-10-25 (simplified-flow.md section 2): the claim approval is gone. Every pending claim the page read matched, that no check
     flags for review and whose Revenue / Volume question is not open, enters the register on its own (status "approved", `auto_accepted`
@@ -1896,9 +1895,10 @@ async def _enter_matched_claims(audit_id: str, audit: dict, found: Optional[list
         except Exception:               # a failed save leaves the claim waiting; the rest go on
             plan["enter"].remove(cid)
     total = [c["id"] for c in _apply_plan(found, plan) if claim_matching.entered_by_python(c)]
-    return {"entered": len(total), "entered_ids": total, "reopened": len(plan["reopen"]),
-            "open": plan["waiting"],
-            "turnover_open": len(plan["open_turnover"] & {c["id"] for c in found if c.get("status") == "pending" or c["id"] in plan["reopen"]})}
+    counts = {"entered": len(total), "entered_ids": total, "reopened": len(plan["reopen"]), "open": plan["waiting"],
+              "turnover_open": len(plan["open_turnover"] & {c["id"] for c in found if c.get("status") == "pending" or c["id"] in plan["reopen"]})}
+    _last_entered.set(counts)
+    return counts
 
 
 async def _with_entries(audit_id: str, audit: dict, found: list) -> list:
@@ -1909,12 +1909,71 @@ async def _with_entries(audit_id: str, audit: dict, found: list) -> list:
 
 
 
+async def _deck_docs(audit_id: str) -> list:
+    return await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "ai_status": 1, "file": 1, "claims_record": 1, "claims_at": 1, "page_overrides": 1,
+                                                                        "reading_since": 1, "read_finished_at": 1}).to_list(100)
+
+
+async def _claims_gate(audit_id: str) -> dict:
+    """Whether the deck claims are done for every deck with figures (run_audit.decks_gate): the results are calculated only when they are."""
+    return run_audit.decks_gate(await _deck_docs(audit_id))
+
+
+async def _latest_input_at(audit_id: str) -> Optional[str]:
+    """The newest reading of a file or claims of a deck the results can be built from (results stage ordering, 2026-11-05)."""
+    stamps = [await readings_mod.latest_at(db, audit_id), *[d.get("claims_at") for d in await _deck_docs(audit_id)]]
+    stamps = [x for x in stamps if x]
+    return max(stamps) if stamps else None
+
+
+async def _store_results_basis(audit_id: str, latest: Optional[str]) -> None:
+    """Stored with the results, beside them and not inside them (the engine contract is unchanged): the newest input they were built from and
+    the decks with figures they were built with. A later reading or claims makes them older (`run_audit.results_older`)."""
+    gate = await _claims_gate(audit_id)
+    await db.audits.update_one({"id": audit_id}, {"$set": {"results_basis": {"latest": latest, "decks": gate["decks_with_figures"],
+                                                                                 "at": datetime.now(timezone.utc).isoformat()}}})
+
+
+async def _results_older(audit_id: str, audit: dict) -> bool:
+    return bool(audit.get("results")) and run_audit.results_older(audit, await _latest_input_at(audit_id))
+
+
+def _timeout_of(gate: dict) -> int:
+    return run_audit.stage_timeout(gate["pages"], gate["reads"])
+
+
+class ContinueWithout(BaseModel):
+    pages: List[int]
+
+
+@api.post("/audits/{audit_id}/decks/{deck_id}/continue-without")
+async def continue_without_pages(audit_id: str, deck_id: str, body: ContinueWithout):
+    """"Continue without page N" (George, 2026-11-05): the analyst accepts a deck whose claims lack a page that can never be read (too large for the
+    cap, cut at the output limit, refused). Stored as an override on the deck (page, reason word, time); the deck then counts complete, and the memo's
+    Worth flagging names the page. Refused for a page that is not missing or can be read again; a re-read keeps the override."""
+    deck = await db[decks.TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "claims_record": 1, "page_overrides": 1})
+    if not deck:
+        raise HTTPException(404, "Deck not found")
+    never = {u["page"]: u["reason"] for u in (deck.get("claims_record") or {}).get("unreadable") or ()}
+    bad = [p for p in body.pages if p not in never]
+    if not body.pages or bad:
+        raise HTTPException(409, "Only a page that cannot be read can be continued without.")
+    kept = {o["page"]: o for o in deck.get("page_overrides") or []}
+    now = datetime.now(timezone.utc).isoformat()
+    kept.update({p: {"page": p, "reason": never[p], "at": now} for p in body.pages if p not in kept})
+    await db[decks.TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"page_overrides": sorted(kept.values(), key=lambda o: o["page"])}})
+    logger.info("continue without pages: run_id=%s deck_id=%s pages=%s", audit_id, deck_id, ",".join(str(p) for p in sorted(body.pages)))
+    return {"deck_id": deck_id, "pages": sorted(kept)}
+
+
 @api.post("/audits/{audit_id}/run/{stage}")
-async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
-    """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (every matched claim no
-    check asks about enters the register). It answers 200 with a status: done, waiting (an earlier stage is not done), running (the files or
-    the decks are still being read; ask again) or failed (a plain-English message, no exception text). Nothing waits for a confirmation
-    (read-check-review.md section 12). Existing endpoints do the work; nothing here is new logic for the engine."""
+async def run_stage(audit_id: str, stage: str, background: BackgroundTasks, poll: bool = False):
+    """One stage of Run audit, in order: mapping (checks the files are mapped), claims (every deck with figures is read, page by page, and its
+    record is complete), engine (the calculations; the matched claims enter the register). It answers 200 with a status: done, waiting (an earlier
+    stage is not done), running (the files or the decks are still being read; ask again, within `timeout_seconds`) or failed (a plain-English
+    message, no exception text). The results are calculated only after the deck claims are done for every deck with figures (results stage
+    ordering, 2026-11-05). `poll`: the caller is asking again for a stage it started; no deck is queued to be read again.
+    Nothing waits for a confirmation (read-check-review.md section 12)."""
     if stage not in run_audit.STAGES:
         raise HTTPException(404, "Unknown stage")
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
@@ -1928,6 +1987,7 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
         await structures.renormalise_audit(db, audit_id)
     except Exception as exc:        # the log names the error type only (rule 17)
         logger.error("normaliser: check again failed: run_id=%s error=%s", audit_id, type(exc).__name__)
+    began = datetime.now(timezone.utc)
     try:
         if stage == "mapping":
             if not files:
@@ -1936,38 +1996,51 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
                 result = run_audit.stage_result(stage, run_audit.RUNNING, run_audit.FILES_READING, files=files)
             else:
                 result = run_audit.stage_result(stage, run_audit.DONE, None, files=files)
-        elif stage == "engine":
-            # Nothing waits for a confirmation: the map is the reading. No month confirmed and none typed: the audit runs everything that
-            # does not depend on it (read-check-review.md section 6).
-            await _run_compute(audit_id)
-            if await llm_gateway.reviewer_startup_problem(db) is None:        # no reviewer prompt: Run audit goes on without the reviewer stage
-                background.add_task(_review_safely, audit_id)        # one review per audit and input; a review already made is kept
-            result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF)
-        else:
-            if not audit.get("results"):
-                result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_ENGINE)
-            else:
-                # Run audit with every stage done carries on from this last one (the calculations are not repeated): the reviewer runs again here
-                # whenever its last stored status is anything other than "read" (PR 4), so a review that was refused, cut off or incomplete is
-                # not left behind for want of a new calculation.
-                await _review_if_not_read(audit_id, background)
+        elif stage == "claims":
+            if not poll:
                 # A deck the page reader could not read for want of the deck_reading prompt is read again, with no new upload, once the
                 # store holds it (George, 2026-10-23, review of PR 164, M6).
                 # A deck an older version left "waiting for revenue file" is read again too: nothing waits for a file (section 12, PR 4).
                 for deck_id in await structures.queue_prompt_missing(db, audit_id) + await structures.queue_blocked(db, audit_id) + await structures.queue_waiting(db, audit_id):
                     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
-                # A deck with pages a timeout or an error left unread is read again for those pages only (deck page reads, 2026-10-23).
+                # A deck with pages a timeout, an error or a missing second read left unread is read again for those pages only (deck page reads,
+                # 2026-10-23; the retry resumes from the missing pages, 2026-11-05).
                 for deck_id in await structures.queue_unread_pages(db, audit_id) + await structures.queue_stale_reading(db, audit_id):
                     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
-                deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "ai_status": 1}).to_list(100)
-                if not deck_docs:
-                    result = run_audit.stage_result(stage, run_audit.DONE, run_audit.NO_DECKS, entered=0, open=0, turnover_open=0)
-                elif any(d.get("ai_status") == "reading" for d in deck_docs):
-                    result = run_audit.stage_result(stage, run_audit.RUNNING, run_audit.DECKS_READING)
-                else:
-                    missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in deck_docs) else \
-                        llm_gateway.PAGE_READER_BLOCKED if any(d.get("ai_status") == structures.BLOCKED for d in deck_docs) else None
-                    result = run_audit.stage_result(stage, run_audit.DONE, missing, **(await _enter_matched_claims(audit_id, audit)))
+            docs = await _deck_docs(audit_id)
+            gate = run_audit.decks_gate(docs)
+            if not docs:
+                result = run_audit.stage_result(stage, run_audit.DONE, run_audit.NO_DECKS)
+            elif gate["state"] == "reading":
+                result = run_audit.stage_result(stage, run_audit.RUNNING, run_audit.DECKS_READING, timeout_seconds=_timeout_of(gate))
+            elif gate["state"] == "incomplete":
+                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.incomplete_message(gate), timeout_seconds=_timeout_of(gate),
+                                                can_continue=[{"deck_id": i["deck_id"], "file": i["file"], "pages": i["can_continue"]} for i in gate["incomplete"] if i["can_continue"]])
+            else:
+                missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in docs) else \
+                    llm_gateway.PAGE_READER_BLOCKED if any(d.get("ai_status") == structures.BLOCKED for d in docs) else None
+                result = run_audit.stage_result(stage, run_audit.DONE, missing, timeout_seconds=_timeout_of(gate))
+            logger.info("claims run: run_id=%s status=%s decks=%s pages_missing=%d elapsed=%.1fs timeout=%ds", audit_id, result["status"],
+                        run_audit.pages_summary(docs), sum(i["missing"] for i in gate["incomplete"]), (datetime.now(timezone.utc) - began).total_seconds(),
+                        _timeout_of(gate))
+        else:
+            # The calculations wait for the deck claims: never on partial deck figures. Nothing waits for a confirmation: the map is the reading.
+            # No month confirmed and none typed: the audit runs everything that does not depend on it (read-check-review.md section 6).
+            gate = await _claims_gate(audit_id)
+            if gate["state"] == "reading":
+                result = run_audit.stage_result(stage, run_audit.RUNNING, run_audit.DECKS_READING, timeout_seconds=_timeout_of(gate))
+            elif gate["state"] == "incomplete":
+                result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_CLAIMS, timeout_seconds=_timeout_of(gate))
+            else:
+                _last_entered.set(None)
+                await _run_compute(audit_id)
+                if await llm_gateway.reviewer_startup_problem(db) is None:        # no reviewer prompt: Run audit goes on without the reviewer stage
+                    background.add_task(_review_safely, audit_id)        # one review per audit and input; a review already made is kept
+                result = run_audit.stage_result(stage, run_audit.DONE, None if audit.get("as_of_month") else run_audit.NO_AS_OF, timeout_seconds=_timeout_of(gate),
+                                                **(_last_entered.get() or await _enter_matched_claims(audit_id, await db.audits.find_one({"id": audit_id}))))
+            logger.info("results run: run_id=%s status=%s decks=%s pages_missing=%d elapsed=%.1fs timeout=%ds", audit_id, result["status"],
+                        run_audit.pages_summary(await _deck_docs(audit_id)), sum(i["missing"] for i in gate["incomplete"]),
+                        (datetime.now(timezone.utc) - began).total_seconds(), _timeout_of(gate))
     except Exception as exc:          # plain English to the analyst; the log has the stage and the error type, never the message
         logger.error("run audit stage failed: run_id=%s stage=%s error=%s", audit_id, stage, type(exc).__name__)
         result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.ENGINE_FAILED if stage == "engine" else run_audit.CLAIMS_FAILED)
@@ -1984,6 +2057,7 @@ async def review_summary(audit_id: str):
         raise HTTPException(404, "Audit not found")
     found = deck_claims.fold_twins(await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000))
     found = await _with_entries(audit_id, audit, found)
+    older = await _results_older(audit_id, audit)
     auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") == "approved"]
     # Other figures are never a task (claim-types-and-correction.md section 4)
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
@@ -1993,7 +2067,9 @@ async def review_summary(audit_id: str):
                    "turnover_open": len(open_turnover & {c["id"] for c in pending})},
         "computed": bool(audit.get("results")),
         "results_stale": run_audit.results_stale(audit),
-        "engine_stale": run_audit.engine_stale(audit),
+        "results_older": older,
+        "results_older_text": run_audit.RESULTS_OLDER if older else None,
+        "engine_stale": run_audit.engine_stale(audit) or older,
         "blockers": await _blocker_list(audit_id, audit)})
 
 
@@ -2139,13 +2215,18 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     fields (paths only, never a value)."""
     current = await _current_audit(audit_id, audit, strict=False)
     results, stale = current.get("results"), bool(current.get("results_stale"))
+    older = bool(results) and not stale and await _results_older(audit_id, audit)
+    # Decks with figures now that the stored results were not built with: the memo rates Data reliability "not rated" and names them.
+    missing_decks = run_audit.decks_missing_from(audit, (await _claims_gate(audit_id))["decks_with_figures"]) if results and not stale else []
+    skipped = (await _claims_gate(audit_id))["skipped"] if results and not stale else []
     ic = verdict_mod.with_review(audit, audit.get("ic_inputs"))
     if validate and results:
         try:
             contract.validate_for_export(results)
         except contract.ContractError as exc:
             return {"rows": [], "results": results, "ic": ic, "state": verdict_mod.top5_state([], None), "gaps": [],
-                    "contract": exc.log_text, "stale": stale, "open_questions": 0, "conflicts": []}
+                    "contract": exc.log_text, "stale": stale, "open_questions": 0, "conflicts": [],
+                    "older": older, "missing_decks": missing_decks, "skipped": skipped}
     _, rows = await _claim_rows(audit_id, audit)
     state = verdict_mod.top5_state(rows, ic.get("top5"))
     rows = verdict_mod.mark_key_gates(rows, state["in_force"])
@@ -2154,7 +2235,7 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     results = report_text.apply_reasons(results, table)
     gaps = verdict_mod.data_gaps(results, rows, state["in_force"], ic.get("gap_target_dates"), table=table, old_claims=flags.old_claims())
     return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None, "stale": stale,
-            "open_questions": await _open_claim_questions(audit_id, audit, rows), "conflicts": _relations(audit, rows)["conflicts"]}
+            "older": older, "missing_decks": missing_decks, "skipped": skipped, "open_questions": await _open_claim_questions(audit_id, audit, rows), "conflicts": _relations(audit, rows)["conflicts"]}
 
 
 async def _integrity(audit_id: str, results: Optional[dict], fiscal_year_end: int) -> dict:
@@ -2486,7 +2567,7 @@ async def get_verdict(audit_id: str):
     five = ver["top5"]["in_force"]
     key = verdict_mod.key_gates(rows, five)
     integrity = await _integrity(audit_id, ctx["results"], _fiscal_year_end(audit))
-    rated = verdict_mod.ratings(ctx["results"], integrity, fmt.fmt_pct, fmt.fmt_months) if ctx["results"] and not ctx["contract"] else None
+    rated = verdict_mod.ratings(ctx["results"], integrity, fmt.fmt_pct, fmt.fmt_months, ctx["missing_decks"]) if ctx["results"] and not ctx["contract"] else None
     draft = verdict_mod.default_thesis(audit, ver, key, lambda v: fmt.fmt_currency(v, (ctx["results"] or {}).get("reporting_currency")))
     # Codes and counts only: no value, gate, thesis, metric name, company or file name reaches the log.
     top5 = claim_matching.label_counts([r for r in rows if r["claim_id"] in set(five)])
@@ -2624,7 +2705,7 @@ async def export_memo(audit_id: str):
             blockers=await _blocker_list(audit_id, audit), narratives=narratives,
             files=await _memo_files(audit_id, audit, datasets),
             decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit),
-            integrity=await _integrity(audit_id, results, _fiscal_year_end(audit)))
+            integrity=await _integrity(audit_id, results, _fiscal_year_end(audit)), results_older=ctx["older"], missing_decks=ctx["missing_decks"], skipped_pages=ctx["skipped"])
     except ic_memo.MemoRefused as exc:
         refusal = exc
     words = ic_memo.word_count_of(text) if text else (refusal.words or 0)
@@ -2677,6 +2758,9 @@ async def _report_table(audit_id: str, audit: dict) -> list:
 
 
 async def _run_compute(audit_id: str) -> dict:
+    gate = await _claims_gate(audit_id)
+    if gate["state"] != "clear":      # never on partial deck figures: a deck is still being read, or its claims are incomplete (2026-11-05)
+        raise HTTPException(409, run_audit.DECKS_READING if gate["state"] == "reading" else run_audit.incomplete_message(gate))
     await _refresh_as_of(audit_id)
     a = await db.audits.find_one({"id": audit_id})
     if not a:
@@ -2687,6 +2771,7 @@ async def _run_compute(audit_id: str) -> dict:
 async def _compute_on_the_map(audit_id: str, a: dict, roles: dict) -> dict:
     """Run the engine with its inputs from the stored map (read-check-review.md section 16). The metrics that need customer-level revenue
     lines or CRM deals say so. Nothing here waits for an answer."""
+    latest = await _latest_input_at(audit_id)       # taken before the calculation: whatever lands during it makes the results older
     config = {"reporting_currency": a["reporting_currency"], "target_arr": a["target_arr"], "target_date": a["target_date"],
               "fx": merged_fx(a, None), "billing_terms": {}, "default_l": 1, "as_of_month": a.get("as_of_month"), "roles": roles}
     failures = []
@@ -2705,6 +2790,7 @@ async def _compute_on_the_map(audit_id: str, a: dict, roles: dict) -> dict:
         {"id": audit_id},
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
                   "metrics_stale": False, "setup_stale": False}})
+    await _store_results_basis(audit_id, latest)
     await _enter_matched_claims(audit_id, await db.audits.find_one({"id": audit_id}))
     return results
 
@@ -2780,7 +2866,9 @@ async def get_results(audit_id: str):
     a = await _current_audit(audit_id, a)
     keys = ("id", "company_name", "reporting_currency", "target_arr", "target_date", "as_of_month", "status", "computed_at",
             "metrics_stale")
-    return sanitize({"audit": {k: a.get(k) for k in keys}, "results": a["results"]})
+    older = await _results_older(audit_id, a)
+    return sanitize({"audit": {**{k: a.get(k) for k in keys}, "results_older": older, "results_older_text": run_audit.RESULTS_OLDER if older else None},
+                     "results": a["results"]})
 
 
 def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = None,
@@ -2910,6 +2998,8 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 cac_label = lab("CAC payback", hq, qual("months"), unit="months")
         kv_sheet(xw, "Headline", [
             ("Company", None, meta.get("company_name")),
+            # Results older than the latest reading (results stage ordering, 2026-11-05): the banner of the results page and the memo, here as a row
+            *([("Note", None, meta["results_older_text"])] if meta.get("results_older_text") else []),
             # the evidence end and the latest valid source period, never the as-of setting as a period (dates-and-periods.md)
             ("Evidence to", None, ((r.get("source_period") or {}).get("evidence_to") or r.get("as_of_month"))),
             ("Latest valid source period", None, fmt.source_period_text(r.get("source_period"))),
@@ -3131,6 +3221,8 @@ async def export_audit(audit_id: str):
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
     a = await _current_audit(audit_id, a)
+    if await _results_older(audit_id, a):
+        a["results_older_text"] = run_audit.RESULTS_OLDER
     try:
         narratives = await llm_gateway.narratives_for_run(db, audit_id)
     except Exception:  # the export never depends on the narrative service
