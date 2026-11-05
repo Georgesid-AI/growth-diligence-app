@@ -44,6 +44,12 @@ def status(doc: dict, now: Optional[datetime] = None) -> dict:
     return {"allowance_usd": allowance, "used_usd": round(used, 2), "percent": percent, "state": state}
 
 
+def reads(doc: dict, now: Optional[datetime] = None) -> dict:
+    """{"first", "second"}: this month's tokens of the first and the second reads on a tester record (second pass, C13)."""
+    month = (doc.get("ledger") or {}).get(month_key(now)) or {}
+    return {"first": int(month.get("read1_tokens", 0)), "second": int(month.get("read2_tokens", 0))}
+
+
 async def tester_of(db, audit_id: str) -> Optional[str]:
     audit = await db.audits.find_one({"id": audit_id}, {"owner": 1})
     return (audit or {}).get("owner") or None

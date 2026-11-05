@@ -303,11 +303,30 @@ def test_c13_the_per_file_cap_counts_both_reads_of_the_file_and_names_them():
     assert caught.value.used == 55_000 and (caught.value.first, caught.value.second) == (30_000, 25_000)
 
 
-def test_c13_the_allowance_refusal_still_names_no_amount(caplog):
+def test_c13_the_allowance_refusal_line_shows_used_against_the_allowance_with_the_two_reads(caplog):
+    """George, 2026-11-05 (on #238): the allowance line names used and allowance (USD) and the month's tokens of the first and the second read."""
+    db = t.make_db()
+    db[access.COLLECTION].docs.append({"id": "t1", "label": "T", "hash": "x", "created_at": "2026-10-01T00:00:00+00:00", "expires_at": "2099-01-01T00:00:00+00:00",
+                                       "revoked_at": None, "allowance_usd": 10.0,
+                                       "ledger": {allowance.month_key(): {"cost_usd": 12.5, "tokens": 1000, "read1_tokens": 700, "read2_tokens": 300}}})
+    for a in db["audits"].docs:
+        a["owner"] = "t1"
+    with pytest.raises(guards.GuardRefusal) as caught:
+        asyncio.run(guards.check_allowance(db, t.RUN_ID))
     caplog.set_level(logging.INFO)
-    gateway.log_refusal("page_claims", "r1", guards.GuardRefusal("monthly_allowance_reached"))
+    gateway.log_refusal("page_claims", "r1", caught.value)
     (line,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("ai call refused:")]
-    assert line.endswith("reason=allowance used=- cap=- input=-"), line
+    assert line == "ai call refused: step=page_claims run_id=r1 reason=allowance used=12.5 cap=10.0 input=- first=700 second=300", line
+
+
+def test_one_count_the_awaiting_confirmation_count_is_items_a_group_of_rows_is_one():
+    from test_role_engine import monthly_report
+    files = held_report(held=("Report:8", "Report:9"))
+    table = role_engine.build_table(files)
+    assert role_engine.awaiting_confirmation(table, [], items=1) == {"count": 1, "rows": 1, "figures": 0}
+    deck = [{"uncertain": True}, {"uncertain": False}]
+    assert role_engine.awaiting_confirmation(table, deck, items=3) == {"count": 4, "rows": 3, "figures": 1}
+    assert role_engine.awaiting_confirmation(table, []) ["rows"] == sum(1 for r in table if r.get("uncertain")), "without items, the held rows"
 
 
 # ---------------------------------------------------------------------------
@@ -352,3 +371,15 @@ def test_the_tc_shape_on_synthetic_rows_13_segment_only_rows_raise_nothing_and_1
     items = consistency.compare(map_of(*pnl_first, *rev_first), map_of(*pnl_second, *rev_second))
     assert len(rev_first) == 17 and len(items) == 4 < 17
     assert sorted(len(i["rows"]) for i in items) == [2, 4, 5, 6]
+
+
+def test_one_count_a_group_of_three_held_rows_is_one_waiting_item_in_the_engine_inputs_and_the_ratings(flow):
+    first = map_of(*[a_row(n, role="revenue", metric="revenue") for n in (4, 5, 6)])
+    second = map_of(*[a_row(n, role="arr", metric="arr") for n in (4, 5, 6)])
+    flow.state["adapter"] = TwoReads(first, second)
+    upload(flow, MONTHLY, monthly())
+    assert len(register(flow)["files"][0]["consistency"]["uncertain"]) == 1
+    import server
+    inputs = asyncio.run(server._role_inputs(AUDIT, flow.db["audits"].docs[0]))
+    assert inputs["waiting"] == 1 and sum(1 for r in inputs["table"] if r["uncertain"]) >= 3
+    assert role_engine.awaiting_confirmation(inputs["table"], [], inputs["waiting"])["count"] == 1

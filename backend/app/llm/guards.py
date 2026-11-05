@@ -207,9 +207,13 @@ async def check_spend_cap(db) -> None:
 async def check_allowance(db, run_id: str) -> None:
     """The tester's monthly AI allowance (docs/specs/usage-and-allowance.md section 4). Every model call is checked, a column
     mapping included. An audit with no tester has no allowance."""
-    current = await allowance.status_for_audit(db, run_id)
+    tester_id = await allowance.tester_of(db, run_id)
+    doc = await db[allowance.access.COLLECTION].find_one({"id": tester_id}) if tester_id else None
+    current = allowance.status(doc) if doc else None
     if current and current["state"] == allowance.BLOCKED:
-        raise GuardRefusal("monthly_allowance_reached")        # no amounts: a tester's allowance is never logged
+        # George, 2026-11-05 (on #238): the line shows used against the allowance and the two reads; never the tester's label or id.
+        by = allowance.reads(doc)
+        raise GuardRefusal("monthly_allowance_reached", used=current["used_usd"], cap=current["allowance_usd"], first=by["first"], second=by["second"])
 
 
 async def acquire(db, run_id: str, step: str) -> Optional[str]:

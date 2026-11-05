@@ -381,7 +381,7 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
       {current?.kind === "deck" && <DeckFigures file={current} auditId={auditId} onChange={changed} />}
       {!current && stopped && (
         <p className="bad" role="alert" data-testid="review-stopped">
-          Review stopped: token allowance reached after {fmtCount(stopped.reviewed)} of {fmtCount(stopped.total)} figures. Figures after that are unreviewed.
+          Review not run: token allowance reached. All {fmtCount(stopped.total)} figures are unreviewed.
         </p>
       )}
       {!current && !stopped && view.review?.not_completed && <p className="evidence" data-testid="review-not-completed">{view.review.not_completed}</p>}

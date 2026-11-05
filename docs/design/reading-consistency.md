@@ -61,9 +61,11 @@ mapping flag skips the role `other`.
 **The All section.** Four categories, each with a one-line explanation: Matches source, Doesn't match source, Uncertain (the list: file or page, row or
 figure, what differs, first and second reading, Use first / Use second) and Needs attention (renamed from Needs review). The per-file tab keeps its cards in
 the same words; the Detected layout block is unchanged. Above Run audit a line counts the readings that await confirmation and links to the list; Run audit
-stays enabled; the reading step says "M uncertain readings". M counts the lines of the list (a group of rows is one).
+stays enabled; the reading step says "M uncertain readings". M counts the lines of the list (a group of rows is one); the same count is `role_metrics.awaiting_confirmation` and so the ratings line (George, on #238).
 
 **Tokens.** The tester ledger keeps `read1_tokens` and `read2_tokens` beside `tokens`; a token cap's "ai call refused" line ends with `first=` and `second=`
-(the allowance's line still names no amount). A review that stopped on the reviewer's token cap or the tester's allowance is stored with `stopped`; the
+(the allowance's line shows used against the allowance in USD and the month's tokens of the two reads, never a label or id: George, on #238). A review that stopped on the reviewer's token cap or the tester's allowance is stored with `stopped`; the
 register then says `review.stopped` ({reviewed, total}) and marks every Matches-source row `unreviewed`.
 
+
+A review that stopped on the allowance reads "Review not run: token allowance reached. All N figures are unreviewed."

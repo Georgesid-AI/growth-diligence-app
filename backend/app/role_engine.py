@@ -1117,10 +1117,12 @@ def _best(rows: List[Dict], table: List[Dict]) -> Dict:
     return max(rows, key=lambda r: (len(r["actual"]), -table.index(r)))
 
 
-def awaiting_confirmation(table: List[Dict], deck: List[Dict]) -> Dict:
+def awaiting_confirmation(table: List[Dict], deck: List[Dict], items: Optional[int] = None) -> Dict:
     """{"count", "rows", "figures"}: every sheet row and every deck figure the two reads disagree on, whatever its role or metric (docs/design/
     reading-consistency.md). All of them are held out of the calculations until the analyst chooses."""
-    rows = sum(1 for r in table if r.get("uncertain"))
+    # One count everywhere (George, 2026-11-05, on #238): the items of the Uncertain list, a group of rows being one. `items` is the number of waiting
+    # sheet items; without it, the held rows.
+    rows = items if items is not None else sum(1 for r in table if r.get("uncertain"))
     figures = sum(1 for f in deck if f.get("uncertain"))
     return {"count": rows + figures, "rows": rows, "figures": figures}
 
@@ -1279,7 +1281,7 @@ def _guarded(metric: str, fn, on_error, fallback):
         return fallback(exc)
 
 
-def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None) -> Dict:
+def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None, waiting_items: Optional[int] = None) -> Dict:
     """{"role_metrics": block, "arr", "mrr_series", "customers_series", "revenue_series", "yearly"}: the `role_metrics` block of the contract,
     the legacy blocks the map feeds (None where the rows are missing) and the yearly input of compute_yearly_basis."""
     if as_of is None:
@@ -1320,7 +1322,7 @@ def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, dec
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
                              "growth_by_year": by_year, "pnl_trend": trend,
                              "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: []),
-                             "awaiting_confirmation": awaiting_confirmation(all_rows, deck or [])},
+                             "awaiting_confirmation": awaiting_confirmation(all_rows, deck or [], waiting_items)},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}
 

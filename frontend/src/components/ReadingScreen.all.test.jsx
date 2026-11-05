@@ -189,7 +189,7 @@ describe("a review that stopped on the token allowance (item 14)", () => {
   test("one red line at the top of the All section; unreviewed figures are marked in the Matches source list and are not counted as matches", async () => {
     await show(stopped());
     const line = q("review-stopped");
-    expect(line.textContent).toBe("Review stopped: token allowance reached after 0 of 2 figures. Figures after that are unreviewed.");
+    expect(line.textContent).toBe("Review not run: token allowance reached. All 2 figures are unreviewed.");
     expect(line.className).toMatch(/bad|red/);
     expect(all("review-stopped")).toHaveLength(1);
     expect(q("heading-confirmed").textContent).toBe("Matches source · 0");

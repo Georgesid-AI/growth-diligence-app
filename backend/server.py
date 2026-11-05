@@ -2648,7 +2648,7 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
     """The engine's inputs from the stored map (docs/design/read-check-review.md section 16): the role table of the audit's readings, with each
     row's stored series and the overrides in force, and the deck figures that did not fail their page check. Empty when no file has been read."""
     done = [c for c in await readings_mod.checks_for(db, audit_id) if c.get("status") == "read"]
-    files = []
+    files, waiting_items = [], 0
     for check in sorted(done, key=lambda c: c.get("file") or ""):
         reading = await db[readings_mod.READINGS].find_one({"key": check.get("reading_key")}, {"_id": 0})
         if not reading:
@@ -2657,6 +2657,7 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
         file_map = readings_mod.effective(reading["file_map"], overrides)
         items = [i for i in check.get("items") or [] if str(i.get("key", "")).startswith("row:")]
         waiting = consistency_mod.pending(check.get("consistency"), overrides)
+        waiting_items += len(waiting)
         labels = {f"{sh['sheet']}:{ln['row']}": ln.get("label") for sh in check.get("lines") or [] for ln in sh.get("lines") or []}
         files.append({"file": check.get("file"), "file_hash": check.get("file_hash"), "file_map": file_map, "labels": labels,
                       "rejected": [i["key"] for i in items if i["outcome"] == checks_mod.REJECTED],
@@ -2665,7 +2666,8 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
     deck = [{**f, "file": d["file"], "page": f["source"]["page"]} for d in await deck_figures.checked(db, audit_id) for f in d["figures"]
             if f["outcome"] != checks_mod.REJECTED]
     # "unread": mapped rows with no series, for the report text only (report_text); the engine reads "table" alone
-    return {"table": role_engine.build_table(files), "unread": report_text.rows_without_series(files), "deck": deck, "fye": _fiscal_year_end(audit)}
+    return {"table": role_engine.build_table(files), "unread": report_text.rows_without_series(files), "deck": deck, "fye": _fiscal_year_end(audit),
+            "waiting": waiting_items}
 
 
 async def _report_table(audit_id: str, audit: dict) -> list:

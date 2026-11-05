@@ -1150,7 +1150,7 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
         assert needle not in "".join(lines), f"{needle!r} was logged"
 
 
-def test_an_allowance_refusal_logs_the_closed_word_and_no_amount_label_or_id(caplog):
+def test_an_allowance_refusal_logs_used_against_the_allowance_and_no_label_or_id(caplog):
     import logging
     db = _structure_db()
     db["access_tokens"].docs.append({"id": "tester-9", "label": "Label Nine", "ledger": {
@@ -1160,10 +1160,10 @@ def test_an_allowance_refusal_logs_the_closed_word_and_no_amount_label_or_id(cap
         result, adapter = _send(db, GOOD_ITEMS)
     assert result.status == "not_read" and adapter.calls == 0
     assert not [r for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    for needle in ("tester-9", "Label Nine", "10.0", "USD", "$"):
+    for needle in ("tester-9", "Label Nine", "USD", "$"):
         assert needle not in "".join(r.getMessage() for r in caplog.records), f"{needle!r} was logged"
     refused = [r.getMessage() for r in caplog.records if r.getMessage().startswith("ai call refused:")]
-    assert refused and all(re.search(r"reason=allowance used=- cap=- input=\d+$", line) for line in refused), "the 'ai call refused' line carries no allowance amount"
+    assert refused and all(re.search(r"reason=allowance used=10\.0 cap=10\.0 input=\d+ first=0 second=0$", line) for line in refused), "George, 2026-11-05: used against the allowance and the two reads, no label or id"
 
 
 def test_the_owner_audit_cost_rows_hold_a_closed_key_set_and_the_tester_filter_covers_every_cost_key(caplog):
