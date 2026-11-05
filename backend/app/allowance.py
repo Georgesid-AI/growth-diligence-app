@@ -44,17 +44,24 @@ def status(doc: dict, now: Optional[datetime] = None) -> dict:
     return {"allowance_usd": allowance, "used_usd": round(used, 2), "percent": percent, "state": state}
 
 
+def reads(doc: dict, now: Optional[datetime] = None) -> dict:
+    """{"first", "second"}: this month's tokens of the first and the second reads on a tester record (second pass, C13)."""
+    month = (doc.get("ledger") or {}).get(month_key(now)) or {}
+    return {"first": int(month.get("read1_tokens", 0)), "second": int(month.get("read2_tokens", 0))}
+
+
 async def tester_of(db, audit_id: str) -> Optional[str]:
     audit = await db.audits.find_one({"id": audit_id}, {"owner": 1})
     return (audit or {}).get("owner") or None
 
 
 async def record(db, tester_id: Optional[str], *, files: int = 0, calls: int = 0, tokens: int = 0, cost_usd: float = 0.0,
-                 now: Optional[datetime] = None) -> None:
-    """Add to this month and to all time. No tester (access control off): nothing is counted."""
+                 now: Optional[datetime] = None, read_no: Optional[int] = None) -> None:
+    """Add to this month and to all time. No tester (access control off): nothing is counted. The tokens are counted in total as before and, beside
+    them, by read (second pass, C13): `read1_tokens` (a call with no read number is a first read) and `read2_tokens`, the consistency read."""
     if not tester_id:
         return
-    amounts = {"files": files, "calls": calls, "tokens": tokens, "cost_usd": cost_usd}
+    amounts = {"files": files, "calls": calls, "tokens": tokens, "cost_usd": cost_usd, "read2_tokens" if read_no == 2 else "read1_tokens": tokens}
     inc = {f"ledger.{key}.{name}": value for key in ("all", month_key(now)) for name, value in amounts.items() if value}
     if inc:
         await db[access.COLLECTION].update_one({"id": tester_id}, {"$inc": inc})

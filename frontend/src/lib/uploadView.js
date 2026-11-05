@@ -174,6 +174,14 @@ export function readiness(sheets, decks) {
   return { held: false, text: `Ready: ${fmtCount(sheetsOk)} data ${sheetsOk === 1 ? "file" : "files"} and ${fmtCount(decksOk)} ${decksOk === 1 ? "deck" : "decks"} processed.` };
 }
 
+/** The line above Run audit when readings await confirmation (brief of George, 2026-11-05, item 12); Run audit stays enabled. */
+export const UNCERTAIN_NOTICE_LINK = "Review →";
+export const OPEN_UNCERTAIN = "open-uncertain-list";         // the event the link fires and the reading screen listens for
+export function uncertainNotice(n) {
+  if (!n) return null;
+  return `${fmtCount(n)} ${n === 1 ? "reading awaits" : "readings await"} confirmation. Ratings exclude them until you confirm.`;
+}
+
 export const STEP_LABELS = { reading: "Reading and checking files", calculating: "Calculating results" };
 const maxOf = (list) => list.reduce((m, n) => (n != null && n > m ? n : m), -1);
 
@@ -182,7 +190,7 @@ const maxOf = (list) => list.reduce((m, n) => (n != null && n > m ? n : m), -1);
  * upload of the batch to the last file processed (`read`: {start, end} in ms, kept by the upload section; without it, the longest single file time the
  * server reports); calculating follows the run's own stages (`calc`: {status, seconds} - idle, running, done, failed - kept by the run panel).
  */
-export function steps(sheets, decks, calc, now, read = {}) {
+export function steps(sheets, decks, calc, now, read = {}, uncertain = 0) {
   const all = [...sheets, ...decks];
   const busy = [...sheets.filter(sheetBusy), ...decks.filter(deckBusy)];
   const total = all.length;
@@ -199,7 +207,7 @@ export function steps(sheets, decks, calc, now, read = {}) {
   } else {
     const processed = outcomes(sheets, decks).filter((x) => x === "ok").length;
     const t = read.start != null && read.end != null ? sinceFirst(read.end) : (maxOf(all.map((f) => (f.local ? null : f.read_elapsed))) >= 0 ? maxOf(all.map((f) => (f.local ? null : f.read_elapsed))) : null);
-    const count = `${fmtCount(processed)} ${processed === 1 ? "file" : "files"} processed`;
+    const count = `${fmtCount(processed)} ${processed === 1 ? "file" : "files"} processed${uncertain > 0 ? ` · ${fmtCount(uncertain)} uncertain ${uncertain === 1 ? "reading" : "readings"}` : ""}`;
     reading = { tone: "done", second: t != null ? `${fmtElapsed(t)} · ${count}` : count };
   }
 

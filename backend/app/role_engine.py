@@ -1117,10 +1117,12 @@ def _best(rows: List[Dict], table: List[Dict]) -> Dict:
     return max(rows, key=lambda r: (len(r["actual"]), -table.index(r)))
 
 
-def awaiting_confirmation(table: List[Dict], deck: List[Dict]) -> Dict:
+def awaiting_confirmation(table: List[Dict], deck: List[Dict], items: Optional[int] = None) -> Dict:
     """{"count", "rows", "figures"}: every sheet row and every deck figure the two reads disagree on, whatever its role or metric (docs/design/
     reading-consistency.md). All of them are held out of the calculations until the analyst chooses."""
-    rows = sum(1 for r in table if r.get("uncertain"))
+    # One count everywhere (George, 2026-11-05, on #238): the items of the Uncertain list, a group of rows being one. `items` is the number of waiting
+    # sheet items; without it, the held rows.
+    rows = items if items is not None else sum(1 for r in table if r.get("uncertain"))
     figures = sum(1 for f in deck if f.get("uncertain"))
     return {"count": rows + figures, "rows": rows, "figures": figures}
 
@@ -1139,12 +1141,50 @@ def mark_awaiting(metrics: List[Dict], table: List[Dict]) -> None:
             m["reason"] = AWAITS
 
 
+ESTIMATE_INPUTS = {"opex", "sales_marketing", "rnd", "ga"}       # the rows an OPEX-split estimate (two-way or three-way) is built from
+TREND_NEEDS = {"revenue": {"revenue"}, "gross_margin": {"revenue", "cost_of_revenue"}, "ebitda_margin": {"revenue", "ebitda"},
+               "sm_share": {"revenue", *ESTIMATE_INPUTS}, "rnd_share": {"revenue", *ESTIMATE_INPUTS}, "ga_share": {"revenue", *ESTIMATE_INPUTS}}
+
+
+def _held_roles(table: List[Dict]) -> set:
+    return {r["role"] for r in table if r.get("uncertain")}
+
+
+def hold_estimates(metrics: List[Dict], table: List[Dict]) -> None:
+    """A held row feeds no estimate (second pass, A6): while any row an OPEX-split estimate is built from (OPEX, S&M, R&D, G&A) is held out, the
+    estimate of S&M, R&D or G&A, and the "No estimate" line of one that failed on the rows left, read "awaits confirmation": the held row is in doubt,
+    not absent, so the split of what is left would be an estimate of the wrong thing. A value the file states is kept (in place)."""
+    if not _held_roles(table) & ESTIMATE_INPUTS:
+        return
+    for i, m in enumerate(metrics):
+        if m["metric"] in ("sm_expense", "rnd_expense", "ga_expense") and (m.get("estimate") or str(m.get("reason") or "").startswith(NO_ESTIMATE)):
+            metrics[i] = _entry(m["metric"], status="needs_row", reason=AWAITS, needs=m.get("needs") or NEEDS[m["metric"]])
+
+
+def hold_trend(trend: Optional[Dict], table: List[Dict]) -> None:
+    """The yearly trend treats a held row as absent: an estimate built from a held row is dropped (a line with a value dropped, or a period left
+    without one, because a role it needs is held carries the reason "awaits confirmation": `reason` of the row) (in place)."""
+    held = _held_roles(table)
+    if not trend or not held:
+        return
+    for line in trend["rows"]:
+        line["reason"] = None
+        needs = TREND_NEEDS.get(line["metric"], set())
+        if not held & needs:
+            continue
+        before = len(line["values"])
+        if held & ESTIMATE_INPUTS:
+            line["values"] = [v for v in line["values"] if not v["estimate"]]
+        if len(line["values"]) < before or len(line["values"]) < len(trend["periods"]):
+            line["reason"] = AWAITS
+
+
 def mapping_flags(table: List[Dict]) -> List[Dict]:
     """[{"role", "file", "sheet", "rows", "used_row", "text"}]: one flag for each sheet and role (cost roles are summed, so left out) that holds two or
     more rows with no parent link: "two rows mapped as customers (rows 23, 24); the calculation uses row 23"."""
     out = []
     for role in dict.fromkeys(r["role"] for r in table):
-        if role in COST_ROLES or role == "forecast":
+        if role in COST_ROLES or role in ("forecast", "other"):         # "other" is no role a calculation reads: two such rows are no ambiguity (second pass, A7)
             continue
         for (file, sheet_), rows in _total_rows(table, role).items():
             if len(rows) < 2:
@@ -1241,7 +1281,7 @@ def _guarded(metric: str, fn, on_error, fallback):
         return fallback(exc)
 
 
-def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None) -> Dict:
+def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None, waiting_items: Optional[int] = None) -> Dict:
     """{"role_metrics": block, "arr", "mrr_series", "customers_series", "revenue_series", "yearly"}: the `role_metrics` block of the contract,
     the legacy blocks the map feeds (None where the rows are missing) and the yearly input of compute_yearly_basis."""
     if as_of is None:
@@ -1277,10 +1317,12 @@ def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, dec
     by_year = _guarded("growth", lambda: growth_by_year(table, as_of, fye, confirmed_deck), on_error, lambda e: [])
     trend = _guarded("pnl_trend", lambda: pnl_trend(table, as_of, fye), on_error, lambda e: None)
     mark_awaiting(metrics, all_rows)
+    hold_estimates(metrics, all_rows)
+    hold_trend(trend, all_rows)
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
                              "growth_by_year": by_year, "pnl_trend": trend,
                              "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: []),
-                             "awaiting_confirmation": awaiting_confirmation(all_rows, deck or [])},
+                             "awaiting_confirmation": awaiting_confirmation(all_rows, deck or [], waiting_items)},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}
 

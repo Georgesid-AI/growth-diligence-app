@@ -58,25 +58,29 @@ def rows_without_series(files: List[dict]) -> List[dict]:
                             "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"), "basis": row.get("basis"),
                             "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
                             "segment": (row.get("segment") or "").strip() or None, "actual": {}, "plan": {}, "cells": row.get("cells"),
-                            "no_series": True})
+                            "no_series": True, "uncertain": f"{smap['sheet']}:{row['row']}" in set(f.get("uncertain") or ())})
     return out
 
 
 def _recs(table: List[dict], role: str) -> List[dict]:
-    """The role's rows that hold a series."""
-    return [r for r in table if r["role"] == role and not r.get("no_series")]
+    """The role's rows that hold a series. A row held out because the two reads disagree on it is absent here (second pass, A6)."""
+    return [r for r in table if r["role"] == role and not r.get("no_series") and not r.get("uncertain")]
 
 
 def _unread(table: List[dict], role: str) -> List[dict]:
-    return [r for r in table if r["role"] == role and r.get("no_series")]
+    return [r for r in table if r["role"] == role and r.get("no_series") and not r.get("uncertain")]
+
+
+def _held(table: List[dict], role: str) -> bool:
+    return any(r["role"] == role and r.get("uncertain") for r in table)
 
 
 def role_state(table: List[dict], role: str) -> str:
-    """How the map holds a role: "unmapped" (no row), "no_values" (rows mapped, no series in them), "segments" (segment rows only, no unsegmented total), "plan_only" (total rows that hold no
+    """How the map holds a role: "unmapped" (no row), "awaiting" (rows mapped, all held out while the two reads disagree on them), "no_values" (rows mapped, no series in them), "segments" (segment rows only, no unsegmented total), "plan_only" (total rows that hold no
     actual value) or "mapped" (a total row with actuals)."""
     recs = _recs(table, role)
     if not recs:
-        return "no_values" if _unread(table, role) else "unmapped"
+        return "no_values" if _unread(table, role) else "awaiting" if _held(table, role) else "unmapped"
     totals = [r for r in recs if r["segment"] is None or role in role_engine.COST_ROLES]       # a cost role's part rows are summed: they are its rows
     if not totals:
         return "segments"
@@ -133,6 +137,8 @@ def _alternatives(needs) -> List[List[str]]:
 
 
 def _state_text(table: List[dict], role: str, state: str) -> Optional[str]:
+    if state == "awaiting":
+        return role_engine.AWAITS
     if state == "no_values":
         rec = _unread(table, role)[0]
         cells = f"{rec['sheet']}!{rec['cells']}" if rec.get("sheet") and rec.get("cells") else rec.get("cells") or ""
@@ -161,7 +167,8 @@ def missing_reason(table: List[dict], needs, engine_reason: Optional[str]) -> Op
         if usable:
             read.append(usable)
             continue
-        first = next((r for r in group if states[r] == "no_values"), None) or next((r for r in group if states[r] == "plan_only"), None) \
+        first = next((r for r in group if states[r] == "awaiting"), None) or next((r for r in group if states[r] == "no_values"), None) \
+            or next((r for r in group if states[r] == "plan_only"), None) \
             or next((r for r in group if states[r] == "segments"), None)
         if first:
             partial.append(_state_text(table, first, states[first]))

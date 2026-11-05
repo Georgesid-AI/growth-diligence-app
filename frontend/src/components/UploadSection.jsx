@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import RunAuditPanel from "@/components/RunAuditPanel";
-import { getDatasets, getDecks, removeDataset, removeDeck, rereadDataset, rereadDeck, reportUsage, uploadChatFile, uploadDeck } from "@/lib/api";
+import { getDatasets, getDecks, getReading, removeDataset, removeDeck, rereadDataset, rereadDeck, reportUsage, uploadChatFile, uploadDeck } from "@/lib/api";
 import { ALLOWED_EXTENSIONS, S7B_XLS_REFUSED, extensionOf } from "@/lib/chatUpload";
 import { DECK_ACCEPT, isDeckFile } from "@/lib/deckClaims";
 import {
   DECK_CARD, HEADER_TEXT, PROCESSING_LINK, PROCESSING_SECTIONS, PROCESSING_TITLE, REMOVE_CONFIRM, REMOVE_LABEL, REPLACE_LABEL, REREAD_FAILED_LABEL,
   REREAD_LABEL, SHEET_CARD, UPLOAD_LABEL, deckBusy, deckLine, headerText, replaceLine, sharedReadError, sheetBusy, sheetLine,
 } from "@/lib/uploadView";
+import { uncertainEntries } from "@/lib/readingView";
 
 /**
  * The top of the Upload page as docs/design/audit-page-mockup.html draws it: the header and its explainer, the Financial data card, the Board deck
@@ -98,6 +99,7 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
   const [replacing, setReplacing] = useState([]);       // files whose name is already stored, waiting for the analyst: [{id, file (File)}]
   const [processing, setProcessing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [uncertain, setUncertain] = useState(0);        // the readings that await confirmation (the Uncertain list's lines)
   const alive = useRef(true);
   const queue = useRef({ sheet: Promise.resolve(), deck: Promise.resolve() });
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -108,6 +110,10 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
     if (!alive.current) return;
     if (views) setStored(stamp(views));
     if (deckData) setDecks(stamp(deckData.decks || []));
+    // The readings that await confirmation: asked of the register once the files are read (not on every poll of a file being read).
+    if ((views || []).some(sheetBusy) || (deckData?.decks || []).some(deckBusy)) return;
+    const read = await Promise.resolve().then(() => getReading(auditId)).catch(() => null);
+    if (alive.current) setUncertain(read ? uncertainEntries(read.files).length : 0);
   }, [auditId]);
   useEffect(() => { refresh(); reportUsage(auditId, { screen: "mapping" }); }, [refresh, auditId]);
 
@@ -256,7 +262,7 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
         )}
       </Card>
 
-      <RunAuditPanel auditId={auditId} sheets={sheets} decks={deckRows} now={now} readClock={readClock} onRunning={onRunning} />
+      <RunAuditPanel auditId={auditId} sheets={sheets} decks={deckRows} now={now} readClock={readClock} onRunning={onRunning} uncertain={uncertain} />
 
     </div>
   );

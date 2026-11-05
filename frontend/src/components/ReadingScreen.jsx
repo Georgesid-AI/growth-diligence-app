@@ -7,9 +7,10 @@ import { MONTHS, DEFAULT_FISCAL_YEAR_END, REPORTING_CURRENCIES, SETUP_HELP, SETU
 import { monthName, shortMonth } from "@/lib/periods";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  FIGURE_HOVERS, FIGURE_WIDTHS, HOVERS, OUTCOME_LABELS, UNCERTAIN_LABEL, WIDTHS, actualPlanText, candidateText, deckSummary, lastActualText, periodLabel, sheetSummary,
-  splitEvidence, uncertainTitle, valueText,
+  FIGURE_HOVERS, FIGURE_WIDTHS, HOVERS, OUTCOME_LABELS, UNCERTAIN_LABEL, UNCERTAIN_TITLE, WIDTHS, actualPlanText, candidateText, deckSummary, differsText, lastActualText,
+  periodLabel, readingsText, sheetSummary, splitEvidence, uncertainEntries, uncertainTitle, valueText, whereText,
 } from "@/lib/readingView";
+import { OPEN_UNCERTAIN } from "@/lib/uploadView";
 import { PLACEHOLDER, fmtCount } from "@/lib/format";
 
 /**
@@ -111,6 +112,32 @@ function UncertainItems({ file, auditId, kinds, onChange }) {
             <button key={which} type="button" className="btn quiet" data-testid={`uncertain-${which}`} onClick={() => pick(item, which)}
               title={`Use the ${which} reading`}>{which === "first" ? "First reading" : "Second reading"}: {candidateText(item, which)}</button>
           ))}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The rows of a spreadsheet the two reads disagree on, as cards on the file's tab (brief of George, 2026-11-05, item 10): the same words as the Uncertain
+ * list - what differs, the first and the second reading, Use first and Use second. The Detected layout block keeps UncertainItems above.
+ */
+function UncertainCards({ file, auditId, onChange }) {
+  const items = (file.consistency?.uncertain || []).filter((i) => i.kind === "row");
+  const pick = async (item, which) => {
+    try { await decideUncertain(auditId, file.file_hash, { key: item.key, pick: which }); onChange(); }
+    catch (e) { toast.error(e.response?.data?.detail || "The choice could not be saved."); }
+  };
+  if (!items.length) return null;
+  return (
+    <div className="uncertain" data-testid="uncertain-items">
+      {items.map((item) => (
+        <p key={item.key} className="note" data-testid="uncertain-item">
+          <b data-testid="uncertain-label">{UNCERTAIN_TITLE}</b> · {whereText(item)} · {differsText(item)}{" "}
+          <span data-testid="uncertain-first-text">First reading: {readingsText(item, "first")}</span>{" "}
+          <button type="button" className="btn quiet" data-testid="uncertain-first" onClick={() => pick(item, "first")} title="Use the first reading">Use first</button>{" "}
+          <span data-testid="uncertain-second-text">Second reading: {readingsText(item, "second")}</span>{" "}
+          <button type="button" className="btn quiet" data-testid="uncertain-second" onClick={() => pick(item, "second")} title="Use the second reading">Use second</button>
         </p>
       ))}
     </div>
@@ -229,7 +256,7 @@ function SheetDetail({ file, auditId, onChange }) {
       <Summary lines={sheetSummary(file.summary)} />
       {(file.notes || []).map((n, i) => <p key={i} className="note" data-testid="file-note">{n.name}: {n.reason}</p>)}
       {file.consistency?.status === "not_compared" && <p className="note" data-testid="consistency-note">{file.consistency.reason}</p>}
-      <UncertainItems file={file} auditId={auditId} kinds={["row"]} onChange={onChange} />
+      <UncertainCards file={file} auditId={auditId} onChange={onChange} />
       <p className="exports">
         <a href="#json" data-testid="export-json" onClick={(e) => { e.preventDefault(); downloadReading(auditId, file.file_hash, "json"); }}>Export map (JSON)</a>
         {" · "}
@@ -272,9 +299,9 @@ function DeckFigures({ file, auditId, onChange }) {
               <td data-h="Label">{f.label || PLACEHOLDER}</td>
               <td data-h="Page">{f.page ?? PLACEHOLDER}</td>
               <td data-h="Outcome" className="nw">
-                {f.uncertain ? <b data-testid="deck-figure-uncertain">{UNCERTAIN_LABEL}</b> : (OUTCOME_LABELS[f.outcome] || f.outcome)}
+                {f.uncertain ? <b data-testid="deck-figure-uncertain">{UNCERTAIN_TITLE}</b> : (OUTCOME_LABELS[f.outcome] || f.outcome)}
                 {f.uncertain && (f.reading?.options || []).map((text, i) => (
-                  <button key={i} type="button" className="btn quiet" data-testid="deck-figure-choose" onClick={() => choose(f, i)}>Use {text}</button>
+                  <button key={i} type="button" className="btn quiet" data-testid="deck-figure-choose" title={text} onClick={() => choose(f, i)}>{i === 0 ? "Use first" : "Use second"}</button>
                 ))}
               </td>
             </tr>
@@ -285,8 +312,8 @@ function DeckFigures({ file, auditId, onChange }) {
   );
 }
 
-const TAB_NOTE = "Each tab shows the Matches source, Doesn't match source and Needs review results for one file. For decks, it also lists every figure read from the deck, with its page number and outcome.";
-const LEAD = "Every figure the model read, after code opened its cell or page and compared the value. Three tables: Matches source, Doesn't match source, Needs review.";
+const TAB_NOTE = "Each tab shows the Matches source, Doesn't match source and Needs attention results for one file. For decks, it also lists every figure read from the deck, with its page number and outcome.";
+const LEAD = "Every figure the model read, after code opened its cell or page and compared the value. Four lists: Matches source, Doesn't match source, Uncertain, Needs attention.";
 const fileKey = (f) => f.file_hash || f.deck_id;
 const rowsOf = (rows, f) => rows.filter((r) => (f.kind === "sheet" ? r.source?.file_hash === f.file_hash : r.source?.deck_id === f.deck_id));
 
@@ -319,6 +346,21 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
   const current = view.files.find((f) => fileKey(f) === tab);
   const results = current ? narrowed(view, current) : view;
   const changed = () => { load(); reloadAudit(); };
+  // The Uncertain list is the All section's (brief of George, 2026-11-05): "Review →" above Run audit opens it.
+  useEffect(() => {
+    const open = () => { setTab("all"); setTimeout(() => document.getElementById("uncertain-list")?.scrollIntoView?.({ behavior: "smooth" }), 0); };
+    window.addEventListener(OPEN_UNCERTAIN, open);
+    return () => window.removeEventListener(OPEN_UNCERTAIN, open);
+  }, []);
+  const uncertain = current ? undefined : uncertainEntries(view.files);
+  const pick = async (entry, which) => {
+    try {
+      if (entry.kind === "deck") await answerCorrection(auditId, entry.figure.id, { index: entry.figure.reading.index, action: "choose", option: which === "first" ? 0 : 1 });
+      else await decideUncertain(auditId, entry.fileHash, { key: entry.item.key, pick: which });
+      changed();
+    } catch (e) { toast.error(e.response?.data?.detail || "The choice could not be saved."); }
+  };
+  const stopped = view.review?.stopped;
   return (
     <div className="reading" data-testid="reading-screen">
       <h1 className="section" data-testid="results-heading">Check results</h1>
@@ -337,8 +379,13 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
       {current?.kind === "sheet" && <SheetDetail file={current} auditId={auditId} onChange={changed} />}
       {current?.kind === "deck" && <DeckDetail file={current} />}
       {current?.kind === "deck" && <DeckFigures file={current} auditId={auditId} onChange={changed} />}
-      {!current && view.review?.not_completed && <p className="evidence" data-testid="review-not-completed">{view.review.not_completed}</p>}
-      <ReadingResults data={results} auditId={auditId} confirmedOpen={confirmedOpen} setConfirmedOpen={setConfirmedOpen} onChanged={changed} />
+      {!current && stopped && (
+        <p className="bad" role="alert" data-testid="review-stopped">
+          Review not run: token allowance reached. All {fmtCount(stopped.total)} figures are unreviewed.
+        </p>
+      )}
+      {!current && !stopped && view.review?.not_completed && <p className="evidence" data-testid="review-not-completed">{view.review.not_completed}</p>}
+      <ReadingResults data={results} auditId={auditId} confirmedOpen={confirmedOpen} setConfirmedOpen={setConfirmedOpen} onChanged={changed} uncertain={uncertain} onPick={pick} />
     </div>
   );
 }

@@ -496,11 +496,51 @@ def test_the_reviewer_has_its_own_cap_and_a_refusal_writes_one_log_line_and_the_
     assert done["status"] == "not_read" and router.review_calls == 0
     run_id = audit_of(flow)["id"]
     (line,) = _refusals(caplog)
-    assert re.fullmatch(rf"ai call refused: step=reviewer run_id={run_id} reason=reviewer_token_cap used=0 cap=5000 input=[1-9]\d*", line), line
+    assert re.fullmatch(rf"ai call refused: step=reviewer run_id={run_id} reason=reviewer_token_cap used=0 cap=5000 input=[1-9]\d* first=0 second=0", line), line
     refused = [c for c in flow.db["llm_calls"].docs if c.get("status") == "reviewer_token_cap_reached"]
     assert [c["refused_input_tokens"] > 0 for c in refused] == [True], "the llm_calls entry keeps the refused input estimate too"
     summary = asyncio.run(register.build(flow.db, run_id))["review"]
     assert summary["not_completed"] == "review not completed: token allowance reached"
+
+
+def test_c14_a_review_that_stops_on_the_token_allowance_is_said_and_its_unreviewed_matches_are_marked(flow, monkeypatch):
+    """Second pass, C14: the register says the review stopped (how many of the figures it reached), and every Matches-source row it did not
+    review is marked `unreviewed` (the screen leaves it out of the match count)."""
+    from app import register
+    start(flow, map_with("bookings"), review={"findings": []})
+    run_id = audit_of(flow)["id"]
+    monkeypatch.setenv("REVIEWER_TOKEN_CAP", "5000")
+    assert review(flow, force=True)["status"] == "not_read"
+    shown = asyncio.run(register.build(flow.db, run_id))
+    total = len(shown["tables"]["confirmed"])
+    assert total > 0 and shown["review"]["stopped"] == {"reviewed": 0, "total": total}
+    assert all(r["unreviewed"] for r in shown["tables"]["confirmed"]), "none was reviewed"
+    monkeypatch.delenv("REVIEWER_TOKEN_CAP")
+    assert review(flow, force=True)["status"] == "read"
+    again = asyncio.run(register.build(flow.db, run_id))
+    assert again["review"]["stopped"] is None and not any(r.get("unreviewed") for r in again["tables"]["confirmed"])
+
+
+def test_c14_the_monthly_allowance_stops_the_review_the_same_way(flow, monkeypatch):
+    from app import register
+    from app.llm import guards
+    start(flow, map_with("bookings"), review={"findings": []})
+    run_id = audit_of(flow)["id"]
+
+    async def blocked(db, rid):
+        raise guards.GuardRefusal("monthly_allowance_reached")
+    monkeypatch.setattr(guards, "check_allowance", blocked)
+    assert review(flow, force=True)["status"] == "not_read"
+    assert asyncio.run(register.build(flow.db, run_id))["review"]["stopped"]["reviewed"] == 0
+
+
+def test_c14_a_review_that_failed_for_another_reason_is_not_a_stop_on_the_allowance(flow, monkeypatch):
+    from app import register
+    router = start(flow, map_with("bookings"), review={"findings": []})
+    router.review = None
+    assert review(flow, force=True)["status"] == "not_read"
+    shown = asyncio.run(register.build(flow.db, audit_of(flow)["id"]))
+    assert shown["review"]["stopped"] is None and not any(r.get("unreviewed") for r in shown["tables"]["confirmed"])
 
 
 def test_the_reviewer_cap_defaults_to_80000_and_counts_only_reviewer_tokens(flow, monkeypatch):
@@ -526,7 +566,7 @@ def test_a_sheet_read_refused_by_the_per_file_cap_writes_the_ai_call_refused_lin
     start(flow, map_with("bookings"))
     run_id = audit_of(flow)["id"]
     lines = _refusals(caplog)
-    assert any(re.fullmatch(rf"ai call refused: step=sheet_reading run_id={run_id} reason=token_cap used=0 cap=1000 input=[1-9]\d*", line) for line in lines), lines
+    assert any(re.fullmatch(rf"ai call refused: step=sheet_reading run_id={run_id} reason=token_cap used=0 cap=1000 input=[1-9]\d* first=0 second=0", line) for line in lines), lines
     assert not [r for r in caplog.records if r.getMessage().startswith("structure not read:")]
     refused = [c for c in flow.db["llm_calls"].docs if c.get("status") == "file_token_cap_reached"]
     assert refused and refused[0]["refused_input_tokens"] > 0 and refused[0]["file_hash"]

@@ -332,7 +332,7 @@ async def review_audit(db, audit: Dict, adapter=None, force: bool = False) -> Di
     ran = await gateway.run_reviewer(db, audit_id, payload, adapter=adapter)
     doc = {"audit_id": audit_id, "input_hash": digest, "status": ran.status, "reason": ran.reason, "prompt_version": ran.prompt_version,
            "model": ran.model, "input_tokens": ran.input_tokens, "output_tokens": ran.output_tokens, "estimated_cost_usd": ran.estimated_cost_usd,
-           "findings": [], "dropped": 0, "created_at": _now()}
+           "findings": [], "dropped": 0, "stopped": ran.stopped, "created_at": _now()}
     if ran.status != "read":
         await _save(db, doc)
         return doc

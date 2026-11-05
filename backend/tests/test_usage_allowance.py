@@ -53,7 +53,7 @@ def test_a_billed_call_is_counted_on_the_tester_this_month_and_all_time_and_a_ca
     adapter = t.FakeAdapter()
     assert narrative(db, adapter).narrative_status == "ok"
     month = allowance.month_key()
-    row = {"calls": 1, "tokens": 1500, "cost_usd": pytest.approx(gateway.estimate_cost_usd(gateway.run_model(), 1200, 300))}
+    row = {"calls": 1, "tokens": 1500, "read1_tokens": 1500, "cost_usd": pytest.approx(gateway.estimate_cost_usd(gateway.run_model(), 1200, 300))}
     assert ledger(db)["all"] == row and ledger(db)[month] == row
     assert narrative(db, adapter).narrative_status == "ok" and adapter.calls == 1, "the second read is the cache"
     assert ledger(db)["all"]["calls"] == 1

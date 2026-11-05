@@ -72,13 +72,15 @@ describe("the words of an uncertain item", () => {
 describe("a spreadsheet's uncertain items", () => {
   test("a row is listed on the file's tab with both candidates and a button for each; a pick is sent, nothing is chosen for the analyst", async () => {
     await show(register([rowItem]));
-    expect(all("uncertain-item")).toHaveLength(0);            // the All tab lists none: the item belongs to its file
+    expect(all("uncertain-item")).toHaveLength(0);            // the All tab lists them in its Uncertain table, not as cards
     await tab(0);
     const item = q("uncertain-item");
-    expect(q("uncertain-label").textContent).toBe("Reading uncertain – confirm");
+    expect(q("uncertain-label").textContent).toBe("Uncertain");
     expect(item.textContent).toContain("Sales, row 23");
-    expect(q("uncertain-first").textContent).toBe("First reading: customers · customers · B23:AP23");
-    expect(q("uncertain-second").textContent).toBe("Second reading: customers · logos · B23:AP23");
+    expect(q("uncertain-first-text").textContent).toBe("First reading: metric customers");
+    expect(q("uncertain-second-text").textContent).toBe("Second reading: metric logos");
+    expect(q("uncertain-first").textContent).toBe("Use first");
+    expect(q("uncertain-second").textContent).toBe("Use second");
     expect(api.decideUncertain).not.toHaveBeenCalled();
     api.decideUncertain.mockResolvedValue({});
     await act(async () => { q("uncertain-second").click(); });
@@ -107,14 +109,15 @@ describe("a spreadsheet's uncertain items", () => {
 });
 
 describe("a deck's uncertain figures", () => {
-  test("the figure says Reading uncertain – confirm with a button for each reading; choosing sends the correction and reloads", async () => {
+  test("the figure says Uncertain with a button for each reading; choosing sends the correction and reloads", async () => {
     await show(register([]));
     await tab(1);
     const rows = all("deck-figure");
-    expect(rows[0].textContent).toContain("Reading uncertain – confirm");
-    expect(rows[1].textContent).not.toContain("Reading uncertain");
+    expect(rows[0].textContent).toContain("Uncertain");
+    expect(rows[1].textContent).not.toContain("Uncertain");
     const buttons = all("deck-figure-choose");
-    expect(buttons.map((b) => b.textContent)).toEqual(["Use revenue · 150,000 · 2025", "Use revenue · 160,000 · 2025"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(["Use first", "Use second"]);
+    expect(buttons.map((b) => b.title)).toEqual(["revenue · 150,000 · 2025", "revenue · 160,000 · 2025"]);
     api.answerCorrection.mockResolvedValue({});
     await act(async () => { buttons[1].click(); });
     expect(api.answerCorrection).toHaveBeenCalledWith("a1", "c1", { index: 0, action: "choose", option: 1 });

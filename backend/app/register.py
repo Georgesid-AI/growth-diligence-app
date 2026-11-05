@@ -262,14 +262,22 @@ async def build(db, audit_id: str) -> Dict:
                                               "awaiting_confirmation": sum(1 for f in deck["figures"] if f.get("uncertain"))}},
                       "figures": [{"key": f["key"], "metric": f.get("metric"), "value": f.get("value"), "unit": f.get("unit"), "currency": f.get("currency"),
                                    "period": f.get("period"), "label": f.get("label"), "page": f["source"]["page"], "outcome": f["outcome"],
-                                   "id": f.get("id"), "uncertain": bool(f.get("uncertain")), "reading": f.get("reading")}
+                                   "id": f.get("id"), "uncertain": bool(f.get("uncertain")), "reading": f.get("reading"), "cell": f.get("cell")}
                                   for f in deck["figures"]]})
     review = max(stored, key=lambda r: r.get("created_at") or "", default=None)
     status = (review or {}).get("status")
     reason = (review or {}).get("reason")
     if review and status == "not_read":
         reason = await _not_read_reason(db, audit_id)
-    summary = {"status": status, "reason": reason,
+    # A review that stopped on the token allowance reached none of the figures (one call per audit): every Matches-source row is marked
+    # `unreviewed` and the summary says how many of how many were reviewed (second pass, C14).
+    stopped = None
+    if review and review.get("stopped"):
+        total = len(tables["confirmed"])
+        for r in tables["confirmed"]:
+            r["unreviewed"] = True
+        stopped = {"reviewed": 0, "total": total}
+    summary = {"status": status, "reason": reason, "stopped": stopped,
                "not_completed": f"review not completed: {reason or 'provider error'}" if review and status not in ("read", "none") else None,
                "findings": sum(1 for f in (review or {}).get("findings") or [] if f.get("state") == "valid"), "dropped": (review or {}).get("dropped", 0)}
     return {"files": files, "period": reporting_period(files), "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": all_cards, "review": summary}

@@ -59,12 +59,19 @@ export const FIGURE_HOVERS = {
   Period: "The month, quarter or year it belongs to; a dash when the figure's own line or column names none.",
   Label: "The label printed with the figure on the page, as the reader took it.",
   Page: "The deck page the figure was read from.",
-  Outcome: "Matches source, Doesn't match source or Needs review, after code compared the value with the page text.",
+  Outcome: "Matches source, Doesn't match source or Needs attention, after code compared the value with the page text.",
 };
 export const FIGURE_WIDTHS = [22, 14, 14, 26, 8, 16];
 
 export const NUMERIC = { lines: [], confirmed: ["Value"], rejected: ["Reading says", "Cell holds"], cannot_check: ["Value"] };
-export const TITLES = { confirmed: "Matches source", rejected: "Doesn't match source", cannot_check: "Needs review" };
+export const TITLES = { confirmed: "Matches source", rejected: "Doesn't match source", uncertain: "Uncertain", cannot_check: "Needs attention" };
+/** The one line under each category's heading (brief of George, 2026-11-05, item 8). */
+export const EXPLAIN = {
+  confirmed: "The figure was found in the file or on the page.",
+  rejected: "The file or page shows a different value.",
+  uncertain: "The two readings disagree; pick one. Until you do, the item is left out of all metrics and ratings.",
+  cannot_check: "The app cannot check this by itself (a date, no comparable cell). Nothing is excluded; you decide if it matters.",
+};
 
 /** "2022-05" -> "May 2022"; "2024-Q1" -> "Q1 2024"; "2024" -> "FY 2024"; anything else as it is; none -> "—". */
 export function periodLabel(period) {
@@ -118,7 +125,7 @@ export function sheetSummary(s) {
       { text: plural(s.rows_mapped ?? 0, "row mapped", "rows mapped") },
       { bold: fmtCount(s.confirmed), text: ` ${s.confirmed === 1 ? "figure matches" : "figures match"} source` },
       { text: `${fmtCount(s.rejected)} ${s.rejected === 1 ? "doesn't" : "don't"} match source` },
-      { text: `${fmtCount(s.cannot_check)} ${s.cannot_check === 1 ? "needs" : "need"} review` },
+      { text: `${fmtCount(s.cannot_check)} ${s.cannot_check === 1 ? "needs" : "need"} attention` },
       { text: "actual to ", bold: lastActualText(s.last_actual, s.granularity) },
     ],
     [...maskingLine(s), { text: plural(s.row_labels_coded ?? 0, "row label coded", "row labels coded") }],
@@ -141,7 +148,7 @@ export function deckSummary(s, figures) {
       { bold: fmtCount(f.read), text: ` ${f.read === 1 ? "figure" : "figures"} read` },
       { bold: fmtCount(s.confirmed), text: " match the page they cite" },
       { text: `${fmtCount(s.rejected)} ${s.rejected === 1 ? "doesn't" : "don't"} match source` },
-      { text: `${fmtCount(s.cannot_check)} ${s.cannot_check === 1 ? "needs" : "need"} review${s.cannot_check ? " (charts without text)" : ""}` },
+      { text: `${fmtCount(s.cannot_check)} ${s.cannot_check === 1 ? "needs" : "need"} attention${s.cannot_check ? " (charts without text)" : ""}` },
     ],
     maskingLine(s),
   ];
@@ -191,4 +198,73 @@ export function uncertainTitle(item) {
   if (item.kind === "row") return `${item.sheet}, row ${item.row}${item.fields?.length ? ` (${item.fields.join(", ")} differ)` : ""}`;
   if (item.kind === "field") return `${item.sheet}: ${item.field}`;
   return `Sheet ${item.sheet}`;
+}
+
+// ---------------------------------------------------------------------------
+// The Uncertain list (brief of George, 2026-11-05, items 9 and 10): one line per item, the differing fields only, in plain words.
+// ---------------------------------------------------------------------------
+export const UNCERTAIN_TITLE = "Uncertain";
+const FIELD_WORDS = { role: "role", metric: "metric", series: "series", plan_series: "plan series", parent_row: "parent row", unit: "unit", currency: "currency",
+  basis: "basis", row: "row", period: "period", value: "value" };
+export const fieldWord = (f) => FIELD_WORDS[f] || String(f).replace(/_/g, " ");
+
+/** "row 4", "rows 6–9" (three or more in a run), "rows 6, 8": the row numbers an item covers. */
+export function rowsText(item) {
+  const rows = [...new Set(item.rows?.length ? item.rows : [item.row])].sort((a, b) => a - b);
+  if (rows.length === 1) return `row ${rows[0]}`;
+  const parts = [];
+  for (let i = 0; i < rows.length;) {
+    let j = i;
+    while (j + 1 < rows.length && rows[j + 1] === rows[j] + 1) j += 1;
+    if (j - i >= 2) parts.push(`${rows[i]}–${rows[j]}`); else for (let k = i; k <= j; k += 1) parts.push(String(rows[k]));
+    i = j + 1;
+  }
+  return `rows ${parts.join(", ")}`;
+}
+
+const rowValue = (c, f) => {
+  if (f === "series" || f === "plan_series") return c.periods != null ? `${c.periods} periods` : "different values";
+  return c[f] ?? "none";
+};
+
+/** The words of one reading of an item: only the fields that differ, each named ("role arr · parent row 5"); "not in this reading" when the read gave nothing. */
+export function readingsText(item, side) {
+  const c = item[side];
+  if (item.kind === "figure") return (item.fields || []).map((f) => `${fieldWord(f)} ${c?.[f] ?? "none"}`).join(" · ") || "not in this reading";
+  if (item.kind !== "row") return c == null ? "not in this reading" : String(c);
+  if (!c) return "not in this reading";
+  if ((item.fields || []).includes("row")) return [c.role, c.metric, c.cells].filter(Boolean).join(" · ");
+  return (item.fields || []).map((f) => `${fieldWord(f)} ${rowValue(c, f)}`).join(" · ");
+}
+
+/** What differs, in plain words: "role, parent row". */
+export function differsText(item) {
+  if (item.kind === "row" || item.kind === "figure") return (item.fields || []).map(fieldWord).join(", ");
+  return item.kind === "field" ? item.field : "sheet";
+}
+
+/** The "Row or figure" of a spreadsheet item: "Sales, rows 6–9"; of a layout item, the field. */
+export function whereText(item) {
+  if (item.kind === "row") return `${item.sheet}, ${rowsText(item)}`;
+  if (item.kind === "field") return `${item.sheet}: ${item.field}`;
+  return `Sheet ${item.sheet}`;
+}
+
+/** The Uncertain list of the whole audit: one entry per spreadsheet item and per deck figure that waits, in file order. */
+export function uncertainEntries(files) {
+  const out = [];
+  for (const f of files || []) {
+    if (f.kind === "sheet") {
+      for (const item of f.consistency?.uncertain || []) out.push({ id: `${f.file_hash}:${item.key}`, file: f.file, fileLabel: f.file, where: whereText(item), item, fileHash: f.file_hash, kind: "sheet" });
+    } else if (f.kind === "deck") {
+      for (const fig of f.figures || []) {
+        if (!fig.uncertain || !fig.reading) continue;
+        const [one, two] = fig.reading.details || [];
+        const fields = ["metric", "value", "period"].filter((k) => (one?.[k] ?? null) !== (two?.[k] ?? null));
+        const item = { kind: "figure", fields, first: one || null, second: two || null };
+        out.push({ id: `${f.deck_id}:${fig.id}`, file: f.file, fileLabel: `${f.file} · page ${fig.page ?? "?"}`, where: `${fig.metric}${fig.cell ? ` · cell ${fig.cell}` : ""}`, item, figure: fig, kind: "deck" });
+      }
+    }
+  }
+  return out;
 }

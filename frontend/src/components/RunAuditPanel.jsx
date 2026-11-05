@@ -6,7 +6,7 @@ import * as apiModule from "@/lib/api";
 import { getDatasets, getDecks, getReview } from "@/lib/api";
 import { setCalculatePressed } from "@/lib/chatUpload";
 import { RETRY_LABEL, RUN_LABEL, STAGES, firstStageNotDone, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
-import { readiness, steps } from "@/lib/uploadView";
+import { OPEN_UNCERTAIN, UNCERTAIN_NOTICE_LINK, readiness, steps, uncertainNotice } from "@/lib/uploadView";
 
 /**
  * The run card (docs/design/audit-page-mockup.html): Run audit, the line beside it saying what it waits for, and the two steps - Reading and checking files,
@@ -15,7 +15,7 @@ import { readiness, steps } from "@/lib/uploadView";
  * from what the audit holds, from the first stage that is not done, and the Audit page opens when it is done. A stage that fails says what to do and
  * has a Retry stage button.
  */
-export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = Date.now(), readClock, onRunning }) {
+export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = Date.now(), readClock, onRunning, uncertain = 0 }) {
   const nav = useNavigate();
   const [stages, setStages] = useState(idleStages());
   const [running, setRunning] = useState(false);
@@ -70,11 +70,18 @@ export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = 
   const calcStatus = later.some((s) => s.status === "failed") ? "failed" : later.some((s) => s.status === "running") ? "running"
     : later.every((s) => s.status === "done") ? "done" : "idle";
   const seconds = clock.start ? ((clock.end ?? clock.tick) - clock.start) / 1000 : null;
-  const rows = steps(sheets, decks, { status: calcStatus, seconds }, now, readClock);
+  const rows = steps(sheets, decks, { status: calcStatus, seconds }, now, readClock, uncertain);
+  const notice = uncertainNotice(uncertain);
   const failed = STAGES.find((s) => stages[s.key].status === "failed");
 
   return (
     <section className="panel" data-testid="run-audit-panel">
+      {notice && (
+        <p className="note" data-testid="uncertain-notice">
+          {notice}{" "}
+          <a href="#uncertain-list" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new Event(OPEN_UNCERTAIN)); }}>{UNCERTAIN_NOTICE_LINK}</a>
+        </p>
+      )}
       <div className="runrow">
         <button type="button" className="btn" data-testid="run-audit" disabled={running || ready.held} onClick={() => start()}>{RUN_LABEL}</button>
         <p data-testid="run-readiness">{ready.text}</p>
