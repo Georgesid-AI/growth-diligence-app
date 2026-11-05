@@ -21,7 +21,6 @@ numbers and cell ids), the checked items without any text, the batch's metadata;
 """
 import asyncio
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
@@ -61,7 +60,7 @@ def sendable_pages(grids: List[Dict]) -> List[Dict]:
 def second_read_enabled() -> bool:
     """Whether each page is read twice (the consistency read, docs/design/reading-consistency.md). On by default; PAGE_SECOND_READ=0 turns the
     second read off for a deployment that must hold the page-read cost down. The tests of the single read switch it off (tests/conftest.py)."""
-    return os.environ.get("PAGE_SECOND_READ", "1").strip() != "0"
+    return completeness.second_read_required()
 
 
 def batches(grids: List[Dict], per_call: int = PAGES_PER_CALL) -> List[List[Dict]]:
@@ -560,7 +559,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
-                                              {"_id": 0, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "blocks": 1, "layout": 1, "page_reads": 1, "retry_pages": 1,
+                                              {"_id": 0, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "blocks": 1, "layout": 1, "page_reads": 1, "retry_pages": 1, "claims_record": 1, "page_overrides": 1,
                                                "diagnostics": 1})
     if not audit or not deck:
         return NOT_READ
@@ -580,8 +579,10 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     # the pages already read).
     # A page whose second read is not stored is read again with the rest (its first read is cached): "done" needs the second read of every page
     # read when the second read is on (results stage ordering, 2026-11-05).
+    # A run cut before its last write leaves no retry list but a record with pages missing: the retry resumes from the record too (review of #240).
     second_on = second_read_enabled()
-    kept = [r for r in deck.get("page_reads") or [] if r.get("status") == "read" and (not second_on or r.get("second"))] if deck.get("retry_pages") else []
+    resume = deck.get("retry_pages") or completeness.still_missing(deck.get("claims_record"), deck.get("page_overrides"), second_on)
+    kept = [r for r in deck.get("page_reads") or [] if r.get("status") == "read" and (not second_on or r.get("second"))] if resume else []
     done_before = {n for r in kept for n in r.get("pages") or ()}
     skipped = skipped_pages(grids, page_count)
 

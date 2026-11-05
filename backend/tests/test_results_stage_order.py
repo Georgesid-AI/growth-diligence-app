@@ -52,13 +52,13 @@ def set_deck(client, **fields):
 
 # --- 3. the record ------------------------------------------------------------------------------------------------------------
 
-def test_a_record_is_complete_only_with_every_page_read_and_each_second_read_equal_to_the_first():
+def test_a_record_is_complete_only_with_every_page_read_and_each_second_read_equal_to_the_first(second_page_read):
     assert run_audit.record_complete(record([1, 2, 3], [1, 2, 3], [1, 2, 3]))
     first_short = record([1, 2, 3], [1, 2], [1, 2])
     assert first_short["missing"] == [3] and not run_audit.record_complete(first_short)
     second_short = record([1, 2, 3], [1, 2, 3], [1, 2])
     assert second_short["missing"] == [3] and not run_audit.record_complete(second_short), "the second read must cover what the first covers"
-    assert run_audit.record_complete(record([1, 2, 3], [1, 2, 3], [], second_on=False)), "with the second read off, the first alone is enough"
+    assert run_audit.record_complete(record([1, 2, 3], [1, 2, 3], [], second_on=False), second_on=False), "with the second read off, the first alone is enough"
     assert not run_audit.record_complete(None)
 
 
@@ -156,8 +156,8 @@ def test_the_results_are_not_calculated_on_partial_deck_figures(run_api):
 def test_the_claims_stage_fails_on_an_incomplete_record_and_names_the_pages(run_api):
     upload_files(run_api)
     add_deck(run_api)
-    set_deck(run_api, claims_record=record([1, 2, 3, 4], [1, 2], [1, 2]))
-    out = stage(run_api, "claims")        # nothing to queue: no retry pages stored
+    set_deck(run_api, claims_record=unreadable_record([1, 2, 3, 4], [1, 2], [1, 2], ((3, "too_large"), (4, "refused"))))      # nothing a read can get
+    out = stage(run_api, "claims")
     assert (out["status"], out["message"]) == ("failed", "Deck claims incomplete: 2 of 4 pages. Retry this stage.")
 
 
@@ -271,10 +271,15 @@ def test_a_result_built_with_every_deck_keeps_its_rating(run_api):
 
 # --- 7. the log ------------------------------------------------------------------------------------------------------------------
 
-def test_one_line_per_claims_run_and_per_results_run_with_the_pages_read_missing_elapsed_and_timeout(run_api, caplog):
+async def no_read(db, audit_id, deck_id, **kwargs):
+    """Stands in for the page reader when a test queues a deck and wants nothing read."""
+
+
+def test_one_line_per_claims_run_and_per_results_run_with_the_pages_read_missing_elapsed_and_timeout(run_api, caplog, monkeypatch, second_page_read):
     upload_files(run_api)
     add_deck(run_api)
     set_deck(run_api, claims_record=record([1, 2, 3], [1, 2], [1]))
+    monkeypatch.setattr(structures, "process_deck_safely", no_read)
     caplog.set_level(logging.INFO)
     stage(run_api, "claims")
     line, = [r.getMessage() for r in caplog.records if r.getMessage().startswith("claims run:")]
@@ -338,12 +343,13 @@ def test_the_claims_failure_offers_continue_without_for_a_page_that_can_never_be
     assert out["can_continue"] == [{"deck_id": "d1", "file": "testco_board.pptx", "pages": [{"page": 3, "reason": "too large for the token cap"}]}]
 
 
-def test_a_page_missing_for_a_retryable_reason_is_not_offered(run_api):
+def test_a_page_missing_for_a_retryable_reason_is_not_offered_but_read_again(run_api, monkeypatch):
     upload_files(run_api)
     add_deck(run_api)
     set_deck(run_api, claims_record=unreadable_record(first=(1,), second=(1,), unreadable=()))
+    monkeypatch.setattr(structures, "process_deck_safely", no_read)
     out = stage(run_api, "claims")
-    assert out["status"] == "failed" and out["can_continue"] == []
+    assert out["status"] == "running" and "can_continue" not in out
 
 
 def test_continuing_without_the_page_stores_an_override_and_the_deck_counts_complete_then_the_results_run(run_api):
@@ -395,3 +401,97 @@ def test_the_record_keeps_the_unreadable_pages_with_their_status_when_the_page_r
     asyncio.run(structures.process_deck(db, A, "d1", adapter=Big(replies=[ONE]), sleep=t._noop_sleep))
     record_ = db[TEXT_COLLECTION].docs[0]["claims_record"]
     assert record_["unreadable"] == [{"page": 1, "reason": "too_large"}] and record_["missing"] == [1]
+
+
+# --- review of #240, items 1-3 (2026-11-05): every path, every later write, the record under the flag, the override, the resumed retry -------------
+
+def test_a_record_written_with_the_second_read_off_is_not_complete_once_the_second_read_is_on(second_page_read):
+    """Check 3: the completeness is judged with the flag as it stands now, not as it stood when the record was written."""
+    stored_off = record([1, 2, 3], [1, 2, 3], [1, 2], second_on=False)
+    assert not run_audit.record_complete(stored_off), "the second read is on: a page read once is missing"
+    assert run_audit.still_missing(stored_off) == [3]
+    assert run_audit.decks_gate([{"file": "a.pdf", "ai_status": "read", "claims_record": stored_off}])["state"] == "incomplete"
+
+
+def test_a_record_written_with_the_second_read_on_is_complete_once_the_second_read_is_off(monkeypatch):
+    monkeypatch.setenv("PAGE_SECOND_READ", "0")
+    assert run_audit.record_complete(record([1, 2, 3], [1, 2, 3], [1, 2], second_on=True)), "the second read is off: the first read alone is enough"
+
+
+def test_an_override_does_not_cover_a_page_a_later_read_left_missing_for_a_reason_that_can_be_retried(run_api):
+    """Check 4: the analyst continued without page 3 when it was too large; a later read finds page 3 missing after a timeout: it is read again."""
+    upload_files(run_api)
+    add_deck(run_api)
+    set_deck(run_api, claims_record=unreadable_record())
+    assert continue_without(run_api, [3]).status_code == 200
+    assert stage(run_api, "claims")["status"] == "done"
+    set_deck(run_api, claims_record=unreadable_record(unreadable=()))       # page 3 now missing for a retryable reason
+    assert run_audit.still_missing(run_api.db[decks.TEXT_COLLECTION].docs[0]["claims_record"], run_api.db[decks.TEXT_COLLECTION].docs[0]["page_overrides"]) == [3]
+    assert stage(run_api, "engine")["status"] == "waiting"
+    assert run_api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
+
+
+def test_a_deck_whose_record_has_pages_missing_is_queued_by_the_retry_even_with_no_retry_list_stored(run_api, monkeypatch):
+    """Check 5: a run cut before its last write leaves the record with pages missing and no `retry_pages`; the retry still queues the deck."""
+    upload_files(run_api)
+    add_deck(run_api)
+    set_deck(run_api, claims_record=record([1, 2, 3], [1, 2], [1, 2]))
+    queued = []
+
+    async def fake(db, audit_id, deck_id, **kwargs):
+        queued.append(deck_id)
+    monkeypatch.setattr(structures, "process_deck_safely", fake)
+    out = stage(run_api, "claims")
+    assert out["status"] == "running" and queued == ["d1"]
+    assert run_api.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] == "reading"
+
+
+def test_a_deck_whose_pages_can_never_be_read_is_not_queued_again(run_api, monkeypatch):
+    upload_files(run_api)
+    add_deck(run_api)
+    set_deck(run_api, claims_record=unreadable_record())
+    queued = []
+
+    async def fake(db, audit_id, deck_id, **kwargs):
+        queued.append(deck_id)
+    monkeypatch.setattr(structures, "process_deck_safely", fake)
+    assert stage(run_api, "claims")["status"] == "failed" and queued == []
+
+
+def test_the_resumed_read_asks_only_for_the_pages_the_record_lists_missing(monkeypatch):
+    """Check 5: page 1 stored read; the record says page 2 is missing and no retry list is stored: one call, for page 2."""
+    from test_deck_list_reread import REPLY_1, REPLY_2, open_audit, two_pages
+    kept = {"pages": [1], "status": "read", "reason": None, "key": "k1", "cache_hit": False, "second": False}
+    _, db, adapter = open_audit(monkeypatch, two_pages(), [REPLY_2], ai_status="reading", page_reads=[kept],
+                                claims_record=run_audit.claims_record([1, 2], [1], [], False, "2026-11-05T09:00:00+00:00"))
+    asyncio.run(structures.pages.process_deck_pages(db, AUDIT_S, "d1", adapter=adapter, sleep=t._noop_sleep))
+    doc = db[TEXT_COLLECTION].docs[0]
+    assert adapter.calls == 1, "page 1 is kept, not asked again"
+    assert [r["pages"] for r in doc["page_reads"]] == [[1], [2]] and doc["claims_record"]["missing"] == []
+    assert REPLY_1 is not None
+
+
+def test_a_confirmation_pick_or_an_override_made_after_the_results_makes_them_older(run_api):
+    """Check 2: an analyst's pick of one of two readings and a Change are overrides; each is a later write."""
+    upload_files(run_api)
+    stage(run_api, "engine")
+    assert run_api.get(f"/api/audits/{AUDIT}/review").json()["results_older"] is False
+    run_api.db[readings.OVERRIDES].docs.append({"audit_id": AUDIT, "reading": "k1", "item": "x", "path": "x", "old": 1, "new": 2, "who": "analyst",
+                                                "at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(), "why": "pick"})
+    assert run_api.get(f"/api/audits/{AUDIT}/review").json()["results_older"] is True
+
+
+def test_the_export_says_the_results_are_older(run_api):
+    """Check 2: the banner reaches the workbook too (Headline sheet), and only when the results are older."""
+    import io
+    import openpyxl
+    upload_files(run_api)
+    add_deck(run_api)
+    stage(run_api, "engine")
+    column_a = lambda: [c.value for c in openpyxl.load_workbook(io.BytesIO(run_api.get(f"/api/audits/{AUDIT}/export").content))["Headline"]["A"]]  # noqa: E731
+    assert run_audit.RESULTS_OLDER not in column_a() and "Note" not in column_a()
+    set_deck(run_api, claims_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat())
+    text = column_a()
+    assert "Note" in text
+    wb = openpyxl.load_workbook(io.BytesIO(run_api.get(f"/api/audits/{AUDIT}/export").content))["Headline"]
+    assert any(r[0].value == "Note" and r[1].value == run_audit.RESULTS_OLDER for r in wb.iter_rows(min_row=2))

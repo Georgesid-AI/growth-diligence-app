@@ -169,6 +169,13 @@ the record's `unreadable`) is offered on the claims-stage failure. The choice is
 time; `POST /audits/{id}/decks/{deck_id}/continue-without`, refused for any page that is readable or not missing); the deck then counts complete, a
 re-read keeps the override, and it goes with the deck and the audit. The memo's Worth flagging reads "Deck X: page N not read (reason)".
 
+Review of #240, items 1-3 (2026-11-05): the record is judged with `PAGE_SECOND_READ` as it stands now, not as it stood when the record was written
+(`completeness.still_missing`); an override covers a page only while the record still lists it as one that can never be read, so a page a later read
+left missing for a reason that can be retried is read again; a retry queues every deck whose record has pages a read can still get, with or without a
+stored retry list, and the reader resumes from the record (pages read are kept, pages missing are asked for); every override of the audit (a
+confirmation pick, a Change, a reviewer's correction, a typed as-of month) is a later write that makes the results older; the xlsx export's Headline
+sheet carries the "Results are older" line as a Note row when they are.
+
 ## The amendment of 2026-10-05
 
 Until 2026-10-05 the gateway read no parsed deck text at all (the former deck-parser.md §4). The amendment added

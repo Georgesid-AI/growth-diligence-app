@@ -3,6 +3,7 @@
 Pure functions; page numbers and counts only (rule 17). The page reader (pages.process_deck_pages) writes the record on the deck's document, page by
 page; Run audit (app/run_audit.py) reads it to decide whether the deck claims are done before the results are calculated.
 """
+import os
 from typing import Dict, Optional
 
 # Timeouts scale with the work: a base plus an allowance per page and per read of it. The allowance is a page's own timeout (60 s) shared by the
@@ -21,6 +22,12 @@ def stage_timeout(pages: int, reads: int) -> int:
 UNREADABLE = {"too_large": "too large for the token cap", "truncated": "reply cut at the output limit", "refused": "refused by the model"}
 
 
+def second_read_required() -> bool:
+    """Whether each page is read twice (the consistency read, docs/design/reading-consistency.md). On by default; PAGE_SECOND_READ=0 turns the
+    second read off for a deployment that must hold the page-read cost down. The one reading of the switch: the page reader and the gate share it."""
+    return os.environ.get("PAGE_SECOND_READ", "1").strip() != "0"
+
+
 def claims_record(expected, first, second, second_required: bool, at: str, unreadable=()) -> Dict:
     """What one deck's claims step stores: the pages with figures (`expected`), the pages read in the first and in the second read, and the pages
     still missing: a page with no first read, and, when the second read is on, a page read once whose second read is not stored. Page numbers only."""
@@ -32,13 +39,24 @@ def claims_record(expected, first, second, second_required: bool, at: str, unrea
             "unreadable": [{"page": int(p), "reason": r} for p, r in sorted(unreadable) if p in missing and r in UNREADABLE]}
 
 
-def still_missing(record: Optional[Dict], overrides=()) -> list:
-    """The pages missing from a record that the analyst has not chosen to continue without (`overrides`: [{"page", "reason", "at"}])."""
-    skipped = {o.get("page") for o in overrides or ()}
-    return [p for p in (record or {}).get("missing") or () if p not in skipped]
+def still_missing(record: Optional[Dict], overrides=(), second_on: Optional[bool] = None) -> list:
+    """The pages missing from a record, judged as the second-read switch stands now (`second_on`; None reads it), not as it stood when the record was
+    written: a page with no first read, and, when the second read is on, a page read once. An override (`overrides`: [{"page", "reason", "at"}],
+    "Continue without page N") covers a page only while the record still lists it as one that can never be read: a page a later read left missing
+    for a reason that can be retried is read again, whatever was continued without before (review of #240, 2026-11-05)."""
+    if not record:
+        return []
+    required = second_read_required() if second_on is None else bool(second_on)
+    first, second = set(record.get("first") or ()), set(record.get("second") or ())
+    missing = set(record.get("expected") or ()) - first
+    if required:
+        missing |= first - second
+    never = {u.get("page") for u in record.get("unreadable") or ()}
+    skipped = {o.get("page") for o in overrides or ()} & never
+    return sorted(p for p in missing if p not in skipped)
 
 
-def record_complete(record: Optional[Dict], overrides=()) -> bool:
+def record_complete(record: Optional[Dict], overrides=(), second_on: Optional[bool] = None) -> bool:
     """Done: first-read coverage of every page with figures and, when the second read is on, second-read coverage equal to the first; a page the
-    analyst continued without counts as covered."""
-    return bool(record) and not still_missing(record, overrides)
+    analyst continued without counts as covered while it can never be read."""
+    return bool(record) and not still_missing(record, overrides, second_on)

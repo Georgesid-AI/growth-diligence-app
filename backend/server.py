@@ -2998,6 +2998,8 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 cac_label = lab("CAC payback", hq, qual("months"), unit="months")
         kv_sheet(xw, "Headline", [
             ("Company", None, meta.get("company_name")),
+            # Results older than the latest reading (results stage ordering, 2026-11-05): the banner of the results page and the memo, here as a row
+            *([("Note", None, meta["results_older_text"])] if meta.get("results_older_text") else []),
             # the evidence end and the latest valid source period, never the as-of setting as a period (dates-and-periods.md)
             ("Evidence to", None, ((r.get("source_period") or {}).get("evidence_to") or r.get("as_of_month"))),
             ("Latest valid source period", None, fmt.source_period_text(r.get("source_period"))),
@@ -3219,6 +3221,8 @@ async def export_audit(audit_id: str):
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
     a = await _current_audit(audit_id, a)
+    if await _results_older(audit_id, a):
+        a["results_older_text"] = run_audit.RESULTS_OLDER
     try:
         narratives = await llm_gateway.narratives_for_run(db, audit_id)
     except Exception:  # the export never depends on the narrative service

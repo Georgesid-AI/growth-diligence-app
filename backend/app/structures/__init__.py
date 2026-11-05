@@ -18,7 +18,7 @@ import statistics
 from collections import Counter
 from typing import Dict, List, Optional, Set, Tuple
 
-from . import redact
+from . import completeness, redact
 
 # Confirmed column mappings, per audit and header set: reused when a file with the same headers is
 # uploaded again, so the model is not asked twice. Removed by Delete audit.
@@ -425,12 +425,21 @@ async def queue_waiting(db, audit_id: str) -> List[str]:
     return [d["deck_id"] for d in found]
 
 
+def _retryable_missing(deck: dict) -> List[int]:
+    """The pages the deck's completeness record lists missing that a read can still get (not the pages that can never be read): a run cut before its
+    last write stores no retry list, so the record decides too (review of #240, 2026-11-05)."""
+    record = deck.get("claims_record")
+    never = {u.get("page") for u in (record or {}).get("unreadable") or ()}
+    return [p for p in completeness.still_missing(record, deck.get("page_overrides")) if p not in never]
+
+
 async def queue_unread_pages(db, audit_id: str) -> List[str]:
     """Run audit reads again, with no new upload, the pages of a deck a failure left unread (a timeout, an error; George, 2026-10-23,
     deck page reads): marks such decks "reading" and returns their ids, for the caller to read. process_deck_pages asks the model
     only for those pages. A deck being read, waiting for the revenue file or missing the prompt is not queued here."""
     found = [d for d in await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": {"$in": [READ, NOT_READ, STOPPED]}},
-                                                       {"_id": 0, "deck_id": 1, "retry_pages": 1}).to_list(1000) if d.get("retry_pages")]
+                                                       {"_id": 0, "deck_id": 1, "retry_pages": 1, "claims_record": 1, "page_overrides": 1}).to_list(1000)
+             if d.get("retry_pages") or _retryable_missing(d)]
     for d in found:
         await _deck_status(db, audit_id, d["deck_id"], "reading")
     return [d["deck_id"] for d in found]
