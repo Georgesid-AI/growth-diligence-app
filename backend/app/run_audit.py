@@ -6,10 +6,11 @@ a claim enters the register on its own unless a check asks about it (`needs_a_wo
 """
 from typing import Dict, Optional
 
+from app.formatting import fmt_count
 from app.decks.claims import review_flags
 from app.structures import page_check, verify
 from app.structures.completeness import (TIMEOUT_BASE_SECONDS, TIMEOUT_PER_PAGE_READ_SECONDS, claims_record, record_complete,  # noqa: F401
-                                         stage_timeout, still_missing, UNREADABLE)
+                                         stage_timeout, still_missing, UNREADABLE, CAP)
 from schemas.metrics import CONTRACT_VERSION
 
 # Order (George, 2026-11-05, results stage ordering): the deck claims are done for every deck with figures before the results are calculated,
@@ -26,7 +27,13 @@ ENGINE_FAILED = "The calculations could not be completed. Retry this stage."
 CLAIMS_FAILED = "The claims could not be read from the decks. Retry this stage; the figures above are unaffected."
 DECKS_READING = "The decks are still being read."
 NO_DECKS = "No deck was uploaded: there are no claims to read."
-CLAIMS_INCOMPLETE = "Deck claims incomplete: {n} of {m} pages. Retry this stage."
+CLAIMS_INCOMPLETE = "Deck claims incomplete: {n} of {m} pages. Retry this stage."       # (the older wording; the failure now names the deck, the reason and the action)
+TOKEN_CAP_WORDS = "token cap"
+CAP_FAILED = ("Audit token cap reached: {used} of {cap} tokens used. Retrying will not help. "
+              "Options: turn off the second deck read (PAGE_SECOND_READ=0) or raise the cap.")
+RETRY_ACTION = "Press Retry stage — it reads only the missing pages, then calculates the results. Nothing already read is lost."
+SKIP_ACTION = ("Press Continue without {pages} to go on; the memo will say {skipped} skipped. "
+               "Or remove the deck and upload a version without {that}.")
 RESULTS_OLDER = "Results are older than the latest reading – run Calculating results again."
 NOT_RATED_INCOMPLETE = "not rated – deck claims incomplete"
 # George, 2026-10-20: results stored under an older engine contract are marked, not recomputed on a read, until Run audit calculates again.
@@ -69,12 +76,39 @@ def needs_a_word(candidate: dict) -> bool:
 # The record, the timeout and their words live in structures/completeness.py (the page reader writes the record; this module reads it).
 
 
+def _reason_by_page(deck: Dict, record: Dict, missing: list) -> Dict:
+    """The plain-words reason each missing page is missing for, from the record's unreadable list and the deck's stored page entries (codes only)."""
+    never = {u["page"]: u["reason"] for u in record.get("unreadable") or ()}
+    last = {}
+    for entry in deck.get("page_reads") or []:
+        for n in entry.get("pages") or ():
+            last[n] = entry
+    out = {}
+    for p in missing:
+        if p in never:
+            out[p] = TOKEN_CAP_WORDS if never[p] == CAP else UNREADABLE.get(never[p], never[p])
+        elif last.get(p, {}).get("status") == "read":
+            out[p] = "second read timed out"
+        elif last.get(p, {}).get("reason") == "timeout":
+            out[p] = "page read timed out"
+        elif last.get(p, {}).get("provider"):
+            out[p] = "the model returned an error"
+        else:
+            out[p] = "page not read"
+    return out
+
+
+def _pages(numbers: list) -> str:
+    return f"page {numbers[0]}" if len(numbers) == 1 else f"pages {', '.join(str(n) for n in numbers)}"
+
+
 def decks_gate(decks: list) -> Dict:
-    """Whether the deck claims are done, from the decks' documents (`ai_status`, `file`, `claims_record`, `page_overrides`).
+    """Whether the deck claims are done, from the decks' documents (`ai_status`, `file`, `claims_record`, `page_overrides`, `page_reads`).
     state "reading": a deck is still being read; "incomplete": a deck's record has pages missing that the analyst has not continued without;
-    else "clear". `incomplete` lists [{"deck_id", "file", "missing", "expected", "can_continue"}] (`can_continue`: the missing pages that can never be
-    read, with a plain reason), `pages` is the pages with figures over all decks, `reads` the reads per page (1 or 2), `skipped` the pages continued
-    without that are still missing ([{"deck_id", "file", "page", "reason"}]).
+    else "clear". `incomplete` lists [{"deck_id", "file", "missing", "expected", "can_continue", "reasons", "capped", "cap"}] (`can_continue`: the missing
+    pages that can never be read, with a plain reason; `reasons`: {page: plain reason} of every missing page; `capped`: the pages the token cap refused,
+    which cannot be continued without; `cap`: {"used", "cap"} then), `pages` is the pages with figures over all decks, `reads` the reads per page (1 or 2),
+    `skipped` the pages continued without that are still missing ([{"deck_id", "file", "page", "reason"}]).
     A deck no page reader applies to (consent off, a model off the list, no prompt) or one read before the record existed has no record and
     stands as the status line says; its message is the stage's own."""
     reading = any(d.get("ai_status") == "reading" for d in decks)
@@ -83,10 +117,12 @@ def decks_gate(decks: list) -> Dict:
     for d, r in records:
         overrides = d.get("page_overrides") or []
         missing = still_missing(r, overrides)
-        never = {u["page"]: u["reason"] for u in r.get("unreadable") or ()}
+        never = {u["page"]: u["reason"] for u in r.get("unreadable") or () if u["reason"] != CAP}
+        capped = [u["page"] for u in r.get("unreadable") or () if u["reason"] == CAP and u["page"] in missing]
         if missing:
             incomplete.append({"deck_id": d.get("deck_id"), "file": d.get("file"), "missing": len(missing), "expected": len(r.get("expected") or ()),
-                               "can_continue": [{"page": p, "reason": UNREADABLE.get(never[p], never[p])} for p in missing if p in never]})
+                               "can_continue": [{"page": p, "reason": UNREADABLE.get(never[p], never[p])} for p in missing if p in never],
+                               "reasons": _reason_by_page(d, r, missing), "capped": capped, "cap": r.get("cap") if capped else None})
         skipped += [{"deck_id": d.get("deck_id"), "file": d.get("file"), "page": o["page"], "reason": UNREADABLE.get(o.get("reason"), o.get("reason") or "unreadable")}
                     for o in overrides if o.get("page") in (r.get("missing") or ())]
     pages = sum(len(r.get("expected") or ()) for _, r in records)
@@ -104,9 +140,38 @@ def pages_summary(decks: list) -> str:
     return ";".join(out) or "-"
 
 
+def claims_failure(gate: Dict) -> Dict:
+    """The claims stage's failure for an incomplete gate: {"message", "retryable"}. Each deck is named with its count ("5 of 19 pages") and the reason in
+    plain words, then the action in one sentence: Retry stage for a page a read can still get, Continue without page N for a page that can never be read.
+    A page the token cap refused is not retryable: the message says so and names the options (combined fixes, 2026-11-05)."""
+    capped = [i for i in gate["incomplete"] if i["capped"]]
+    if capped:
+        cap = next(i["cap"] for i in capped if i["cap"]) if any(i["cap"] for i in capped) else {"used": 0, "cap": 0}
+        return {"message": CAP_FAILED.format(used=fmt_count(cap["used"]), cap=fmt_count(cap["cap"])), "retryable": False}
+    parts, retry, skip = [], False, []
+    for i in gate["incomplete"]:
+        by_reason, never = {}, {c["page"] for c in i["can_continue"]}
+        for p, why in sorted(i["reasons"].items()):
+            by_reason.setdefault(why, []).append(p)
+            retry = retry or p not in never
+        skip += [p for p in sorted(never)]
+        counted = f"{i['missing']} of {i['expected']} pages are missing" if i["missing"] != 1 else f"1 of {i['expected']} pages is missing"
+        why = "; ".join(f"{w} on {_pages(ps)}" if w in ("second read timed out", "page read timed out", "page not read", "the model returned an error")
+                        else f"{_pages(ps)} {w}" for w, ps in by_reason.items())
+        parts.append(f"{i['file']}: {counted}: {why}.")
+    if retry:
+        parts.append(RETRY_ACTION)
+    if skip:
+        skip = sorted(set(skip))
+        named = ", ".join(str(n) for n in skip)
+        parts.append(SKIP_ACTION.format(pages=f"page {named}" if len(skip) == 1 else f"pages {named}", skipped="the page was" if len(skip) == 1 else "the pages were",
+                                        that="that page" if len(skip) == 1 else "those pages"))
+    return {"message": " ".join(parts), "retryable": True}
+
+
 def incomplete_message(gate: Dict) -> str:
-    """"Deck claims incomplete: N of M pages. Retry this stage." N is the pages missing and M the pages with figures, over the decks that are not done."""
-    return CLAIMS_INCOMPLETE.format(n=sum(i["missing"] for i in gate["incomplete"]), m=sum(i["expected"] for i in gate["incomplete"]))
+    """The claims-stage failure's text (`claims_failure`)."""
+    return claims_failure(gate)["message"]
 
 
 def results_older(audit: dict, latest: Optional[str]) -> bool:

@@ -477,3 +477,19 @@ def test_two_reads_that_differ_on_a_rows_unit_currency_or_basis_flag_the_row_wit
     inputs = asyncio.run(server._role_inputs(AUDIT, flow.db["audits"].docs[0]))
     assert [r["uncertain"] for r in inputs["table"] if r["role"] == "revenue"] == [True]
     assert decide(flow, item["key"], "second").status_code == 200 and effective_row(flow)[field] == other
+
+
+def test_item10_a_stored_series_item_with_no_difference_is_served_with_the_first_differing_period(flow):
+    """Combined fixes, 2026-11-05: an item stored before the series difference was kept is not served as a bare period count."""
+    flow.state["adapter"] = TwoReads(good_map(), with_row(good_map(), metric="mrr"))
+    upload(flow, MONTHLY, monthly())
+    item = checks_doc(flow)["consistency"]["items"][0]
+    item.update(fields=["series", "plan_series"])
+    item.pop("series_diff", None)
+    def series(values):
+        return {"periods": [f"2021-{n + 1:02d}" for n in range(len(values))], "values": values, "refs": [f"B{n}" for n in range(len(values))]}
+    flow.db[readings.READINGS].docs[0]["file_map"]["sheets"][0]["rows"][0].update(series=series([1, 2, 3]), plan_series=series([5, 6]))
+    flow.db[readings.SECOND_READS].docs[0]["file_map"]["sheets"][0]["rows"][0].update(series=series([1, 2, 9]), plan_series=series([5, 60]))
+    served, = register(flow)["files"][0]["consistency"]["uncertain"]
+    assert served["series_diff"] == {"series": {"period": "2021-03", "first": 3, "second": 9, "differing": 1, "total": 3},
+                                     "plan_series": {"period": "2021-02", "first": 6, "second": 60, "differing": 1, "total": 2}}

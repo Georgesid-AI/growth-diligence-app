@@ -192,6 +192,42 @@ test("a deck with pages missing from its claims is read again from those pages, 
   expect(ranStages()).toEqual(["claims", "engine"]);
 });
 
+// Combined fixes, 2026-11-05, items 4 and 5 (A2): the claims failure says which deck, how many pages, why and what to press; a token cap stop is not retryable.
+const B4 = "board.pptx: 5 of 19 pages are missing: second read timed out on pages 4, 9. Press Retry stage — it reads only the missing pages, then calculates the results. Nothing already read is lost.";
+const B5 = "board.pptx: 1 of 12 pages is missing: page 3 too large for the token cap. Press Continue without page 3 to go on; the memo will say the page was skipped. Or remove the deck and upload a version without that page.";
+const CAP = "Audit token cap reached: 600,000 of 600,000 tokens used. Retrying will not help. Options: turn off the second deck read (PAGE_SECOND_READ=0) or raise the cap.";
+const failClaims = async (result) => {
+  allDone();
+  api.getDecks.mockResolvedValue({ decks: [{ ...DECK, claims_incomplete: true }], candidates: [] });
+  api.runStage.mockImplementation(async (id, key) => (key === "claims" ? { stage: key, status: "failed", ...result } : { stage: key, status: "done" }));
+  await mount();
+  await press("run-audit");
+};
+
+test("missing pages: the failure shows the deck, the count, the reason and the Retry stage sentence, and Retry stage can be pressed", async () => {
+  await failClaims({ message: B4, retryable: true, can_continue: [] });
+  expect(q("stage-claims-message").textContent).toBe(B4);
+  expect(q("retry-claims").disabled).toBe(false);
+  expect(document.querySelector('[data-testid^="continue-without"]')).toBeNull();
+});
+
+test("an unreadable page: the failure names the page and the reason; Continue without page N is offered and the old second line is gone", async () => {
+  await failClaims({ message: B5, retryable: true, can_continue: [{ deck_id: "d1", file: "board.pptx", pages: [{ page: 3, reason: "too large for the token cap" }] }] });
+  expect(q("stage-claims-message").textContent).toBe(B5);
+  expect(q("continue-without-d1").textContent).toBe("Continue without page 3");
+  expect(document.body.textContent).not.toContain("Worth flagging will name it");
+});
+
+test("a token cap stop is not retryable: the message says so, Retry stage is disabled and the carry-on line is not shown", async () => {
+  await failClaims({ message: CAP, retryable: false, can_continue: [] });
+  expect(q("stage-claims-message").textContent).toBe(CAP);
+  expect(q("retry-claims").disabled).toBe(true);
+  expect(document.body.textContent).not.toContain("Nothing already done is lost");
+  api.runStage.mockClear();
+  await press("retry-claims");
+  expect(api.runStage).not.toHaveBeenCalled();
+});
+
 test("a claims failure on a page that can never be read offers Continue without page N; it stores the choice, runs the claims stage again and then the results", async () => {
   allDone();
   api.getDecks.mockResolvedValue({ decks: [{ ...DECK, claims_incomplete: true }], candidates: [] });
@@ -199,12 +235,12 @@ test("a claims failure on a page that can never be read offers Continue without 
   let failing = true;
   const offer = { deck_id: "d1", file: "board.pptx", pages: [{ page: 3, reason: "too large for the token cap" }] };
   api.runStage.mockImplementation(async (id, key) => (key === "claims" && failing
-    ? { stage: key, status: "failed", message: "Deck claims incomplete: 1 of 12 pages. Retry this stage.", can_continue: [offer] }
+    ? { stage: key, status: "failed", message: B5, retryable: true, can_continue: [offer] }
     : { stage: key, status: "done" }));
   api.continueWithoutPages.mockImplementation(async () => { failing = false; return {}; });
   await mount();
   await press("run-audit");
-  expect(q("stage-claims-message").textContent).toContain("Deck claims incomplete: 1 of 12 pages.");
+  expect(q("stage-claims-message").textContent).toBe(B5);
   expect(q("continue-without-d1").textContent).toBe("Continue without page 3");
   expect(ranStages()).toEqual(["claims"]);
   await press("continue-without-d1");

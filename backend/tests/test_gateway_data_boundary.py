@@ -4087,3 +4087,23 @@ def test_the_completeness_record_and_the_run_log_lines_hold_page_numbers_and_cou
     for _x, _y, _size, line in LINES:
         assert line not in logged and line not in _json.dumps(record), "no deck text in the log or the record"
     assert "deck.pdf" not in "\n".join(m for m in logged.splitlines() if m.startswith("claims run:")), "the deck is named by its id, not its file name"
+
+
+# --- combined fixes (2026-11-05): the token cap's record, message and log line hold numbers and closed words only ---------------------------------------
+def test_the_token_cap_record_the_failure_message_and_the_claims_log_hold_numbers_and_closed_words_only(monkeypatch, second_page_read, caplog):
+    import logging
+    import re
+    from app import run_audit
+    from test_reading_consistency import FIRST, LINES, read_deck
+    caplog.set_level(logging.INFO)
+    db, _ = read_deck(monkeypatch, [FIRST])
+    record = run_audit.claims_record([1, 2], [1], [1], True, "2026-11-05T09:00:00+00:00", capped=[2], cap={"used": 599_000, "cap": 600_000})
+    assert record["unreadable"] == [{"page": 2, "reason": "cap"}] and record["cap"] == {"used": 599_000, "cap": 600_000}
+    gate = run_audit.decks_gate([{"deck_id": "d1", "file": "deck.pdf", "ai_status": "read", "claims_record": record}])
+    message = run_audit.claims_failure(gate)["message"]
+    assert re.fullmatch(r"Audit token cap reached: [\d,]+ of [\d,]+ tokens used\. Retrying will not help\. "
+                        r"Options: turn off the second deck read \(PAGE_SECOND_READ=0\) or raise the cap\.", message), message
+    line, = [r.getMessage() for r in caplog.records if r.getMessage().startswith("claims run:")]
+    assert re.search(r" cap=\d+$", line), line
+    for _x, _y, _size, text in LINES:
+        assert text not in line and text not in message

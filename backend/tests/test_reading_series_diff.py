@@ -92,3 +92,35 @@ def test_rows_with_the_same_series_difference_group_and_rows_with_another_do_not
     three = [a_row(4, series=ser([100, 100])), a_row(5, series=ser([100, 100]))]
     four = [a_row(4, series=ser([100, 900])), a_row(5, series=ser([100, 700]))]
     assert len(consistency.compare(map_of(*three), map_of(*four))) == 2
+
+
+# --- combined fixes, item 10 (2026-11-05): an item stored before the series difference was kept gets it when served ---------------------------------
+
+def stored_without_diff(first, second, field="series"):
+    (item,) = pair(first, second, field)
+    item.pop("series_diff")
+    return item
+
+
+def test_item10_a_stored_item_with_no_series_difference_gets_the_first_differing_period_when_served():
+    a, b = ser([100, 200, 300]), ser([100, 200, 999])
+    old = stored_without_diff(a, b)
+    (served,) = consistency.with_series_diffs([old], map_of(a_row(4, series=a)), map_of(a_row(4, series=b)))
+    assert served["series_diff"] == {"series": {"period": "2019-03", "first": 300, "second": 999, "differing": 1, "total": 3}}
+
+
+def test_item10_the_plan_series_is_filled_alike_and_an_item_that_has_its_difference_is_left_as_it_is():
+    a, b = ser([1, 2]), ser([1, 9])
+    old = stored_without_diff(a, b, "plan_series")
+    (served,) = consistency.with_series_diffs([old], map_of(a_row(4, plan_series=a)), map_of(a_row(4, plan_series=b)))
+    assert served["series_diff"]["plan_series"]["period"] == "2019-02" and served["series_diff"]["plan_series"]["differing"] == 1
+    kept = {**old, "series_diff": {"plan_series": {"period": "x", "first": 1, "second": 2, "differing": 1, "total": 1}}}
+    assert consistency.with_series_diffs([kept], map_of(a_row(4, plan_series=a)), map_of(a_row(4, plan_series=b)))[0] is kept
+
+
+def test_item10_no_second_reading_or_an_item_with_no_series_field_is_returned_as_it_is():
+    a, b = ser([1, 2]), ser([1, 9])
+    old = stored_without_diff(a, b)
+    assert consistency.with_series_diffs([old], map_of(a_row(4, series=a)), None) == [old]
+    other = {"key": "k", "kind": "row", "sheet": "S", "row": 4, "rows": [4], "fields": ["role"], "first": {}, "second": {}}
+    assert consistency.with_series_diffs([other], map_of(a_row(4, series=a)), map_of(a_row(4, series=b))) == [other]

@@ -231,6 +231,10 @@ async def build(db, audit_id: str) -> Dict:
         for name in tables:
             tables[name] += rows[name]
         notes = item_notes(doc)
+        waiting = consistency.pending(doc.get("consistency"), overrides)
+        if any(i.get("kind") == "row" and set(i.get("fields") or []) & set(consistency.SERIES_FIELDS) and not i.get("series_diff") for i in waiting):
+            second = await readings.get_second(db, reading["key"])        # an item stored before the difference was kept: from the two stored reads
+            waiting = consistency.with_series_diffs(waiting, reading["file_map"], (second or {}).get("file_map"))
         shown = _effective_lines(doc, effective)
         for entry in shown:
             for ln in entry["lines"]:
@@ -243,7 +247,7 @@ async def build(db, audit_id: str) -> Dict:
                       "notes": notes["file"],
                       "anchors": anchors(doc, effective, shown, overrides), "lines": shown, "overrides": len(overrides),
                       "consistency": {"status": (doc.get("consistency") or {}).get("status"), "reason": (doc.get("consistency") or {}).get("reason"),
-                                      "label": consistency.UNCERTAIN, "uncertain": consistency.pending(doc.get("consistency"), overrides)}})
+                                      "label": consistency.UNCERTAIN, "uncertain": waiting}})
     deck_docs = {d["deck_id"]: d for d in await db["deck_text"].find({"audit_id": audit_id}, {"_id": 0, "blocks": 0, "structures": 0, "layout": 0}).to_list(100)}
     for deck in await deck_figures.checked(db, audit_id):
         rows = deck_rows(deck)

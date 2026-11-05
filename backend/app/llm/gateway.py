@@ -2051,7 +2051,7 @@ async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
-    fiscal_year_end: int = 12, reread_of: Optional[Any] = None, on_stage=None, second_read: bool = False,
+    fiscal_year_end: int = 12, reread_of: Optional[Any] = None, on_stage=None, second_read: bool = False, token_cap: Optional[int] = None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2276,7 +2276,7 @@ async def read_structure(
                     if structure_type == SHEET_READING:
                         await guards.check_file_token_cap(db, audit_id, file_hash, counted, max_tokens)      # a file has its own cap (PR 4)
                     else:
-                        await guards.check_structure_token_cap(db, audit_id, counted + beside, max_tokens)
+                        await guards.check_structure_token_cap(db, audit_id, counted + beside, max_tokens, token_cap)
                     break
                 except guards.GuardRefusal:
                     if not beside:
@@ -2604,7 +2604,7 @@ async def record_verification(db, audit_id: str, key: str, statuses: List[str], 
 # ---------------------------------------------------------------------------
 # Usage + cleanup
 # ---------------------------------------------------------------------------
-async def usage_for_run(db, run_id: str) -> UsageResponse:
+async def usage_for_run(db, run_id: str, structure_token_cap: Optional[int] = None) -> UsageResponse:
     """Calls, tokens and cost for a run. `calls` counts billed narrative calls (what the call cap
     counts); structure reading calls are counted apart, against the token cap, and per deck."""
     cursor = db[CALLS_COLLECTION].find({"run_id": run_id}, {"_id": 0})
@@ -2648,7 +2648,7 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
         call_cap=guards.MAX_CALLS_PER_RUN,
         structure_calls=sum(1 for r in structures if not r.get("cache_hit")),
         structure_tokens=sum(int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0)) for r in structures),
-        structure_token_cap=guards.STRUCTURE_TOKEN_CAP,
+        structure_token_cap=structure_token_cap or guards.structure_token_cap(),
         by_deck=by_deck,
     )
 

@@ -22,7 +22,7 @@ from typing import Optional
 
 from pymongo.errors import DuplicateKeyError
 
-from .. import allowance
+from .. import allowance, formatting
 
 logger = logging.getLogger("growth.llm")
 
@@ -37,8 +37,11 @@ SHEET_READING_TYPE = "sheet_reading"   # structure_type of a file reading: count
 DEFAULT_FILE_TOKEN_CAP = 400_000   # billed input and output tokens per file, its readings and re-reads (env FILE_TOKEN_CAP); replaces the per-audit cap for files
 REVIEWER_STEP_TYPE = "reviewer"    # structure_type of the reviewer's calls: counted against REVIEWER_TOKEN_CAP, never against the reading cap
 DEFAULT_REVIEWER_TOKEN_CAP = 80_000  # billed input and output tokens per audit, reviewer call only (env REVIEWER_TOKEN_CAP)
-STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 600,000-token limit. The remaining "
-                         "structures were read by Python only.")
+STRUCTURE_CAP_MESSAGE = "AI reading stopped: this audit reached its {cap}-token limit. The remaining structures were read by Python only."
+# The cap scales with the work (combined fixes, 2026-11-05): CAP_BASE + pages with figures x reads per page x CAP_PER_PAGE_READ, never under the floor
+# (STRUCTURE_TOKEN_CAP, or the env STRUCTURE_TOKEN_CAP when set: the one way to raise the cap).
+CAP_BASE = 200_000
+CAP_PER_PAGE_READ = 12_000
 FILE_CAP_MESSAGE = "This file reached its reading limit; it was not read again."
 
 # How long a lock may be held before it is treated as abandoned, so a worker
@@ -125,6 +128,24 @@ async def read_tokens_used(db, run_id: str, file_hash: Optional[str] = None, typ
     return _by_read([r for r in rows if (types is None or r.get("structure_type") in types) and r.get("structure_type") not in exclude])
 
 
+def structure_cap_floor() -> int:
+    """The least the audit's structure cap can be: STRUCTURE_TOKEN_CAP (600,000), or the env of the same name when it is a positive whole number."""
+    raw = os.environ.get("STRUCTURE_TOKEN_CAP", "").strip()
+    try:
+        value = int(raw) if raw else STRUCTURE_TOKEN_CAP
+    except ValueError:
+        return STRUCTURE_TOKEN_CAP
+    return value if value > 0 else STRUCTURE_TOKEN_CAP
+
+
+def structure_token_cap(pages: int = 0, reads: int = 2) -> int:
+    """The audit's structure token cap: 200,000 + pages with figures x reads per page x 12,000, floor 600,000. The caller (structures.audit_token_cap)
+    counts the pages from the decks' completeness records and the reads from the second-read switch; the gateway never reads a deck's document."""
+    if not pages:
+        return structure_cap_floor()
+    return max(structure_cap_floor(), CAP_BASE + int(pages) * max(1, int(reads)) * CAP_PER_PAGE_READ)
+
+
 async def structure_tokens_used(db, run_id: str) -> int:
     """Billed input and output tokens of this audit's structure reading calls."""
     rows = await db[CALLS_COLLECTION].find(
@@ -151,12 +172,12 @@ async def reviewer_tokens_used(db, run_id: str) -> int:
                if r.get("structure_type") == REVIEWER_STEP_TYPE)
 
 
-async def check_structure_token_cap(db, run_id: str, input_tokens: int, max_tokens: int) -> None:
-    """A call goes out only if the tokens used + its input + its max_tokens fit under the cap."""
-    used = await structure_tokens_used(db, run_id)
-    if used + input_tokens + max_tokens > STRUCTURE_TOKEN_CAP:
+async def check_structure_token_cap(db, run_id: str, input_tokens: int, max_tokens: int, cap: Optional[int] = None) -> None:
+    """A call goes out only if the tokens used + its input + its max_tokens fit under the cap (the audit's, scaled with its pages; the floor when none is given)."""
+    used, cap = await structure_tokens_used(db, run_id), cap or structure_token_cap()
+    if used + input_tokens + max_tokens > cap:
         by = await read_tokens_used(db, run_id, exclude=(REVIEWER_STEP_TYPE, SHEET_READING_TYPE))
-        raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE, used=used, cap=STRUCTURE_TOKEN_CAP, first=by["first"], second=by["second"])
+        raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE.format(cap=formatting.fmt_count(cap)), used=used, cap=cap, first=by["first"], second=by["second"])
 
 
 async def check_file_token_cap(db, run_id: str, file_hash: str, input_tokens: int, max_tokens: int) -> None:

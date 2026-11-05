@@ -5,7 +5,7 @@ import { ALLOWED_EXTENSIONS, S7B_XLS_REFUSED, extensionOf } from "@/lib/chatUplo
 import { DECK_ACCEPT, isDeckFile } from "@/lib/deckClaims";
 import {
   DECK_CARD, HEADER_TEXT, PROCESSING_LINK, PROCESSING_SECTIONS, PROCESSING_TITLE, REMOVE_CONFIRM, REMOVE_LABEL, REPLACE_LABEL, REREAD_FAILED_LABEL,
-  REREAD_LABEL, SHEET_CARD, UPLOAD_LABEL, deckBusy, deckLine, headerText, replaceLine, sharedReadError, sheetBusy, sheetLine,
+  REREAD_LABEL, SHEET_CARD, UPLOAD_LABEL, READINGS_CHANGED, deckBusy, deckLine, headerText, replaceLine, sharedReadError, sheetBusy, sheetLine,
 } from "@/lib/uploadView";
 import { uncertainEntries } from "@/lib/readingView";
 
@@ -116,6 +116,12 @@ export default function UploadSection({ audit, onChanged, onRunning }) {
     if (alive.current) setUncertain(read ? uncertainEntries(read.files).length : 0);
   }, [auditId]);
   useEffect(() => { refresh(); reportUsage(auditId, { screen: "mapping" }); }, [refresh, auditId]);
+  // A pick on the Uncertain list changes the count of items still waiting: ask the register again, no reload (combined fixes, item 6).
+  useEffect(() => {
+    const again = () => { refresh(); };
+    window.addEventListener(READINGS_CHANGED, again);
+    return () => window.removeEventListener(READINGS_CHANGED, again);
+  }, [refresh]);
 
   const sheets = [...stored, ...local.filter((l) => l.kind === "sheet").map((l) => ({ file: l.file, local: l.local, id: l.id }))];
   const deckRows = [...decks, ...local.filter((l) => l.kind === "deck").map((l) => ({ file: l.file, local: l.local, id: l.id }))];

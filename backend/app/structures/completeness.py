@@ -22,21 +22,31 @@ def stage_timeout(pages: int, reads: int) -> int:
 UNREADABLE = {"too_large": "too large for the token cap", "truncated": "reply cut at the output limit", "refused": "refused by the model"}
 
 
+# A page the token cap refused: marked "cap" in the record's `unreadable` list, with the tokens used and the cap in the record's `cap`. Unlike the pages above it
+# cannot be continued without and a read will not be tried again: the same cap refuses it (combined fixes, 2026-11-05).
+CAP = "cap"
+
+
 def second_read_required() -> bool:
     """Whether each page is read twice (the consistency read, docs/design/reading-consistency.md). On by default; PAGE_SECOND_READ=0 turns the
     second read off for a deployment that must hold the page-read cost down. The one reading of the switch: the page reader and the gate share it."""
     return os.environ.get("PAGE_SECOND_READ", "1").strip() != "0"
 
 
-def claims_record(expected, first, second, second_required: bool, at: str, unreadable=()) -> Dict:
+def claims_record(expected, first, second, second_required: bool, at: str, unreadable=(), capped=(), cap: Optional[Dict] = None) -> Dict:
     """What one deck's claims step stores: the pages with figures (`expected`), the pages read in the first and in the second read, and the pages
-    still missing: a page with no first read, and, when the second read is on, a page read once whose second read is not stored. Page numbers only."""
+    still missing: a page with no first read, and, when the second read is on, a page read once whose second read is not stored. `capped`: the pages
+    a read was refused for the token cap, marked "cap"; `cap` is {"used", "cap"} then. Page numbers and counts only."""
     expected, first, second = sorted(set(expected)), sorted(set(first)), sorted(set(second))
     missing = set(expected) - set(first)
     if second_required:
         missing |= set(first) - set(second)
-    return {"expected": expected, "first": first, "second": second, "second_required": bool(second_required), "missing": sorted(missing), "at": at,
-            "unreadable": [{"page": int(p), "reason": r} for p, r in sorted(unreadable) if p in missing and r in UNREADABLE]}
+    listed = [(p, r) for p, r in unreadable if p in missing and r in UNREADABLE] + [(p, CAP) for p in set(capped) if p in missing]
+    record = {"expected": expected, "first": first, "second": second, "second_required": bool(second_required), "missing": sorted(missing), "at": at,
+              "unreadable": [{"page": int(p), "reason": r} for p, r in sorted(set(listed))]}
+    if cap and any(r == CAP for _, r in listed):
+        record["cap"] = {"used": int(cap["used"]), "cap": int(cap["cap"])}
+    return record
 
 
 def still_missing(record: Optional[Dict], overrides=(), second_on: Optional[bool] = None) -> list:
