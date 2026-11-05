@@ -4,6 +4,7 @@ New cleanup items go in this file, not in session logs (CLAUDE.md rule 33). One 
 
 ## Open
 
+- [ ] Results stage ordering: a page the cap, the size or a refusal will refuse again (not in `RETRY_STATUSES`) counts as missing for ever, so a deck with such a page fails the claims stage on every retry and holds the results back; decide whether an analyst may accept the deck with that page named (George, 2026-11-05).
 - [ ] Golden test: cover the legacy engine blocks (arr, yearly_basis) the map feeds, and a monthly file with an EBITDA row (cleanup PR 6 added the rule, the golden fixtures do not exercise it).
 - [ ] Deck-claim timeout: the results stage polls 24 times at 5 s; the engine stage never answers "running" today, so its timeout message is untested end to end (cleanup PR 6 added the text).
 - [ ] Period headers: "Q1 FY26" and "FY26 Q1" (a quarter with an FY-prefixed two-digit year) parse to no period, so such a column leaves the series; "Q1 2026", "2026 Q1" and "Q1-26" parse (found in the review of cleanup PR 6, item 6).

@@ -130,7 +130,8 @@ export const getDisclosure = (id) => api.get(`/runs/${id}/disclosure`).then((r) 
 
 // Run audit (one button): three stages in order, each answering done, waiting, running or failed with a plain-English
 // message; and what the Audit page opens with. The files themselves go through the endpoints above.
-export const runStage = (id, stage) => api.post(`/audits/${id}/run/${stage}`, null, { timeout: 120000 }).then((r) => r.data);
+// `poll`: asking again for a stage already started; the server then queues no deck to be read again (results stage ordering, 2026-11-05).
+export const runStage = (id, stage, { poll = false } = {}) => api.post(`/audits/${id}/run/${stage}${poll ? "?poll=true" : ""}`, null, { timeout: 120000 }).then((r) => r.data);
 export const getReview = (id) => api.get(`/audits/${id}/review`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 // What "Write all narratives" would run and its upper-bound cost; reads only, no provider call.
 export const getNarrativeEstimate = (id) => api.get(`/runs/${id}/narratives/estimate`).then((r) => r.data);

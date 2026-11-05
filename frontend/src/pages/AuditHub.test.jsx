@@ -298,7 +298,7 @@ describe("the audit tile (docs/specs/chat-upload.md section 24)", () => {
 
     test("an audit that can run is run from the stage it stands at and ends on the Audit page, never on Upload & Mapping", async () => {
       await press("run-audit-a1");
-      expect(api.runStage.mock.calls).toEqual([["a1", "engine"], ["a1", "claims"]]);
+      expect(api.runStage.mock.calls).toEqual([["a1", "claims"], ["a1", "engine"]]);
       expect(mockNavigate.mock.calls.map((c) => c[0])).toEqual(["/audit/a1/dashboard"]);
     });
     test("with no file the audit does not run: Upload & Mapping opens with one line saying what is missing", async () => {

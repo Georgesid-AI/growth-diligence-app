@@ -5,8 +5,8 @@
  */
 export const STAGES = [
   { key: "mapping", label: "Reading files" },        // the stage key stays "mapping" (the server's route); the label says what happens (PR 4)
+  { key: "claims", label: "Claim extraction from decks" },       // before the calculations: a result never rests on partial deck figures (2026-11-05)
   { key: "engine", label: "Engine calculations" },
-  { key: "claims", label: "Claim extraction from decks" },
 ];
 export const STAGE_STATUS_TEXT = {
   idle: "Not started", running: "Running…", done: "Done", waiting: "Waiting", failed: "Failed",
@@ -24,6 +24,9 @@ export const TIMEOUT_MESSAGES = {
 };
 export const POLL_MS = 5000;
 export const MAX_POLLS = 24;
+/** How long a stage may run before the timeout message: the longer of the fixed polls and the time the server says the work needs
+ * (`timeout_seconds`: a base plus an allowance per page and per read of it, so a 44-page audit does not time out on the normal path). */
+export const pollLimit = (result) => Math.max(MAX_POLLS, Math.ceil(((Number(result?.timeout_seconds) || 0) * 1000) / POLL_MS));
 
 const extension = (name) => (String(name).includes(".") ? String(name).split(".").pop().toLowerCase() : "");
 
@@ -44,7 +47,8 @@ export function stagesFromState({ views = [], summary = null, deckData = { decks
   const stages = idleStages();
   if (views.length) stages.mapping = { status: "done", message: null };
   if (summary?.computed && !summary.engine_stale) stages.engine = { status: "done", message: null };
-  if ((deckData.decks || []).length || (deckData.candidates || []).length) stages.claims = { status: "done", message: null };
+  // Done once the decks exist and none has pages missing from its claims (`claims_incomplete`): an incomplete deck is read again, from those pages.
+  if (((deckData.decks || []).length || (deckData.candidates || []).length) && !(deckData.decks || []).some((d) => d.claims_incomplete)) stages.claims = { status: "done", message: null };
   return stages;
 }
 
@@ -104,10 +108,10 @@ export async function runAudit({ api, auditId, pick = { data: [], decks: [] }, f
       result = key === "mapping" ? await uploadData(api, auditId, pick) : key === "claims" ? await uploadDecks(api, auditId, pick) : null;
       if (!result) {
         result = await api.runStage(auditId, key);
-        for (let polls = 0; result.status === "running" && polls < MAX_POLLS; polls += 1) {
+        for (let polls = 0; result.status === "running" && polls < pollLimit(result); polls += 1) {
           onUpdate(key, result);
           await wait(POLL_MS);
-          result = await api.runStage(auditId, key);
+          result = await api.runStage(auditId, key, { poll: true });
         }
         if (result.status === "running") result = { ...result, status: "failed", message: TIMEOUT_MESSAGES[key] };
       }

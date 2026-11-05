@@ -145,6 +145,25 @@ The narrative path may read a count of deck documents per audit (number only). I
 
 Python enters a matched claim on Run audit and tests it against the data, whatever its label; it enters nothing a check asks about. A claim Python entered stays correctable and excludable one by one; a claim the analyst answered, edited or added is never changed by a later run.
 
+### Results stage ordering and completeness (2026-11-05)
+
+Run audit runs mapping, then the deck claims, then the results (`run_audit.STAGES`). The results are calculated only when the deck claims are done
+for every deck with figures: `_run_compute` refuses (409) while a deck is being read or its record has pages missing, and the results stage
+answers running or waiting; it never runs on partial deck figures. The page reader stores, per deck on its document, a completeness record
+(`claims_record`: pages with figures, pages read in the first and second read, pages missing; page numbers only, `structures/completeness.py`)
+and writes each page's entry, second-read link and claims as soon as the page is finished, so a run that stops leaves the pages already read
+stored and a retry resumes from the missing pages. "Done" is first-read coverage of every page with figures and, with `PAGE_SECOND_READ` on,
+second-read coverage equal to the first; otherwise the claims stage fails with "Deck claims incomplete: N of M pages. Retry this stage." A deck no
+page reader applies to (consent off, a model off the allow-list, no prompt) has no record and stands as its status line says.
+
+Results carry, beside them on the audit (`results_basis`, not inside `results`: the engine contract is unchanged), the newest reading or deck
+claims they were built from and the decks with figures they were built with. A reading or claims written later makes them older: the review
+summary and the results page say "Results are older than the latest reading – run Calculating results again", the memo says it, and Run audit
+offers the results step. Results built with fewer decks than the audit now has with figures leave Data reliability "not rated – deck claims
+incomplete" and name the missing deck under Worth flagging. The stage timeouts scale with the work (`stage_timeout`: 120 s plus 8 s per page per read;
+the stage answer carries `timeout_seconds`, and the caller polls for that long); one log line is written per claims run and per results run
+(counts and page numbers, elapsed seconds, timeout used). Nothing new crosses the server boundary and the model sees nothing it did not.
+
 ## The amendment of 2026-10-05
 
 Until 2026-10-05 the gateway read no parsed deck text at all (the former deck-parser.md §4). The amendment added

@@ -51,7 +51,7 @@ RUN_A = fixture()["runs"]["A"]
 @pytest.mark.parametrize("flag", ["axis tick", "not a plan line", "scenario label not on page", "use-of-funds share", "matches analyst claim"])
 def test_h1_python_leaves_a_flagged_claim_to_the_analyst(run_api, flag):
     prepared(run_api, claim("plain"), claim("flagged", flags=[flag]))
-    res = stage(run_api, "claims")
+    res = stage(run_api, "engine")
     got = stored(run_api)
     assert (got["plain"]["status"], got["plain"].get("auto_accepted")) == ("approved", True)
     assert (got["flagged"]["status"], got["flagged"].get("auto_accepted")) == ("pending", None)
@@ -62,7 +62,7 @@ def test_h1_a_best_or_worst_case_enters_like_any_claim_and_is_listed_unverified(
     assert not run_audit.needs_a_word({"scenario": "worst"}) and not run_audit.needs_a_word({"scenario": "best"})
     prepared(run_api, claim("plain"), claim("best", **CASE), claim("worst", basis="scenario", scenario="worst"),
              claim("realistic", basis="scenario", scenario="realistic"))
-    stage(run_api, "claims")
+    stage(run_api, "engine")
     got = stored(run_api)
     assert [got[c]["status"] for c in ("plain", "best", "worst", "realistic")] == ["approved"] * 4
 
@@ -216,7 +216,7 @@ def _past_claim_rows_actual(monkeypatch):
 def test_m2_a_projection_with_a_past_period_is_flagged_in_the_deck_list_and_left_to_the_analyst(run_api):
     prepared(run_api, claim("plain"), claim("proj", basis="projection", scenario="none"), claim("fut", basis="projection", target_date="2030",
                                                                                           period_text="2030"))
-    res = stage(run_api, "claims")
+    res = stage(run_api, "engine")
     listed = {c["id"]: c for c in run_api.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]}
     assert listed["proj"]["flags"] == [checker.BASIS_CONFLICT], "Feb 2024 is on or before the as-of month"
     assert listed["plain"]["flags"] == [] and checker.BASIS_CONFLICT not in listed["fut"]["flags"], "a plan for a future period is no conflict"

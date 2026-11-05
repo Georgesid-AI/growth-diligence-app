@@ -66,6 +66,25 @@ test("when the narrative cannot be generated the metrics render with their sourc
   host.remove();
 });
 
+test("results older than the latest reading say so on the results page, and the figures still render (2026-11-05)", async () => {
+  const text = "Results are older than the latest reading – run Calculating results again.";
+  api.getAudit.mockResolvedValue({ ...sample.audit, old_claims: true });
+  api.getResults.mockResolvedValue({ ...sample, audit: { ...sample.audit, results_older: true, results_older_text: text } });
+  api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "x" });
+  api.getDisclosure.mockResolvedValue(null);
+  api.getVerdict.mockResolvedValue(VERDICT_NONE);
+  api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<Dashboard />); });
+  await act(async () => { await Promise.resolve(); });
+  expect(host.querySelector('[data-testid="results-older-banner"]').textContent).toContain(text);
+  expect(host.textContent).toContain("Ending ARR202,125 EUR");
+  await act(async () => { root.unmount(); });
+  host.remove();
+});
+
 test("results of an older engine contract answer 409 Stale – re-run audit: the dashboard says so and shows no figure (George, 2026-10-20)", async () => {
   api.getAudit.mockResolvedValue({ ...sample.audit, old_claims: true });
   api.getResults.mockRejectedValue({ response: { status: 409, data: { detail: { code: "results_stale", message: "Stale – re-run audit" } } } });

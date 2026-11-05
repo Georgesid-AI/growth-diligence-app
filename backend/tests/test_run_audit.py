@@ -123,22 +123,25 @@ def candidates(client):
 
 # --- the stages -------------------------------------------------------------------------------------------------------------
 
-def test_the_stages_run_in_the_order_mapping_engine_claims_and_each_reports_done(run_api):
+def test_the_stages_run_in_the_order_mapping_claims_engine_and_each_reports_done(run_api):
     upload_files(run_api)
     add_deck(run_api)
-    assert run_audit.STAGES == ("mapping", "engine", "claims")
+    assert run_audit.STAGES == ("mapping", "claims", "engine")
     results = run_audit_button(run_api)
-    assert [(r["stage"], r["status"]) for r in results] == [("mapping", "done"), ("engine", "done"), ("claims", "done")]
+    assert [(r["stage"], r["status"]) for r in results] == [("mapping", "done"), ("claims", "done"), ("engine", "done")]
     assert run_api.db["audits"].docs[0]["results"] and run_api.db["audits"].docs[0]["status"] == "computed"
 
 
 def test_a_stage_asked_out_of_order_waits_and_does_nothing(run_api):
+    """The calculations wait for the deck claims (results stage ordering, 2026-11-05): with a deck's claims incomplete they calculate nothing."""
     upload_files(run_api)
     add_deck(run_api)
-    assert stage(run_api, "claims")["status"] == "waiting" and not run_api.db["audits"].docs[0]["results"]
+    run_api.db[decks.TEXT_COLLECTION].docs[0]["claims_record"] = run_audit.claims_record([1, 2], [1], [1], True, "2026-11-05T09:00:00+00:00")
+    assert stage(run_api, "engine")["status"] == "waiting" and not run_api.db["audits"].docs[0]["results"]
     assert all(c["status"] == "pending" for c in candidates(run_api)), "no claim is accepted before the calculations"
-    assert stage(run_api, "engine")["status"] == "done"
+    run_api.db[decks.TEXT_COLLECTION].docs[0]["claims_record"] = run_audit.claims_record([1, 2], [1, 2], [1, 2], True, "2026-11-05T09:00:00+00:00")
     assert stage(run_api, "claims")["status"] == "done"
+    assert stage(run_api, "engine")["status"] == "done"
 
 
 def test_engine_stale_follows_the_flag_of_a_recompute_that_could_not_run():
@@ -205,9 +208,10 @@ def test_the_claims_stage_waits_while_the_decks_are_read(run_api):
 
 def test_an_audit_with_no_deck_has_no_claims_to_read(run_api):
     upload_files(run_api)
-    stage(run_api, "engine")
     res = stage(run_api, "claims")
-    assert (res["status"], res["entered"], res["open"], res["message"]) == ("done", 0, 0, run_audit.NO_DECKS)
+    assert (res["status"], res["message"]) == ("done", run_audit.NO_DECKS)
+    res = stage(run_api, "engine")
+    assert (res["status"], res["entered"], res["open"]) == ("done", 0, 0)
 
 
 # --- accepted without a click -------------------------------------------------------------------------------------------------
@@ -221,8 +225,7 @@ def test_every_matched_claim_enters_whatever_its_label_and_the_ones_a_check_asks
     """simplified-flow.md section 2: the tolerance decides a claim's label, no longer whether it enters the register."""
     upload_files(run_api)
     add_deck(run_api)
-    stage(run_api, "engine")
-    res = stage(run_api, "claims")
+    res = stage(run_api, "engine")
     rows = cm.build_register(candidates_for(RUN), results_for(RUN), settings(RUN))
     beats = {r["claim_id"].split("#")[0] for r in rows if cm.is_beat(r)}
     entered = {c["id"] for c in candidates(run_api) if c.get("auto_accepted")}
@@ -234,7 +237,7 @@ def test_every_matched_claim_enters_whatever_its_label_and_the_ones_a_check_asks
     assert all(c["status"] in ("approved", "edited") for c in candidates(run_api) if c.get("auto_accepted"))
     summary = review(run_api)["claims"]
     assert summary["auto_accepted"] == len(entered) and set(summary["auto_accepted_ids"]) == entered and summary["open"] == len(left)
-    again = stage(run_api, "claims")
+    again = stage(run_api, "engine")
     assert again["entered"] == res["entered"] and again["reopened"] == 0, "running the stage again enters nothing twice"
 
 

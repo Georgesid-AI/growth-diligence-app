@@ -258,6 +258,16 @@ export default function Dashboard() {
           </button>
         </div>
       )}
+      {data.audit?.results_older && (
+        <div data-testid="results-older-banner"
+          className="mb-6 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          {data.audit.results_older_text}
+          <button onClick={() => nav(`/audit/${id}/mapping`)} className="ml-auto underline hover:text-amber-900 whitespace-nowrap">
+            Run audit →
+          </button>
+        </div>
+      )}
       <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{audit?.company_name}</h1>
