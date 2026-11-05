@@ -14,7 +14,7 @@ jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), updateAudit: jest.fn(), reportUsage: jest.fn(), getBlockers: jest.fn(),
   uploadChatFile: jest.fn(), uploadDeck: jest.fn(), runStage: jest.fn(), decideColumns: jest.fn(), changeDatasetType: jest.fn(),
   confirmForecastClaims: jest.fn(), saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(),
-  getDatasets: jest.fn(), getReview: jest.fn(), getDecks: jest.fn(),
+  getDatasets: jest.fn(), getReview: jest.fn(), getDecks: jest.fn(), continueWithoutPages: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({
@@ -190,6 +190,39 @@ test("a deck with pages missing from its claims is read again from those pages, 
   await mount();
   await press("run-audit");
   expect(ranStages()).toEqual(["claims", "engine"]);
+});
+
+test("a claims failure on a page that can never be read offers Continue without page N; it stores the choice, runs the claims stage again and then the results", async () => {
+  allDone();
+  api.getDecks.mockResolvedValue({ decks: [{ ...DECK, claims_incomplete: true }], candidates: [] });
+  api.getReview.mockResolvedValue({ computed: false });
+  let failing = true;
+  const offer = { deck_id: "d1", file: "board.pptx", pages: [{ page: 3, reason: "too large for the token cap" }] };
+  api.runStage.mockImplementation(async (id, key) => (key === "claims" && failing
+    ? { stage: key, status: "failed", message: "Deck claims incomplete: 1 of 12 pages. Retry this stage.", can_continue: [offer] }
+    : { stage: key, status: "done" }));
+  api.continueWithoutPages.mockImplementation(async () => { failing = false; return {}; });
+  await mount();
+  await press("run-audit");
+  expect(q("stage-claims-message").textContent).toContain("Deck claims incomplete: 1 of 12 pages.");
+  expect(q("continue-without-d1").textContent).toBe("Continue without page 3");
+  expect(ranStages()).toEqual(["claims"]);
+  await press("continue-without-d1");
+  for (let i = 0; i < 6; i += 1) await act(async () => { await Promise.resolve(); });
+  expect(api.continueWithoutPages).toHaveBeenCalledWith("a1", "d1", [3]);
+  expect(ranStages()).toEqual(["claims", "claims", "engine"]);
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
+});
+
+test("a claims failure with nothing that can never be read offers only Retry stage", async () => {
+  allDone();
+  api.getDecks.mockResolvedValue({ decks: [{ ...DECK, claims_incomplete: true }], candidates: [] });
+  api.getReview.mockResolvedValue({ computed: false });
+  api.runStage.mockImplementation(async (id, key) => (key === "claims" ? { stage: key, status: "failed", message: "x", can_continue: [] } : { stage: key, status: "done" }));
+  await mount();
+  await press("run-audit");
+  expect(document.querySelector('[data-testid^="continue-without"]')).toBeNull();
+  expect(q("retry-claims")).not.toBeNull();
 });
 
 test("a second Run audit with nothing new sends no file and reads no deck again", async () => {

@@ -9,7 +9,7 @@ from typing import Dict, Optional
 from app.decks.claims import review_flags
 from app.structures import page_check, verify
 from app.structures.completeness import (TIMEOUT_BASE_SECONDS, TIMEOUT_PER_PAGE_READ_SECONDS, claims_record, record_complete,  # noqa: F401
-                                         stage_timeout)
+                                         stage_timeout, still_missing, UNREADABLE)
 from schemas.metrics import CONTRACT_VERSION
 
 # Order (George, 2026-11-05, results stage ordering): the deck claims are done for every deck with figures before the results are calculated,
@@ -70,17 +70,27 @@ def needs_a_word(candidate: dict) -> bool:
 
 
 def decks_gate(decks: list) -> Dict:
-    """Whether the deck claims are done, from the decks' documents (`ai_status`, `file`, `claims_record`).
-    state "reading": a deck is still being read; "incomplete": a deck's record has pages missing; else "clear". `incomplete` lists
-    [{"file", "missing", "expected"}], `pages` is the pages with figures over all decks, `reads` the reads per page (1 or 2).
+    """Whether the deck claims are done, from the decks' documents (`ai_status`, `file`, `claims_record`, `page_overrides`).
+    state "reading": a deck is still being read; "incomplete": a deck's record has pages missing that the analyst has not continued without;
+    else "clear". `incomplete` lists [{"deck_id", "file", "missing", "expected", "can_continue"}] (`can_continue`: the missing pages that can never be
+    read, with a plain reason), `pages` is the pages with figures over all decks, `reads` the reads per page (1 or 2), `skipped` the pages continued
+    without that are still missing ([{"deck_id", "file", "page", "reason"}]).
     A deck no page reader applies to (consent off, a model off the list, no prompt) or one read before the record existed has no record and
     stands as the status line says; its message is the stage's own."""
     reading = any(d.get("ai_status") == "reading" for d in decks)
     records = [(d, d.get("claims_record")) for d in decks if d.get("claims_record") and d.get("ai_status") not in ("blocked", "prompt_missing", "python_only")]
-    incomplete = [{"file": d.get("file"), "missing": len(r.get("missing") or ()), "expected": len(r.get("expected") or ())}
-                  for d, r in records if not record_complete(r)]
+    incomplete, skipped = [], []
+    for d, r in records:
+        overrides = d.get("page_overrides") or []
+        missing = still_missing(r, overrides)
+        never = {u["page"]: u["reason"] for u in r.get("unreadable") or ()}
+        if missing:
+            incomplete.append({"deck_id": d.get("deck_id"), "file": d.get("file"), "missing": len(missing), "expected": len(r.get("expected") or ()),
+                               "can_continue": [{"page": p, "reason": UNREADABLE.get(never[p], never[p])} for p in missing if p in never]})
+        skipped += [{"deck_id": d.get("deck_id"), "file": d.get("file"), "page": o["page"], "reason": UNREADABLE.get(o.get("reason"), o.get("reason") or "unreadable")}
+                    for o in overrides if o.get("page") in (r.get("missing") or ())]
     pages = sum(len(r.get("expected") or ()) for _, r in records)
-    return {"state": "reading" if reading else "incomplete" if incomplete else "clear", "incomplete": incomplete, "pages": pages,
+    return {"state": "reading" if reading else "incomplete" if incomplete else "clear", "incomplete": incomplete, "pages": pages, "skipped": skipped,
             "reads": 2 if any(r.get("second_required") for _, r in records) else 1, "decks_with_figures": [d.get("file") for d, r in records if r.get("expected")]}
 
 

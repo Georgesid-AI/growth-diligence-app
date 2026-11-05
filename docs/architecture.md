@@ -164,6 +164,11 @@ incomplete" and name the missing deck under Worth flagging. The stage timeouts s
 the stage answer carries `timeout_seconds`, and the caller polls for that long); one log line is written per claims run and per results run
 (counts and page numbers, elapsed seconds, timeout used). Nothing new crosses the server boundary and the model sees nothing it did not.
 
+"Continue without page N" (George, 2026-11-05): a page the reader will never read again (too large for the cap, reply cut at the output limit, refused;
+the record's `unreadable`) is offered on the claims-stage failure. The choice is stored as an override on the deck (`page_overrides`: page, reason word,
+time; `POST /audits/{id}/decks/{deck_id}/continue-without`, refused for any page that is readable or not missing); the deck then counts complete, a
+re-read keeps the override, and it goes with the deck and the audit. The memo's Worth flagging reads "Deck X: page N not read (reason)".
+
 ## The amendment of 2026-10-05
 
 Until 2026-10-05 the gateway read no parsed deck text at all (the former deck-parser.md §4). The amendment added

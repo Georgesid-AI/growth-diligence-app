@@ -4079,7 +4079,7 @@ def test_the_completeness_record_and_the_run_log_lines_hold_page_numbers_and_cou
     caplog.set_level(logging.INFO)
     db, _ = read_deck(monkeypatch, [FIRST, SAME])
     record = db["deck_text"].docs[0]["claims_record"]
-    assert set(record) == {"expected", "first", "second", "second_required", "missing", "at"}
+    assert set(record) == {"expected", "first", "second", "second_required", "missing", "at", "unreadable"}
     assert all(isinstance(n, int) for key in ("expected", "first", "second", "missing") for n in record[key]), "page numbers, never a line of a page"
     assert set(db["deck_text"].docs[0]["page_reads"][0]) >= {"pages", "status", "second"}
     logged = "\n".join(r.getMessage() for r in caplog.records)

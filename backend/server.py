@@ -1312,7 +1312,7 @@ async def list_deck_candidates(audit_id: str):
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
                    "page_reads": 1, "skipped_pages": 1, "unread_pages": 1, "images_unavailable": 1, "images_need_file": 1, "diagnostics": 1,
-                   "reading_since": 1, "read_finished_at": 1, "claims_record": 1}
+                   "reading_since": 1, "read_finished_at": 1, "claims_record": 1, "page_overrides": 1}
     # Opening the audit writes and deletes nothing (George, 2026-11-03, review of PR 225): the decks holding a page reply an older normaliser checked
     # are told "Re-read needed", and Run audit checks those replies again. A version check that fails never fails the list: the decks say "check failed".
     try:
@@ -1326,8 +1326,8 @@ async def list_deck_candidates(audit_id: str):
         d["reread_needed"], d["check_failed"] = d["deck_id"] in reread, check_failed
         # The claims step's completeness record, as a flag and a count (results stage ordering, 2026-11-05): page numbers never leave the server here.
         record = d.pop("claims_record", None)
-        d["claims_incomplete"] = bool(record) and not run_audit.record_complete(record) and d.get("ai_status") not in ("blocked", "prompt_missing", "python_only")
-        d["claims_pages_missing"] = len((record or {}).get("missing") or ())
+        d["claims_incomplete"] = bool(record) and not run_audit.record_complete(record, d.get("page_overrides")) and d.get("ai_status") not in ("blocked", "prompt_missing", "python_only")
+        d["claims_pages_missing"] = len(run_audit.still_missing(record, d.get("page_overrides")))
         # The deck panel's run log: status and the pages sent to the model (no text, no cost: usage-and-allowance.md section 9).
         d["sent_pages"] = sorted({p for s in d.pop("sent", None) or [] for p in ([s["page"]] if s.get("page") is not None else s.get("pages") or [])})
         # The panel's "AI read" counts (George, 2026-10-23): pages read and pages whose reply was rejected or not read; counts only.
@@ -1910,7 +1910,7 @@ async def _with_entries(audit_id: str, audit: dict, found: list) -> list:
 
 
 async def _deck_docs(audit_id: str) -> list:
-    return await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "ai_status": 1, "file": 1, "claims_record": 1, "claims_at": 1,
+    return await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "ai_status": 1, "file": 1, "claims_record": 1, "claims_at": 1, "page_overrides": 1,
                                                                         "reading_since": 1, "read_finished_at": 1}).to_list(100)
 
 
@@ -1940,6 +1940,30 @@ async def _results_older(audit_id: str, audit: dict) -> bool:
 
 def _timeout_of(gate: dict) -> int:
     return run_audit.stage_timeout(gate["pages"], gate["reads"])
+
+
+class ContinueWithout(BaseModel):
+    pages: List[int]
+
+
+@api.post("/audits/{audit_id}/decks/{deck_id}/continue-without")
+async def continue_without_pages(audit_id: str, deck_id: str, body: ContinueWithout):
+    """"Continue without page N" (George, 2026-11-05): the analyst accepts a deck whose claims lack a page that can never be read (too large for the
+    cap, cut at the output limit, refused). Stored as an override on the deck (page, reason word, time); the deck then counts complete, and the memo's
+    Worth flagging names the page. Refused for a page that is not missing or can be read again; a re-read keeps the override."""
+    deck = await db[decks.TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "claims_record": 1, "page_overrides": 1})
+    if not deck:
+        raise HTTPException(404, "Deck not found")
+    never = {u["page"]: u["reason"] for u in (deck.get("claims_record") or {}).get("unreadable") or ()}
+    bad = [p for p in body.pages if p not in never]
+    if not body.pages or bad:
+        raise HTTPException(409, "Only a page that cannot be read can be continued without.")
+    kept = {o["page"]: o for o in deck.get("page_overrides") or []}
+    now = datetime.now(timezone.utc).isoformat()
+    kept.update({p: {"page": p, "reason": never[p], "at": now} for p in body.pages if p not in kept})
+    await db[decks.TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"page_overrides": sorted(kept.values(), key=lambda o: o["page"])}})
+    logger.info("continue without pages: run_id=%s deck_id=%s pages=%s", audit_id, deck_id, ",".join(str(p) for p in sorted(body.pages)))
+    return {"deck_id": deck_id, "pages": sorted(kept)}
 
 
 @api.post("/audits/{audit_id}/run/{stage}")
@@ -1990,7 +2014,8 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks, poll
             elif gate["state"] == "reading":
                 result = run_audit.stage_result(stage, run_audit.RUNNING, run_audit.DECKS_READING, timeout_seconds=_timeout_of(gate))
             elif gate["state"] == "incomplete":
-                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.incomplete_message(gate), timeout_seconds=_timeout_of(gate))
+                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.incomplete_message(gate), timeout_seconds=_timeout_of(gate),
+                                                can_continue=[{"deck_id": i["deck_id"], "file": i["file"], "pages": i["can_continue"]} for i in gate["incomplete"] if i["can_continue"]])
             else:
                 missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in docs) else \
                     llm_gateway.PAGE_READER_BLOCKED if any(d.get("ai_status") == structures.BLOCKED for d in docs) else None
@@ -2193,6 +2218,7 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     older = bool(results) and not stale and await _results_older(audit_id, audit)
     # Decks with figures now that the stored results were not built with: the memo rates Data reliability "not rated" and names them.
     missing_decks = run_audit.decks_missing_from(audit, (await _claims_gate(audit_id))["decks_with_figures"]) if results and not stale else []
+    skipped = (await _claims_gate(audit_id))["skipped"] if results and not stale else []
     ic = verdict_mod.with_review(audit, audit.get("ic_inputs"))
     if validate and results:
         try:
@@ -2200,7 +2226,7 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
         except contract.ContractError as exc:
             return {"rows": [], "results": results, "ic": ic, "state": verdict_mod.top5_state([], None), "gaps": [],
                     "contract": exc.log_text, "stale": stale, "open_questions": 0, "conflicts": [],
-                    "older": older, "missing_decks": missing_decks}
+                    "older": older, "missing_decks": missing_decks, "skipped": skipped}
     _, rows = await _claim_rows(audit_id, audit)
     state = verdict_mod.top5_state(rows, ic.get("top5"))
     rows = verdict_mod.mark_key_gates(rows, state["in_force"])
@@ -2209,7 +2235,7 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     results = report_text.apply_reasons(results, table)
     gaps = verdict_mod.data_gaps(results, rows, state["in_force"], ic.get("gap_target_dates"), table=table, old_claims=flags.old_claims())
     return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None, "stale": stale,
-            "older": older, "missing_decks": missing_decks, "open_questions": await _open_claim_questions(audit_id, audit, rows), "conflicts": _relations(audit, rows)["conflicts"]}
+            "older": older, "missing_decks": missing_decks, "skipped": skipped, "open_questions": await _open_claim_questions(audit_id, audit, rows), "conflicts": _relations(audit, rows)["conflicts"]}
 
 
 async def _integrity(audit_id: str, results: Optional[dict], fiscal_year_end: int) -> dict:
@@ -2679,7 +2705,7 @@ async def export_memo(audit_id: str):
             blockers=await _blocker_list(audit_id, audit), narratives=narratives,
             files=await _memo_files(audit_id, audit, datasets),
             decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit),
-            integrity=await _integrity(audit_id, results, _fiscal_year_end(audit)), results_older=ctx["older"], missing_decks=ctx["missing_decks"])
+            integrity=await _integrity(audit_id, results, _fiscal_year_end(audit)), results_older=ctx["older"], missing_decks=ctx["missing_decks"], skipped_pages=ctx["skipped"])
     except ic_memo.MemoRefused as exc:
         refusal = exc
     words = ic_memo.word_count_of(text) if text else (refusal.words or 0)

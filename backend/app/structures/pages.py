@@ -625,7 +625,8 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         done = kept + reads
         return completeness.claims_record(expected, [n for r in done if r["status"] == "read" for n in r["pages"]],
                                        [n for r in done if r["status"] == "read" and r.get("second") for n in r["pages"]], second_on,
-                                       datetime.now(timezone.utc).isoformat())
+                                       datetime.now(timezone.utc).isoformat(),
+                                       unreadable=[(n, r["status"]) for r in done if r["status"] in completeness.UNREADABLE for n in r["pages"]])
 
     async def handle(batch, result, again) -> None:
         """One call finished: its entry, its second read's link and its claims are stored at once, page by page, under a lock (the calls run in

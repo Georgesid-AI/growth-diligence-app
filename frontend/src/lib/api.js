@@ -132,6 +132,8 @@ export const getDisclosure = (id) => api.get(`/runs/${id}/disclosure`).then((r) 
 // message; and what the Audit page opens with. The files themselves go through the endpoints above.
 // `poll`: asking again for a stage already started; the server then queues no deck to be read again (results stage ordering, 2026-11-05).
 export const runStage = (id, stage, { poll = false } = {}) => api.post(`/audits/${id}/run/${stage}${poll ? "?poll=true" : ""}`, null, { timeout: 120000 }).then((r) => r.data);
+// "Continue without page N": the deck counts complete without pages that can never be read (George, 2026-11-05).
+export const continueWithoutPages = (id, deckId, pages) => api.post(`/audits/${id}/decks/${encodeURIComponent(deckId)}/continue-without`, { pages }).then((r) => r.data);
 export const getReview = (id) => api.get(`/audits/${id}/review`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 // What "Write all narratives" would run and its upper-bound cost; reads only, no provider call.
 export const getNarrativeEstimate = (id) => api.get(`/runs/${id}/narratives/estimate`).then((r) => r.data);

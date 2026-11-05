@@ -317,3 +317,81 @@ def test_the_stored_page_entries_stay_in_page_order_whichever_page_answers_first
     asyncio.run(structures.pages.process_deck_pages(db, AUDIT_S, "d1", adapter=adapter, sleep=t._noop_sleep))
     assert [r["pages"] for r in db[TEXT_COLLECTION].docs[0]["page_reads"]] == [[1], [2]]
     assert db[TEXT_COLLECTION].docs[0]["claims_record"]["first"] == [1, 2]
+
+
+# --- Continue without page N (George, 2026-11-05) ---------------------------------------------------------------------------------------------
+
+def unreadable_record(expected=(1, 2, 3), first=(1, 2), second=(1, 2), unreadable=((3, "too_large"),)):
+    return run_audit.claims_record(list(expected), list(first), list(second), True, "2026-11-05T09:00:00+00:00", unreadable=list(unreadable))
+
+
+def continue_without(client, pages, deck_id="d1"):
+    return client.post(f"/api/audits/{AUDIT}/decks/{deck_id}/continue-without", json={"pages": pages})
+
+
+def test_the_claims_failure_offers_continue_without_for_a_page_that_can_never_be_read(run_api):
+    upload_files(run_api)
+    add_deck(run_api)
+    set_deck(run_api, claims_record=unreadable_record())
+    out = stage(run_api, "claims")
+    assert out["status"] == "failed" and out["message"] == "Deck claims incomplete: 1 of 3 pages. Retry this stage."
+    assert out["can_continue"] == [{"deck_id": "d1", "file": "testco_board.pptx", "pages": [{"page": 3, "reason": "too large for the token cap"}]}]
+
+
+def test_a_page_missing_for_a_retryable_reason_is_not_offered(run_api):
+    upload_files(run_api)
+    add_deck(run_api)
+    set_deck(run_api, claims_record=unreadable_record(first=(1,), second=(1,), unreadable=()))
+    out = stage(run_api, "claims")
+    assert out["status"] == "failed" and out["can_continue"] == []
+
+
+def test_continuing_without_the_page_stores_an_override_and_the_deck_counts_complete_then_the_results_run(run_api):
+    upload_files(run_api)
+    add_deck(run_api)
+    set_deck(run_api, claims_record=unreadable_record())
+    assert stage(run_api, "engine")["status"] == "waiting"
+    r = continue_without(run_api, [3])
+    assert r.status_code == 200, r.text
+    override, = run_api.db[decks.TEXT_COLLECTION].docs[0]["page_overrides"]
+    assert (override["page"], override["reason"]) == (3, "too_large") and override["at"]
+    assert stage(run_api, "claims")["status"] == "done"
+    assert stage(run_api, "engine")["status"] == "done"
+
+
+def test_continue_without_refuses_a_page_that_can_be_read_or_is_not_missing(run_api):
+    upload_files(run_api)
+    add_deck(run_api)
+    set_deck(run_api, claims_record=unreadable_record(first=(1,), second=(1,), unreadable=((3, "too_large"),)))
+    assert continue_without(run_api, [2]).status_code == 409, "page 2 is retryable"
+    assert continue_without(run_api, [1]).status_code == 409, "page 1 was read"
+    assert continue_without(run_api, [3], deck_id="nope").status_code == 404
+    assert "page_overrides" not in run_api.db[decks.TEXT_COLLECTION].docs[0]
+
+
+def test_worth_flagging_names_the_deck_page_and_reason_and_the_override_survives_a_new_read(run_api):
+    upload_files(run_api)
+    add_deck(run_api)
+    set_deck(run_api, claims_record=unreadable_record())
+    continue_without(run_api, [3])
+    stage(run_api, "engine")
+    text = run_api.get(f"/api/audits/{AUDIT}/memo.md").text
+    flagged = text.split("## Worth flagging")[1].split("## ")[0]
+    assert "- Deck testco_board.pptx: page 3 not read (too large for the token cap)" in flagged
+    set_deck(run_api, claims_record=unreadable_record())      # a later read finds the page unreadable again: the override still stands
+    assert stage(run_api, "claims")["status"] == "done"
+
+
+def test_the_record_keeps_the_unreadable_pages_with_their_status_when_the_page_reader_stops_on_them(monkeypatch, second_page_read):
+    from app.llm import gateway
+    monkeypatch.setattr(gateway, "PAGE_INPUT_CAP", 50)
+    from test_page_pipeline import AUDIT as A
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    db = _page_db(deck([TITLE, *LINES]))
+
+    class Big(t.FakeAdapter):
+        def count_tokens(self, **kw):
+            return 1200
+    asyncio.run(structures.process_deck(db, A, "d1", adapter=Big(replies=[ONE]), sleep=t._noop_sleep))
+    record_ = db[TEXT_COLLECTION].docs[0]["claims_record"]
+    assert record_["unreadable"] == [{"page": 1, "reason": "too_large"}] and record_["missing"] == [1]
