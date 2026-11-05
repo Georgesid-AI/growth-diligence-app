@@ -92,3 +92,28 @@ test("item 12: the notice above Run audit counts the readings and links to the U
   expect(uncertainNotice(0)).toBeNull();
   expect(UNCERTAIN_NOTICE_LINK).toBe("Review →");
 });
+
+// ---- the file line says why (George, 2026-11-05): the stored reason in plain words, not "could not be read" / "rejected" ----
+const CUT_LINE = "Reply cut at the output limit – read sheet by sheet failed on sheet Big";
+
+test("a spreadsheet the reader could not read shows the stored reason in place of the generic line", () => {
+  const cut = done({ read_state: "failed", rows_mapped: 0, read_reason: CUT_LINE });
+  expect(sheetLine(cut, 0)).toMatchObject({ tag: "Not processed", tone: "bad", sub: CUT_LINE });
+  const slow = done({ read_state: "failed", rows_mapped: 0, read_reason: "Timed out after 330 s" });
+  expect(sheetLine(slow, 0).sub).toBe("Timed out after 330 s");
+  expect(sheetLine(done({ read_state: "failed", rows_mapped: 0, read_reason: null }), 0).sub).toBe("The file is stored but could not be read.");
+});
+
+test("a spreadsheet read in part is processed and says which sheet was lost", () => {
+  expect(sheetLine(done({ rows_mapped: 3, read_reason: CUT_LINE }), 0)).toMatchObject({ tag: "Processed", tone: "done", sub: CUT_LINE });
+  expect(sheetLine(done({ rows_mapped: 3 }), 0).sub).toBeNull();
+});
+
+test("a deck whose pages were not sent or timed out shows that, not the count of rejected pages", () => {
+  const notSent = deckOf({ ai_status: "not_read", pages_read: 0, pages_rejected: 4, figure_pages: 4, pages: 4, read_reason: "Page reads were not sent (waited 64 s)" });
+  expect(deckLine(notSent, 0)).toMatchObject({ tag: "Not processed", summary: "Page reads were not sent (waited 64 s)" });
+  expect(deckLine(notSent, 0).summary).not.toMatch(/rejected/);
+  const late = deckOf({ ai_status: "not_read", pages_read: 0, pages_rejected: 1, read_reason: "Timed out after 60 s" });
+  expect(deckLine(late, 0).summary).toBe("Timed out after 60 s");
+  expect(deckLine(late, 0, CREDIT).summary).toBeNull();
+});

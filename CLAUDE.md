@@ -78,6 +78,12 @@
     cannot-check list, every string masked by the one module (company tokens first, then the personal rules). It returns findings as plain JSON
     validated in code; Python opens every reference, drops a finding that cites what does not exist, and a valid finding sends one re-read of
     that item through the sheet reader's recheck path with the finding attached (the finding's text masked like any payload).
+    Amended 2026-11-05 (George, two reading limits found on a real board pack; for approval before merge, rule 32): `sheet_reading` reads sheet by sheet.
+    One call per sheet that holds a figure, each with its own input cap (40,000 tokens of cells) and output cap, the maps merged into one stored
+    reading; the 40,000 limit is per sheet, no longer per file. What the model receives is unchanged (the same masked cells, a sheet's lines alone per
+    call). A reply cut at the output limit, or a sheet over the input cap, loses that sheet only; the reading stores the sheet's name and a closed
+    reason (`unread_sheets`), the other sheets stand. Second reads and re-reads follow the same split. A sheet read holds its own advisory lock, apart
+    from the page reads' (`structures`), and a page's 60-second clock starts when its model call is sent.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt

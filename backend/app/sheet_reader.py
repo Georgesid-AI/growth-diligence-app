@@ -17,12 +17,17 @@ import asyncio
 import logging
 from typing import Dict, List, Optional
 
-from . import cards, checks, consistency, lines as lines_mod, readings
+from . import cards, checks, consistency, lines as lines_mod, read_reasons, readings
 from .llm import gateway, redaction
 from .llm.schemas import SHEET_READING
 from .structures import reading_input
 
-READ_SECONDS = gateway.SHEET_READING_TIMEOUT_SECONDS + 30
+READ_SECONDS = gateway.SHEET_READING_TIMEOUT_SECONDS + 30       # one sheet's call; a workbook read sheet by sheet is given this for each sheet
+
+
+def read_seconds(text: str) -> float:
+    """The time a whole read of the workbook is given: READ_SECONDS for each sheet that is sent (the gateway reads them one after another)."""
+    return READ_SECONDS * max(1, len(gateway.sheet_units(text)))
 logger = logging.getLogger("growth")
 
 
@@ -67,13 +72,15 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     if text is None:
         return {"status": "none", "reason": "No sheet with period columns to read."}
     await stage("removing_personal_data")
+    allowed = read_seconds(text)
     try:
         first = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter,
-                                                           fiscal_year_end=fiscal_year_end, on_stage=stage), READ_SECONDS)
+                                                           fiscal_year_end=fiscal_year_end, on_stage=stage), allowed)
     except asyncio.TimeoutError:
-        return {"status": "not_read", "reason": gateway.NOT_READ}
+        return {"status": "not_read", "reason": gateway.NOT_READ, "read_reason": read_reasons.timeout_line(allowed)}
     if first.status != "read" or not first.file_map:
-        return {"status": first.status, "reason": first.reason or gateway.NOT_READ, "provider": first.provider}
+        return {"status": first.status, "reason": first.reason or gateway.NOT_READ, "provider": first.provider,
+                "unread_sheets": first.unread_sheets, "read_reason": read_reasons.sheets_line(first.unread_sheets)}
     # The consistency read (docs/design/reading-consistency.md): the same input read a second time, beside the first. A stored second read is
     # reused (a file read before makes at most this one call); a failure of any kind leaves the first reading standing, compared with nothing.
     second, same = await _second_read(db, audit_id, text, file_hash, adapter, fiscal_year_end, stage, first)
@@ -92,7 +99,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
         try:
             second = await asyncio.wait_for(
                 gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask,
-                                       reread_of=first.reading_key, on_stage=stage), READ_SECONDS)
+                                       reread_of=first.reading_key, on_stage=stage), read_seconds(text))
             if second.status != "read" or second.file_map is None:
                 failure = second.reason or second.status
         except asyncio.TimeoutError:
@@ -133,6 +140,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
            "items": final["items"], "rereads": rereads, "months": months,
            "month": best["month"] if best else None,
            "evidence": (f"{best['evidence']} (confirmed on sheet {best['sheet']}, column {best['column']})" if best else None),
+           "unread_sheets": first.unread_sheets, "read_reason": read_reasons.sheets_line(first.unread_sheets),
            "lines": sheet_lines(merged, cells, final["items"]),
            "consistency": same,
            "dims": {name: [sheet.max_row, sheet.max_col] for name, sheet in cells.sheets.items()},
@@ -154,7 +162,7 @@ async def _second_read(db, audit_id: str, text: str, file_hash: str, adapter, fi
     second = None
     try:
         second = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter,
-                                                              fiscal_year_end=fiscal_year_end, on_stage=stage, second_read=True), READ_SECONDS)
+                                                              fiscal_year_end=fiscal_year_end, on_stage=stage, second_read=True), read_seconds(text))
         if second.status != "read" or second.file_map is None:
             failure = second.reason or second.status
     except asyncio.TimeoutError:
@@ -165,7 +173,10 @@ async def _second_read(db, audit_id: str, text: str, file_hash: str, adapter, fi
         logger.warning("sheet reads: run_id=%s hash=%s second read not completed", audit_id, file_hash[:12])
         return None, {"status": "not_compared", "reason": f"second read not completed: {failure}", "items": [], "reads": reads}
     reads["second"] = {"input_tokens": second.input_tokens, "output_tokens": second.output_tokens, "cache_hit": bool(second.cache_hit)}
-    items = consistency.compare(first.file_map, second.file_map)
+    # A sheet either read lost to the output limit is no disagreement: it is left out of the comparison.
+    lost = {u["sheet"] for read in (first, second) for u in read.unread_sheets or []}
+    only = lambda m: {**m, "sheets": [sh for sh in m.get("sheets") or [] if sh["sheet"] not in lost]}      # noqa: E731
+    items = consistency.compare(only(first.file_map), only(second.file_map))
     logger.info("sheet reads: run_id=%s hash=%s first=%d/%d second=%d/%d uncertain=%d", audit_id, file_hash[:12], first.input_tokens,
                 first.output_tokens, second.input_tokens, second.output_tokens, len(items))
     return second, {"status": "compared", "reason": None, "items": items, "reads": reads}

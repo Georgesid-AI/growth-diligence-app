@@ -22,6 +22,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -37,12 +38,13 @@ def notice(text: str) -> None:
 
 
 class OneCall:
-    """The provider adapter, counting. The cap per fixture is the first reading plus the one schema-validation retry (a fix request
-    carrying the errors, which the gateway sends when the first reply fails the file map's schema). Nothing else is allowed: an item re-read
-    (recheck), a second retry or any third call is refused with an error."""
+    """The provider adapter, counting. A workbook is read sheet by sheet (George, 2026-11-05), so the cap is per sheet: the first reading of the
+    sheet plus the one schema-validation retry (a fix request carrying the errors, which the gateway sends when the first reply fails the file
+    map's schema). Nothing else is allowed: an item re-read (recheck), a second retry or any third call for a sheet is refused with an error."""
 
     def __init__(self, adapter):
         self.adapter, self.calls, self.retries, self.tokens_in, self.tokens_out = adapter, 0, 0, 0, 0
+        self.sheets, self.current = {}, None          # the calls and retries made for each sheet; the sheet the last reading was for
 
     @staticmethod
     def is_fix(kw) -> bool:
@@ -51,10 +53,25 @@ class OneCall:
         except (KeyError, TypeError, ValueError):
             return False
 
+    @staticmethod
+    def sheet_of(kw):
+        try:
+            sent = json.loads(kw["user_payload"])
+            return tuple(re.findall(r"(?m)^sheet \d+: (.*)$", sent.get("text") or ""))
+        except (KeyError, TypeError, ValueError):
+            return None
+
     def complete(self, **kw):
         fix = self.is_fix(kw)
-        if self.calls == 0 and fix or self.calls > 0 and not (fix and self.retries == 0):
-            raise RuntimeError("the cap is one reading and one schema-validation retry per fixture per run")
+        if not fix:
+            self.current = self.sheet_of(kw)
+            if self.current in self.sheets:
+                raise RuntimeError("the cap is one reading and one schema-validation retry per sheet per run")
+            self.sheets[self.current] = {"calls": 0, "retries": 0}
+        elif self.current is None or self.sheets[self.current]["retries"]:
+            raise RuntimeError("the cap is one reading and one schema-validation retry per sheet per run")
+        self.sheets[self.current]["calls"] += 1
+        self.sheets[self.current]["retries"] += fix
         self.calls += 1
         self.retries += fix
         reply = self.adapter.complete(**kw)

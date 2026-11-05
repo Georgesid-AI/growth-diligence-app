@@ -68,7 +68,7 @@ async def get(db, account: Optional[str], file_hash: str, prompt_hash: str, mode
 
 
 async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str, prompt_hash: str, model: str, reading: dict, prompt_text: str = "",
-              input_tokens: int = 0, output_tokens: int = 0, cost: float = 0.0) -> dict:
+              input_tokens: int = 0, output_tokens: int = 0, cost: float = 0.0, unread_sheets: Optional[List[dict]] = None) -> dict:
     """Store a reading once. A reading already stored under the key is returned as it stands and nothing is written."""
     key = reading_key(account, file_hash, prompt_hash, model)
     kept = await db[READINGS].find_one({"key": key}, {"_id": 0})
@@ -77,7 +77,7 @@ async def put(db, *, account: Optional[str], file_hash: str, prompt_version: str
     doc = {"key": key, "account": account or "", "file_hash": file_hash, "prompt_version": prompt_version, "prompt_hash": prompt_hash,
            "model": model, "file_map": copy.deepcopy(reading), "prompt_text": prompt_text,
            "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6),
-           "created_at": _now()}
+           "unread_sheets": copy.deepcopy(unread_sheets or []), "created_at": _now()}
     if kept:
         await db[READINGS].replace_one({"key": key}, dict(doc))        # the failed record of an earlier read gives way to the reading
         return doc
@@ -102,13 +102,14 @@ async def get_second(db, reading: str) -> Optional[dict]:
 
 
 async def put_second(db, *, reading: str, prompt_version: str, model: str, file_map: dict, input_tokens: int = 0, output_tokens: int = 0,
-                     cost: float = 0.0) -> dict:
+                     cost: float = 0.0, unread_sheets: Optional[List[dict]] = None) -> dict:
     """Store the second read of a reading once, beside the first. One already stored is returned as it stands and nothing is written."""
     kept = await get_second(db, reading)
     if kept:
         return kept
     doc = {"reading": reading, "prompt_version": prompt_version, "model": model, "file_map": copy.deepcopy(file_map),
-           "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6), "created_at": _now()}
+           "input_tokens": int(input_tokens), "output_tokens": int(output_tokens), "estimated_cost_usd": round(float(cost), 6),
+           "unread_sheets": copy.deepcopy(unread_sheets or []), "created_at": _now()}
     await db[SECOND_READS].insert_one(dict(doc))
     return doc
 
@@ -125,7 +126,7 @@ async def get_reread(db, reading: str, items: List[str], reason: str = "") -> Op
 
 
 async def put_reread(db, *, reading: str, items: List[str], reason: str, prompt_version: str, model: str, output: dict, input_tokens: int = 0,
-                     output_tokens: int = 0, cost: float = 0.0) -> dict:
+                     output_tokens: int = 0, cost: float = 0.0, unread_sheets: Optional[List[dict]] = None) -> dict:
     """Store the second reading of rejected items beside the first, once. The same items of the same reading are never read again."""
     key = reread_key(reading, items, reason)
     kept = await db[REREADS].find_one({"key": key}, {"_id": 0})
@@ -133,7 +134,7 @@ async def put_reread(db, *, reading: str, items: List[str], reason: str, prompt_
         return kept
     doc = {"key": key, "reading": reading, "items": sorted(set(items)), "reason": reason, "prompt_version": prompt_version, "model": model,
            "output": copy.deepcopy(output), "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
-           "estimated_cost_usd": round(float(cost), 6), "created_at": _now()}
+           "estimated_cost_usd": round(float(cost), 6), "unread_sheets": copy.deepcopy(unread_sheets or []), "created_at": _now()}
     if kept:
         await db[REREADS].replace_one({"key": key}, dict(doc))
         return doc

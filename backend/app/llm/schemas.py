@@ -792,6 +792,7 @@ class StructureRead(BaseModel):
     labels: List[dict] = Field(default_factory=list)
     pairs: List[dict] = Field(default_factory=list)
     claims: List[dict] = Field(default_factory=list)     # a page batch's claims (PageClaimsReply), cells cited by page id
+    seconds: Optional[float] = None         # the seconds the reason names: a page's clock after a timeout, the wait of a page that was not sent
     key: Optional[str] = None
     cache_hit: bool = False
     input_tokens: int = 0
@@ -803,6 +804,7 @@ class StructureRead(BaseModel):
     model: Optional[str] = None
     masked: Optional[dict] = None           # a page read: counts of what masking removed or tokenised in the text sent (numbers only)
     file_map: Optional[dict] = None         # a sheet reading (the contract's FileMap) in masked space; the stored copy has the names restored
+    unread_sheets: List[dict] = Field(default_factory=list)     # a sheet reading read sheet by sheet: [{"sheet", "reason"}] of the sheets lost alone (reply cut, input over the cap)
     reading_key: Optional[str] = None       # ... and its identity: file hash + prompt version + model (app/readings.py)
     payload: Optional[str] = Field(default=None, exclude=True)      # the masked cell text a sheet reading sent: in memory for the checks, never serialised
 

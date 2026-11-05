@@ -45,7 +45,11 @@ class Ideal(t.FakeAdapter):
             raise gateway.GatewayError("model_refused", "not scripted")
         self.reads += 1
         self.payloads.append(kw["user_payload"])
-        return json.dumps(self.file_map), 3000, 400
+        # The reader is sent one sheet to a call (George, 2026-11-05): it answers for that sheet only, and a figure belongs to the sheet it cites.
+        asked = {ln.split(": ", 1)[1] for ln in sent["text"].split("\n") if ln.startswith("sheet ")}
+        mine = {**self.file_map, "sheets": [sh for sh in self.file_map["sheets"] if sh["sheet"] in asked],
+                "figures": [f for f in self.file_map.get("figures") or [] if ((f.get("source") or {}).get("sheet") or next(iter(asked), None)) in asked]}
+        return json.dumps(mine), 3000, 400
 
 
 def run(fixture, file_map=None):
@@ -102,7 +106,8 @@ def test_the_expected_map_is_a_valid_file_map_and_the_ideal_reading_agrees_with_
 @pytest.mark.parametrize("fixture", [f for f in SHEETS if f["name"] != "testco_pnl"], ids=[n for n in IDS if n != "testco_pnl"])
 def test_the_ideal_reading_of_each_workbook_is_confirmed_cell_by_cell_and_gives_the_expected_month(fixture):
     doc, adapter, _ = run(fixture)
-    assert doc["status"] == "read" and adapter.reads == 2
+    sent_sheets = len(gateway.sheet_units(reading_input.reading_text(workbook(fixture))))
+    assert doc["status"] == "read" and adapter.reads == 2 * sent_sheets, "the reading and the consistency read, one call per sheet each"
     rejected = [i for i in doc["items"] if i["outcome"] == checks.REJECTED]
     assert rejected == [], [(i["key"], i["reason"]) for i in rejected]
     assert doc["month"] == fixture["expected_map"]["as_of_month"], doc["evidence"]
@@ -123,8 +128,8 @@ def test_the_variance_columns_of_actual_budget_variance_are_tested_in_every_row_
 @pytest.mark.parametrize("fixture", [f for f in SHEETS if f["name"] != "testco_pnl"], ids=[n for n in IDS if n != "testco_pnl"])
 def test_every_non_empty_cell_of_every_sheet_is_sent_none_sampled_none_cut(fixture):
     _, adapter, _ = run(fixture)
-    sent = json.loads(adapter.payloads[0])["text"]
-    parsed = redact.parse_reading_text(sent)
+    sent = "\n".join(json.loads(p)["text"] for p in adapter.payloads)
+    parsed = [sh for p in adapter.payloads for sh in redact.parse_reading_text(json.loads(p)["text"])]
     expected_cells = {s.sheet: sum(1 for c in reading_input.sheet_cells(s)) for s in workbook(fixture)}
     assert {s["name"]: len(s["cells"]) for s in parsed} == expected_cells
     assert rf.COMPANY not in sent and "Client-01" in sent, "the target's name is a token"
@@ -246,7 +251,11 @@ class FixtureRouter:
 
     def __init__(self, differ=None, boundary=None):
         self.boundary = boundary
-        self.maps = {tuple(sorted(s["sheet"] for s in f["expected_map"]["file_map"]["sheets"])): f for f in SHEETS}
+        self.by_sheet = {}
+        for f in SHEETS:
+            for sh in f["expected_map"]["file_map"]["sheets"]:
+                assert sh["sheet"] not in self.by_sheet, f"sheet name {sh['sheet']!r} is in two fixtures: the router could not tell them apart"
+                self.by_sheet[sh["sheet"]] = f
         self.differ, self.requests = differ, []
 
     def __call__(self, *a, **k):
@@ -258,8 +267,8 @@ class FixtureRouter:
     def complete(self, **kw):
         sent = json.loads(kw["user_payload"])
         self.requests.append(sent)
-        names = tuple(sorted(re.findall(r"(?m)^sheet \d+: (.*)$", sent["text"])))
-        fixture = self.maps[names]
+        names = re.findall(r"(?m)^sheet \d+: (.*)$", sent["text"])
+        fixture = self.by_sheet[names[0]]
         file_map = copy.deepcopy(fixture["expected_map"]["file_map"])
         if self.differ and fixture["name"] == self.differ:
             file_map["sheets"][0]["rows"][0]["role"] = "bookings"
@@ -267,6 +276,9 @@ class FixtureRouter:
             la = next(sh for sh in file_map["sheets"] if sh.get("last_actual"))["last_actual"]
             from app.structures.redact import col_letters, col_number
             la["column"] = col_letters(col_number(la["column"]) + 1)          # rejected by the checks, so a re-read is asked for
+        # One sheet to a call (George, 2026-11-05): the reply holds that sheet, and the figures that cite it.
+        file_map["sheets"] = [sh for sh in file_map["sheets"] if sh["sheet"] in names]
+        file_map["figures"] = [f for f in file_map.get("figures") or [] if ((f.get("source") or {}).get("sheet") or names[0]) in names]
         return json.dumps(file_map), 3000, 400
 
 
@@ -278,10 +290,12 @@ def test_the_job_reads_every_fixture_once_and_exits_0_when_every_reading_agrees(
         monkeypatch.setenv(name, value)
     assert runner.main() == 0
     out = capsys.readouterr().out
-    assert len(router.requests) == len(SHEETS), "one provider call per fixture, no re-read"
+    calls = {f["name"]: len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS}
+    assert len(router.requests) == sum(calls.values()), "one provider call per sheet of each fixture, no re-read"
     assert "every fixture agrees with its expected map" in out and all(f["name"] in out for f in SHEETS)
     assert "recheck" not in json.dumps(router.requests)
-    assert out.count("3000/400") == len(SHEETS), "the tokens in/out column shows the call's tokens"
+    for name, n in calls.items():
+        assert f"{3000 * n}/{400 * n}" in next(ln for ln in out.split("\n") if ln.startswith(name)), "the tokens in/out column sums the fixture's calls"
     assert "skipped: deck path unchanged" in out and "differ from" not in out
     assert "Client-01" not in out and "447223" not in out, "no cell text in the job's output"
 
@@ -303,6 +317,9 @@ def test_a_second_provider_call_for_one_fixture_is_an_error():
     wrapped.complete(user_payload=payload)
     with pytest.raises(RuntimeError):
         wrapped.complete(user_payload=payload)
+    other = json.dumps({"type": "sheet_reading", "text": "sheet 1: Yearly P&L\nA1: x"})
+    with pytest.raises(KeyError):                  # another sheet is its own reading: it reaches the router, which has no such fixture
+        wrapped.complete(user_payload=other)
 
 
 def test_the_workflow_runs_only_on_the_reading_path_and_skips_without_the_key():
@@ -450,7 +467,9 @@ def test_a_failing_re_read_leaves_the_file_read_with_its_rejected_items_noted_an
     out = capsys.readouterr().out
     line = next(ln for ln in out.splitlines() if ln.startswith("monthly_report"))
     assert " read " in line and "not_read" not in line and re.search(r"rejected [1-9]", line), line
-    assert len(router.requests) == len(SHEETS), "the failed re-read made no provider call beyond the cap"
+    sheets_sent = len(gateway.sheet_units(reading_input.reading_text(workbook(next(f for f in SHEETS if f["name"] == "monthly_report")))))
+    assert len(router.requests) == sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS), "the failed re-read made no provider call beyond the cap"
+    assert sheets_sent >= 1
 
 
 def test_a_re_read_that_fails_never_marks_the_reading_not_read_and_notes_each_rejected_item():
