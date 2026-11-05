@@ -110,7 +110,19 @@ describe("the Uncertain list (item 9)", () => {
     await show(register([], [figure({ reading: { index: 0, options: ["a", "b"], details: [{ metric: "revenue", value: "150,000", period: "2025" }, { metric: "revenue", value: "150,000", period: null }] } })]));
     const [row] = all("row-uncertain");
     const cells = [...row.querySelectorAll("td")].map((c) => c.textContent);
-    expect(cells.slice(0, 5)).toEqual(["Board.pdf · page 3", "revenue · cell p3r2c1", "period", "period 2025", "period none"]);
+    expect(cells.slice(0, 5)).toEqual(["Board.pdf · page 3", "150,000 USD, 2025 · page 3, cell p3r2c1", "period", "period 2025", "period none"]);
+  });
+
+  test("a pick tells the page, so the line above Run audit counts again (combined fixes, item 6)", async () => {
+    api.decideUncertain.mockResolvedValue({});
+    await show(register([group, single]));
+    const heard = jest.fn();
+    window.addEventListener("readings-changed", heard);
+    api.getReading.mockResolvedValue(register([single]));
+    await act(async () => { all("row-uncertain")[0].querySelectorAll("button")[0].click(); });
+    await act(async () => { await Promise.resolve(); });
+    window.removeEventListener("readings-changed", heard);
+    expect(heard).toHaveBeenCalledTimes(1);
   });
 
   test("picking sends the pick, reloads, updates the count and removes the row", async () => {

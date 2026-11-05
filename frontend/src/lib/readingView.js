@@ -233,7 +233,7 @@ export function seriesDiffText(d) {
 const rowValue = (item, c, f, side) => {
   const d = SERIES.includes(f) ? item.series_diff?.[f] : null;
   if (d) return `${d.period}: ${figure(d[side])}`;
-  if (SERIES.includes(f)) return c.periods != null ? `${c.periods} periods` : "different values";
+  if (SERIES.includes(f)) return "different values";         // never the bare period count (combined fixes, 2026-11-05)
   return c[f] ?? "none";
 };
 
@@ -255,11 +255,30 @@ export function differsText(item) {
   return item.kind === "field" ? item.field : "sheet";
 }
 
-/** The "Row or figure" of a spreadsheet item: "Sales, rows 6–9"; of a layout item, the field. */
-export function whereText(item) {
-  if (item.kind === "row") return `${item.sheet}, ${rowsText(item)}`;
+/** The label text of a row item from the lines the screen holds for its file: "Net revenue", or "Line 6; Line 7; Line 8; …" for a run of rows (three at most); "" when none. */
+export function rowLabels(item, file) {
+  const lines = (file?.lines || []).find((l) => l.sheet === item.sheet)?.lines || [];
+  const rows = [...new Set(item.rows?.length ? item.rows : [item.row])].sort((a, b) => a - b);
+  const labels = rows.map((n) => lines.find((l) => l.row === n)?.label).filter(Boolean);
+  return labels.length ? `${labels.slice(0, 3).join("; ")}${labels.length > 3 ? "; …" : ""}` : "";
+}
+
+/** The "Row or figure" of a spreadsheet item: "Sales, rows 6–9 · Line 6; …" (the labels when `file` holds them); of a layout item, the field. */
+export function whereText(item, file) {
+  if (item.kind === "row") {
+    const labels = rowLabels(item, file);
+    return `${item.sheet}, ${rowsText(item)}${labels ? ` · ${labels}` : ""}`;
+  }
   if (item.kind === "field") return `${item.sheet}: ${item.field}`;
   return `Sheet ${item.sheet}`;
+}
+
+/** A deck figure as the list names it: "170,044 EUR, 2019 · page 11, cell r4c2" - its value and period beside the page and cell, whatever field differs. */
+export function figureWhere(fig) {
+  const named = fig.currency || (["money", "count", "rate"].includes(fig.unit) ? "" : fig.unit || "");        // a currency, else a unit the deck prints (%, x, days...)
+  const value = fig.value == null ? "" : `${fmtCount(fig.value)}${named === "%" ? "%" : named ? ` ${named}` : ""}`;
+  const head = [value, fig.period].filter(Boolean).join(", ") || fig.metric;
+  return `${head} · page ${fig.page ?? "?"}${fig.cell ? `, cell ${fig.cell}` : ""}`;
 }
 
 /** The Uncertain list of the whole audit: one entry per spreadsheet item and per deck figure that waits, in file order. */
@@ -267,14 +286,14 @@ export function uncertainEntries(files) {
   const out = [];
   for (const f of files || []) {
     if (f.kind === "sheet") {
-      for (const item of f.consistency?.uncertain || []) out.push({ id: `${f.file_hash}:${item.key}`, file: f.file, fileLabel: f.file, where: whereText(item), item, fileHash: f.file_hash, kind: "sheet" });
+      for (const item of f.consistency?.uncertain || []) out.push({ id: `${f.file_hash}:${item.key}`, file: f.file, fileLabel: f.file, where: whereText(item, f), item, fileHash: f.file_hash, kind: "sheet" });
     } else if (f.kind === "deck") {
       for (const fig of f.figures || []) {
         if (!fig.uncertain || !fig.reading) continue;
         const [one, two] = fig.reading.details || [];
         const fields = ["metric", "value", "period"].filter((k) => (one?.[k] ?? null) !== (two?.[k] ?? null));
         const item = { kind: "figure", fields, first: one || null, second: two || null };
-        out.push({ id: `${f.deck_id}:${fig.id}`, file: f.file, fileLabel: `${f.file} · page ${fig.page ?? "?"}`, where: `${fig.metric}${fig.cell ? ` · cell ${fig.cell}` : ""}`, item, figure: fig, kind: "deck" });
+        out.push({ id: `${f.deck_id}:${fig.id}`, file: f.file, fileLabel: `${f.file} · page ${fig.page ?? "?"}`, where: figureWhere(fig), item, figure: fig, kind: "deck" });
       }
     }
   }

@@ -1910,7 +1910,7 @@ async def _with_entries(audit_id: str, audit: dict, found: list) -> list:
 
 
 async def _deck_docs(audit_id: str) -> list:
-    return await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "ai_status": 1, "file": 1, "claims_record": 1, "claims_at": 1, "page_overrides": 1,
+    return await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "ai_status": 1, "file": 1, "claims_record": 1, "claims_at": 1, "page_overrides": 1, "page_reads": 1,
                                                                         "reading_since": 1, "read_finished_at": 1}).to_list(100)
 
 
@@ -1954,7 +1954,7 @@ async def continue_without_pages(audit_id: str, deck_id: str, body: ContinueWith
     deck = await db[decks.TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "claims_record": 1, "page_overrides": 1})
     if not deck:
         raise HTTPException(404, "Deck not found")
-    never = {u["page"]: u["reason"] for u in (deck.get("claims_record") or {}).get("unreadable") or ()}
+    never = {u["page"]: u["reason"] for u in (deck.get("claims_record") or {}).get("unreadable") or () if u["reason"] != structures.completeness.CAP}      # not a page the token cap refused
     bad = [p for p in body.pages if p not in never]
     if not body.pages or bad:
         raise HTTPException(409, "Only a page that cannot be read can be continued without.")
@@ -2014,15 +2014,16 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks, poll
             elif gate["state"] == "reading":
                 result = run_audit.stage_result(stage, run_audit.RUNNING, run_audit.DECKS_READING, timeout_seconds=_timeout_of(gate))
             elif gate["state"] == "incomplete":
-                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.incomplete_message(gate), timeout_seconds=_timeout_of(gate),
+                failure = run_audit.claims_failure(gate)
+                result = run_audit.stage_result(stage, run_audit.FAILED, failure["message"], timeout_seconds=_timeout_of(gate), retryable=failure["retryable"],
                                                 can_continue=[{"deck_id": i["deck_id"], "file": i["file"], "pages": i["can_continue"]} for i in gate["incomplete"] if i["can_continue"]])
             else:
                 missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in docs) else \
                     llm_gateway.PAGE_READER_BLOCKED if any(d.get("ai_status") == structures.BLOCKED for d in docs) else None
                 result = run_audit.stage_result(stage, run_audit.DONE, missing, timeout_seconds=_timeout_of(gate))
-            logger.info("claims run: run_id=%s status=%s decks=%s pages_missing=%d elapsed=%.1fs timeout=%ds", audit_id, result["status"],
+            logger.info("claims run: run_id=%s status=%s decks=%s pages_missing=%d elapsed=%.1fs timeout=%ds cap=%d", audit_id, result["status"],
                         run_audit.pages_summary(docs), sum(i["missing"] for i in gate["incomplete"]), (datetime.now(timezone.utc) - began).total_seconds(),
-                        _timeout_of(gate))
+                        _timeout_of(gate), await structures.audit_token_cap(db, audit_id))
         else:
             # The calculations wait for the deck claims: never on partial deck figures. Nothing waits for a confirmation: the map is the reading.
             # No month confirmed and none typed: the audit runs everything that does not depend on it (read-check-review.md section 6).
@@ -3316,7 +3317,7 @@ async def narrative_disclosure(run_id: str):
 
 @api.get("/runs/{run_id}/llm-usage")
 async def llm_usage(run_id: str):
-    usage = await llm_gateway.usage_for_run(db, run_id)
+    usage = await llm_gateway.usage_for_run(db, run_id, await structures.audit_token_cap(db, run_id))
     return sanitize(usage.model_dump())
 
 

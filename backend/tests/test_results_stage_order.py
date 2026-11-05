@@ -65,7 +65,7 @@ def test_a_record_is_complete_only_with_every_page_read_and_each_second_read_equ
 def test_the_incomplete_message_counts_the_missing_pages_over_the_pages_with_figures():
     gate = run_audit.decks_gate([{"file": "a.pdf", "ai_status": "read", "claims_record": record(list(range(1, 45)), list(range(1, 42)), list(range(1, 42)))}])
     assert gate["state"] == "incomplete"
-    assert run_audit.incomplete_message(gate) == "Deck claims incomplete: 3 of 44 pages. Retry this stage."
+    assert run_audit.incomplete_message(gate).startswith("a.pdf: 3 of 44 pages are missing: ")
 
 
 def test_a_deck_the_page_reader_does_not_apply_to_does_not_hold_the_results_back():
@@ -158,7 +158,7 @@ def test_the_claims_stage_fails_on_an_incomplete_record_and_names_the_pages(run_
     add_deck(run_api)
     set_deck(run_api, claims_record=unreadable_record([1, 2, 3, 4], [1, 2], [1, 2], ((3, "too_large"), (4, "refused"))))      # nothing a read can get
     out = stage(run_api, "claims")
-    assert (out["status"], out["message"]) == ("failed", "Deck claims incomplete: 2 of 4 pages. Retry this stage.")
+    assert out["status"] == "failed" and out["message"].startswith("testco_board.pptx: 2 of 4 pages are missing: page 3 too large for the token cap; page 4 refused by the model.")
 
 
 def test_the_claims_stage_is_done_when_every_deck_is_complete_and_then_the_results_run(run_api):
@@ -339,7 +339,7 @@ def test_the_claims_failure_offers_continue_without_for_a_page_that_can_never_be
     add_deck(run_api)
     set_deck(run_api, claims_record=unreadable_record())
     out = stage(run_api, "claims")
-    assert out["status"] == "failed" and out["message"] == "Deck claims incomplete: 1 of 3 pages. Retry this stage."
+    assert out["status"] == "failed" and out["message"].startswith("testco_board.pptx: 1 of 3 pages is missing: page 3 too large for the token cap.")
     assert out["can_continue"] == [{"deck_id": "d1", "file": "testco_board.pptx", "pages": [{"page": 3, "reason": "too large for the token cap"}]}]
 
 

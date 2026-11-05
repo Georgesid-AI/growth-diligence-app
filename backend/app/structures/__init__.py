@@ -661,3 +661,9 @@ async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
                 "structures": found,
                 "periods_corrected": sum((s.get("ai") or {}).get("periods_corrected", 0) for s in found)}})
     return changed
+
+
+async def audit_token_cap(db, audit_id: str) -> int:
+    """The audit's structure token cap, scaled with the pages of its decks (pages.audit_token_cap)."""
+    from . import pages as page_pipeline
+    return await page_pipeline.audit_token_cap(db, audit_id)

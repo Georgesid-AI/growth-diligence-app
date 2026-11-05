@@ -176,10 +176,11 @@ export function readiness(sheets, decks) {
 
 /** The line above Run audit when readings await confirmation (brief of George, 2026-11-05, item 12); Run audit stays enabled. */
 export const UNCERTAIN_NOTICE_LINK = "Review →";
+export const READINGS_CHANGED = "readings-changed";         // fired after a pick, so the line above Run audit counts the items still waiting (combined fixes, item 6)
 export const OPEN_UNCERTAIN = "open-uncertain-list";         // the event the link fires and the reading screen listens for
 export function uncertainNotice(n) {
   if (!n) return null;
-  return `${fmtCount(n)} ${n === 1 ? "reading awaits" : "readings await"} confirmation. Ratings exclude them until you confirm.`;
+  return `${fmtCount(n)} uncertain ${n === 1 ? "reading awaits" : "readings await"} confirmation. Ratings exclude them until you confirm.`;
 }
 
 export const STEP_LABELS = { reading: "Reading and checking files", calculating: "Calculating results" };

@@ -10,7 +10,7 @@ import {
   FIGURE_HOVERS, FIGURE_WIDTHS, HOVERS, OUTCOME_LABELS, UNCERTAIN_LABEL, UNCERTAIN_TITLE, WIDTHS, actualPlanText, candidateText, deckSummary, differsText, lastActualText,
   periodLabel, readingsText, sheetSummary, splitEvidence, uncertainEntries, uncertainTitle, valueText, whereText,
 } from "@/lib/readingView";
-import { OPEN_UNCERTAIN } from "@/lib/uploadView";
+import { OPEN_UNCERTAIN, READINGS_CHANGED } from "@/lib/uploadView";
 import { PLACEHOLDER, fmtCount } from "@/lib/format";
 
 /**
@@ -133,7 +133,7 @@ function UncertainCards({ file, auditId, onChange }) {
     <div className="uncertain" data-testid="uncertain-items">
       {items.map((item) => (
         <p key={item.key} className="note" data-testid="uncertain-item">
-          <b data-testid="uncertain-label">{UNCERTAIN_TITLE}</b> · {whereText(item)} · {differsText(item)}{" "}
+          <b data-testid="uncertain-label">{UNCERTAIN_TITLE}</b> · {whereText(item, file)} · {differsText(item)}{" "}
           <span data-testid="uncertain-first-text">First reading: {readingsText(item, "first")}</span>{" "}
           <button type="button" className="btn quiet" data-testid="uncertain-first" onClick={() => pick(item, "first")} title="Use the first reading">Use first</button>{" "}
           <span data-testid="uncertain-second-text">Second reading: {readingsText(item, "second")}</span>{" "}
@@ -345,7 +345,8 @@ export default function ReadingScreen({ audit, setAudit, reloadKey = 0 }) {
   const view = data || EMPTY;
   const current = view.files.find((f) => fileKey(f) === tab);
   const results = current ? narrowed(view, current) : view;
-  const changed = () => { load(); reloadAudit(); };
+  // Every change (a pick, a Change, a card) may move the count of readings that wait: the line above Run audit asks the register again.
+  const changed = () => { load(); reloadAudit(); window.dispatchEvent(new Event(READINGS_CHANGED)); };
   // The Uncertain list is the All section's (brief of George, 2026-11-05): "Review →" above Run audit opens it.
   useEffect(() => {
     const open = () => { setTab("all"); setTimeout(() => document.getElementById("uncertain-list")?.scrollIntoView?.({ behavior: "smooth" }), 0); };

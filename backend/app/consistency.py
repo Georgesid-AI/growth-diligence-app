@@ -66,6 +66,26 @@ def series_diff(first: Optional[Dict], second: Optional[Dict]) -> Optional[Dict]
     return {"period": bad[0], "first": a.get(bad[0]), "second": b.get(bad[0]), "differing": len(bad), "total": len(periods)}
 
 
+def with_series_diffs(items: List[Dict], first: Optional[Dict], second: Optional[Dict]) -> List[Dict]:
+    """The items as served: a row item that differs in `series` or `plan_series` and was stored before the difference was kept (no `series_diff` for that
+    field) gets it from the two stored reads, so the list never falls back to a bare period count (combined fixes, 2026-11-05). `first` and `second` are
+    the stored file maps with their series; an item the maps do not settle is returned as it is. Stored items are never edited."""
+    if not first or not second:
+        return items
+    a = {(s["sheet"], r["row"]): r for s in first.get("sheets") or [] for r in s.get("rows") or []}
+    b = {(s["sheet"], r["row"]): r for s in second.get("sheets") or [] for r in s.get("rows") or []}
+    out = []
+    for item in items:
+        wanted = [f for f in SERIES_FIELDS if item.get("kind") == "row" and f in (item.get("fields") or []) and f not in (item.get("series_diff") or {})]
+        ra, rb = a.get((item.get("sheet"), item.get("row"))), b.get((item.get("sheet"), item.get("row")))
+        if not wanted or ra is None or rb is None:
+            out.append(item)
+            continue
+        found = {f: d for f in wanted if (d := series_diff(ra.get(f), rb.get(f)))}
+        out.append({**item, "series_diff": {**(item.get("series_diff") or {}), **found}} if found else item)
+    return out
+
+
 def _signature(row: Dict) -> Dict:
     return {"role": row.get("role"), "metric": row.get("metric"), "series": row.get("series"), "plan_series": row.get("plan_series"),
             "parent_row": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency"), "basis": row.get("basis")}

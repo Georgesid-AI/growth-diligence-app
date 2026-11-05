@@ -80,6 +80,7 @@ export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = 
   const rows = steps(sheets, decks, { status: calcStatus, seconds }, now, readClock, uncertain);
   const notice = uncertainNotice(uncertain);
   const failed = STAGES.find((s) => stages[s.key].status === "failed");
+  const retryable = failed ? stages[failed.key].retryable : undefined;          // false: the token cap stopped the claims; the same run would be refused again
 
   return (
     <section className="panel" data-testid="run-audit-panel">
@@ -111,9 +112,8 @@ export default function RunAuditPanel({ auditId, sheets = [], decks = [], now = 
               {`Continue without page ${o.pages.map((p) => p.page).join(", ")}`}
             </button>
           ))}
-          {offers.map((o) => <p key={`why-${o.deck_id}`} className="muted">{`${o.file}: ${o.pages.map((p) => `page ${p.page} ${p.reason}`).join("; ")}. Worth flagging will name it.`}</p>)}
-          <button type="button" className="btn quiet" disabled={running} data-testid={`retry-${failed.key}`} onClick={() => start(failed.key)}>{RETRY_LABEL}</button>
-          <p className="muted">Nothing already done is lost: Retry stage carries on from the stage that failed.</p>
+          <button type="button" className="btn quiet" disabled={running || retryable === false} data-testid={`retry-${failed.key}`} onClick={() => start(failed.key)}>{RETRY_LABEL}</button>
+          {retryable !== false && <p className="muted">Nothing already done is lost: Retry stage carries on from the stage that failed.</p>}
         </div>
       )}
     </section>

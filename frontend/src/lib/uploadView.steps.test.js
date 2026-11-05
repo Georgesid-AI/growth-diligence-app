@@ -87,8 +87,8 @@ test("item 11: a step that is still running or failed says nothing of uncertain 
 });
 
 test("item 12: the notice above Run audit counts the readings and links to the Uncertain list; nothing at zero", () => {
-  expect(uncertainNotice(4)).toBe("4 readings await confirmation. Ratings exclude them until you confirm.");
-  expect(uncertainNotice(1)).toBe("1 reading awaits confirmation. Ratings exclude them until you confirm.");
+  expect(uncertainNotice(4)).toBe("4 uncertain readings await confirmation. Ratings exclude them until you confirm.");
+  expect(uncertainNotice(1)).toBe("1 uncertain reading awaits confirmation. Ratings exclude them until you confirm.");
   expect(uncertainNotice(0)).toBeNull();
   expect(UNCERTAIN_NOTICE_LINK).toBe("Review →");
 });

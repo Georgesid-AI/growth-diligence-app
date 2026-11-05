@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import UploadSection from "./UploadSection";
 import * as api from "@/lib/api";
+import { READINGS_CHANGED } from "@/lib/uploadView";
 
 /**
  * Item 12 of the brief of George, 2026-11-05: above Run audit, when readings await confirmation, one line says so and links to the Uncertain list; Run audit
@@ -45,7 +46,7 @@ test("uncertain readings: the reading step names them, the notice sits above Run
   await mount(reading([item([6, 7]), item([9])], [{ uncertain: true, id: "c1", reading: { index: 0, options: ["a", "b"], details: [{ value: "1" }, { value: "2" }] } }, { uncertain: false }]));
   expect(q("step-reading-second").textContent).toMatch(/1 file processed · 3 uncertain readings$/);
   const notice = q("uncertain-notice");
-  expect(notice.textContent).toBe("3 readings await confirmation. Ratings exclude them until you confirm. Review →");
+  expect(notice.textContent).toBe("3 uncertain readings await confirmation. Ratings exclude them until you confirm. Review →");
   expect(notice.querySelector("a").getAttribute("href")).toBe("#uncertain-list");
   expect(notice.querySelector("a").textContent).toBe("Review →");
   expect(q("run-audit").disabled).toBe(false);
@@ -61,4 +62,27 @@ test("nothing uncertain, or a reading that cannot be fetched: no notice and the 
   await mount("fails");
   expect(q("uncertain-notice")).toBeNull();
   expect(q("run-audit").disabled).toBe(false);
+});
+
+// Combined fixes, 2026-11-05, items 6 and 7: the count is the items not yet picked; it follows every pick without a reload and goes at zero.
+const many = (n) => Array.from({ length: n }, (_, i) => item([i + 1]));
+const settle = async (read) => {
+  api.getReading.mockResolvedValue(read);
+  await act(async () => { window.dispatchEvent(new Event(READINGS_CHANGED)); });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await Promise.resolve(); });
+};
+
+test("twelve uncertain readings: a pick makes it eleven in the notice and the step; picking them all removes the line", async () => {
+  await mount(reading(many(12)));
+  expect(q("uncertain-notice").textContent).toBe("12 uncertain readings await confirmation. Ratings exclude them until you confirm. Review →");
+  expect(q("step-reading-second").textContent).toMatch(/12 uncertain readings$/);
+  await settle(reading(many(11)));
+  expect(q("uncertain-notice").textContent).toBe("11 uncertain readings await confirmation. Ratings exclude them until you confirm. Review →");
+  expect(q("step-reading-second").textContent).toMatch(/11 uncertain readings$/);
+  await settle(reading(many(1)));
+  expect(q("uncertain-notice").textContent).toBe("1 uncertain reading awaits confirmation. Ratings exclude them until you confirm. Review →");
+  await settle(reading([]));
+  expect(q("uncertain-notice")).toBeNull();
+  expect(q("step-reading-second").textContent).not.toMatch(/uncertain/);
 });
