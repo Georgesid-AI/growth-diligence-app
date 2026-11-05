@@ -319,23 +319,37 @@ def _reading_option(claim: Dict, year_end: int) -> Dict:
     target = _target_date(period)
     found = claims.period_range(period, year_end) if period else None
     text = " · ".join(str(x) for x in (claim.get("metric"), None if claim.get("value") is None else fmt.fmt_number(claim["value"]), period) if x)
-    return {"value": text, "ref": text, "set": {"claim_type": claims.PAGE_CLAIM_TYPE.get(claim["metric"], claim["metric"]), "value": claim.get("value"),
+    fields = {"metric": claim.get("metric"), "value": None if claim.get("value") is None else fmt.fmt_number(claim["value"]), "period": period}
+    return {"value": text, "ref": text, "fields": fields, "set": {"claim_type": claims.PAGE_CLAIM_TYPE.get(claim["metric"], claim["metric"]), "value": claim.get("value"),
                                                 "value_high": claim.get("value_high"), "target_date": target, "period_text": period if target else None,
                                                 "period_start": (found or (None, None))[0], "period_end": (found or (None, None))[1]}}
 
 
+def _same_figure(a: Dict, b: Dict) -> bool:
+    """Two reads agree on a figure when page, metric and value are equal and the period is equal or given by one read only (second pass, A2)."""
+    ka, kb = _read_key(a), _read_key(b)
+    return ka[:2] == kb[:2] and ka[3] == kb[3] and (ka[2] == kb[2] or ka[2] is None or kb[2] is None)
+
+
 def merge_reads(first: List[Dict], second: Optional[List[Dict]], year_end: int = 12) -> List[Dict]:
-    """The claims of a page read twice. A claim both reads give with the same metric, period and value stands as it is. Any other claim, one
-    that only one read gives or that the other read gives with another metric, period or value, is kept (the first read's, else the second's)
-    with `_uncertain`: the readings of the two reads that are present, as options. A claim of the second read that pairs with a first-read claim on
-    the same cell is the other candidate of that one claim; the rest are claims of their own. Without a second read nothing is marked."""
+    """The claims of a page read twice. A claim both reads give with the same metric and value, and the same period (or the period on one read only,
+    which then stands: second pass, A2), stands as it is. Any other claim, one that only one read gives or that the other read gives with another
+    metric, period or value, is kept (the first read's, else the second's) with `_uncertain`: the readings of the two reads that are present, as
+    options. A claim of the second read that pairs with a first-read claim on the same cell is the other candidate of that one claim; the rest are
+    claims of their own. A claim of the metric "other" is never marked (A3): the first read's stands, a second-read-only one is dropped. Without
+    a second read nothing is marked."""
     if second is None:
         return list(first)
     pool, out, differing = list(second), [], []
     for claim in first:
-        match = next((c for c in pool if _read_key(c) == _read_key(claim)), None)
+        match = next((c for c in pool if _same_figure(c, claim)), None)
         if match is not None:
             pool.remove(match)
+            out.append(claim if claim.get("period") or not match.get("period") else {**claim, "period": match["period"]})
+        elif claim.get("metric") == "other":
+            other = next((c for c in pool if c.get("value_cell") == claim.get("value_cell")), None)
+            if other is not None:
+                pool.remove(other)
             out.append(claim)
         else:
             differing.append(claim)
@@ -343,8 +357,11 @@ def merge_reads(first: List[Dict], second: Optional[List[Dict]], year_end: int =
         other = next((c for c in pool if c.get("value_cell") == claim.get("value_cell")), None)
         if other is not None:
             pool.remove(other)
+            if other.get("metric") == "other":
+                out.append(claim)               # the other read called it "other": no disagreement is raised on it
+                continue
         out.append({**claim, UNCERTAIN_KEY: [_reading_option(c, year_end) for c in (claim, other) if c is not None]})
-    out += [{**c, UNCERTAIN_KEY: [_reading_option(c, year_end)]} for c in pool]
+    out += [{**c, UNCERTAIN_KEY: [_reading_option(c, year_end)]} for c in pool if c.get("metric") != "other"]
     return out
 
 

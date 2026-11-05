@@ -69,3 +69,26 @@ test("different errors, or an error on only some files, stay per file", () => {
   expect(steps([a, b], [], { status: "idle" }, 0)[0].error).toBeUndefined();
   expect(sheetLine(b, 0).sub).toBe("The file is stored but could not be read.");
 });
+
+// ---- uncertain readings (brief of George, 2026-11-05, items 11 and 12) ----
+import { UNCERTAIN_NOTICE_LINK, uncertainNotice } from "./uploadView";
+
+test("item 11: the done reading step names the uncertain readings when there are some", () => {
+  const rows = steps([done(), done({ file_hash: "b" })], [], { status: "idle" }, 0, { start: 1000, end: 124000 }, 3);
+  expect(rows[0].second).toBe("2:03 · 2 files processed · 3 uncertain readings");
+  expect(steps([done()], [], { status: "idle" }, 0, { start: 1000, end: 124000 }, 1)[0].second).toBe("2:03 · 1 file processed · 1 uncertain reading");
+  expect(steps([done()], [], { status: "idle" }, 0, { start: 1000, end: 124000 }, 0)[0].second).toBe("2:03 · 1 file processed");
+  expect(steps([done()], [], { status: "idle" }, 0, { start: 1000, end: 124000 })[0].second).toBe("2:03 · 1 file processed");
+});
+
+test("item 11: a step that is still running or failed says nothing of uncertain readings", () => {
+  const busy = steps([done({ read_state: "reading" })], [], { status: "idle" }, 5000, { start: 1000 }, 4)[0];
+  expect(busy.second).not.toMatch(/uncertain/);
+});
+
+test("item 12: the notice above Run audit counts the readings and links to the Uncertain list; nothing at zero", () => {
+  expect(uncertainNotice(4)).toBe("4 readings await confirmation. Ratings exclude them until you confirm.");
+  expect(uncertainNotice(1)).toBe("1 reading awaits confirmation. Ratings exclude them until you confirm.");
+  expect(uncertainNotice(0)).toBeNull();
+  expect(UNCERTAIN_NOTICE_LINK).toBe("Review →");
+});

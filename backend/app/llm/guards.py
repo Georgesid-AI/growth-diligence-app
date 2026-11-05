@@ -53,12 +53,14 @@ class GuardRefusal(Exception):
     """A guard refused the call. Carries a client-safe reason code."""
 
     def __init__(self, reason: str, detail: str = "", used: Optional[float] = None, cap: Optional[float] = None,
-                 input_tokens: Optional[int] = None):
+                 input_tokens: Optional[int] = None, first: Optional[int] = None, second: Optional[int] = None):
         self.reason = reason
         self.detail = detail
         self.used = used          # what the cap counted so far and the cap itself, for the "ai call refused" log line
         self.cap = cap
         self.input_tokens = input_tokens      # the input the refused call would have sent (the provider's count): kept on the log line and the llm_calls row
+        self.first = first            # what the first and the second reads of a file or page used of `used` (second pass, C13): on the log line of a token cap
+        self.second = second
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
@@ -108,6 +110,21 @@ async def calls_made(db, run_id: str) -> int:
     )
 
 
+def _by_read(rows: list) -> dict:
+    """{"first", "second"}: the billed input and output tokens of calls split by their read number; a call with none (a re-read, the reviewer) is a first read."""
+    out = {"first": 0, "second": 0}
+    for r in rows:
+        out["second" if r.get("read_no") == 2 else "first"] += int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0))
+    return out
+
+
+async def read_tokens_used(db, run_id: str, file_hash: Optional[str] = None, types: Optional[tuple] = None, exclude: tuple = ()) -> dict:
+    """{"first", "second"}: this audit's billed structure tokens by read (the consistency read is the second), optionally of one file or of some call types."""
+    flt = {"run_id": run_id, "step": STRUCTURE_STEP, "cache_hit": False, **({"file_hash": file_hash} if file_hash else {})}
+    rows = await db[CALLS_COLLECTION].find(flt, {"_id": 0, "input_tokens": 1, "output_tokens": 1, "structure_type": 1, "read_no": 1}).to_list(100000)
+    return _by_read([r for r in rows if (types is None or r.get("structure_type") in types) and r.get("structure_type") not in exclude])
+
+
 async def structure_tokens_used(db, run_id: str) -> int:
     """Billed input and output tokens of this audit's structure reading calls."""
     rows = await db[CALLS_COLLECTION].find(
@@ -138,21 +155,23 @@ async def check_structure_token_cap(db, run_id: str, input_tokens: int, max_toke
     """A call goes out only if the tokens used + its input + its max_tokens fit under the cap."""
     used = await structure_tokens_used(db, run_id)
     if used + input_tokens + max_tokens > STRUCTURE_TOKEN_CAP:
-        raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE, used=used, cap=STRUCTURE_TOKEN_CAP)
+        by = await read_tokens_used(db, run_id, exclude=(REVIEWER_STEP_TYPE, SHEET_READING_TYPE))
+        raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE, used=used, cap=STRUCTURE_TOKEN_CAP, first=by["first"], second=by["second"])
 
 
 async def check_file_token_cap(db, run_id: str, file_hash: str, input_tokens: int, max_tokens: int) -> None:
     """A file reading goes out only if the tokens already used on this file + its input + its max_tokens fit under the per-file cap."""
     used, cap = await file_tokens_used(db, run_id, file_hash), file_token_cap()
     if used + input_tokens + max_tokens > cap:
-        raise GuardRefusal("file_token_cap_reached", FILE_CAP_MESSAGE, used=used, cap=cap)
+        by = await read_tokens_used(db, run_id, file_hash=file_hash, types=(SHEET_READING_TYPE,))
+        raise GuardRefusal("file_token_cap_reached", FILE_CAP_MESSAGE, used=used, cap=cap, first=by["first"], second=by["second"])
 
 
 async def check_reviewer_token_cap(db, run_id: str, input_tokens: int, max_tokens: int) -> None:
     """The reviewer's own allowance: its tokens used + its input + its max_tokens must fit under REVIEWER_TOKEN_CAP. File reading is not counted."""
     used, cap = await reviewer_tokens_used(db, run_id), reviewer_token_cap()
     if used + input_tokens + max_tokens > cap:
-        raise GuardRefusal("reviewer_token_cap_reached", used=used, cap=cap)
+        raise GuardRefusal("reviewer_token_cap_reached", used=used, cap=cap, first=used, second=0)
 
 
 async def check_call_cap(db, run_id: str) -> None:

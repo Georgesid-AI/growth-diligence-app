@@ -46,3 +46,24 @@ Both reads log their tokens per call (`llm_calls.read_no` 1 and 2, with the file
 
 What reaches the model: the same payload twice. What is stored: model JSON output only (rule 17); the second read adds `reading_second_reads` and
 `llm_structures` records of type `page_claims_second`, deleted with the audit (rule 22: `purge_audit`, `purge_file`, `delete_structures`).
+
+## Second pass (brief of George, 2026-11-05)
+
+**Compare rules.** A difference in the segment flag alone is no disagreement (the flag is no longer compared). A deck figure the two page reads agree on
+in metric and value, one with a period and one without, is accepted with the period; a figure of the metric `other` is never raised. An override already on
+a row (an analyst's Change) settles the fields it sets: the item keeps the fields it left open, or goes when it left none. Rows of one sheet with identical
+candidate pairs (position and cells aside) are one item with one pick that applies to all of them (`rows`, "rows 6–9"); the key is the first row's. The
+mapping flag skips the role `other`.
+
+**Held rows.** While a row an OPEX-split estimate is built from (OPEX, S&M, R&D, G&A) is held out, the S&M, R&D and G&A estimates and a "No estimate" line read
+"awaits confirmation"; the trend rows gain `reason`; the templated lines (`report_text`) read a role whose rows are all held as "awaiting". Contract 22.
+
+**The All section.** Four categories, each with a one-line explanation: Matches source, Doesn't match source, Uncertain (the list: file or page, row or
+figure, what differs, first and second reading, Use first / Use second) and Needs attention (renamed from Needs review). The per-file tab keeps its cards in
+the same words; the Detected layout block is unchanged. Above Run audit a line counts the readings that await confirmation and links to the list; Run audit
+stays enabled; the reading step says "M uncertain readings". M counts the lines of the list (a group of rows is one).
+
+**Tokens.** The tester ledger keeps `read1_tokens` and `read2_tokens` beside `tokens`; a token cap's "ai call refused" line ends with `first=` and `second=`
+(the allowance's line still names no amount). A review that stopped on the reviewer's token cap or the tester's allowance is stored with `stopped`; the
+register then says `review.stopped` ({reviewed, total}) and marks every Matches-source row `unreviewed`.
+

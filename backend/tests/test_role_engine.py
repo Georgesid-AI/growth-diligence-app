@@ -216,7 +216,7 @@ def test_customer_level_and_crm_metrics_still_say_they_need_their_files():
 
 def test_the_engine_output_passes_the_contract_and_carries_the_version():
     r = run(monthly_report() + yearly_pnl())
-    assert r["contract_version"] == metrics.CONTRACT_VERSION == 21
+    assert r["contract_version"] == metrics.CONTRACT_VERSION == 22
     metrics.MetricsPayload.model_validate(r)
     assert metrics.safe_problems(r) == []
 

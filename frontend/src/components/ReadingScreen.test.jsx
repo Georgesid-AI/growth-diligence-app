@@ -205,7 +205,7 @@ describe("the two blocks under the Check results sentence", () => {
     await tab(0);
     const sheet = q("file-block");
     expect([...sheet.querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
-      "48 month columns · 41 rows mapped · 37 figures match source · 1 doesn't match source · 1 needs review · actual to May 2022",
+      "48 month columns · 41 rows mapped · 37 figures match source · 1 doesn't match source · 1 needs attention · actual to May 2022",
       "0 personal items removed · 0 company names coded · 0 row labels coded"]);
     expect(sheet.querySelector('[data-testid="file-summary"] b').textContent).toBe("37");
     expect(sheet.querySelector("summary").textContent).toBe("Show all lines");
@@ -213,7 +213,7 @@ describe("the two blocks under the Check results sentence", () => {
     await tab(1);
     expect([...q("file-block").querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
       "20 pages · 17 pages processed · 3 pages skipped (no digits in their text: 1, 2, 7)",
-      "112 figures read · 15 match the page they cite · 0 don't match source · 3 need review (charts without text)",
+      "112 figures read · 15 match the page they cite · 0 don't match source · 3 need attention (charts without text)",
       "1 personal item removed · 17 company names coded"]);
     expect([...q("file-block").querySelectorAll('[data-testid="file-summary"]')[1].querySelectorAll("b")].map((b) => b.textContent)).toEqual(["112", "15"]);
   });
@@ -225,7 +225,7 @@ describe("the two blocks under the Check results sentence", () => {
     await tab(1);
     expect([...q("file-block").querySelectorAll('[data-testid="file-summary"]')].map((p) => p.textContent)).toEqual([
       "1 page · 0 pages processed · 1 page skipped (no digits in its text: 1)",
-      "1 figure read · 0 match the page they cite · 0 don't match source · 0 need review",
+      "1 figure read · 0 match the page they cite · 0 don't match source · 0 need attention",
       "0 personal items removed · 1 company name coded"]);
   });
 
@@ -334,10 +334,10 @@ describe("the Check results section", () => {
   test("a heading with a lead sentence, a tab row with All and one tab per file with its figure count, and the note under it", async () => {
     await show();
     expect(q("results-heading").textContent).toBe("Check results");
-    expect(q("results-lead").textContent).toBe("Every figure the model read, after code opened its cell or page and compared the value. Three tables: Matches source, Doesn't match source, Needs review.");
+    expect(q("results-lead").textContent).toBe("Every figure the model read, after code opened its cell or page and compared the value. Four lists: Matches source, Doesn't match source, Uncertain, Needs attention.");
     expect([q("tab-all"), ...all("tab-file")].map((a) => a.textContent)).toEqual(["All 52", "revenue.xlsx 37", "Board report.pdf 15"]);
     expect(q("tab-all").className).toBe("on");
-    expect(q("tab-note").textContent).toBe("Each tab shows the Matches source, Doesn't match source and Needs review results for one file. For decks, it also lists every figure read from the deck, with its page number and outcome.");
+    expect(q("tab-note").textContent).toBe("Each tab shows the Matches source, Doesn't match source and Needs attention results for one file. For decks, it also lists every figure read from the deck, with its page number and outcome.");
     const css = fs.readFileSync(path.resolve(__dirname, "../App.css"), "utf8");
     expect(css).toMatch(/h1\.section \{[^}]*border-top: 2px solid var\(--ink\)/);
   });
@@ -356,7 +356,7 @@ describe("the Check results section", () => {
     expect(all("file-block")).toHaveLength(1);
     expect(q("heading-confirmed").textContent).toBe("Matches source · 1");
     expect(q("heading-rejected").textContent).toBe("Doesn't match source · 1");
-    expect(q("heading-cannot_check").textContent).toBe("Needs review · 0");
+    expect(q("heading-cannot_check").textContent).toBe("Needs attention · 0");
     expect(all("card-citation_failed_twice")).toHaveLength(1);
     expect(q("deck-figures")).toBeNull();
     expect(q("tab-all").className).toBe("");
@@ -372,10 +372,10 @@ describe("the Check results section", () => {
     expect([...box.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Metric", "Value", "Period", "Label", "Page", "Outcome"]);
     for (const th of box.querySelectorAll("th")) expect(th.getAttribute("title")).toBeTruthy();
     expect(all("deck-figure").map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent))).toEqual([
-      ["arr", "4.5%", "FY 2021", "Closing ARR", "3", "Matches source"], ["mrr", "2,500 EUR", "—", "—", "8", "Needs review"]]);
+      ["arr", "4.5%", "FY 2021", "Closing ARR", "3", "Matches source"], ["mrr", "2,500 EUR", "—", "—", "8", "Needs attention"]]);
     expect(box.className).toBe("box");
     expect(q("heading-confirmed").textContent).toBe("Matches source · 1");
-    expect(q("heading-cannot_check").textContent).toBe("Needs review · 1");
+    expect(q("heading-cannot_check").textContent).toBe("Needs attention · 1");
     expect(q("heading-rejected").textContent).toBe("Doesn't match source · 0");
     expect(all("card-citation_failed_twice")).toHaveLength(0);
     await act(async () => { q("tab-all").click(); });
@@ -384,12 +384,12 @@ describe("the Check results section", () => {
 });
 
 describe("the three result tables", () => {
-  test("Matches source starts collapsed behind its count; Doesn't match source and Needs review show every row", async () => {
+  test("Matches source starts collapsed behind its count; Doesn't match source and Needs attention show every row", async () => {
     await show();
     expect(q("confirmed-details").open).toBe(false);
     expect(q("heading-confirmed").textContent).toBe("Matches source · 2");
     expect(q("heading-rejected").textContent).toBe("Doesn't match source · 1");
-    expect(q("heading-cannot_check").textContent).toBe("Needs review · 1");
+    expect(q("heading-cannot_check").textContent).toBe("Needs attention · 1");
     expect(all("row-rejected")).toHaveLength(1);
     expect(all("row-cannot_check")).toHaveLength(1);
     expect(q("confirmed-details").querySelector("summary").textContent).toBe("Show");

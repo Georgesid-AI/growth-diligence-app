@@ -50,11 +50,12 @@ async def tester_of(db, audit_id: str) -> Optional[str]:
 
 
 async def record(db, tester_id: Optional[str], *, files: int = 0, calls: int = 0, tokens: int = 0, cost_usd: float = 0.0,
-                 now: Optional[datetime] = None) -> None:
-    """Add to this month and to all time. No tester (access control off): nothing is counted."""
+                 now: Optional[datetime] = None, read_no: Optional[int] = None) -> None:
+    """Add to this month and to all time. No tester (access control off): nothing is counted. The tokens are counted in total as before and, beside
+    them, by read (second pass, C13): `read1_tokens` (a call with no read number is a first read) and `read2_tokens`, the consistency read."""
     if not tester_id:
         return
-    amounts = {"files": files, "calls": calls, "tokens": tokens, "cost_usd": cost_usd}
+    amounts = {"files": files, "calls": calls, "tokens": tokens, "cost_usd": cost_usd, "read2_tokens" if read_no == 2 else "read1_tokens": tokens}
     inc = {f"ledger.{key}.{name}": value for key in ("all", month_key(now)) for name, value in amounts.items() if value}
     if inc:
         await db[access.COLLECTION].update_one({"id": tester_id}, {"$inc": inc})

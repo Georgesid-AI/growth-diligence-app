@@ -11,6 +11,7 @@ stored reading; the second is stored beside it (readings.put_second). Here the t
 The analyst picks one candidate: a dated override record (`readings.add_override`, item `uncertain:...`), exactly like a Change. The reading is not
 edited. An item is pending until an override of its key exists. No cell value of the file is read here beyond the series the readings already hold.
 """
+import json
 from typing import Dict, List, Optional
 
 from . import readings
@@ -21,7 +22,8 @@ WHY = "uncertain: kept the first reading"
 WHY_SECOND = "uncertain: picked the second reading"
 SHEET_FIELDS = ("granularity", "header_row", "last_actual")      # last_actual compares its column
 # unit, currency and basis added 2026-11-05 (George): they are read into the figures (the fx, the form of the series), so a difference is one.
-ROW_FIELDS = ("role", "metric", "series", "plan_series", "segment", "parent_row", "unit", "currency", "basis")
+# The segment flag left out 2026-11-05 (second pass, A1): two reads that differ in it alone are not a disagreement.
+ROW_FIELDS = ("role", "metric", "series", "plan_series", "parent_row", "unit", "currency", "basis")
 
 
 def _segment_flag(row: Dict) -> bool:
@@ -30,8 +32,7 @@ def _segment_flag(row: Dict) -> bool:
 
 def _signature(row: Dict) -> Dict:
     return {"role": row.get("role"), "metric": row.get("metric"), "series": row.get("series"), "plan_series": row.get("plan_series"),
-            "segment": _segment_flag(row), "parent_row": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency"),
-            "basis": row.get("basis")}
+            "parent_row": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency"), "basis": row.get("basis")}
 
 
 def row_view(row: Optional[Dict]) -> Optional[Dict]:
@@ -78,6 +79,7 @@ def compare(first: Dict, second: Dict) -> List[Dict]:
                               "name": field, "first": one, "second": two})
         rows_a = {r["row"]: r for r in fa.get("rows") or []}
         rows_b = {r["row"]: r for r in fb.get("rows") or []}
+        groups: Dict[str, Dict] = {}
         for number in sorted({*rows_a, *rows_b}):
             ra, rb = rows_a.get(number), rows_b.get(number)
             if ra is not None and rb is not None:
@@ -87,19 +89,53 @@ def compare(first: Dict, second: Dict) -> List[Dict]:
                 differing = [f for f in ROW_FIELDS if sa[f] != sb[f]]
             else:
                 differing = ["row"]
-            items.append({"key": row_key(name, number), "kind": "row", "sheet": name, "row": number, "fields": differing,
-                          "first": row_view(ra), "second": row_view(rb)})
+            item = {"key": row_key(name, number), "kind": "row", "sheet": name, "row": number, "rows": [number], "fields": differing,
+                    "first": row_view(ra), "second": row_view(rb)}
+            # Rows of one sheet with identical candidate pairs are one item with one pick (second pass, A5); the position of a row (its cells) is no part of the pair.
+            same = json.dumps([differing, _pair(item["first"]), _pair(item["second"])], sort_keys=True, default=str)
+            if same in groups:
+                groups[same]["rows"].append(number)
+            else:
+                groups[same] = item
+                items.append(item)
     return items
+
+
+def _pair(view: Optional[Dict]) -> Optional[Dict]:
+    return None if view is None else {k: v for k, v in view.items() if k != "cells"}
 
 
 def decided_keys(overrides: List[Dict]) -> set:
     return {o["item"] for o in overrides if str(o.get("item", "")).startswith("uncertain:") and str(o.get("why", "")).startswith("uncertain:")}
 
 
+def _set_by_analyst(overrides: List[Dict]) -> Dict[str, set]:
+    """{"row:<sheet>:<row>": the row fields an override (an analyst's Change, a reviewer's correction) has set}: the last part of its path."""
+    out: Dict[str, set] = {}
+    for o in overrides:
+        item = str(o.get("item", ""))
+        if item.startswith("row:") and not str(o.get("why", "")).startswith("uncertain:"):
+            out.setdefault(item, set()).add(str(o.get("path", "")).rsplit(".", 1)[-1])
+    return out
+
+
 def pending(consistency: Optional[Dict], overrides: List[Dict]) -> List[Dict]:
-    """The items of a file's consistency record that no override has settled yet."""
-    done = decided_keys(overrides)
-    return [i for i in (consistency or {}).get("items") or [] if i["key"] not in done]
+    """The items of a file's consistency record that no override has settled yet. An override already on a row (an analyst's Change) settles the
+    fields it sets (second pass, A4): the item keeps the fields it left open, or goes when it left none."""
+    done, set_by = decided_keys(overrides), _set_by_analyst(overrides)
+    out = []
+    for i in (consistency or {}).get("items") or []:
+        if i["key"] in done:
+            continue
+        if i["kind"] == "row" and i.get("fields") != ["row"]:
+            rows = i.get("rows") or [i["row"]]
+            settled = set.intersection(*[set_by.get(f"row:{i['sheet']}:{n}", set()) for n in rows])
+            left = [f for f in i.get("fields") or [] if f not in settled]
+            if not left:
+                continue
+            i = {**i, "fields": left}
+        out.append(i)
+    return out
 
 
 def held_rows(file_map: Dict, waiting: List[Dict]) -> List[str]:
@@ -107,7 +143,7 @@ def held_rows(file_map: Dict, waiting: List[Dict]) -> List[str]:
     and every row of a sheet with a pending sheet-level item (the sheet only one read gives, or a layout field the reads disagree on: the
     rows' series and the as-of month are read under that layout, so they are in doubt with it)."""
     sheets = {i["sheet"] for i in waiting if i["kind"] in ("sheet", "field")}
-    out = [f"{i['sheet']}:{i['row']}" for i in waiting if i["kind"] == "row"]
+    out = [f"{i['sheet']}:{n}" for i in waiting if i["kind"] == "row" for n in i.get("rows") or [i["row"]]]
     out += [f"{s['sheet']}:{r['row']}" for s in file_map.get("sheets") or [] if s["sheet"] in sheets for r in s.get("rows") or []]
     return list(dict.fromkeys(out))
 
@@ -161,9 +197,10 @@ async def decide(db, audit_id: str, file_hash: str, key: str, pick: str, who: st
         path, old = f"sheets.{si}.rows", [r["row"] for r in rows]
         if pick == "second":
             theirs = next((s for s in second["file_map"]["sheets"] if s["sheet"] == item["sheet"]), {})
-            candidate = next((r for r in theirs.get("rows") or [] if r["row"] == item["row"]), None)
-            rows = [r for r in rows if r["row"] != item["row"]]
-            if candidate is not None:
-                rows = sorted([*rows, candidate], key=lambda r: r["row"])
+            for number in item.get("rows") or [item["row"]]:         # one pick applies to every row of a group
+                candidate = next((r for r in theirs.get("rows") or [] if r["row"] == number), None)
+                rows = [r for r in rows if r["row"] != number]
+                if candidate is not None:
+                    rows = sorted([*rows, candidate], key=lambda r: r["row"])
         new = rows
     return await readings.add_override(db, reading=reading["key"], audit_id=audit_id, item=key, path=path, old=old, new=new, who=who, why=why)

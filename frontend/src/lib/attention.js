@@ -8,7 +8,7 @@ import { definitionOf, turnoverOf } from "./claimRegister";
 import { isOther } from "./deckClaims";
 import { groupQuestions } from "./claimGroups";
 
-export const ATTENTION_HEADING = "Needs your attention";
+export const ATTENTION_HEADING = "Needs attention";           // George, 2026-11-05: "Needs attention" is the one word, here and on the mapping page
 export const SHOWN_QUESTIONS = 3;
 export const attentionCount = (n) => (n === 1 ? "1 question needs a word from you" : `${n} questions need a word from you`);
 export const moreLabel = (n) => `${n} more`;

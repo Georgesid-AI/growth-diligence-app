@@ -1058,7 +1058,7 @@ async def log_call(
     if not cache_hit and (input_tokens or output_tokens):
         # A billed call counts against the tester's allowance, kept on the tester and not on the audit (usage-and-allowance.md).
         await allowance.record_for_audit(db, run_id, calls=1, tokens=int(input_tokens) + int(output_tokens),
-                                         cost_usd=float(estimated_cost_usd))
+                                         cost_usd=float(estimated_cost_usd), read_no=read_no)
 
 
 _DATE_SUFFIX = re.compile(r"-\d{8}$")
@@ -1651,9 +1651,11 @@ CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_rea
 
 def log_refusal(step: str, run_id: str, refusal: "guards.GuardRefusal") -> None:
     """One backend log line for every cap refusal on any AI call: closed words and numbers only."""
-    logger.warning("ai call refused: step=%s run_id=%s reason=%s used=%s cap=%s input=%s", step, run_id,
+    # A token cap names what the first and the second reads of the audit (or file) used of `used` (second pass, C13); the allowance names no amount.
+    reads = "" if refusal.first is None else f" first={refusal.first} second={refusal.second or 0}"
+    logger.warning("ai call refused: step=%s run_id=%s reason=%s used=%s cap=%s input=%s%s", step, run_id,
                    CAP_REASONS.get(refusal.reason, "cap"), "-" if refusal.used is None else refusal.used,
-                   "-" if refusal.cap is None else refusal.cap, "-" if refusal.input_tokens is None else refusal.input_tokens)
+                   "-" if refusal.cap is None else refusal.cap, "-" if refusal.input_tokens is None else refusal.input_tokens, reads)
 # The calls outside the daily spend cap: a column mapping (chat-upload.md 4.2) and a page read (ai-reads-rules-check.md). Both still
 # count in the tester's monthly allowance and in the day's spend every other call is checked against.
 SPEND_CAP_EXEMPT = frozenset({PAGE_CLAIMS})
@@ -2401,6 +2403,9 @@ REVIEW_STRUCTURE_TYPE = "reviewer"
 REVIEWER_PROMPT_MISSING = "prompt_missing"       # the llm_calls status of a review that found no `reviewer` prompt in the store
 
 
+REVIEW_ALLOWANCE_STOPS = frozenset({"reviewer_token_cap_reached", "monthly_allowance_reached"})
+
+
 class ReviewRead(NamedTuple):
     """The result of the reviewer call: status ("read", or why not), the findings as the model wrote them (restored names), the reason."""
     status: str
@@ -2412,6 +2417,7 @@ class ReviewRead(NamedTuple):
     input_tokens: int = 0
     output_tokens: int = 0
     estimated_cost_usd: float = 0.0
+    stopped: Optional[str] = None          # "allowance": the call was refused on the reviewer's token cap or the tester's monthly allowance (second pass, C14)
 
 
 def parse_review_reply(reply: str) -> "schemas.ReviewReply":
@@ -2507,7 +2513,7 @@ async def run_reviewer(db, audit_id: str, review_input: dict, adapter=None, slee
                            estimated_cost_usd=0.0, cache_hit=False, status=refusal.reason, content_hash=digest, structure_type=REVIEW_STRUCTURE_TYPE,
                            refused_input_tokens=counted)
             log_refusal(REVIEW_STRUCTURE_TYPE, audit_id, refusal)
-            return ReviewRead("not_read", reason=NOT_READ, **base)
+            return ReviewRead("not_read", reason=NOT_READ, stopped="allowance" if refusal.reason in REVIEW_ALLOWANCE_STOPS else None, **base)
         billed_in = billed_out = attempts = 0
         prior, payload = None, user_payload
         while True:

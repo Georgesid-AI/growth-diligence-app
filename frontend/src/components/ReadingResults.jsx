@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { decideCard, getCell, getDeckPage } from "@/lib/api";
 import {
-  ACTION_LABELS, HOVERS, NUMERIC, TITLES, WIDTHS, actualPlanLabel, basisLabel, cardTitle, periodLabel, sourceParts, valueText,
+  ACTION_LABELS, EXPLAIN, HOVERS, NUMERIC, TITLES, WIDTHS, actualPlanLabel, basisLabel, cardTitle, differsText, periodLabel, readingsText, sourceParts, valueText,
 } from "@/lib/readingView";
 import { PLACEHOLDER, fmtCount } from "@/lib/format";
 
@@ -56,6 +56,8 @@ const cellsFor = {
   confirmed: (r, auditId) => [
     <>{r.metric}{r.note === "set by analyst" && (
       <><br /><span className="muted" data-testid="set-by-analyst" title={r.hover}>{r.note}{r.set_at ? `, ${r.set_at}` : ""}</span></>
+    )}{r.unreviewed && (
+      <><br /><span className="muted" data-testid="unreviewed-mark" title="The review stopped before it reached this figure">unreviewed</span></>
     )}</>, valueText(r.value, r.unit, r.currency), periodLabel(r.period), r.label || PLACEHOLDER, basisLabel(r.basis), actualPlanLabel(r.actual_plan),
     r.row_role || PLACEHOLDER, <SourceLink key="s" auditId={auditId} source={r.source} />,
   ],
@@ -164,11 +166,42 @@ function Card({ card, auditId, onDecided }) {
   );
 }
 
-export default function ReadingResults({ data, auditId, confirmedOpen, setConfirmedOpen, onChanged }) {
+const UNCERTAIN_HEADS = ["File / page", "Row or figure", "What differs", "First reading", "Second reading", "Your pick"];
+const UNCERTAIN_WIDTHS = [14, 15, 12, 20, 20, 19];
+
+/** The Uncertain list (brief of George, 2026-11-05, item 9): one row per item, the differing fields only, the two buttons; a pick sends and the screen loads again. */
+function UncertainTable({ entries, onPick }) {
+  return (
+    <table className="rows" data-testid="table-uncertain">
+      <colgroup>{UNCERTAIN_WIDTHS.map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
+      <thead><tr>{UNCERTAIN_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+      <tbody>
+        {entries.map((e) => (
+          <tr key={e.id} data-testid="row-uncertain">
+            <td data-h="File / page">{e.fileLabel}</td>
+            <td data-h="Row or figure">{e.where}</td>
+            <td data-h="What differs">{differsText(e.item)}</td>
+            <td data-h="First reading">{readingsText(e.item, "first")}</td>
+            <td data-h="Second reading">{readingsText(e.item, "second")}</td>
+            <td data-h="Your pick" className="nw">
+              <button type="button" className="btn quiet" data-testid="uncertain-use-first" title="Use the first reading" onClick={() => onPick(e, "first")}>Use first</button>
+              <button type="button" className="btn quiet" data-testid="uncertain-use-second" title="Use the second reading" onClick={() => onPick(e, "second")}>Use second</button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+export default function ReadingResults({ data, auditId, confirmedOpen, setConfirmedOpen, onChanged, uncertain, onPick }) {
   const open = data.cards.filter((c) => c.status === "open");
+  const matches = data.tables.confirmed.filter((r) => !r.unreviewed).length;          // a figure the review did not reach is no match (item 14)
+  const counts = { ...data.counts, confirmed: matches, uncertain: (uncertain || []).length };
   const section = (kind, tone, children) => (
     <>
-      <h2 className={tone} data-testid={`heading-${kind}`}>{TITLES[kind]} <span className="n">· {fmtCount(data.counts[kind])}</span></h2>
+      <h2 className={tone} data-testid={`heading-${kind}`}>{TITLES[kind]} <span className="n">· {fmtCount(counts[kind])}</span></h2>
+      <p className="explain" data-testid={`explain-${kind}`}>{EXPLAIN[kind]}</p>
       {children}
     </>
   );
@@ -182,6 +215,11 @@ export default function ReadingResults({ data, auditId, confirmedOpen, setConfir
       ))}
       {section("rejected", "bad", data.tables.rejected.length > 0 && <ResultTable kind="rejected" rows={data.tables.rejected} auditId={auditId} />)}
       {open.map((c) => <Card key={c.id} card={c} auditId={auditId} onDecided={onChanged} />)}
+      {uncertain && (
+        <div id="uncertain-list" data-testid="uncertain-list">
+          {section("uncertain", "warn", uncertain.length > 0 && <UncertainTable entries={uncertain} onPick={onPick} />)}
+        </div>
+      )}
       {section("cannot_check", "warn", data.tables.cannot_check.length > 0 && <ResultTable kind="cannot_check" rows={data.tables.cannot_check} auditId={auditId} />)}
     </section>
   );
