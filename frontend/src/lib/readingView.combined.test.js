@@ -52,3 +52,12 @@ describe("item 10: a series or plan series difference never shows the bare perio
     expect(readingsText(none, "first")).toBe("series different values · plan series different values");
   });
 });
+
+// ---- prompt v5: a scenario segment is shown by its name, not as "a segment" ----
+import { candidateText as scenarioCandidateText } from "./readingView";
+
+test("a row whose segment is a scenario is shown as that scenario, a product split as a segment", () => {
+  const row = { role: "revenue", metric: "revenue", cells: "B4:M4", segment: false, scenario: "Best case" };
+  expect(scenarioCandidateText({ kind: "row", first: row }, "first")).toBe("revenue · revenue · B4:M4 · scenario Best case");
+  expect(scenarioCandidateText({ kind: "row", first: { ...row, scenario: null, segment: true } }, "first")).toBe("revenue · revenue · B4:M4 · a segment");
+});

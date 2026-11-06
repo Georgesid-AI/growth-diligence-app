@@ -4071,6 +4071,16 @@ def test_a_reading_read_sheet_by_sheet_stores_a_lost_sheet_as_its_name_and_a_clo
     assert line == "Reply cut at the output limit – read sheet by sheet failed on sheet Big"
 
 
+def test_the_weak_evidence_reason_and_the_scenario_name_are_closed_words_and_names_from_the_file_map_only():
+    """Prompt v5 (2026-11-06): the new reason string is fixed text with no cell value; the scenario shown on the mapping page is the part of the
+    reading's own segment after "scenario: ", and the segment flag stays a boolean."""
+    from app import checks, consistency, lines
+    assert checks.R_WEAK_EVIDENCE == "weak evidence only" and "{" not in checks.R_WEAK_EVIDENCE
+    view = consistency.row_view({"role": "revenue", "segment": "scenario: Best case"})
+    assert view["scenario"] == "Best case" and view["segment"] is False
+    assert lines.scenario_of("Product A") is None and lines.scenario_of("scenario:") is None
+
+
 def asyncio_run(coro):
     import asyncio
     return asyncio.run(coro)

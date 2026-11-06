@@ -18,6 +18,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 
 from . import formatting as fmt
+from . import lines as lines_mod
 
 ROLES = ("revenue", "bookings", "arr", "mrr", "churn_rate", "customers", "forecast", "cost_of_revenue", "sales_marketing", "rnd", "ga", "opex",
          "ebitda", "cash", "headcount")
@@ -179,6 +180,8 @@ def _total(rec: Optional[Dict], key: str = "actual") -> float:
 def _counts(rec: Dict, role: str) -> bool:
     """A row a role is summed from: any row of a cost role (a part row with no total row is summed, a part under a total is skipped by its
     parent), an unsegmented row of any other role."""
+    if lines_mod.scenario_of(rec["segment"]):
+        return False
     return role in COST_ROLES or rec["segment"] is None
 
 

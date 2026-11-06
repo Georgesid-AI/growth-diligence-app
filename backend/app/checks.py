@@ -47,6 +47,8 @@ C_MASKED = "Depends on a name that was masked before reading."
 # --- Two more "nothing to compare against" cases (review of PR 205, F2): the arithmetic input the reading did not give. ---
 C_VARIANCE_ROWS = "variance row without its two source rows"
 C_SEGMENT_TOTAL = "segment row without its total row"
+R_WEAK_EVIDENCE = "weak evidence only"
+WEAK_EVIDENCE = ("row_ends", "repeated_values", "round_values", "layout")      # kinds that show a pattern, not a plan or an actual label
 C_NO_UNIT = "No unit given; not compared."
 C_DATE_ONLY = "No value to compare; date only."
 # --- Wording for rejections the note does not list (for the owner's approval; same discipline: a template, formatted from code). ---
@@ -63,9 +65,13 @@ R_NUMBER = "Reading says a number; cell {ref} holds {cell}."
 R_ACTUAL_PLAN = "Figure marked {marked}; column {column} is {found} for this row."
 NOTHING = "nothing"
 
-# The plan words a `label_contains` piece of evidence may cite (budget, plan, forecast, FC, estimate, projection and their plain forms). It
-# verifies the word the reader cited: it never finds a boundary, a column or a title of its own.
-PLAN_WORD_CHECK = re.compile(r"(?i)(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|forecast(?:s|ed)?|fc|estimates?|estimated|projections?|projected)(?![^\W\d_])")
+# The plan words a `label_contains` piece of evidence may cite (budget, plan, forecast, reforecast, FC, estimate, projection, outlook, pro forma
+# and their plain forms; and a year followed by E, F, B or P: FY24E, 2025F, 2024B). This list decides only whether a confirmed title supports the
+# boundary (the word is read from the cell the reader cited, which must hold it: any word passes that test). It verifies the word the reader
+# cited: it never finds a boundary, a column or a title of its own.
+_YEAR_MARK = r"(?<![^\W_])(?:FY\s?\d{2}|(?:19|20)\d{2})[EFBP](?![^\W_])"
+PLAN_WORD_CHECK = re.compile(r"(?i)(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|(?:re)?forecast(?:s|ed)?|fc|estimates?|estimated|projections?|projected|"
+                             r"outlooks?|pro[\s-]?forma)(?![^\W\d_])|" + _YEAR_MARK)
 _PLACEHOLDER = re.compile("|".join(re.escape(p) for p in redact.PLACEHOLDERS))
 _NUMBER = re.compile(r"^\(?[-+−]?\s*[£$€¥]?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*%?\)?$|^[-+]?\.\d+$|^[-+]?\d+\.?\d*[eE][-+]?\d+$")
 _RANGE = re.compile(r"^([A-Z]{1,3})([1-9]\d*)(?::([A-Z]{1,3})([1-9]\d*))?$")
@@ -572,6 +578,9 @@ def check_last_actual(smap: Dict, sheet: SheetCells, fye: int) -> Tuple[List[Dic
     else:
         items.append(_item(key, "last_actual", CONFIRMED, None, smap["sheet"], head_ref))
     pieces = [check_evidence(smap, i, p, sheet, col) for i, p in enumerate(la["evidence"])]
+    if pieces and items[0]["outcome"] == CONFIRMED and all(p["evidence_kind"] in WEAK_EVIDENCE for p in pieces):
+        # Nothing but a pattern in the cells (a row's end, repeated or round values, a layout remark): the boundary is not evidenced (prompt v5).
+        items[0] = _item(key, "last_actual", REJECTED, R_WEAK_EVIDENCE, smap["sheet"], head_ref)
     items += pieces
     standing = [p for p in pieces if p["outcome"] == CONFIRMED and p["supports"]]
     if items[0]["outcome"] != CONFIRMED or not standing or not parsed or not parsed.get("end"):
