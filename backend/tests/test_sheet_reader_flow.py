@@ -106,8 +106,9 @@ def test_an_uploaded_report_is_read_checked_and_sets_the_as_of_month_with_its_ev
 def test_the_payload_of_the_upload_is_the_masked_file_in_full(flow):
     upload(flow, MONTHLY, monthly())
     text = flow.state["adapter"].sheet_payloads[0]["text"]
+    head, text = text.split("\n", 1)
     lines = text.split("\n")
-    assert lines[0] == "sheet 1: CSV" and len(lines) == 1 + sum(1 for ln in monthly().decode().split("\n")[:12] for cell in ln.split(",") if cell)
+    assert head == "sheets in this file: CSV" and lines[0] == "sheet 1: CSV" and len(lines) == 1 + sum(1 for ln in monthly().decode().split("\n")[:12] for cell in ln.split(",") if cell)
     assert "Northwind" not in text and "A1: Client-01 - monthly management report" in lines
     assert "A8: Logo churn %" in lines and "A11: Pipeline" in lines and "A7: Customers" in lines, "metric labels are not company names"
     assert "G4: 10625" in lines and "M12: 0.1787" in lines, "every row to the last, every column to the last, no sampling"

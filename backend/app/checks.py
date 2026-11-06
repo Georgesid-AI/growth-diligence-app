@@ -614,15 +614,53 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
     return {**base, "outcome": CANNOT, "reason": C_LAYOUT}
 
 
-def _plan_sheet_elsewhere(name: str, cells: Optional["Cells"]) -> bool:
-    """Whether a sheet other than `name` has a plan word in its name or in a text cell of its title rows."""
+def _plan_sheet_named(name: str, cells: Optional["Cells"], others: bool = True) -> Optional[str]:
+    """The name of the first sheet with a plan word in its name or in a text cell of its title rows: a sheet other than `name` (`others`), or
+    `name` alone (not `others`). None when there is none."""
     for other, sheet in (cells.sheets if cells else {}).items():
-        if other == name:
+        if (other == name) == others:
             continue
         title = [t for (r, _), t in sheet.cells.items() if r <= TITLE_ROWS and to_number(t) is None]
         if PLAN_WORD.search(other) or any(PLAN_WORD.search(t) for t in title):
-            return True
-    return False
+            return other
+    return None
+
+
+def _plan_sheet_elsewhere(name: str, cells: Optional["Cells"]) -> bool:
+    """Whether a sheet other than `name` has a plan word in its name or in a text cell of its title rows."""
+    return _plan_sheet_named(name, cells) is not None
+
+
+_FORM_OF = {"monthly": "2000-01", "quarterly": "2000-Q1", "yearly": "2000"}
+R_BY_CODE = "Every mapped row on {sheet} ends at column {column}, and sheet {plan} is the plan: last actual column set by code."
+
+
+def plan_fallback(fmap: Dict, cells: "Cells", fye: int = 12) -> Dict:
+    """A copy of the file map in which a sheet whose reading has no last actual column gets one from code (George, 2026-11-06). The rule: another
+    sheet of the file has a plan word (PLAN_WORDS) in its name or its first three rows, this sheet has none, and every mapped row of this sheet
+    that holds values ends at the sheet's last period column. The column is that column; its period is what its header names; the one piece of
+    evidence is a row_ends that names the plan sheet and says it was set by code. The checks then open it like any other piece. A sheet that
+    does not meet the rule, or whose header names no period, is left as it was."""
+    out = copy.deepcopy(fmap)
+    for smap in out.get("sheets") or []:
+        sheet = cells.sheet(smap["sheet"])
+        if smap.get("last_actual") or sheet is None or periods_down(smap) or _plan_sheet_named(smap["sheet"], cells, others=False):
+            continue
+        plan = _plan_sheet_named(smap["sheet"], cells)
+        last = redact.col_number(smap["last_period_col"])
+        ends = {}
+        for row in smap.get("rows") or []:
+            cols = [c for (r, c), t in sheet.cells.items() if r == row["row"] and c > redact.col_number(smap["label_col"]) and not _empty(t)]
+            if cols:
+                ends[row["row"]] = max(cols)
+        parsed = header_period(sheet.header(smap["header_row"], last), fye)
+        if not plan or not ends or any(c != last for c in ends.values()) or not parsed or not parsed.get("end"):
+            continue
+        text = R_BY_CODE.format(sheet=smap["sheet"], column=smap["last_period_col"], plan=plan)[:300]    # the schema's MAP_TEXT_MAX
+        smap["last_actual"] = {"column": smap["last_period_col"], "period": period_in_form(parsed, _FORM_OF.get(smap["granularity"], "2000-01")),
+                               "evidence": [{"kind": "row_ends", "text": text, "row": min(ends), "column": smap["last_period_col"], "cell": None,
+                                             "cells": None, "other_cells": None, "word": None, "multiple": None}]}
+    return out
 
 
 def _weak(smap: Dict, piece: Dict, cells: Optional["Cells"]) -> bool:

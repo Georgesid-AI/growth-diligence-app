@@ -96,8 +96,9 @@ def test_the_payload_is_every_cell_masked_and_nothing_else():
     sent = json.loads(adapter.payloads[0])
     assert sent["type"] == "sheet_reading" and set(sent) == {"type", "text", "answer", "schema"}
     assert sent["schema"] == schemas.file_map_schema(), "the file map's schema as text, the same for every file"
-    lines = sent["text"].split("\n")
-    assert lines[0] == "sheet 1: Client-01 report"
+    head, text = sent["text"].split("\n", 1)
+    lines = text.split("\n")
+    assert head == "sheets in this file: Client-01 report" and lines[0] == "sheet 1: Client-01 report"
     assert len(lines) == 1 + len(CELLS), "every non-empty cell, none sampled, none cut"
     for secret in (COMPANY, "Orchid", EMAIL, "Pat Sample", "Zenith"):
         assert secret not in sent["text"], f"{secret!r} reached the provider"

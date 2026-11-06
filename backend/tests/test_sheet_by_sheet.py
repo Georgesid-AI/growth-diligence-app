@@ -151,3 +151,18 @@ def test_a_re_read_asks_only_the_sheets_its_items_are_on():
     assert result.status == "read" and adapter.calls == 1
     assert [ln for ln in adapter.sent[0]["text"].split("\n") if ln.startswith("sheet ")] == ["sheet 1: Actuals"]
     assert adapter.sent[0]["recheck"] == [{"item": "row:Actuals:2", "reason": "test"}]
+
+
+def test_every_sheet_call_starts_with_one_line_naming_all_the_sheets_of_the_file():
+    """George, 2026-11-06: the model reading one sheet can see the others by name; the line comes before the sheet's own cells."""
+    db, adapter, text = audit_db(), BySheet(), book(extra=["Readme"])
+    read(db, adapter, text=text)
+    line = "sheets in this file: Plan, Actuals, Big, Cash, Readme"
+    assert adapter.calls == 4
+    for sent in adapter.sent:
+        first, second = sent["text"].split("\n")[:2]
+        assert first == line and second.startswith("sheet 1: ")
+    again = BySheet()
+    read(db, again, text=text, second_read=True)
+    read(db, again, text=text, recheck=[{"item": "row:Actuals:2", "reason": "test"}])
+    assert again.calls == 5 and all(s["text"].startswith(line + "\nsheet 1: ") for s in again.sent), "second reads and re-reads carry it too"

@@ -1540,6 +1540,7 @@ SHEET_READING_TOO_LARGE = ("This file is too large to read in full (the limit is
 SHEET_READING_CUT = ("The reading of this file was cut off because the file has too many rows to map in one read. "
                      "Remove the sheets that are not needed or split the file, then upload it again.")
 SHEET_READING_LOCK_ROUNDS = 5
+SHEETS_IN_FILE = "sheets in this file: "      # the first line of a sheet call: the names of every sheet of the file, so the model sees the others
 # A sheet reading goes sheet by sheet (George, 2026-11-05): a sheet whose reply is cut, or whose cells are over the input cap, is lost alone; the
 # stored reading names it with the reason. The sheet reads hold a lock of their own, so a page read never waits behind one.
 SHEET_CUT_REASON = "output cap: sheet too large to read in one reply"
@@ -2058,7 +2059,7 @@ async def read_structure(
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
     fiscal_year_end: int = 12, reread_of: Optional[Any] = None, on_stage=None, second_read: bool = False, token_cap: Optional[int] = None,
-    on_sent=None, _unit: bool = False,
+    on_sent=None, _unit: bool = False, _sheets_line: Optional[str] = None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2239,7 +2240,8 @@ async def read_structure(
             base=base, company_name=context.get("company_name"), mapping=mapping)
     # A sheet reading carries the file map's schema as text, with the ask for plain JSON (schemas.file_map_schema; no strict output schema).
     ask = {"answer": schemas.FILE_MAP_ANSWER, "schema": schemas.file_map_schema()} if structure_type == SHEET_READING else {}
-    user_payload = cache.canonical_json({"type": structure_type, "text": text, **({"recheck": recheck} if recheck else {}), **ask})
+    sent_text = f"{_sheets_line}\n{text}" if _sheets_line else text          # a sheet call: the line naming the file's sheets comes before its own cells
+    user_payload = cache.canonical_json({"type": structure_type, "text": sent_text, **({"recheck": recheck} if recheck else {}), **ask})
     image_tokens = 0
     adapter = adapter or (AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS) if structure_type == SHEET_READING else AnthropicAdapter())
     input_cap, max_tokens = STRUCTURE_INPUT_CAP, STRUCTURE_MAX_TOKENS
@@ -2426,9 +2428,10 @@ async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_ra
     reason; the others stand, and a second read leaves out the sheets the first could not read. A re-read asks only the sheets its items are on.
     Any other failure (a provider error, a reply that does not validate, a cap) ends the read as it did for the whole file. Figures citing another
     sheet resolve against the whole file's payload, which is returned."""
-    from .. import series as series_mod        # series imports the checks, which import this module's package
+    from .. import checks as checks_mod, series as series_mod        # series imports the checks, which import this module's package
     adapter = adapter or AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS)
     units = sheet_units(text)
+    sheets_line = SHEETS_IN_FILE + ", ".join(sh["name"] for sh in structure_redact.parse_reading_text(text) or [])      # masked names; nothing else
     if second_read:
         stored = await db[readings.READINGS].find_one({"key": reading_key}, {"_id": 0, "unread_sheets": 1}) or {}
         lost_before = {_mask_map(u["sheet"], company_name, mapping) for u in stored.get("unread_sheets") or []}
@@ -2443,7 +2446,7 @@ async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_ra
     for name, unit_text in units:
         one = await read_structure(db, audit_id, unit_text, SHEET_READING, file_hash=file_hash, adapter=adapter, sleep=sleep,
                                    on_rate_limit=on_rate_limit, recheck=asked.get(name) or None, fiscal_year_end=fiscal_year_end,
-                                   reread_of=reread_of, second_read=second_read, _unit=True)
+                                   reread_of=reread_of, second_read=second_read, _unit=True, _sheets_line=sheets_line)
         tokens = [tokens[0] + one.input_tokens, tokens[1] + one.output_tokens, tokens[2] + one.estimated_cost_usd]
         if one.status == "read" and one.file_map is not None:
             parts.append(one.file_map)
@@ -2463,6 +2466,7 @@ async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_ra
     merged = {"map_version": parts[0]["map_version"], "kind": parts[0]["kind"],
               "sheets": [sh for part in parts for sh in part.get("sheets") or []], "figures": [f for part in parts for f in part.get("figures") or []]}
     if not recheck:
+        merged = checks_mod.plan_fallback(merged, checks_mod.Cells(text), fiscal_year_end)       # a last actual column set by code is stored with the reading
         merged = series_mod.attach(merged, text, fiscal_year_end)           # the row series, written once with the reading (step a of PR 3)
     restored = redaction.restore_deep(merged, mapping)
     unread = redaction.restore_deep(lost, mapping)
