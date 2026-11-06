@@ -647,7 +647,7 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
             for f in (results.get("role_metrics") or {}).get("mapping_flags") or ()]
     out += [f"{f['text']}{notes.add('data integrity, ' + ('totals, ' if f['kind'] == 'totals_mismatch' else 'formula errors, ') + str(f.get('file')))}"
             for f in (results.get("role_metrics") or {}).get("integrity_flags") or ()
-            if f["kind"] != "totals_mismatch" or f["pct"] > integrity_mod.TOTALS_WORTH_FLAGGING]      # a total off by 5 % or less is in the integrity table only
+            if f["kind"] != "totals_mismatch" or (f["pct"] > integrity_mod.TOTALS_WORTH_FLAGGING and not f.get("double_counted"))]      # a total off by 5 % or less, or one whose parts are counted twice, is in the integrity table only
     reconciled = [r for r in recon if r["status"] in ("differs", "agrees_rounded")]
     out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation')}"
             for r in recon if r["status"] == "agrees_rounded"]

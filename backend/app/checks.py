@@ -816,6 +816,41 @@ def classify_by_label(fmap: Dict, cells: "Cells") -> Dict:
     return out
 
 
+SHEET_TYPES = (("cashflow", re.compile(r"cash\s*-?\s*flow", re.I)), ("balance", re.compile(r"\bbalance", re.I)),
+               ("pnl", re.compile(r"\bp\s*(?:&|and)\s*l\b|\bpnl\b|profit|income\s+statement", re.I)))
+PNL_ROLES = ("revenue", "cost_of_revenue", "sales_marketing", "rnd", "ga", "opex", "ebitda", "margin_rate")      # read from a P&L-type or an untyped sheet only
+CASH_SHEETS = ("cashflow", "balance")        # the sheet types a cash balance is read from before any other
+CLASSIFIED_BY_SHEET = "sheet_type"
+CASH_MOVEMENT_NOTE = "cash movement, not a P&L line"
+
+
+def sheet_type(name: Optional[str], title: Optional[str] = None) -> Optional[str]:
+    """"pnl", "cashflow", "balance" or None: from the sheet's name, else from the text above its header row (its title)."""
+    for text in (name, title):
+        for kind, pattern in SHEET_TYPES:
+            if text and pattern.search(text):
+                return kind
+    return None
+
+
+def retype_by_sheet(fmap: Dict, cells: Optional["Cells"] = None) -> Dict:
+    """A copy of the file map in which every sheet carries its `sheet_type` (sheet_type()) and a row of a cash-flow or balance-sheet sheet that the
+    model gave a P&L role (PNL_ROLES) is `other`, classified_by "sheet_type", with the note CASH_MOVEMENT_NOTE: receipts and payments are no
+    revenue or cost. P&L and untyped sheets are left as they are. Idempotent; the input is not changed."""
+    out = copy.deepcopy(fmap)
+    for smap in out.get("sheets") or []:
+        sheet = cells.sheet(smap["sheet"]) if cells is not None else None
+        title = " ".join(t for (r, _), t in sorted(sheet.cells.items()) if r < smap["header_row"] and t and t.strip()) if sheet is not None else None
+        kind = sheet_type(smap["sheet"], title)
+        if kind:
+            smap["sheet_type"] = kind
+        if kind in CASH_SHEETS:
+            for r in smap.get("rows") or []:
+                if r.get("role") in PNL_ROLES:
+                    r["role"], r["metric"], r["classified_by"], r["note"] = "other", None, CLASSIFIED_BY_SHEET, CASH_MOVEMENT_NOTE
+    return out
+
+
 def _weak(smap: Dict, piece: Dict, cells: Optional["Cells"]) -> bool:
     """Whether a piece of evidence for the last actual column shows a pattern only. A row's end is strong when it ends at the sheet's last period
     column and another sheet of the file is named or titled for a plan; every other row end, and the other pattern kinds, are weak."""
