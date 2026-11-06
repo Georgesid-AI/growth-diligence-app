@@ -189,3 +189,11 @@ test("an estimated R&D figure is labelled, carries its method and cells, and kee
     expect(q(host, "role-missing-rnd_expense")).toBeNull();
   } finally { await done(); }
 });
+
+test("the as-of year before its year end shows its label, \"2025 (to Nov)\", on the growth card", async () => {
+  const labelled = { ...RM.growth_by_year[1], label: "2025 (to Nov)" };
+  const { host, done } = await mount(results({ role_metrics: { ...RM, growth_by_year: [RM.growth_by_year[0], labelled] } }));
+  try {
+    expect(q(host, "metric-card-growth_by_year").textContent).toContain("2025 (to Nov) on the year before");
+  } finally { await done(); }
+});

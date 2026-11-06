@@ -83,8 +83,8 @@ export function RoleCards({ rm, ccy }) {
         qualifier={churn?.period ? `(${churn.period})` : undefined}
         note={churn?.status === "computed" ? undefined : churn?.reason} caption="As the file states it" />
       <MetricCard id="growth_by_year" label="Growth by year" source={roleSource(last?.source)}
-        value={last ? signedPct(last.growth) : "n/c"} qualifier={last ? `(${last.period} on the year before)` : undefined}
-        sub={years.length > 1 ? years.slice(0, -1).map((y) => `${y.period} ${signedPct(y.growth)}`).join(" · ") : undefined}
+        value={last ? signedPct(last.growth) : "n/c"} qualifier={last ? `(${last.label || last.period} on the year before)` : undefined}
+        sub={years.length > 1 ? years.slice(0, -1).map((y) => `${y.label || y.period} ${signedPct(y.growth)}`).join(" · ") : undefined}
         note={last ? undefined : first(rm, "growth")?.reason || NOT_COMPUTED}
         caption={last?.deck_note ? `Revenue of the year against the year before (${last.deck_note})` : "Revenue of the year against the year before"} />
     </>

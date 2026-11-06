@@ -15,6 +15,7 @@ New cleanup items go in this file, not in session logs (CLAUDE.md rule 33). One 
 - [ ] A reviewer's `fix` on a deck figure (relabel, currency) is a note with no button; applying it needs the deck candidate's own edit path (board-pack fixes, 2026-11-06).
 - [ ] The reviewer prompt in the store must ask for the optional `fix` of a finding (field currency, role or metric, and its value); until it does, every reviewer card is a note (board-pack fixes, 2026-11-06).
 - [ ] Sheet reading calls run one sheet after another (the lock allows one sheet call per audit); two at a time would shorten a many-sheet file, not built (sheet by sheet reading, 2026-11-05).
+- [ ] Dating: only year-less text months are checked for going back; a date-typed month that goes back is read as written. A leading TOTAL (TOTAL 2024 before its months) closes the year-less months to its left when their own closing headers are missing (board-pack dating, 2026-11-06).
 
 ## Moved from session logs ("Process change to propose")
 

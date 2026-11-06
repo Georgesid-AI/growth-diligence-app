@@ -46,7 +46,7 @@ def _trend(results: dict) -> Optional[Sheet]:
     if not trend or not trend.get("rows"):
         return None
     periods = trend["periods"]
-    header = ["Metric", *[p["period"] + (" (plan)" if p["kind"] == "plan" else "") for p in periods]]
+    header = ["Metric", *[(p.get("label") or p["period"]) + (" (plan)" if p["kind"] == "plan" else "") for p in periods]]
     rows = []
     for r in trend["rows"]:
         by_period = {v["period"] + v["kind"]: v for v in r["values"]}

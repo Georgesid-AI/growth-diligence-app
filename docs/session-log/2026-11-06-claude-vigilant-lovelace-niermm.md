@@ -1,0 +1,7 @@
+2026-11-06 · claude/vigilant-lovelace-niermm (board-pack dating: year-less months, one flag per row, TOTAL before months)
+Deleted: `checks.nearest_year` (it took the year from any cell to the left, so from another block); the growth-by-year citation test for months, now a TOTAL-cell test.
+Decided: `checks.dated_headers` dates a year-less month from the quarter/half/year header that closes its block, else a year title over the block, and drops a month that goes back, repeats or that its closer does not contain ("undated": on the sheet map, a `periods` mapping flag, in no series); the TOTAL column of a monthly sheet (not a separate yearly sheet) is the year before its months, the as-of year counting; the latest year's TOTAL against its months to the as-of month above 1% is a mapping flag with both cells; mapping flags count a row number once; contract 24, golden regenerated.
+Slow or unclear: the full suite takes about 2.3 minutes; whether a TOTAL over a partial year is a year to date or a forecast is not knowable from the file, so the 1% flag is the only guard.
+Root cause and rule: the year was taken from whatever year cell lay to the left and the table counted a row once per record (monthly, quarterly, yearly); the fixture now holds the real layout and the rule is pinned by tests/test_board_pack_dating.py.
+Process change: none.
+Cleanup item added to docs/pr6-cleanup.md: dating of date-typed months that go back, and a leading TOTAL as a closer.

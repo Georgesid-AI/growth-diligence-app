@@ -96,6 +96,7 @@ class SheetCells:
                       for c in cells if c.get("row_span", 1) > 1 or c.get("col_span", 1) > 1]
         self.max_row = max((r for r, _ in self.cells), default=0)
         self.max_col = max((c for _, c in self.cells), default=0)
+        self.dated: Dict = {}            # dated_headers, by header row and column span
 
     def get(self, row: int, col: int) -> Optional[str]:
         return self.cells.get((row, col))
@@ -251,29 +252,85 @@ def _year_cell(text: Optional[str], fye: int) -> Optional[int]:
     return found["year"] if found and found["grain"] == "year" and found["tag"] is None else None
 
 
-def nearest_year(sheet: "SheetCells", row: int, col: int, fye: int = 12) -> Optional[int]:
-    """The year a month's name stands under: the year cell above the header (a merged title over its months counts), else the nearest year cell to the
-    left in the header row or the rows above it. None when no cell states a year: a month's name alone is no period."""
+def _months_between(start: str, end: str) -> List[str]:
+    """The months from `start` to `end` (YYYY-MM), both included."""
+    k, stop = int(start[:4]) * 12 + int(start[5:]) - 1, int(end[:4]) * 12 + int(end[5:]) - 1
+    return [f"{i // 12:04d}-{i % 12 + 1:02d}" for i in range(k, stop + 1)]
+
+
+_CLOSERS = ("quarter", "half", "year")      # the headers that close a block of year-less months: "Q4 2023", "H1 2023", "TOTAL 2023"
+
+
+def _title_year(sheet: "SheetCells", row: int, col: int, block_start: int, fye: int) -> Optional[int]:
+    """The year title above a block of months: a year cell in the rows above the header, over the month's own column (a merged title counts) or in
+    a column to its left that is still inside the block. Never a year of another block."""
     for r in range(row - 1, 0, -1):
-        year = _year_cell(sheet.header(r, col), fye)
-        if year:
-            return year
-    for r in range(row, 0, -1):
-        for c in range(col - 1, 0, -1):
-            year = _year_cell(sheet.get(r, c), fye)
+        for c in range(col, block_start - 1, -1):
+            year = _year_cell(sheet.header(r, c) if c == col else sheet.get(r, c), fye)
             if year:
                 return year
     return None
 
 
-def resolve_header(sheet: "SheetCells", row: int, col: int, fye: int = 12) -> Optional[Dict]:
-    """The period a header cell names, as `header_period` reads it, else (a month's name alone) the month of the nearest year cell."""
+def dated_headers(sheet: "SheetCells", row: int, first_col: int, last_col: int, fye: int = 12) -> Tuple[Dict[int, Dict], List[Tuple[int, str]]]:
+    """({column: month period}, [(column, text)]) of the year-less month headers of a header row ("December"). A month takes its year from the
+    quarter, half or year header that closes its block (the first one to its right with no dated month between: "Q4 2023", "TOTAL 2023"), else from
+    a year title above its block; never from the year seen in another block or from a date-typed header elsewhere. Periods must increase left to
+    right: a month that goes back (or repeats) is undated, as is one the closing header does not contain, or one no header or title dates. An
+    undated month is in the second list and is read by nothing."""
+    key = (row, first_col, last_col, fye)
+    if key in sheet.dated:
+        return sheet.dated[key]
+    heads = {c: sheet.header(row, c) for c in range(first_col, last_col + 1)}
+    explicit = {c: header_period(t, fye) for c, t in heads.items()}
+    dated: Dict[int, Dict] = {}
+    undated: List[Tuple[int, str]] = []
+    last_ym, block_start = None, first_col
+    for c in range(first_col, last_col + 1):
+        found = explicit[c]
+        if found is not None:
+            if found["grain"] == "month":
+                last_ym, block_start = found["start"], c + 1
+            elif found["grain"] in _CLOSERS:
+                block_start = c + 1
+            continue
+        month = _month_word(heads[c])
+        if month is None:
+            continue
+        closer = None
+        for d in range(c + 1, last_col + 1):
+            other = explicit[d]
+            if other is None or other["start"] is None:
+                continue
+            if other["grain"] == "month":
+                break
+            if other["grain"] in _CLOSERS:
+                closer = other
+                break
+        ym = None
+        if closer is not None:
+            ym = next((p for p in _months_between(closer["start"], closer["end"]) if int(p[5:]) == month), None)
+        else:
+            year = _title_year(sheet, row, c, block_start, fye)
+            if year:
+                ym = f"{year - (1 if month > fye else 0):04d}-{month:02d}"
+        if ym is None or (last_ym is not None and ym <= last_ym):
+            undated.append((c, (heads[c] or "").strip()))
+            continue
+        dated[c] = sheet_mod.period_of(date(int(ym[:4]), month, 1), fye)
+        last_ym = ym
+    sheet.dated[key] = (dated, undated)
+    return dated, undated
+
+
+def resolve_header(sheet: "SheetCells", row: int, col: int, fye: int = 12, down: bool = False) -> Optional[Dict]:
+    """The period a header cell names, as `header_period` reads it, else (a month's name alone) the month `dated_headers` gives it. `down`: the
+    periods run down the sheet, the header is a row label and only a year title above it can date it."""
     text = sheet.header(row, col)
     found = header_period(text, fye)
     if found or _month_word(text) is None:
         return found
-    year = nearest_year(sheet, row, col, fye)
-    return sheet_mod.period_of(date(year, _month_word(text), 1), fye) if year else None
+    return dated_headers(sheet, row, col if down else 1, col if down else max(sheet.max_col, col), fye)[0].get(col)
 
 
 def same_period(found: Optional[Dict], written: Optional[str], fye: int = 12) -> bool:
@@ -374,7 +431,7 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
         head_row, head_col = (row, redact.col_number(smap["label_col"])) if down else (smap["header_row"], col)
         head_ref = ref_of(head_row, head_col)
         head_text = sheet.header(head_row, head_col)
-        header = resolve_header(sheet, head_row, head_col, fye)
+        header = resolve_header(sheet, head_row, head_col, fye, down)
         found = period if same_period(header, period, fye) else period_in_form(header, period)
         base["found_period"] = found
         if found != period:

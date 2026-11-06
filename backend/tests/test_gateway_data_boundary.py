@@ -4037,6 +4037,17 @@ def test_the_yearly_pnl_trend_sits_in_the_server_only_role_metrics_block():
     assert not {"pnl_trend", "periods"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
 
 
+def test_the_undated_month_flags_sit_in_the_server_only_role_metrics_block_and_never_in_the_readers_schema():
+    """Board-pack dating (contract 24): the `undated` header cells and the flag text (a cell reference and the month word of the header) are part of
+    `role_metrics`: in no step slice, no log line and no provider payload; the sheet map's `undated` list is stripped before the reader's schema."""
+    from app import series
+    from schemas.metrics import MappingFlag, RoleMetrics
+    assert "undated" in MappingFlag.model_fields and "mapping_flags" in RoleMetrics.model_fields
+    assert not {"undated", "mapping_flags"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
+    stored = {"sheets": [{"sheet": "S", "rows": [], "undated": [{"cell": "G3", "text": "February"}]}]}
+    assert "undated" not in series.strip(stored)["sheets"][0]
+
+
 # --- reading consistency (docs/design/reading-consistency.md): the second read of a sheet and of a page holds the same boundary as the first --------
 def test_the_second_page_read_and_the_second_sheet_read_store_and_log_no_text_and_no_new_key(monkeypatch, second_page_read):
     import json as _json

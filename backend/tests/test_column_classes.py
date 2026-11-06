@@ -142,14 +142,13 @@ def test_year_on_year_growth_and_gross_margin_use_the_year_columns(pack):
     assert all(years[p]["gross_margin_pct"] == pytest.approx(0.6) for p in years)
 
 
-def test_a_growth_citation_lists_the_months_in_runs_and_never_a_subtotal_column(pack):
+def test_a_growth_citation_names_the_total_columns_and_never_a_subtotal_or_month_column(pack):
+    """Board-pack dating, item 3: a year that has a TOTAL column is read from it, so its citation is the TOTAL cells, not the months."""
     r = run(files_of(pack), as_of="2023-12")
     cells = {g["period"]: g["source"]["cells"] for g in r["role_metrics"]["growth_by_year"]}
-    subtotal_refs = {f"{col(c)}4" for c, k in pack["layout"].items() if k[0] == "quarter"}
-    assert not subtotal_refs & set(cells["2023"]), "2022 and 2023 are cited by their month cells"
-    shown = cell_ranges(cells["2023"])
-    assert shown[:2] == ["E4:G4", "I4:K4"] and len(shown) == 8
-    assert cells["2022"][0] == "B4", "the 2021 total column is cited on its own, before the months of 2022"
+    subtotal_refs = {f"{col(c)}4" for c, k in pack["layout"].items() if k[0] in ("quarter", "month")}
+    assert not subtotal_refs & set(cells["2023"]), "2022 and 2023 are cited by their TOTAL columns"
+    assert cells["2023"] == ["C4", "D4"] and cells["2022"] == ["B4", "C4"]
 
 
 def test_headers_that_name_a_subtotal_are_periods():
