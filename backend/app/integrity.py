@@ -194,6 +194,10 @@ def overall(rows: List[dict]) -> dict:
     return {"conclusion": conclusion, "code": code, "completed": x, "applicable": y}
 
 
+TOTALS_LINE = "Totals that don't add up"
+TOTALS_WORTH_FLAGGING = 0.05        # a total that its parts miss by more than this share of the total is also under Worth flagging
+
+
 def statement_findings(results: dict) -> List[dict]:
     """The integrity findings of a P&L read as a statement (docs/design/pnl-lines.md section 3): a total that differs from its lines, a sign
     that differs, a % row that does not recompute, each beyond the app's tolerance and with the cell it cites; and a file with formula errors, with their cells. They are shown with the data
@@ -201,7 +205,8 @@ def statement_findings(results: dict) -> List[dict]:
     found = [{"kind": f["kind"], "line": f["line"], "period": f["period"], "text": f["text"], "source": _cite(f["source"])}
              for f in (results.get("pnl_lines") or {}).get("findings") or ()]
     # A file that holds formula errors (#REF!, #DIV/0!, #N/A, #VALUE!): one finding for the file, with the cells (role_metrics.integrity_flags)
-    return found + [{"kind": f["kind"], "line": f.get("file"), "period": None, "text": f["text"], "source": ", ".join(f["cells"])}
+    return found + [{"kind": f["kind"], "line": TOTALS_LINE if f["kind"] == "totals_mismatch" else f.get("file"), "period": None, "text": f["text"],
+                     "source": ", ".join(f["cells"])}
                     for f in (results.get("role_metrics") or {}).get("integrity_flags") or ()]
 
 

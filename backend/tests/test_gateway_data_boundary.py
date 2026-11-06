@@ -4183,3 +4183,11 @@ def test_the_sheets_in_this_file_line_of_a_sheet_call_carries_sheet_names_only()
         for cell_text in ("Metric", "Jan-24", "Revenue", "Acme", "Jane", "100", "200"):
             assert cell_text not in head
         assert head.count("\n") == 0 and len(head) <= 400
+
+
+def test_the_totals_findings_and_the_cited_formula_errors_sit_in_the_server_only_role_metrics_block():
+    """Contract 25: a total that its parts do not add up to (sheet, row, cell, the two sums, the difference) and a formula error in a cited cell are
+    stored on the file's check outcome and told by `role_metrics.integrity_flags`: in no step slice, no log line and no provider payload."""
+    from schemas.metrics import IntegrityFlag, RoleMetrics
+    assert {"total", "parts_sum", "difference", "pct", "sheet", "row"} <= set(IntegrityFlag.model_fields) and "integrity_flags" in RoleMetrics.model_fields
+    assert not {"totals", "totals_mismatch", "parts_sum", "integrity_flags", "formula_error"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}

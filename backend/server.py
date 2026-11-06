@@ -2745,12 +2745,14 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
         items = [i for i in check.get("items") or [] if str(i.get("key", "")).startswith("row:")]
         waiting = consistency_mod.pending(check.get("consistency"), overrides)
         waiting_items += len(waiting)
+        fresh = await register.refreshed(db, audit_id, check, file_map, _fiscal_year_end(audit))      # the stored checks by today's rules: no model call
         labels = {f"{sh['sheet']}:{ln['row']}": ln.get("label") for sh in check.get("lines") or [] for ln in sh.get("lines") or []}
         files.append({"file": check.get("file"), "file_hash": check.get("file_hash"), "file_map": file_map, "labels": labels,
                       "rejected": [i["key"] for i in items if i["outcome"] == checks_mod.REJECTED],
                       "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT],
                       "uncertain": consistency_mod.held_rows(file_map, waiting),
-                      "hidden_sheets": check.get("hidden_sheets") or [], "formula_errors": check.get("formula_errors") or []})
+                      "hidden_sheets": check.get("hidden_sheets") or [], "formula_errors": checks_mod.formula_errors_of(fresh),
+                      "totals": fresh["totals"]})
     deck = [{**{k: v for k, v in f.items() if k != "line"}, "file": d["file"], "page": f["source"]["page"]}      # the line of text is for the screen only
             for d in await deck_figures.checked(db, audit_id) for f in d["figures"] if f["outcome"] != checks_mod.REJECTED]
     # "unread": mapped rows with no series, for the report text only (report_text); the engine reads "table" alone

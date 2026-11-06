@@ -53,7 +53,7 @@ def _worst(items: List[Dict]) -> Dict:
     return next((i for i in items if i["outcome"] == checks.REJECTED), items[0])
 
 
-FORMULA_ERRORS = ("#REF!", "#DIV/0!", "#N/A", "#VALUE!", "#NAME?", "#NUM!", "#NULL!")      # a cell that holds exactly one of these is a formula error
+FORMULA_ERRORS = checks.FORMULA_ERRORS      # a cell that holds exactly one of these is a formula error
 
 
 def file_facts(sheets: list) -> Dict:
@@ -154,7 +154,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     best = max(months, key=lambda m: m["month"], default=None)
     doc = {"status": "read", "file": file, "file_hash": file_hash, "reading_key": first.reading_key, "prompt_version": first.prompt_version,
            "model": first.model, "cache_hit": first.cache_hit, "masked": first.masked or {}, "counts": final["counts"],
-           "items": final["items"], "rereads": rereads, "months": months,
+           "items": final["items"], "totals": final["totals"], "rereads": rereads, "months": months,
            "month": best["month"] if best else None,
            "evidence": (f"{best['evidence']} (confirmed on sheet {best['sheet']}, column {best['column']})" if best else None),
            "unread_sheets": first.unread_sheets, "read_reason": read_reasons.sheets_line(first.unread_sheets),

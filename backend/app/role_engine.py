@@ -195,10 +195,26 @@ def undated_flags(files: List[Dict]) -> List[Dict]:
     return out
 
 
+TOTALS_HINT = "a part row may be unmapped or the total hard-coded"
+
+
+def totals_flags(files: List[Dict]) -> List[Dict]:
+    """One data-integrity flag for each total row whose mapped parts do not add up to it within 1 % (checks.check_parts): "CASHFLOW row 23: total
+    129,200 vs parts 62,891, 51% — a part row may be unmapped or the total hard-coded". The total row is kept as read; the flag is the whole outcome."""
+    out = []
+    for f in files:
+        for t in f.get("totals") or []:
+            out.append({"kind": "totals_mismatch", "file": f.get("file"), "count": 1, "cells": [f"{t['sheet']}!{t['cell']}"], "sheet": t["sheet"],
+                        "row": t["row"], "total": t["total"], "parts_sum": t["parts_sum"], "difference": t["difference"], "pct": t["pct"],
+                        "text": f"{t['sheet']} row {t['row']}: total {fmt.fmt_currency(t['total'])} vs parts {fmt.fmt_currency(t['parts_sum'])}, "
+                                f"{fmt.fmt_pct(t['pct'])} — {TOTALS_HINT}"})
+    return out
+
+
 def file_flags(files: List[Dict]) -> Dict[str, List[Dict]]:
     """What the files themselves call for, apart from their rows: {"mapping": the hidden duplicates and the undated month headers, "integrity": the
-    formula errors}."""
-    return {"mapping": hidden_flags(files) + undated_flags(files), "integrity": formula_error_flags(files)}
+    formula errors, then the totals that do not add up}."""
+    return {"mapping": hidden_flags(files) + undated_flags(files), "integrity": formula_error_flags(files) + totals_flags(files)}
 
 
 def hidden_sheets(table: List[Dict]) -> set:

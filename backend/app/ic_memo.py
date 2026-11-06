@@ -645,7 +645,9 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
                        f"{notes.source('Revenue reconciliation', {'rows': sources})}")
     out += [f"{f['text'][:1].upper()}{f['text'][1:]}{notes.add('mapping, ' + f['file'] + ' · ' + f['sheet']) if f.get('file') else ''}"
             for f in (results.get("role_metrics") or {}).get("mapping_flags") or ()]
-    out += [f"{f['text']}{notes.add('data integrity, formula errors, ' + str(f.get('file')))}" for f in (results.get("role_metrics") or {}).get("integrity_flags") or ()]
+    out += [f"{f['text']}{notes.add('data integrity, ' + ('totals, ' if f['kind'] == 'totals_mismatch' else 'formula errors, ') + str(f.get('file')))}"
+            for f in (results.get("role_metrics") or {}).get("integrity_flags") or ()
+            if f["kind"] != "totals_mismatch" or f["pct"] > integrity_mod.TOTALS_WORTH_FLAGGING]      # a total off by 5 % or less is in the integrity table only
     reconciled = [r for r in recon if r["status"] in ("differs", "agrees_rounded")]
     out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation')}"
             for r in recon if r["status"] == "agrees_rounded"]

@@ -234,12 +234,14 @@ def test_a_variance_row_that_is_not_actual_minus_plan_is_rejected_with_the_count
     assert ok["outcome"] == checks.CONFIRMED
 
 
-def test_parts_that_do_not_sum_to_their_named_total_are_rejected_with_the_cells_and_the_sum():
+def test_parts_that_do_not_sum_to_their_named_total_are_a_total_finding_with_the_cells_and_the_sum():
     rows = [row(row=8, label_cell="A8", role="revenue", cells="B8:M8"),
             row(row=9, label_cell="A9", segment="Product A", parent_row=8, cells="B9:M9"),
             row(row=10, label_cell="A10", segment="Product B", parent_row=8, cells="B10:M10")]
-    got = item(check(fmap(sheet_map(rows=rows)), build({(8, 4): "260"})), "parts:Report:8")
-    assert (got["outcome"], got["reason"]) == (checks.REJECTED, "Parts D9, D10 sum to 200; the reading names D8 as their total, which holds 260.")
+    got = check(fmap(sheet_map(rows=rows)), build({(8, 4): "260"}))
+    assert not [i for i in got["items"] if i["key"] == "parts:Report:8"], "no item, so no re-read and no card"
+    (found,) = got["totals"]
+    assert (found["cell"], found["parts"], found["total"], found["parts_sum"], found["difference"]) == ("D8", ["D9", "D10"], 260.0, 200.0, 60.0)
     assert item(check(fmap(sheet_map(rows=rows))), "parts:Report:8")["outcome"] == checks.CONFIRMED
 
 
@@ -538,14 +540,14 @@ def test_a_variance_row_whose_cells_are_text_is_still_rejected_before_its_arithm
     assert got["outcome"] == checks.REJECTED and got["reason"] == "Reading says a number; cell E7 holds tbc."
 
 
-def test_a_segment_row_with_no_total_cannot_be_checked_and_parts_that_do_not_sum_are_rejected():
+def test_a_segment_row_with_no_total_cannot_be_checked_and_parts_that_do_not_sum_are_a_total_finding():
     lone = [row(row=9, label_cell="A9", segment="Product A", cells="B9:M9")]
     got = item(check(fmap(sheet_map(rows=lone))), "row:Report:9")
     assert (got["outcome"], got["reason"]) == (checks.CANNOT, "segment row without its total row")
     rows = [row(row=8, label_cell="A8", cells="B8:M8"), row(row=9, label_cell="A9", segment="Product A", parent_row=8, cells="B9:M9"),
             row(row=10, label_cell="A10", segment="Product B", parent_row=8, cells="B10:M10")]
-    bad = item(check(fmap(sheet_map(rows=rows)), build({(9, 6): "130"})), "parts:Report:8")
-    assert (bad["outcome"], bad["reason"]) == (checks.REJECTED, "Parts F9, F10 sum to 210; the reading names F8 as their total, which holds 200.")
+    (bad,) = check(fmap(sheet_map(rows=rows)), build({(9, 6): "130"}))["totals"]
+    assert (bad["cell"], bad["parts"], bad["parts_sum"], bad["total"]) == ("F8", ["F9", "F10"], 210.0, 200.0)
 
 
 # Layout 3: actual | budget | variance per month, in the cells of one row.

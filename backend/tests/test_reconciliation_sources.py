@@ -101,8 +101,8 @@ def test_a_total_with_the_opposite_sign_to_its_parts_is_not_a_disagreement():
     assert item(check(fmap(sheet_map(rows=rows)), build(negative_total)), "parts:Report:8")["outcome"] == checks.CONFIRMED
     negative_parts = {(r, 2 + i): v for r, v in ((9, "-120"), (10, "-80")) for i in range(12)}
     assert item(check(fmap(sheet_map(rows=rows)), build(negative_parts)), "parts:Report:8")["outcome"] == checks.CONFIRMED
-    wrong = item(check(fmap(sheet_map(rows=rows)), build({(8, 4): "-260"})), "parts:Report:8")
-    assert wrong["outcome"] == checks.REJECTED and "which holds -260" in wrong["reason"], "a real difference of size still disagrees"
+    (wrong,) = check(fmap(sheet_map(rows=rows)), build({(8, 4): "-260"}))["totals"]
+    assert wrong["cell"] == "D8" and wrong["total"] == 260.0 and wrong["parts_sum"] == 200.0, "a real difference of size is a total finding"
 
 
 def test_the_mapping_flag_is_a_worth_flagging_line_of_the_memo():

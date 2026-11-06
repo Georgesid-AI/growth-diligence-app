@@ -517,6 +517,21 @@ describe("the cards", () => {
   });
 });
 
+describe("a card with one option is a note", () => {
+  test("a citation card with no value to choose between renders as a note with no button", async () => {
+    const note = { ...REGISTER.cards[0], id: "c2", actions: [], reader: { ...REGISTER.cards[0].reader, value: null }, other: { ...REGISTER.cards[0].other, value: null } };
+    await show({ ...REGISTER, cards: [note] });
+    expect(q("card-note").textContent).toContain("nothing to decide");
+    expect(document.body.querySelectorAll(".card .actions button")).toHaveLength(0);
+  });
+
+  test("a card with two values keeps its buttons and shows no note", async () => {
+    await show();
+    expect(document.body.querySelector('[data-testid="card-note"]')).toBeNull();
+    expect(document.body.querySelectorAll(".card .actions button")).toHaveLength(3);
+  });
+});
+
 describe("a reviewer's card (PR 4b)", () => {
   const LONG = "Rows 4 and 10 both carry the recognised revenue of the month, so the report counts it twice; the second row is the bookings line of the sales team, which is booked before it is recognised and sits under the same heading as the revenue line.";
   const FINDING_CARD = { id: "r1", kind: "reviewer_disagreement", status: "open", title: LONG, subject: {}, actions: ["use_reader"],
