@@ -103,7 +103,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     cells = checks.Cells(first.payload)
     total = _cited(first.file_map)
     await stage("checking_cells", checked=0, total=total)
-    base = checks.plan_fallback(first.file_map, cells, fiscal_year_end)      # a sheet read with no last actual column gets one from code, where the file shows a plan
+    base = checks.plan_fallback(checks.classify_by_label(first.file_map, cells), cells, fiscal_year_end)      # a sheet read with no last actual column gets one from code, where the file shows a plan
     before = checks.check_map(cells, base, fiscal_year_end)
     await stage("checking_cells", checked=total, total=total, matched=before["counts"].get(checks.CONFIRMED, 0), items=len(before["items"]))
     final, rereads, merged = before, [], base
@@ -124,7 +124,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
         except Exception as exc:           # an error, a cap, a missing prompt: whatever the re-read met, the first reading stands
             failure = type(exc).__name__ if not str(exc) else str(exc)
         if failure is None:
-            merged = checks.plan_fallback(checks.merge_reread(base, second.file_map, keys), cells, fiscal_year_end)
+            merged = checks.plan_fallback(checks.classify_by_label(checks.merge_reread(base, second.file_map, keys), cells), cells, fiscal_year_end)
             final = checks.check_map(cells, merged, fiscal_year_end)
             await stage("checking_cells", checked=total, total=total, matched=final["counts"].get(checks.CONFIRMED, 0), items=len(final["items"]))
             after = _group(final["items"])
@@ -193,7 +193,8 @@ async def _second_read(db, audit_id: str, text: str, file_hash: str, adapter, fi
     # A sheet either read lost to the output limit is no disagreement: it is left out of the comparison.
     lost = {u["sheet"] for read in (first, second) for u in read.unread_sheets or []}
     only = lambda m: {**m, "sheets": [sh for sh in m.get("sheets") or [] if sh["sheet"] not in lost]}      # noqa: E731
-    items = consistency.compare(only(first.file_map), only(second.file_map))
+    cells = checks.Cells(first.payload)          # the rows are compared after the label rule (a reading stored before it gets it here): the reads agree on its roles
+    items = consistency.compare(only(checks.classify_by_label(first.file_map, cells)), only(checks.classify_by_label(second.file_map, cells)))
     logger.info("sheet reads: run_id=%s hash=%s first=%d/%d second=%d/%d uncertain=%d", audit_id, file_hash[:12], first.input_tokens,
                 first.output_tokens, second.input_tokens, second.output_tokens, len(items))
     return second, {"status": "compared", "reason": None, "items": items, "reads": reads}

@@ -212,6 +212,19 @@ async def _not_read_reason(db, audit_id: str) -> str:
     return "provider error"
 
 
+async def effective_map(db, audit_id: str, doc: Dict, stored_map: Dict, overrides: List[Dict]) -> Dict:
+    """The effective map of a stored reading by today's label rule (checks.classify_by_label), from the cells the dataset keeps: no model call and
+    nothing is written. The rule is applied to the stored map first and the overrides after it, so an analyst's Change or a reviewer's correction
+    wins. A file with no stored cells is returned as stored with its overrides."""
+    from . import stored_sheets as rec
+    from .structures import reading_input
+    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": doc.get("file_hash")}, {"_id": 0, "recognition_sheets": 1})
+    sheets = rec.unpack_sheets((ds or {}).get("recognition_sheets") or [])
+    text = reading_input.reading_text(sheets) if sheets else None
+    base = checks.classify_by_label(stored_map, checks.Cells(text)) if text is not None else stored_map
+    return readings.effective(base, overrides)
+
+
 async def refreshed(db, audit_id: str, doc: Dict, effective: Dict, fye: int = 12, skip=()) -> Dict:
     """The stored outcome of a file with its rejected items checked again by today's rules (checks.recheck_stored), from the cells the dataset keeps:
     a page load or a run recomputes, no model is called and nothing is written. Returns {**doc, "items", "totals", "cleared"}; a file with nothing
@@ -248,7 +261,7 @@ async def build(db, audit_id: str) -> Dict:
         if not reading:
             continue
         overrides = await readings.overrides_for(db, audit_id, reading["key"])
-        effective = readings.effective(reading["file_map"], overrides)
+        effective = await effective_map(db, audit_id, doc, reading["file_map"], overrides)
         doc = await refreshed(db, audit_id, doc, effective, fye, skip=set(decided))
         cleared |= set(doc["cleared"])
         rows = sheet_rows(doc, effective, decided, card_ids)

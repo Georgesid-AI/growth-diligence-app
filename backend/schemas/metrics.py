@@ -748,6 +748,7 @@ class MapRow(MapBlock):
     variance_of: Optional[MapVariance] = None
     variance_columns: Optional[MapVarianceColumns] = None
     by_column: bool = False
+    classified_by: Optional[Literal["label", "combined"]] = None                  # set by code from the row's label (checks.classify_by_label), never by the model
     evidence: str = Field(max_length=MAP_TEXT_MAX)
 
 

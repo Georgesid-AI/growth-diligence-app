@@ -2741,7 +2741,7 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
         if not reading:
             continue
         overrides = await readings_mod.overrides_for(db, audit_id, reading["key"])
-        file_map = readings_mod.effective(reading["file_map"], overrides)
+        file_map = await register.effective_map(db, audit_id, check, reading["file_map"], overrides)      # the label rule by today's code: no model call
         items = [i for i in check.get("items") or [] if str(i.get("key", "")).startswith("row:")]
         waiting = consistency_mod.pending(check.get("consistency"), overrides)
         waiting_items += len(waiting)

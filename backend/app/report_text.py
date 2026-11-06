@@ -39,6 +39,8 @@ def article(name: str) -> str:
 
 
 def needs_row(role: str) -> str:
+    if role == PERSONNEL_SPLIT:
+        return "the split of personnel costs by function"
     return f"{article(plain(role))} {plain(role)} row"
 
 
@@ -152,6 +154,17 @@ def _state_text(table: List[dict], role: str, state: str) -> Optional[str]:
     return None
 
 
+FUNCTION_ROLES = ("sales_marketing", "rnd", "ga")
+PERSONNEL_SPLIT = "personnel_split"
+UNSPLIT_PERSONNEL = "personnel costs not split by function; the split is requested"
+
+
+def unsplit_personnel(table: List[dict], role: str) -> bool:
+    """Whether `role` is a cost function no file maps while a file has a combined personnel line under its OPEX (checks.classify_by_label marks it
+    `combined`): the gap is the split of that line, not a missing row."""
+    return role in FUNCTION_ROLES and not any(r["role"] == role for r in table) and any(r.get("classified_by") == "combined" for r in table)
+
+
 def missing_reason(table: List[dict], needs, engine_reason: Optional[str]) -> Optional[str]:
     """Why a metric is not computed, from the map. For each group of roles the metric needs (the first of a "one of" group that the map holds):
     a) the role is mapped nowhere: "needs a <role> row"; b) mapped only in plan columns; c) mapped as segment rows only; d) mapped with actuals
@@ -172,6 +185,9 @@ def missing_reason(table: List[dict], needs, engine_reason: Optional[str]) -> Op
             or next((r for r in group if states[r] == "segments"), None)
         if first:
             partial.append(_state_text(table, first, states[first]))
+        elif unsplit_personnel(table, group[0]):
+            if UNSPLIT_PERSONNEL not in partial:
+                partial.append(UNSPLIT_PERSONNEL)
         else:
             absent.append(group)
     out = []
@@ -196,8 +212,10 @@ def request_roles(table: List[dict], needs) -> List[str]:
     """The roles a data request for this metric may name: those no file maps (in any columns, any segment); the first of a "one of" group."""
     out = []
     for group in _alternatives(needs or ()):
-        if not any(r in mapped_roles(table) for r in group) and group[0] not in out:
-            out.append(group[0])
+        if not any(r in mapped_roles(table) for r in group):
+            name = PERSONNEL_SPLIT if unsplit_personnel(table, group[0]) else group[0]
+            if name not in out:
+                out.append(name)
     return out
 
 

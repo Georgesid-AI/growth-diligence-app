@@ -81,7 +81,8 @@ async def collect(db, audit: Dict) -> Tuple[Dict, Files]:
         if not reading:
             continue
         overrides = await readings.overrides_for(db, audit_id, reading["key"])
-        file_map = readings.effective(reading["file_map"], overrides)
+        from . import register          # register imports this module's neighbours; imported here to keep the import graph as it was
+        file_map = await register.effective_map(db, audit_id, check, reading["file_map"], overrides)
         n = files.add(kind="sheet", file=check.get("file"), file_hash=check["file_hash"], check=check, reading=reading,
                       sheets={s["sheet"]: s for s in file_map.get("sheets") or []}, dims=check.get("dims") or {})
         payload["files"].append({"file": n, "kind": "sheet", "map": strip_evidence(file_map)})
