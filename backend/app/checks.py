@@ -19,7 +19,7 @@ The as-of month of a file stands only if at least one piece of evidence for its 
 import copy
 import re
 from datetime import date
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from .structures import redact
 from . import periods as sheet_mod
@@ -44,6 +44,9 @@ C_NO_TEXT = "Page {n} has no text layer; figure read from the image."
 C_SCALE = "Cell {ref} holds {cell}; reading says {value}. Unit or scale differs; not compared."
 C_NO_REF = "No cell reference given."
 C_MASKED = "Depends on a name that was masked before reading."
+R_FORMULA_ERROR = "cell {ref} holds {error}"
+FORMULA_ERRORS = ("#REF!", "#DIV/0!", "#N/A", "#VALUE!", "#NAME?", "#NUM!", "#NULL!")      # a cell that holds exactly one of these is a formula error
+PARTS_TOLERANCE = 0.01          # parts that add up to their total within 1 %; beyond it the total row is kept as read and the sums are an integrity finding
 # --- Two more "nothing to compare against" cases (review of PR 205, F2): the arithmetic input the reading did not give. ---
 C_VARIANCE_ROWS = "variance row without its two source rows"
 C_SEGMENT_TOTAL = "segment row without its total row"
@@ -286,12 +289,15 @@ def dated_headers(sheet: "SheetCells", row: int, first_col: int, last_col: int, 
     dated: Dict[int, Dict] = {}
     undated: List[Tuple[int, str]] = []
     last_ym, block_start = None, first_col
+    lead = None                 # (column, year) of a year cell that opens the header row's months: "2024 | January | February ..."
     for c in range(first_col, last_col + 1):
         found = explicit[c]
         if found is not None:
             if found["grain"] == "month":
                 last_ym, block_start = found["start"], c + 1
             elif found["grain"] in _CLOSERS:
+                if found["grain"] == "year" and found["tag"] is None and last_ym is None and lead is None and c + 1 <= last_col:
+                    lead = (c, found["year"])
                 block_start = c + 1
             continue
         month = _month_word(heads[c])
@@ -311,7 +317,7 @@ def dated_headers(sheet: "SheetCells", row: int, first_col: int, last_col: int, 
         if closer is not None:
             ym = next((p for p in _months_between(closer["start"], closer["end"]) if int(p[5:]) == month), None)
         else:
-            year = _title_year(sheet, row, c, block_start, fye)
+            year = _title_year(sheet, row, c, block_start, fye) or (lead[1] if lead and lead[0] == block_start - 1 else None)
             if year:
                 ym = f"{year - (1 if month > fye else 0):04d}-{month:02d}"
         if ym is None or (last_ym is not None and ym <= last_ym):
@@ -416,6 +422,8 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
     number = to_number(text)
     base["found_value"] = number            # what the code found when it opened the cell (the register's "Cell holds")
     unit = figure.get("unit")
+    if (text or "").strip() in FORMULA_ERRORS:        # the file's own error, not a disagreement: counted in the formula-error flag
+        return {**base, "outcome": CANNOT, "reason": R_FORMULA_ERROR.format(ref=cell_ref, error=text.strip()), "formula_error": text.strip()}
     if number is None:
         return {**base, "outcome": REJECTED, "reason": R_VALUE.format(value=shown(reading), ref=cell_ref, cell=cell_shown(text))}
     if unit not in ("money", "count", "rate"):
@@ -478,15 +486,23 @@ def check_row(smap: Dict, row: Dict, sheet: SheetCells) -> Dict:
         return {**base, "outcome": CANNOT, "reason": C_LAYOUT}
     numeric = numbers_expected_check(row)
     seen = 0
+    errors: List[Tuple[str, str]] = []
     for r, c in range_cells(rng):
         text = sheet.get(r, c)
         if text is None or not text.strip():
             continue
         if _masked(text):
             return {**base, "outcome": CANNOT, "reason": C_MASKED}
+        if text.strip() in FORMULA_ERRORS:
+            errors.append((ref_of(r, c), text.strip()))        # a formula error is the file's, counted in its flag: not a text cell
+            continue
         if numeric and to_number(text) is None:
             return {**base, "outcome": REJECTED, "reason": R_NUMBER.format(ref=ref_of(r, c), cell=cell_shown(text))}
         seen += 1
+    if errors:
+        base["formula_errors"] = [{"cell": ref, "error": err} for ref, err in errors]
+    if numeric and seen == 0 and errors:
+        return {**base, "outcome": CANNOT, "reason": R_FORMULA_ERROR.format(ref=errors[0][0], error=errors[0][1])}
     if numeric and seen == 0:
         return {**base, "outcome": REJECTED, "reason": R_NUMBER.format(ref=ref_of(rng[0], rng[1]), cell=NOTHING)}
     if row.get("role") == "variance" and not row.get("variance_of") and not row.get("variance_columns"):
@@ -543,8 +559,10 @@ def check_variance(smap: Dict, row: Dict, sheet: SheetCells) -> Dict:
 
 
 def check_parts(smap: Dict, parent: int, children: List[Dict], parent_row: Optional[Dict], sheet: SheetCells) -> Dict:
-    """Parts that name a row as their total sum to it, column by column; the first column that does not is the reason. Absolute values are compared:
-    a total with the opposite sign to its parts (costs printed as negatives under positive parts) is not a disagreement."""
+    """Parts that name a row as their total sum to it, column by column, within PARTS_TOLERANCE. Absolute values are compared: a total with the
+    opposite sign to its parts (costs printed as negatives under positive parts) is not a disagreement. Parts that do not add up are no
+    rejection: the total row stays as read and the first column that does not add up comes back as `mismatch` (sheet, total row and cell,
+    total, parts sum, difference and its share of the total), an integrity finding with no re-read and no card."""
     key = f"parts:{smap['sheet']}:{parent}"
     base = {"key": key, "kind": "parts", "sheet": smap["sheet"], "cell": (parent_row or {}).get("cells"), "row": parent}
     part_rows = [c["row"] for c in children]
@@ -554,10 +572,13 @@ def check_parts(smap: Dict, parent: int, children: List[Dict], parent_row: Optio
         if vals is None:
             continue
         compared += 1
-        total, parts = vals[-1], vals[:-1]
-        if abs(abs(sum(parts)) - abs(total)) > MONEY_TOLERANCE * abs(total) + EXACT:
-            return {**base, "outcome": REJECTED, "reason": R_PARTS.format(
-                refs=", ".join(ref_of(r, col) for r in part_rows), sum=shown(sum(parts)), ref=ref_of(parent, col), value=shown(total))}
+        total, parts = abs(vals[-1]), abs(sum(vals[:-1]))
+        if abs(parts - total) > PARTS_TOLERANCE * total + EXACT:
+            diff = abs(total - parts)
+            return {**base, "outcome": CONFIRMED, "reason": None,
+                    "mismatch": {"sheet": smap["sheet"], "row": parent, "cell": ref_of(parent, col), "column": redact.col_letters(col),
+                                 "parts": [ref_of(r, col) for r in part_rows], "total": total, "parts_sum": parts, "difference": diff,
+                                 "pct": diff / total if total else 1.0}}
     return {**base, "outcome": CONFIRMED if compared else CANNOT, "reason": None if compared else C_LAYOUT}
 
 
@@ -823,6 +844,7 @@ def check_periods(smap: Dict, sheet: SheetCells, fye: int) -> Dict:
 def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
     """Every item of the map checked against the cells: {"items": [...], "counts": {...}, "months": [per-sheet confirmed months]}."""
     items: List[Dict] = []
+    totals: List[Dict] = []                               # parts that do not add up to their total: findings, not items
     months: List[Dict] = []
     boundaries: Dict[str, int] = {}                       # the last actual column of each sheet whose month stands
     smaps = {s["sheet"]: s for s in fmap.get("sheets") or []}
@@ -850,7 +872,11 @@ def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
             if row.get("parent_row"):
                 by_parent.setdefault(row["parent_row"], []).append(row)
         for parent, children in by_parent.items():
-            items.append(check_parts(smap, parent, children, next((r for r in rows if r["row"] == parent), None), sheet))
+            got = check_parts(smap, parent, children, next((r for r in rows if r["row"] == parent), None), sheet)
+            if got.get("mismatch"):
+                totals.append(got["mismatch"])
+            else:
+                items.append(got)
         extra, month = check_last_actual(smap, sheet, fye, cells)
         items += extra
         if month:
@@ -859,9 +885,60 @@ def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
     for i, figure in enumerate(fmap.get("figures") or []):
         items.append(check_figure(i, figure, cells, smaps, fye, boundaries))
     counts = {o: sum(1 for i in items if i["outcome"] == o) for o in OUTCOMES}
-    return {"items": items, "counts": counts, "months": months}
+    return {"items": items, "counts": counts, "months": months, "totals": totals}
 
 
+
+
+def recheck_stored(doc: Dict, fmap: Dict, cells: Cells, fye: int = 12, skip: Iterable[str] = ()) -> Dict:
+    """The stored outcome of a file with its rejected figures and rejected parts checks run again by today's rules, on the stored cells and the
+    effective map (no model call, nothing written): a figure whose only difference was the written form of its period or a dropped % sign is now
+    confirmed, a cell that holds a formula error is now that, and parts that do not add up are now a total finding. Every other item stands as
+    stored; so does an item in `skip` (one the analyst decided on a card). Returns {"items", "totals", "cleared"}: `cleared` are the keys of the items that
+    are no longer rejected."""
+    smaps = {s["sheet"]: s for s in fmap.get("sheets") or []}
+    boundaries = {m["sheet"]: redact.col_number(m["column"]) for m in doc.get("months") or [] if m.get("column")}
+    figures = {_figure_key(i, f): (i, f) for i, f in enumerate(fmap.get("figures") or [])}
+    items: List[Dict] = []
+    totals = list(doc.get("totals") or [])
+    cleared: List[str] = []
+    for it in doc.get("items") or []:
+        new = None
+        if it.get("key") in skip:
+            pass
+        elif it.get("outcome") == REJECTED and it.get("kind") == "figure" and it["key"] in figures:
+            i, figure = figures[it["key"]]
+            new = check_figure(i, figure, cells, smaps, fye, boundaries)
+        elif it.get("outcome") == REJECTED and it.get("kind") == "parts" and it.get("sheet") in smaps and cells.sheet(it["sheet"]) is not None:
+            smap = smaps[it["sheet"]]
+            rows = smap.get("rows") or []
+            children = [r for r in rows if r.get("parent_row") == it.get("row")]
+            new = check_parts(smap, it["row"], children, next((r for r in rows if r["row"] == it["row"]), None), cells.sheet(it["sheet"])) if children else None
+        if new is None:
+            items.append(it)
+            continue
+        if new.get("mismatch"):
+            totals.append(new["mismatch"])
+            cleared.append(it["key"])
+            continue
+        if new["outcome"] != REJECTED:
+            cleared.append(it["key"])
+        items.append({**it, **new})
+    return {"items": items, "totals": totals, "cleared": cleared}
+
+
+def formula_errors_of(doc: Dict) -> List[Dict]:
+    """The formula errors of a stored file outcome: those the workbook scan found (sheet order), then any the checks met in a cited cell that the scan
+    did not list (an outcome stored before the check named them). One entry per cell: [{"sheet", "cell", "error"}]."""
+    out = list(doc.get("formula_errors") or [])
+    seen = {(e["sheet"], e["cell"]) for e in out}
+    for it in doc.get("items") or []:
+        cells = ([{"cell": it.get("cell"), "error": it["formula_error"]}] if it.get("formula_error") else []) + list(it.get("formula_errors") or [])
+        for e in cells:
+            if e.get("cell") and (it.get("sheet"), e["cell"]) not in seen:
+                seen.add((it.get("sheet"), e["cell"]))
+                out.append({"sheet": it.get("sheet"), "cell": e["cell"], "error": e["error"]})
+    return out
 
 
 def _figure_key(index: int, figure: Dict) -> str:

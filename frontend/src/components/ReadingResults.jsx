@@ -147,8 +147,10 @@ function Card({ card, auditId, onDecided }) {
           <p className="muted"><SourceLink auditId={auditId} source={card.source} /></p>
         </>
       )}
-      {card.finding && card.actions.length === 0 && (
-        <p className="muted" data-testid="card-note">Note for your review: the reviewer implies no correction, so there is nothing to apply.</p>
+      {card.actions.length === 0 && (
+        <p className="muted" data-testid="card-note">
+          {card.finding ? "Note for your review: the reviewer implies no correction, so there is nothing to apply." : "Note for your review: there is no value to choose between, so nothing to decide."}
+        </p>
       )}
       <div className="actions">
         {card.actions.filter((a) => a !== "type_value").map((a) => (

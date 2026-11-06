@@ -212,6 +212,25 @@ async def _not_read_reason(db, audit_id: str) -> str:
     return "provider error"
 
 
+async def refreshed(db, audit_id: str, doc: Dict, effective: Dict, fye: int = 12, skip=()) -> Dict:
+    """The stored outcome of a file with its rejected items checked again by today's rules (checks.recheck_stored), from the cells the dataset keeps:
+    a page load or a run recomputes, no model is called and nothing is written. Returns {**doc, "items", "totals", "cleared"}; a file with nothing
+    rejected, or no stored cells, is returned as stored."""
+    plain = {**doc, "totals": doc.get("totals") or [], "cleared": []}
+    if not any(i.get("outcome") == checks.REJECTED and i.get("kind") in ("figure", "parts") for i in doc.get("items") or []):
+        return plain
+    from . import stored_sheets as rec
+    from .structures import reading_input
+    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": doc.get("file_hash")}, {"_id": 0, "recognition_sheets": 1})
+    sheets = rec.unpack_sheets((ds or {}).get("recognition_sheets") or [])
+    if not sheets:
+        return plain
+    text = reading_input.reading_text(sheets)
+    if text is None:
+        return plain
+    return {**doc, **checks.recheck_stored(doc, effective, checks.Cells(text), fye, skip)}
+
+
 async def build(db, audit_id: str) -> Dict:
     stored = await db[readings.REVIEWS].find({"audit_id": audit_id}, {"_id": 0}).to_list(50)
     latest = max((r.get("created_at") or "" for r in stored if r.get("status") == "read"), default=None)
@@ -222,12 +241,16 @@ async def build(db, audit_id: str) -> Dict:
     files: List[Dict] = []
     tables: Dict[str, List[Dict]] = {"confirmed": [], "rejected": [], "cannot_check": []}
     datasets = {d.get("file_hash"): d for d in await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "file_hash": 1, "size": 1}).to_list(20)}
+    fye = int(((await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1})) or {}).get("fiscal_year_end") or 12)
+    cleared: set = set()
     for doc in sorted([c for c in await readings.checks_for(db, audit_id) if c.get("status") == "read"], key=lambda c: c.get("file") or ""):
         reading = await db[readings.READINGS].find_one({"key": doc.get("reading_key")}, {"_id": 0})
         if not reading:
             continue
         overrides = await readings.overrides_for(db, audit_id, reading["key"])
         effective = readings.effective(reading["file_map"], overrides)
+        doc = await refreshed(db, audit_id, doc, effective, fye, skip=set(decided))
+        cleared |= set(doc["cleared"])
         rows = sheet_rows(doc, effective, decided, card_ids)
         for name in tables:
             tables[name] += rows[name]
@@ -287,7 +310,9 @@ async def build(db, audit_id: str) -> Dict:
     summary = {"status": status, "reason": reason, "stopped": stopped,
                "not_completed": f"review not completed: {reason or 'provider error'}" if review and status not in ("read", "none") else None,
                "findings": sum(1 for f in (review or {}).get("findings") or [] if f.get("state") == "valid"), "dropped": (review or {}).get("dropped", 0)}
-    return {"files": files, "period": reporting_period(files), "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": all_cards, "review": summary}
+    # A card for a citation the stored check no longer rejects (the period's written form, a dropped % sign) is not shown
+    shown = [c for c in all_cards if not (c["kind"] == cards.CITATION and c["status"] == cards.OPEN and c["item"] in cleared)]
+    return {"files": files, "period": reporting_period(files), "tables": tables, "counts": {k: len(v) for k, v in tables.items()}, "cards": shown, "review": summary}
 
 
 def _effective_lines(doc: Dict, effective: Dict) -> List[Dict]:

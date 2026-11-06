@@ -33,6 +33,17 @@ def set_by_analyst(card: Dict) -> Dict:
     return {"note": SET_NOTE, "set_at": str(decision.get("at") or "")[:10] or None, "hover": SET_HOVER, "set_action": decision.get("action")}
 
 
+def choice_actions(reader_value: Optional[float], cell_value: Optional[float]) -> List[str]:
+    """The buttons a value card offers, and none when the analyst has no real choice. A real choice is two different values (the cell's and the
+    reader's), or one value and a typed one; a card with no value to set, or whose only option would be to confirm nothing, is a note."""
+    values = [v for v in (cell_value, reader_value) if v is not None]
+    if not values:
+        return []
+    if cell_value is not None and reader_value is not None and cell_value != reader_value:
+        return [USE_CELL, USE_READER, TYPED]
+    return [USE_READER, TYPED] if reader_value is not None else [USE_CELL, TYPED]
+
+
 def card_id(audit_id: str, kind: str, item: str) -> str:
     return hashlib.sha256(f"card\x00{audit_id}\x00{kind}\x00{item}".encode("utf-8")).hexdigest()[:24]
 
@@ -48,7 +59,7 @@ async def open_card(db, audit_id: str, *, kind: str, item: str, title: str, sour
     """Open the card of (audit, kind, item) unless it exists. `source` is {file, sheet, cell | page, file_hash | deck_id}; `reader` and `other` are
     the two readings to show, each {label, value, unit, currency, period, evidence}. `cell_value` is what the cell holds (for "use the cell"),
     `reading` the key of the stored reading and `path` the place in it a decision overrides, `subject` {metric, period} for the heading and
-    `actions` the buttons offered: all three for a value with a cell to use, "use the reader" alone where nothing else can be used. A reviewer's
+    `actions` the buttons offered, by default `choice_actions`: all three for two different values, the reader's (or the cell's) value and a typed one for one value, none (a note) where there is no value to set. A reviewer's
     card is one per finding: `finding` is its full text, `cites` every row or figure it cites with the reader's value for that one, `review` the
     run (the review's created_at) that opened or last met it; the register shows the cards of the latest completed run only. `fix` is the correction a
     reviewer's doubt implies ({field, value, old, label, reading, path, item}): the card then offers it ("Set currency EUR") beside "Keep as read"; a card
@@ -64,7 +75,7 @@ async def open_card(db, audit_id: str, *, kind: str, item: str, title: str, sour
         return kept
     doc = {"id": cid, "audit_id": audit_id, "kind": kind, "item": item, "title": title, "source": source, "reader": reader, "other": other,
            "cell_value": cell_value, "reading": reading, "path": path, "subject": subject or {},
-           "actions": actions if actions is not None else ([USE_CELL, USE_READER, TYPED] if cell_value is not None else [USE_READER, TYPED]),
+           "actions": actions if actions is not None else choice_actions((reader or {}).get("value"), cell_value),
            "status": OPEN, "decision": None, "created_at": _now(),
            **({"cites": cites, "finding": finding, "review": review, "fix": fix} if cites is not None or finding is not None else {})}
     await db[readings.CARDS].insert_one(dict(doc))
@@ -158,8 +169,7 @@ async def open_for_checks(db, audit_id: str, doc: Dict) -> List[Dict]:
             db, audit_id, kind=CITATION, item=again["item"], title="The reader and the file disagree",
             source={"file": doc.get("file"), "file_hash": doc.get("file_hash"), "sheet": item.get("sheet"), "cell": item.get("cell")},
             reader=reader, other=other, cell_value=item.get("found_value") if is_figure else None, reading=doc.get("reading_key"),
-            path=figure_path(again["item"]) if is_figure else None, subject={"metric": item.get("metric"), "period": first.get("period")},
-            actions=None if is_figure else [USE_READER]))
+            path=figure_path(again["item"]) if is_figure else None, subject={"metric": item.get("metric"), "period": first.get("period")}))
     for item in doc.get("items") or []:
         if item["kind"] != "figure" or item["outcome"] != "cannot_check" or item.get("reason") != checks.C_MASKED:
             continue
@@ -170,6 +180,5 @@ async def open_for_checks(db, audit_id: str, doc: Dict) -> List[Dict]:
             reader={"label": "Reader", "value": first.get("value"), "unit": first.get("unit"), "currency": first.get("currency"),
                     "period": first.get("period"), "evidence": first.get("evidence") if isinstance(first.get("evidence"), str) else None},
             other={"label": f"Cell {item.get('cell')}", "value": None, "period": None, "evidence": item.get("reason")},
-            reading=doc.get("reading_key"), path=figure_path(item["key"]), subject={"metric": item.get("metric"), "period": first.get("period")},
-            actions=[USE_READER, TYPED]))
+            reading=doc.get("reading_key"), path=figure_path(item["key"]), subject={"metric": item.get("metric"), "period": first.get("period")}))
     return out
