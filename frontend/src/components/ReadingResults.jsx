@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { decideCard, getCell, getDeckPage } from "@/lib/api";
 import {
-  ACTION_LABELS, EXPLAIN, HOVERS, NUMERIC, TITLES, WIDTHS, actualPlanLabel, basisLabel, cardTitle, differsText, periodLabel, readingsText, sourceParts, valueText,
+  ACTION_LABELS, EXPLAIN, actionLabel, HOVERS, NUMERIC, TITLES, WIDTHS, actualPlanLabel, basisLabel, cardTitle, differsText, periodLabel, readingsText, sourceParts, valueText,
 } from "@/lib/readingView";
 import { PLACEHOLDER, fmtCount } from "@/lib/format";
 
@@ -147,9 +147,12 @@ function Card({ card, auditId, onDecided }) {
           <p className="muted"><SourceLink auditId={auditId} source={card.source} /></p>
         </>
       )}
+      {card.finding && card.actions.length === 0 && (
+        <p className="muted" data-testid="card-note">Note for your review: the reviewer implies no correction, so there is nothing to apply.</p>
+      )}
       <div className="actions">
         {card.actions.filter((a) => a !== "type_value").map((a) => (
-          <button key={a} type="button" className="btn quiet" data-testid={`card-${a}`} onClick={() => send(a)}>{ACTION_LABELS[a]}</button>
+          <button key={a} type="button" className="btn quiet" data-testid={`card-${a}`} onClick={() => send(a)}>{actionLabel(card, a)}</button>
         ))}
         {card.actions.includes("type_value") && !typing && (
           <button type="button" className="btn quiet" data-testid="card-type_value" onClick={() => setTyping(true)}>{ACTION_LABELS.type_value}</button>

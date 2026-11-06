@@ -94,10 +94,14 @@ export function valueText(value, unit, currency) {
 export const basisLabel = (basis) => (basis ? String(basis).replace(/_/g, " ") : PLACEHOLDER);
 export const actualPlanLabel = (v) => v || PLACEHOLDER;
 
-/** "AP11 · 2019-2022 Sales · revenue.xlsx" or "p12 · deck.pdf": the cell or page first. */
+export const HIDDEN = " (hidden)";
+
+/** "AP11 · 2019-2022 Sales · revenue.xlsx" or "p12 · deck.pdf": the cell or page first. A text-style deck page shows the line the figure sits in
+ *  ("p1: ARR: 1 774 628 EUR - 93% of the plan!"); a sheet the workbook hides is named so. */
 export function sourceParts(source) {
-  if (source.page) return { first: `p${source.page}`, rest: source.file || "" };
-  return { first: source.cell || "sheet", rest: [source.sheet, source.file].filter(Boolean).join(" · ") };
+  if (source.page) return { first: source.line ? `p${source.page}: ${source.line}` : `p${source.page}`, rest: source.file || "" };
+  const sheet = source.sheet && source.hidden ? `${source.sheet}${HIDDEN}` : source.sheet;
+  return { first: source.cell || "sheet", rest: [sheet, source.file].filter(Boolean).join(" · ") };
 }
 
 const plural = (n, one, many) => `${fmtCount(n)} ${n === 1 ? one : many}`;
@@ -168,7 +172,14 @@ export function cardTitle(card) {
   return subject ? `${subject}: ${card.title.charAt(0).toLowerCase()}${card.title.slice(1)}` : card.title;
 }
 
-export const ACTION_LABELS = { use_cell: "Use the cell", use_reader: "Use the reader", type_value: "Type a value" };
+export const ACTION_LABELS = { use_cell: "Use the cell", use_reader: "Use the reader", type_value: "Type a value", apply_fix: "Apply the correction", keep_as_read: "Keep as read" };
+
+/** The words of a button. A reviewer's card (it has a finding) offers its correction by name ("Set currency EUR") beside "Keep as read". */
+export function actionLabel(card, action) {
+  if (action === "apply_fix") return card.fix?.label || ACTION_LABELS.apply_fix;
+  if (action === "use_reader" && card.finding) return ACTION_LABELS.keep_as_read;
+  return ACTION_LABELS[action];
+}
 
 const colNumber = (letters) => [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
 const colLetters = (n) => { let out = ""; for (let k = n; k > 0; k = Math.floor((k - 1) / 26)) out = String.fromCharCode(65 + ((k - 1) % 26)) + out; return out; };
@@ -273,12 +284,14 @@ export function whereText(item, file) {
   return `Sheet ${item.sheet}`;
 }
 
-/** A deck figure as the list names it: "170,044 EUR, 2019 · page 11, cell r4c2" - its value and period beside the page and cell, whatever field differs. */
+/** A deck figure as the list names it: "170,044 EUR, 2019 · page 11, cell r4c2 · Revenue" - its value and period beside the page and cell and the row
+ *  label, whatever field differs. A figure on a text-style page has no cell to show: "170,044 EUR · p1: ARR: 170 044 EUR - 93% of the plan!". */
 export function figureWhere(fig) {
   const named = fig.currency || (["money", "count", "rate"].includes(fig.unit) ? "" : fig.unit || "");        // a currency, else a unit the deck prints (%, x, days...)
   const value = fig.value == null ? "" : `${fmtCount(fig.value)}${named === "%" ? "%" : named ? ` ${named}` : ""}`;
   const head = [value, fig.period].filter(Boolean).join(", ") || fig.metric;
-  return `${head} · page ${fig.page ?? "?"}${fig.cell ? `, cell ${fig.cell}` : ""}`;
+  if (fig.line) return `${head} · p${fig.page ?? "?"}: ${fig.line}`;
+  return `${head} · page ${fig.page ?? "?"}${fig.cell ? `, cell ${fig.cell}` : ""}${fig.label ? ` · ${fig.label}` : ""}`;
 }
 
 /** The Uncertain list of the whole audit: one entry per spreadsheet item and per deck figure that waits, in file order. */

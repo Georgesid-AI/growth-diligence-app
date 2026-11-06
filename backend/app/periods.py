@@ -19,6 +19,9 @@ _PTD = re.compile(r"(?i)^(?:period to date|ptd|month to date|mtd|current (?:peri
 
 _YTD = re.compile(r"(?i)^(?:year to date|ytd)$")
 
+# A subtotal column is named for its period with a word of its own: "TOTAL 2021", "Q1 2024 Total", "Full year 2023". The word is no part of the period.
+_TOTAL_WORDS = re.compile(r"(?i)\b(?:sub-?total|total|full[\s-]?year)\b")
+
 _FY_SHORT = re.compile(r"(?i)^FY\s?'?(\d{2})$")
 
 _FY_SPLIT = re.compile(r"(?i)^(?:FY\s?)?((?:19|20)\d{2})\s?/\s?(\d{2}|\d{4})$")
@@ -62,6 +65,9 @@ def period_of(value, fye: int = 12) -> Optional[Dict]:
     if isinstance(value, (int, float)):
         return _year(int(value), fye, None) if _year_number(value) else None
     text, tag = re.sub(r"\s+", " ", str(value)).strip(), None
+    stripped = re.sub(r"\s+", " ", _TOTAL_WORDS.sub(" ", text)).strip(" -–:()")
+    if stripped and stripped != text and re.search(r"\d", stripped):
+        text = stripped
     for rx, name in _TAG_WORDS:
         if rx.search(text):
             tag, text = name, re.sub(r"\s+", " ", rx.sub(" ", text)).strip(" -–:()")

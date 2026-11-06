@@ -176,3 +176,19 @@ def test_a_rounded_agreement_reads_agrees_rounded_with_its_note_and_a_deck_year_
     assert "Agrees (rounded) (deck figure printed to the nearest hundred thousand)" in recon
     growth = appendix.split("Growth by year")[1].split("Plan to date")[0]
     assert "2026 from deck, page 7, unverified" in growth
+
+
+def test_a_hidden_sheet_is_named_as_hidden_in_the_memo_citations_and_a_hidden_duplicate_is_flagged():
+    """Board-pack fixes, item 2: MRR is mapped on a hidden sheet only (used, cited "(hidden)"); revenue is on a visible sheet and on a hidden one (the visible
+    sheet is used, the hidden copy is a Worth flagging line)."""
+    from test_role_engine import file_of, sheet
+    months = [f"{2024 + i // 12}-{i % 12 + 1:02d}" for i in range(24)]
+    visible = sheet("PNL", [row(4, "revenue", [100] * 24, months)])
+    hidden = sheet("data_for_graphs", [row(4, "revenue", [999] * 24, months), row(20, "mrr", [10 + i for i in range(24)], months)])
+    files = [{**file_of("pack", [visible, hidden]), "hidden_sheets": ["data_for_graphs"]}]
+    text = build(run(files, as_of="2025-12"), files)
+    appendix = appendix_c(text)
+    assert "data_for_graphs (hidden)!B20:Y20" in appendix, "the MRR row is read from the hidden sheet and says so"
+    assert "999" not in appendix and "PNL!B4:M4, N4:Y4" in appendix, "revenue is read from the visible sheet"
+    flagged = text.split("## Worth flagging")[1].split("## Data gaps")[0]
+    assert "Revenue also on data_for_graphs (hidden); the calculation uses PNL" in flagged

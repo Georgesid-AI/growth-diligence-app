@@ -4127,3 +4127,29 @@ def test_the_token_cap_record_the_failure_message_and_the_claims_log_hold_number
     assert re.search(r" cap=\d+$", line), line
     for _x, _y, _size, text in LINES:
         assert text not in line and text not in message
+
+
+# --- board-pack fixes (item 6): the line of a text-style page a deck figure sits in is for the screen only ---------------------------------------------
+def test_the_line_of_a_deck_figure_reaches_no_result_no_review_and_no_log(caplog):
+    import asyncio
+    import json
+    import logging
+    import server
+    import test_llm_gateway as t
+    from app import reviewer
+    caplog.set_level(logging.INFO)
+    line = "ARR: 1 774 628 EUR - 93% of the plan!"
+    db = t.FakeDB()
+    db["deck_text"].docs.append({"audit_id": "a1", "deck_id": "d1", "file": "deck.pdf", "pages": 3, "blocks": [], "structures": []})
+    db["deck_candidates"].docs.append({"audit_id": "a1", "deck_id": "d1", "origin": "ai", "status": "pending", "id": "c1", "claim_type": "arr", "value": 1774628.0,
+                                       "currency": "EUR", "unit": None, "period_text": None, "label_from": None, "flags": [], "basis": "actual", "cell": "r1c1",
+                                       "snippet": line, "sources": [{"page": 1, "kind": "page", "cell": "r1c1"}]})
+    server.db, saved = db, server.db
+    try:
+        inputs = asyncio.run(server._role_inputs("a1", {"id": "a1", "fiscal_year_end": 12}))
+        payload, _ = asyncio.run(reviewer.collect(db, {"id": "a1"}))
+    finally:
+        server.db = saved
+    assert inputs["deck"] and all("line" not in f for f in inputs["deck"]), "the engine gets the figure without its line"
+    assert line not in json.dumps(inputs, default=str) and line not in json.dumps(payload, default=str), "not in the engine's inputs, not in the review"
+    assert line not in "\n".join(r.getMessage() for r in caplog.records)

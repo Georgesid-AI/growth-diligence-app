@@ -1871,7 +1871,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     # as-of month is deferred revenue and must not appear in current figures.
     as_of = _resolve_as_of(config.get("as_of_month"))
     roles = config.get("roles")            # the stored map's role table (app/role_engine.py): the engine's inputs when it is given
-    mapped = role_engine.compute(roles["table"], as_of, roles.get("fye", 12), roles.get("deck"), on_error, roles.get("waiting")) if roles is not None else None
+    mapped = role_engine.compute(roles["table"], as_of, roles.get("fye", 12), roles.get("deck"), on_error, roles.get("waiting"), roles.get("flags")) if roles is not None else None
     if mapped and yearly is None:
         yearly = mapped["yearly"]
     if not mrr.empty and as_of is not None:
@@ -2210,6 +2210,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                 "metric": "P&L lines (calculation error)", "status": MISSING_STATUS,
                 "reason": f"The calculation stopped on an unexpected {type(exc).__name__}; reported as Missing, not estimated",
                 "unlocked_by": "Not computable from the data as supplied; the server log has the run id", "file": pnl_src.get("file")})
+    if roles is not None:
+        role_engine.label_hidden(results, role_engine.hidden_sheets(roles["table"]))           # a hidden sheet is named so in every citation
     return results
 
 

@@ -9,8 +9,9 @@ the tolerance of its unit (money 0.5 %, a rate 1 point, a count exact). Three ou
                   (the figure was read from the image): "Page {n} has no text layer; figure read from the image."
 
 Nothing is corrected, nothing is stored here: the outcome is computed from the stored page text and the stored candidate each time it is asked,
-so it always follows the deck as it now stands. No deck text leaves this module: a figure carries its page number, its value and the closed
-words of the candidate, never a line of the page (rule 17).
+so it always follows the deck as it now stands. No deck text reaches a result, a log or the model from this module: a figure carries its page number,
+its value and the closed words of the candidate. The one exception is `line` (board-pack fixes, item 6): for the screen only, the line of a text-style
+page a figure sits in, up to 120 characters, so the analyst sees where it was read; it is dropped before the figures reach the engine (server._role_inputs).
 """
 import re
 from typing import Dict, List, Optional
@@ -136,6 +137,18 @@ def reading_choice(candidate: Dict) -> Optional[Dict]:
     return None
 
 
+LINE_MAX = 120
+
+
+def line_of(candidate: Dict) -> Optional[str]:
+    """The line of text a figure of a text-style page sits in, on one line, cut at LINE_MAX characters ("…" for the cut); None for a figure in a table
+    (it keeps its cell reference and its row label)."""
+    if (candidate.get("sources") or [{}])[0].get("table") is not None:
+        return None
+    text = re.sub(r"\s+", " ", candidate.get("snippet") or "").strip()
+    return None if not text else text if len(text) <= LINE_MAX else text[:LINE_MAX - 1].rstrip() + "…"
+
+
 def figure_of(candidate: Dict, deck: Dict) -> Dict:
     """One deck figure in the file map's fields (value, unit, currency, period, actual/plan, source), its candidate's id for the register."""
     page = page_of(candidate)
@@ -154,7 +167,7 @@ def figure_of(candidate: Dict, deck: Dict) -> Dict:
             "actual_plan": "plan" if candidate.get("basis") == "projection" else "actual" if candidate.get("basis") == "actual" else None,
             "segment": candidate.get("page_segment"), "precision": printed_precision(deck, page, value) if unit in ("money", "count") else 0.0,
             "uncertain": checker.READING_UNCERTAIN in (candidate.get("flags") or []),       # the two page reads disagree: held out until the analyst chooses
-            "reading": reading_choice(candidate), "cell": candidate.get("cell"),
+            "reading": reading_choice(candidate), "cell": candidate.get("cell"), "line": line_of(candidate),
             "source": {"page": page, "text_layer": bool(page and page_numbers(deck, page))}}
 
 

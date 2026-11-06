@@ -1053,7 +1053,7 @@ async def reading_cell(audit_id: str, file_hash: str, sheet: str, cell: str):
 
 class CardDecision(BaseModel):
     model_config = {"extra": "forbid"}
-    action: Literal["use_cell", "use_reader", "type_value"]
+    action: Literal["use_cell", "use_reader", "type_value", "apply_fix"]
     value: Optional[float] = Field(default=None, allow_inf_nan=False)
 
 
@@ -2749,12 +2749,13 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
         files.append({"file": check.get("file"), "file_hash": check.get("file_hash"), "file_map": file_map, "labels": labels,
                       "rejected": [i["key"] for i in items if i["outcome"] == checks_mod.REJECTED],
                       "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT],
-                      "uncertain": consistency_mod.held_rows(file_map, waiting)})
-    deck = [{**f, "file": d["file"], "page": f["source"]["page"]} for d in await deck_figures.checked(db, audit_id) for f in d["figures"]
-            if f["outcome"] != checks_mod.REJECTED]
+                      "uncertain": consistency_mod.held_rows(file_map, waiting),
+                      "hidden_sheets": check.get("hidden_sheets") or [], "formula_errors": check.get("formula_errors") or []})
+    deck = [{**{k: v for k, v in f.items() if k != "line"}, "file": d["file"], "page": f["source"]["page"]}      # the line of text is for the screen only
+            for d in await deck_figures.checked(db, audit_id) for f in d["figures"] if f["outcome"] != checks_mod.REJECTED]
     # "unread": mapped rows with no series, for the report text only (report_text); the engine reads "table" alone
     return {"table": role_engine.build_table(files), "unread": report_text.rows_without_series(files), "deck": deck, "fye": _fiscal_year_end(audit),
-            "waiting": waiting_items}
+            "waiting": waiting_items, "flags": role_engine.file_flags(files)}
 
 
 async def _report_table(audit_id: str, audit: dict) -> list:

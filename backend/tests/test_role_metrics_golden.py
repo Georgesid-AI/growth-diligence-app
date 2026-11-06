@@ -18,15 +18,26 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 from schemas.metrics import CONTRACT_VERSION  # noqa: E402
+from test_column_classes import board_pack, files_of, smap_of, sheet_of  # noqa: E402
 from test_role_engine import monthly_report, run, yearly_pnl  # noqa: E402
+from app import series  # noqa: E402
 
 GOLDEN = Path(__file__).parent / "golden" / f"role_metrics_{CONTRACT_VERSION}.json"
 REGENERATE = "regenerate with: GOLDEN_REGENERATE=1 .venv/bin/python -m pytest tests/test_role_metrics_golden.py (from backend/)"
 
 
+def board_pack_files() -> list:
+    """The board-pack layout (tests/test_column_classes.py): TOTAL year columns, months with a Qn subtotal after every third, datetime headers."""
+    grid, layout, months, quarters, years, last = board_pack()
+    text, _ = sheet_of(grid)
+    fmap = series.attach({"map_version": 1, "kind": "sheet", "figures": [], "sheets": [smap_of(last)]}, text)
+    return files_of({"fmap": fmap})
+
+
 def produce() -> dict:
-    """role_metrics of both fixtures, round-tripped through JSON so what is compared is what is stored."""
-    out = {"yearly": run(yearly_pnl())["role_metrics"], "monthly": run(monthly_report())["role_metrics"]}
+    """role_metrics of the fixtures, round-tripped through JSON so what is compared is what is stored."""
+    out = {"yearly": run(yearly_pnl())["role_metrics"], "monthly": run(monthly_report())["role_metrics"],
+           "board_pack": run(board_pack_files(), as_of="2023-12")["role_metrics"]}
     return json.loads(json.dumps(out, sort_keys=True, default=str))
 
 

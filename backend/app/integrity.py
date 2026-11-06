@@ -196,10 +196,13 @@ def overall(rows: List[dict]) -> dict:
 
 def statement_findings(results: dict) -> List[dict]:
     """The integrity findings of a P&L read as a statement (docs/design/pnl-lines.md section 3): a total that differs from its lines, a sign
-    that differs, a % row that does not recompute, each beyond the app's tolerance and with the cell it cites. They are shown with the data
+    that differs, a % row that does not recompute, each beyond the app's tolerance and with the cell it cites; and a file with formula errors, with their cells. They are shown with the data
     integrity results; they are not one of the six checks, so they move neither the coverage nor the conclusion."""
-    return [{"kind": f["kind"], "line": f["line"], "period": f["period"], "text": f["text"], "source": _cite(f["source"])}
-            for f in (results.get("pnl_lines") or {}).get("findings") or ()]
+    found = [{"kind": f["kind"], "line": f["line"], "period": f["period"], "text": f["text"], "source": _cite(f["source"])}
+             for f in (results.get("pnl_lines") or {}).get("findings") or ()]
+    # A file that holds formula errors (#REF!, #DIV/0!, #N/A, #VALUE!): one finding for the file, with the cells (role_metrics.integrity_flags)
+    return found + [{"kind": f["kind"], "line": f.get("file"), "period": None, "text": f["text"], "source": ", ".join(f["cells"])}
+                    for f in (results.get("role_metrics") or {}).get("integrity_flags") or ()]
 
 
 def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fiscal_year_end: int = 12) -> dict:

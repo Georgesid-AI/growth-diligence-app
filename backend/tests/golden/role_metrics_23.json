@@ -1,4 +1,574 @@
 {
+  "board_pack": {
+    "as_of_month": "2023-12",
+    "awaiting_confirmation": {
+      "count": 0,
+      "figures": 0,
+      "rows": 0
+    },
+    "growth_by_year": [
+      {
+        "deck_note": null,
+        "growth": 0.3979999999999999,
+        "period": "2022",
+        "prior": 1000.0,
+        "source": {
+          "cells": [
+            "B4",
+            "E4:G4",
+            "I4:K4",
+            "M4:O4",
+            "Q4:S4"
+          ],
+          "file": "board",
+          "row": 4,
+          "rule": "Growth by year = revenue of the fiscal year \u00f7 revenue of the year before \u2212 1",
+          "sheet": "Report"
+        },
+        "value": 1398.0
+      },
+      {
+        "deck_note": null,
+        "growth": 0.3090128755364807,
+        "period": "2023",
+        "prior": 1398.0,
+        "source": {
+          "cells": [
+            "E4:G4",
+            "I4:K4",
+            "M4:O4",
+            "Q4:S4",
+            "U4:W4",
+            "Y4:AA4",
+            "AC4:AE4",
+            "AG4:AI4"
+          ],
+          "file": "board",
+          "row": 4,
+          "rule": "Growth by year = revenue of the fiscal year \u00f7 revenue of the year before \u2212 1",
+          "sheet": "Report"
+        },
+        "value": 1830.0
+      }
+    ],
+    "integrity_flags": [],
+    "mapping_flags": [
+      {
+        "file": "board",
+        "role": "revenue",
+        "rows": [
+          4,
+          4,
+          4
+        ],
+        "sheet": "Report",
+        "text": "three rows mapped as revenue (rows 4, 4, 4); the calculation uses row 4",
+        "used_row": 4
+      }
+    ],
+    "metrics": [
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "ending_arr",
+        "name": "Ending ARR",
+        "needs": [
+          "arr/mrr"
+        ],
+        "period": null,
+        "reason": "needs an arr row or an mrr row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "mrr_series",
+        "name": "MRR",
+        "needs": [
+          "mrr"
+        ],
+        "period": null,
+        "reason": "needs an mrr row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "monthly_churn",
+        "name": "Monthly churn",
+        "needs": [
+          "churn_rate"
+        ],
+        "period": null,
+        "reason": "needs a churn_rate row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "customers",
+        "name": "Customers",
+        "needs": [
+          "customers"
+        ],
+        "period": null,
+        "reason": "needs a customers row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": "monthly",
+        "detail": null,
+        "estimate": false,
+        "label": "Revenue growth, month on month",
+        "metric": "growth",
+        "name": "Growth",
+        "needs": [
+          "revenue/arr/mrr"
+        ],
+        "period": "2023-12",
+        "reason": null,
+        "source": {
+          "cells": [
+            "AH4",
+            "AI4"
+          ],
+          "file": "board",
+          "row": 4,
+          "rule": "Revenue growth = revenue row \u00f7 the month before \u2212 1",
+          "sheet": "Report"
+        },
+        "status": "computed",
+        "unit": "rate",
+        "value": 0.01807228915662651
+      },
+      {
+        "basis": "monthly",
+        "detail": null,
+        "estimate": false,
+        "label": "Revenue growth, year on year",
+        "metric": "growth",
+        "name": "Growth",
+        "needs": [
+          "revenue/arr/mrr"
+        ],
+        "period": "2023-12",
+        "reason": null,
+        "source": {
+          "cells": [
+            "S4",
+            "AI4"
+          ],
+          "file": "board",
+          "row": 4,
+          "rule": "Revenue growth = revenue row \u00f7 the same month a year before \u2212 1",
+          "sheet": "Report"
+        },
+        "status": "computed",
+        "unit": "rate",
+        "value": 0.2706766917293233
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "plan_to_date",
+        "name": "Plan to date",
+        "needs": [
+          "revenue",
+          "forecast"
+        ],
+        "period": null,
+        "reason": "needs a forecast row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": "yearly",
+        "detail": null,
+        "estimate": false,
+        "label": "yearly",
+        "metric": "yearly_revenue",
+        "name": "Yearly revenue",
+        "needs": [
+          "revenue"
+        ],
+        "period": "2023",
+        "reason": null,
+        "source": {
+          "cells": [
+            "D4"
+          ],
+          "file": "board",
+          "row": 4,
+          "rule": "Yearly revenue = the revenue row of the fiscal year",
+          "sheet": "Report"
+        },
+        "status": "computed",
+        "unit": "money",
+        "value": 1830.0
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "sm_share",
+        "name": "S&M share of revenue",
+        "needs": [
+          "revenue",
+          "sales_marketing"
+        ],
+        "period": null,
+        "reason": "needs a sales_marketing row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "rnd_share",
+        "name": "R&D share of revenue",
+        "needs": [
+          "revenue",
+          "rnd"
+        ],
+        "period": null,
+        "reason": "needs an rnd row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "ga_share",
+        "name": "G&A share of revenue",
+        "needs": [
+          "revenue",
+          "ga"
+        ],
+        "period": null,
+        "reason": "needs a ga row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "rnd_expense",
+        "name": "R&D expense",
+        "needs": [
+          "rnd"
+        ],
+        "period": null,
+        "reason": "needs an opex row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "ga_expense",
+        "name": "G&A expense",
+        "needs": [
+          "ga"
+        ],
+        "period": null,
+        "reason": "needs an opex row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "opex_share",
+        "name": "Operating expenses share of revenue",
+        "needs": [
+          "revenue",
+          "opex"
+        ],
+        "period": null,
+        "reason": "needs an opex row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "ebitda_margin",
+        "name": "EBITDA margin",
+        "needs": [
+          "revenue",
+          "ebitda"
+        ],
+        "period": null,
+        "reason": "needs an ebitda row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "bookings",
+        "name": "Bookings",
+        "needs": [
+          "bookings"
+        ],
+        "period": null,
+        "reason": "needs a bookings row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "cash",
+        "name": "Cash",
+        "needs": [
+          "cash"
+        ],
+        "period": null,
+        "reason": "needs a cash row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "headcount",
+        "name": "Headcount",
+        "needs": [
+          "headcount"
+        ],
+        "period": null,
+        "reason": "needs a headcount row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      },
+      {
+        "basis": "yearly",
+        "detail": null,
+        "estimate": false,
+        "label": "yearly",
+        "metric": "gross_margin",
+        "name": "Gross margin",
+        "needs": [
+          "revenue",
+          "cost_of_revenue"
+        ],
+        "period": "2023",
+        "reason": null,
+        "source": {
+          "cells": [
+            "D4"
+          ],
+          "file": "board",
+          "row": 4,
+          "rule": "Gross margin = (revenue \u2212 cost of revenue) \u00f7 revenue",
+          "sheet": "Report"
+        },
+        "status": "computed",
+        "unit": "rate",
+        "value": 0.6
+      },
+      {
+        "basis": null,
+        "detail": null,
+        "estimate": false,
+        "label": null,
+        "metric": "yearly_cac_payback",
+        "name": "CAC payback (yearly)",
+        "needs": [
+          "revenue",
+          "cost_of_revenue",
+          "sales_marketing"
+        ],
+        "period": null,
+        "reason": "needs a sales_marketing row",
+        "source": null,
+        "status": "needs_row",
+        "unit": null,
+        "value": null
+      }
+    ],
+    "plan_to_date": null,
+    "pnl_trend": {
+      "file": "board",
+      "periods": [
+        {
+          "kind": "actual",
+          "period": "2021"
+        },
+        {
+          "kind": "actual",
+          "period": "2022"
+        },
+        {
+          "kind": "actual",
+          "period": "2023"
+        }
+      ],
+      "rows": [
+        {
+          "metric": "revenue",
+          "name": "Revenue",
+          "unit": "money",
+          "values": [
+            {
+              "cells": [
+                "B4"
+              ],
+              "estimate": false,
+              "kind": "actual",
+              "period": "2021",
+              "value": 1000.0
+            },
+            {
+              "cells": [
+                "C4"
+              ],
+              "estimate": false,
+              "kind": "actual",
+              "period": "2022",
+              "value": 1398.0
+            },
+            {
+              "cells": [
+                "D4"
+              ],
+              "estimate": false,
+              "kind": "actual",
+              "period": "2023",
+              "value": 1830.0
+            }
+          ]
+        },
+        {
+          "metric": "gross_margin",
+          "name": "Gross margin",
+          "unit": "rate",
+          "values": [
+            {
+              "cells": [
+                "B4",
+                "B5"
+              ],
+              "estimate": false,
+              "kind": "actual",
+              "period": "2021",
+              "value": 0.6
+            },
+            {
+              "cells": [
+                "C4",
+                "C5"
+              ],
+              "estimate": false,
+              "kind": "actual",
+              "period": "2022",
+              "value": 0.6
+            },
+            {
+              "cells": [
+                "D4",
+                "D5"
+              ],
+              "estimate": false,
+              "kind": "actual",
+              "period": "2023",
+              "value": 0.6
+            }
+          ]
+        },
+        {
+          "metric": "sm_share",
+          "name": "S&M share of revenue",
+          "unit": "rate",
+          "values": []
+        },
+        {
+          "metric": "rnd_share",
+          "name": "R&D share of revenue",
+          "unit": "rate",
+          "values": []
+        },
+        {
+          "metric": "ga_share",
+          "name": "G&A share of revenue",
+          "unit": "rate",
+          "values": []
+        },
+        {
+          "metric": "ebitda_margin",
+          "name": "EBITDA margin",
+          "unit": "rate",
+          "values": []
+        }
+      ],
+      "sheet": "Report"
+    },
+    "reconciliation": []
+  },
   "monthly": {
     "as_of_month": "2026-06",
     "awaiting_confirmation": {
@@ -7,6 +577,7 @@
       "rows": 0
     },
     "growth_by_year": [],
+    "integrity_flags": [],
     "mapping_flags": [],
     "metrics": [
       {
@@ -473,6 +1044,7 @@
         "value": 2400.0
       }
     ],
+    "integrity_flags": [],
     "mapping_flags": [],
     "metrics": [
       {
