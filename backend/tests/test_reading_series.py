@@ -91,7 +91,7 @@ def test_the_series_are_written_once_with_the_reading_and_equal_the_builder(flow
 
 
 def _payload(flow):
-    return flow.state["adapter"].sheet_payloads[0]["text"]
+    return flow.state["adapter"].sheet_payloads[0]["text"].split("\n", 1)[1]      # after the line naming the file's sheets
 
 
 def test_the_export_round_trips_json_and_csv(flow):

@@ -103,9 +103,10 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     cells = checks.Cells(first.payload)
     total = _cited(first.file_map)
     await stage("checking_cells", checked=0, total=total)
-    before = checks.check_map(cells, first.file_map, fiscal_year_end)
+    base = checks.plan_fallback(first.file_map, cells, fiscal_year_end)      # a sheet read with no last actual column gets one from code, where the file shows a plan
+    before = checks.check_map(cells, base, fiscal_year_end)
     await stage("checking_cells", checked=total, total=total, matched=before["counts"].get(checks.CONFIRMED, 0), items=len(before["items"]))
-    final, rereads, merged = before, [], first.file_map
+    final, rereads, merged = before, [], base
     keys = checks.reread_keys(before["items"])
     if keys:
         groups = _group(before["items"])
@@ -123,7 +124,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
         except Exception as exc:           # an error, a cap, a missing prompt: whatever the re-read met, the first reading stands
             failure = type(exc).__name__ if not str(exc) else str(exc)
         if failure is None:
-            merged = checks.merge_reread(first.file_map, second.file_map, keys)
+            merged = checks.plan_fallback(checks.merge_reread(base, second.file_map, keys), cells, fiscal_year_end)
             final = checks.check_map(cells, merged, fiscal_year_end)
             await stage("checking_cells", checked=total, total=total, matched=final["counts"].get(checks.CONFIRMED, 0), items=len(final["items"]))
             after = _group(final["items"])
@@ -137,13 +138,13 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
                          "reason": new.get("reason"), "action": "corrected automatically" if new["outcome"] == checks.CONFIRMED else "card"}
                 if new["outcome"] == checks.REJECTED:
                     # Both readings go with the card: the first as the reader gave it, the second beside it.
-                    entry["first"], entry["second"] = checks.reading_of(first.file_map, key), checks.reading_of(second.file_map, key)
+                    entry["first"], entry["second"] = checks.reading_of(base, key), checks.reading_of(second.file_map, key)
                 rereads.append(entry)
         else:
             # The first reading stands, checked as it was; its rejected items say the re-read was not completed. Never not_read.
             note = f"re-read not completed: {failure}"
             rereads = [{"item": e["item"], "first_reason": e["reason"], "reread": None, "outcome": checks.REJECTED, "reason": note,
-                        "action": "card", "first": checks.reading_of(first.file_map, e["item"]), "second": None} for e in ask]
+                        "action": "card", "first": checks.reading_of(base, e["item"]), "second": None} for e in ask]
             for item in final["items"]:
                 if item["outcome"] == checks.REJECTED:
                     item["reread_note"] = note

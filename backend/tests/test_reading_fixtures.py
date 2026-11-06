@@ -129,7 +129,7 @@ def test_the_variance_columns_of_actual_budget_variance_are_tested_in_every_row_
 def test_every_non_empty_cell_of_every_sheet_is_sent_none_sampled_none_cut(fixture):
     _, adapter, _ = run(fixture)
     sent = "\n".join(json.loads(p)["text"] for p in adapter.payloads)
-    parsed = [sh for p in adapter.payloads for sh in redact.parse_reading_text(json.loads(p)["text"])]
+    parsed = [sh for p in adapter.payloads for sh in redact.parse_reading_text(json.loads(p)["text"].split("\n", 1)[1])]      # the first line names the file's sheets
     expected_cells = {s.sheet: sum(1 for c in reading_input.sheet_cells(s)) for s in workbook(fixture)}
     assert {s["name"]: len(s["cells"]) for s in parsed} == expected_cells
     assert rf.COMPANY not in sent and "Client-01" in sent, "the target's name is a token"
@@ -647,3 +647,61 @@ def test_the_verdict_fails_on_a_row_both_reads_get_wrong_or_on_a_sheet_level_fie
     late["sheets"][0]["granularity"] = "yearly" if good["sheets"][0]["granularity"] != "yearly" else "monthly"
     assert runner.fixture_verdict(rf, exp, month, late, good)[0] == "differs", "a sheet-level field differs in one read"
     assert runner.fixture_verdict(rf, exp, "1999-01", good, good)[0] == "differs", "the as-of month is sheet-level"
+
+
+def _bare_budget_reading():
+    fixture = next(f for f in SHEETS if f["name"] == "budget_separate_sheet")
+    bare = copy.deepcopy(fixture["expected_map"]["file_map"])
+    actuals = next(s for s in bare["sheets"] if s["sheet"] == "Actuals")
+    actuals["last_actual"] = None                    # a stand-in that reads the boundary as null
+    return fixture, bare
+
+
+def test_code_sets_the_last_actual_column_when_the_reading_has_none_another_sheet_is_a_plan_and_the_rows_end_at_the_last_column():
+    """George, 2026-11-06: the fallback gives the as-of month, and its piece of evidence says it was set by code."""
+    fixture, bare = _bare_budget_reading()
+    doc, _, _ = run(fixture, bare)
+    assert doc["month"] == "2024-06", doc["evidence"]
+    pieces = [i for i in doc["items"] if i["kind"] == "evidence" and i["sheet"] == "Actuals"]
+    assert [i["evidence_kind"] for i in pieces] == ["row_ends"] and pieces[0]["outcome"] == checks.CONFIRMED
+    assert "Budget" in pieces[0]["text"] and "set by code" in pieces[0]["text"]
+    last, = [i for i in doc["items"] if i["key"] == "last_actual:Actuals"]
+    assert last["outcome"] == checks.CONFIRMED
+    assert [i for i in doc["items"] if i["outcome"] == checks.REJECTED] == []
+
+
+def _cells_of(sheets):
+    return checks.Cells(redact.reading_text(sheets))
+
+
+def _grid(name, title, last_col_has_value=True):
+    cells = [{"row": 1, "col": 1, "text": title}, {"row": 2, "col": 1, "text": "Metric"}, {"row": 2, "col": 2, "text": "Jan-24"},
+             {"row": 2, "col": 3, "text": "Feb-24"}, {"row": 3, "col": 1, "text": "Revenue"}, {"row": 3, "col": 2, "text": "10"}]
+    if last_col_has_value:
+        cells.append({"row": 3, "col": 3, "text": "11"})
+    return {"name": name, "cells": cells}
+
+
+def _map_of(*names):
+    return {"map_version": 1, "kind": "sheet", "figures": [], "sheets": [
+        {"sheet": n, "header_row": 2, "label_col": "A", "first_period_col": "B", "last_period_col": "C", "granularity": "monthly", "currency": None,
+         "currency_cell": None, "last_actual": None, "rows": [{"row": 3, "label_cell": "A3", "role": "revenue", "metric": "revenue", "basis": "monthly",
+                                                                "actual_plan": "actual", "cells": "B3:C3", "by_column": False, "evidence": "Revenue"}]}
+        for n in names]}
+
+
+def test_the_fallback_needs_a_plan_word_elsewhere_rows_that_end_at_the_last_column_and_no_plan_word_on_the_sheet_itself():
+    two = lambda other_name, other_title, title="Monthly P&L", ends=True: _cells_of(  # noqa: E731
+        [_grid("Report", title, ends), _grid(other_name, other_title)])
+    ok = checks.plan_fallback(_map_of("Report"), two("Cost plan", "Cost"), 12)
+    la = ok["sheets"][0]["last_actual"]
+    assert (la["column"], la["period"]) == ("C", "2024-02") and la["evidence"][0]["kind"] == "row_ends"
+    assert "Cost plan" in la["evidence"][0]["text"] and "set by code" in la["evidence"][0]["text"]
+    titled = checks.plan_fallback(_map_of("Report"), two("Sheet2", "FY24 Budget"), 12)           # the plan word is in the other sheet's first rows
+    assert titled["sheets"][0]["last_actual"]["column"] == "C"
+    assert checks.plan_fallback(_map_of("Report"), two("Sheet2", "Cost"), 12)["sheets"][0]["last_actual"] is None, "no plan word elsewhere"
+    assert checks.plan_fallback(_map_of("Report"), two("Cost plan", "Cost", ends=False), 12)["sheets"][0]["last_actual"] is None, "row stops before the last column"
+    assert checks.plan_fallback(_map_of("Report"), two("Cost plan", "Cost", title="Budget 2024"), 12)["sheets"][0]["last_actual"] is None, "the sheet is itself a plan"
+    own = _map_of("Report")
+    own["sheets"][0]["last_actual"] = {"column": "B", "period": "2024-01", "evidence": []}
+    assert checks.plan_fallback(own, two("Cost plan", "Cost"), 12)["sheets"][0]["last_actual"]["column"] == "B", "a reading's own last actual stands"

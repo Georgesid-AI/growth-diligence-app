@@ -4153,3 +4153,23 @@ def test_the_line_of_a_deck_figure_reaches_no_result_no_review_and_no_log(caplog
     assert inputs["deck"] and all("line" not in f for f in inputs["deck"]), "the engine gets the figure without its line"
     assert line not in json.dumps(inputs, default=str) and line not in json.dumps(payload, default=str), "not in the engine's inputs, not in the review"
     assert line not in "\n".join(r.getMessage() for r in caplog.records)
+
+
+def test_the_sheets_in_this_file_line_of_a_sheet_call_carries_sheet_names_only():
+    """George, 2026-11-06: the one line before a sheet's cells holds the file's sheet names, masked like the sheet lines, and nothing else."""
+    import test_sheet_by_sheet as sbs
+    from app.llm import gateway
+    from app.structures import redact
+    sheets = [{"name": "Orchid Test Co Plan", "cells": sbs.cells_of(100) + [{"row": 3, "col": 1, "text": "Acme Retail"}]},
+              {"name": "Cash", "cells": sbs.cells_of(200) + [{"row": 3, "col": 1, "text": "Owner: Jane"}]}]
+    adapter = sbs.BySheet()
+    sbs.read(sbs.audit_db(), adapter, text=redact.reading_text(sheets))
+    assert adapter.calls == 2
+    for sent in adapter.sent:
+        head, body = sent["text"].split("\n", 1)
+        masked_names = [s["name"] for s in redact.parse_reading_text(body)]
+        assert head == "sheets in this file: Client-01 Plan, Cash"
+        assert "Orchid" not in head and masked_names[0] in head
+        for cell_text in ("Metric", "Jan-24", "Revenue", "Acme", "Jane", "100", "200"):
+            assert cell_text not in head
+        assert head.count("\n") == 0 and len(head) <= 400
