@@ -5,6 +5,8 @@ precision, with the cell each value came from. Cells after the row's actual/plan
 
     row["series"]       {"periods": ["2024-01", ...], "values": [100.0, ...], "refs": ["B4", ...]}      actual
     row["plan_series"]  the same three lists for the cells after the boundary                           plan
+    row["subtotal_series"], row["plan_subtotal_series"]    the same for the quarter and year columns of a monthly sheet (or the year columns
+                        of a quarterly one): periods "2024-Q1", "2021"; they feed the quarterly and yearly metrics (role_engine.build_table)
 
 The series are written once, with the reading (readings.put), and never edited: the reading is immutable, and a reviewer's correction or an
 analyst's Change is an override record of its own. The checks keep opening the file (app/checks.py); they never read these series.
@@ -20,7 +22,10 @@ from . import checks
 from .structures import redact
 
 FORMS = {"monthly": "2000-01", "quarterly": "2000-Q1", "yearly": "2000"}      # the form a granularity writes its periods in
-SERIES_KEYS = ("series", "plan_series")
+GRAINS = {"monthly": "month", "quarterly": "quarter", "yearly": "year"}
+ORDER = {"month": 0, "quarter": 1, "year": 2}              # a column coarser than the sheet's grain is a subtotal; a finer one is detail
+FORM_OF_GRAIN = {"month": FORMS["monthly"], "quarter": FORMS["quarterly"], "year": FORMS["yearly"]}
+SERIES_KEYS = ("series", "plan_series", "subtotal_series", "plan_subtotal_series")
 
 
 def _form(smap: Dict) -> str:
@@ -34,7 +39,12 @@ def _boundary(smap: Dict, row: Dict) -> Optional[int]:
 
 
 def row_series(smap: Dict, row: Dict, sheet: "checks.SheetCells", fye: int = 12) -> Dict[str, Dict[str, List]]:
-    """{"series": {...}, "plan_series": {...}} for one row, or {} when the row has no range or is a variance-columns row."""
+    """{"series": {...}, "plan_series": {...}, "subtotal_series": {...}, "plan_subtotal_series": {...}} for one row (a key with no cell is left out),
+    or {} when the row has no range or is a variance-columns row.
+
+    Every period column is classified from its header as a month, a quarter ("Q1 2024") or a year ("TOTAL 2021", "FY 2021", "2021"; a datetime
+    header is a month). The series holds the columns of the sheet's own grain only; the columns of a coarser grain are subtotals and go to the
+    subtotal series, each period in its own form ("2024-Q1", "2021"), so that a quarter or a year never lands on a month's key."""
     rng = checks.parse_range(row.get("cells"))
     if rng is None or row.get("variance_columns"):
         return {}
@@ -42,13 +52,19 @@ def row_series(smap: Dict, row: Dict, sheet: "checks.SheetCells", fye: int = 12)
     down = row.get("by_column", False)
     label_col = redact.col_number(smap["label_col"])
     mark, boundary = row.get("actual_plan"), _boundary(smap, row)
-    out: Dict[str, Dict[str, List]] = {"series": {"periods": [], "values": [], "refs": []}, "plan_series": {"periods": [], "values": [], "refs": []}}
+    own = ORDER[GRAINS.get(smap.get("granularity"), "month")]
+    out: Dict[str, Dict[str, List]] = {k: {"periods": [], "values": [], "refs": []} for k in SERIES_KEYS}
     for r, c in checks.range_cells(rng):
         value = checks.to_number(sheet.get(r, c))
         if value is None:
             continue
         head = sheet.get(r, label_col) if down else sheet.header(smap["header_row"], c)
-        period = checks.period_in_form(checks.header_period(head, fye), form)
+        found = checks.header_period(head, fye)
+        grain = (found or {}).get("grain")
+        if grain not in ORDER or ORDER[grain] < own:
+            continue                # no period, a half or year to date, or a column finer than the sheet's grain: no part of the series
+        subtotal = ORDER[grain] > own
+        period = checks.period_in_form(found, FORM_OF_GRAIN[grain] if subtotal else form)
         if period is None:
             continue
         if mark == "plan":
@@ -57,7 +73,7 @@ def row_series(smap: Dict, row: Dict, sheet: "checks.SheetCells", fye: int = 12)
             after = (r if down else c) > boundary
         else:
             after = False
-        target = out["plan_series" if after else "series"]
+        target = out[("plan_" if after else "") + ("subtotal_series" if subtotal else "series")]
         target["periods"].append(period)
         target["values"].append(value)
         target["refs"].append(checks.ref_of(r, c))

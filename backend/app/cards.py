@@ -19,8 +19,8 @@ from . import checks, readings
 CITATION, DISAGREEMENT, MASKED = "citation_failed_twice", "reviewer_disagreement", "masked_value"
 KINDS = (CITATION, DISAGREEMENT, MASKED)
 OPEN, DECIDED = "open", "decided"
-USE_CELL, USE_READER, TYPED = "use_cell", "use_reader", "type_value"
-ACTIONS = (USE_CELL, USE_READER, TYPED)
+USE_CELL, USE_READER, TYPED, APPLY = "use_cell", "use_reader", "type_value", "apply_fix"
+ACTIONS = (USE_CELL, USE_READER, TYPED, APPLY)
 
 
 SET_NOTE = "set by analyst"
@@ -44,13 +44,15 @@ def _now() -> str:
 async def open_card(db, audit_id: str, *, kind: str, item: str, title: str, source: Dict, reader: Optional[Dict], other: Optional[Dict],
                     cell_value: Optional[float] = None, reading: Optional[str] = None, path: Optional[str] = None,
                     subject: Optional[Dict] = None, actions: Optional[List[str]] = None, cites: Optional[List[Dict]] = None,
-                    finding: Optional[Dict] = None, review: Optional[str] = None) -> Dict:
+                    finding: Optional[Dict] = None, review: Optional[str] = None, fix: Optional[Dict] = None) -> Dict:
     """Open the card of (audit, kind, item) unless it exists. `source` is {file, sheet, cell | page, file_hash | deck_id}; `reader` and `other` are
     the two readings to show, each {label, value, unit, currency, period, evidence}. `cell_value` is what the cell holds (for "use the cell"),
     `reading` the key of the stored reading and `path` the place in it a decision overrides, `subject` {metric, period} for the heading and
     `actions` the buttons offered: all three for a value with a cell to use, "use the reader" alone where nothing else can be used. A reviewer's
     card is one per finding: `finding` is its full text, `cites` every row or figure it cites with the reader's value for that one, `review` the
-    run (the review's created_at) that opened or last met it; the register shows the cards of the latest completed run only."""
+    run (the review's created_at) that opened or last met it; the register shows the cards of the latest completed run only. `fix` is the correction a
+    reviewer's doubt implies ({field, value, old, label, reading, path, item}): the card then offers it ("Set currency EUR") beside "Keep as read"; a card
+    with `actions` of [] is a note and offers nothing (reviewer cards only: "Use the reader" alone is never the only option)."""
     if kind not in KINDS:
         raise ValueError(f"unknown card kind {kind!r}")
     cid = card_id(audit_id, kind, item)
@@ -62,8 +64,9 @@ async def open_card(db, audit_id: str, *, kind: str, item: str, title: str, sour
         return kept
     doc = {"id": cid, "audit_id": audit_id, "kind": kind, "item": item, "title": title, "source": source, "reader": reader, "other": other,
            "cell_value": cell_value, "reading": reading, "path": path, "subject": subject or {},
-           "actions": actions or ([USE_CELL, USE_READER, TYPED] if cell_value is not None else [USE_READER, TYPED]), "status": OPEN, "decision": None, "created_at": _now(),
-           **({"cites": cites, "finding": finding, "review": review} if cites is not None or finding is not None else {})}
+           "actions": actions if actions is not None else ([USE_CELL, USE_READER, TYPED] if cell_value is not None else [USE_READER, TYPED]),
+           "status": OPEN, "decision": None, "created_at": _now(),
+           **({"cites": cites, "finding": finding, "review": review, "fix": fix} if cites is not None or finding is not None else {})}
     await db[readings.CARDS].insert_one(dict(doc))
     return doc
 
@@ -92,17 +95,35 @@ async def decide(db, audit_id: str, cid: str, action: str, typed: Optional[float
         return None
     if action not in card.get("actions", ACTIONS):
         raise ValueError("this card does not offer that action")
-    value = chosen_value(card, action, typed)
+    fix = card.get("fix") if action == APPLY else None
+    if action == APPLY and not fix:
+        raise ValueError("this card does not offer that action")
+    value = fix["value"] if fix else chosen_value(card, action, typed)
     if value is None and action != USE_READER:
         raise ValueError("no value to use")
     decision = {"action": action, "value": value, "who": who, "at": _now()}
-    if value is not None and card.get("reading") and card.get("path"):
+    if fix:
+        override = await readings.add_override(db, reading=fix["reading"], audit_id=audit_id, item=fix["item"], path=fix["path"], old=fix["old"], new=value,
+                                               who=who, why=f"card decided: {fix['label']}")
+        decision["override"] = override["id"]
+    elif value is not None and card.get("reading") and card.get("path"):
         old = (card.get("reader") or {}).get("value")
         override = await readings.add_override(db, reading=card["reading"], audit_id=audit_id, item=card["item"], path=card["path"], old=old, new=value,
                                                who=who, why=f"card decided: {action}")
         decision["override"] = override["id"]
     await db[readings.CARDS].update_one({"id": cid}, {"$set": {"status": DECIDED, "decision": decision}})
     return {**card, "status": DECIDED, "decision": decision}
+
+
+def _agrees(reading: Dict, item: Dict) -> bool:
+    """True when the reader and the file say the same figure and only the written form differs: the cell holds the reader's value (the reading may
+    have dropped a % sign), and the period the header names is the reader's (a quarter written "Q3 2024" is "2024-Q3"). Such a figure needs no card."""
+    value, cell = reading.get("value"), item.get("found_value")
+    if value is None or cell is None:
+        return False
+    unit = reading.get("unit")
+    held = checks.compare(unit, value, cell) or (unit == "rate" and checks.compare(unit, value, cell * 100))
+    return held and checks.same_period(checks.header_period(item.get("found_period")), reading.get("period"))
 
 
 async def open_for_checks(db, audit_id: str, doc: Dict) -> List[Dict]:
@@ -126,6 +147,8 @@ async def open_for_checks(db, audit_id: str, doc: Dict) -> List[Dict]:
         item = by_key.get(again["item"]) or {}
         first = again.get("first") or {}
         is_figure = again["item"].startswith("figure:")
+        if is_figure and _agrees(first, item):
+            continue
         reader = {"label": "Reader, twice" if again.get("second") else "Reader", "value": first.get("value") if is_figure else None,
                   "unit": first.get("unit"), "currency": first.get("currency"), "period": first.get("period"),
                   "evidence": first.get("evidence") if isinstance(first.get("evidence"), str) else None}

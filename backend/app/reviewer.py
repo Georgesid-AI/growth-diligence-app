@@ -22,8 +22,9 @@ from typing import Dict, List, Optional, Tuple
 
 from . import cards, checks, deck_figures, readings, series
 from .llm import cache, gateway, redaction
-from .llm.schemas import SHEET_READING
+from .llm.schemas import SCHEMA_CURRENCIES, SHEET_READING
 from .structures import reading_input, redact
+from schemas.metrics import MAP_METRICS, MAP_ROLES
 
 logger = logging.getLogger("growth.reviewer")
 
@@ -458,6 +459,29 @@ def _cites(finding: Dict, files: Files, outcomes: Dict) -> List[Dict]:
     return unique
 
 
+FIX_FIELDS = {"row": ("role", "metric", "currency"), "figure": ("metric", "currency")}      # what a correction may set on a spreadsheet row, on a figure
+FIX_VALUES = {"currency": SCHEMA_CURRENCIES, "role": MAP_ROLES, "metric": MAP_METRICS}
+
+
+def _fix_of(finding: Dict, cites: List[Dict], files: Files) -> Optional[Dict]:
+    """The correction a finding implies, checked: it names one field of the one row or figure the finding cites, the value is on the closed list of
+    that field and differs from what the reading holds. Anything else (no fix, two cited items, a page figure, an unknown value, the same value) is no
+    correction and the card is a note. {field, value, old, label, reading, path, item} for the card."""
+    fix = finding.get("fix")
+    if not fix or len(cites) != 1 or cites[0]["kind"] not in FIX_FIELDS:
+        return None
+    cite, field, value = cites[0], fix["field"], str(fix["value"]).strip()
+    if field not in FIX_FIELDS[cite["kind"]] or value not in FIX_VALUES[field]:
+        return None
+    owner = next((x for x in files.items if x["kind"] == "sheet" and x.get("file_hash") == cite["source"].get("file_hash")), None)
+    found = _paths(owner["reading"], cite["key"]) if owner else None
+    if not found or found[1].get(field) == value:
+        return None
+    path, entry = found
+    label = f"Set currency {value}" if field == "currency" else f"Relabel as {value}"
+    return {"field": field, "value": value, "old": entry.get(field), "label": label, "reading": owner["reading"]["key"], "path": f"{path}.{field}", "item": cite["key"]}
+
+
 async def _finding_card(db, audit_id: str, finding: Dict, files: Files, outcomes: Dict, stamp: str) -> None:
     """The card of a finding the reader did not settle: one card for the finding, its full text, every row or figure it cites each with the
     reader's reading of that item, and the cell or page. The decision keeps the reader's reading: it overrides no number."""
@@ -467,6 +491,7 @@ async def _finding_card(db, audit_id: str, finding: Dict, files: Files, outcomes
     reader = {"label": "Reader, twice" if twice else "Reader", "value": None, "unit": None, "currency": None, "period": None, "evidence": None,
               **(first["reader"] or {})}
     other = {"label": "Reviewer", "evidence": finding["reading"], "confidence": finding["confidence"], "what": finding["what"]}
+    fix = _fix_of(finding, cites, files)
     await cards.open_card(db, audit_id, kind=cards.DISAGREEMENT, item=f"finding:{_digest(finding)}", title=finding["what"], source=first["source"],
-                          reader=reader, other=other, actions=[cards.USE_READER], cites=cites,
+                          reader=reader, other=other, actions=[cards.APPLY, cards.USE_READER] if fix else [], cites=cites, fix=fix,
                           finding={"what": finding["what"], "reading": finding["reading"], "confidence": finding["confidence"]}, review=stamp)

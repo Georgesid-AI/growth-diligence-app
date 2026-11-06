@@ -69,7 +69,8 @@ def sheet_rows(doc: Dict, file_map: Dict, decided: Dict[str, Dict], card_ids: Di
                "unit": figure.get("unit"), "currency": figure.get("currency"), "period": figure.get("period"), "label": figure.get("label_text"),
                "basis": figure.get("basis"),
                "actual_plan": figure.get("actual_plan"), "row_role": _row_role(file_map, item.get("sheet"), item.get("cell")),
-               "source": {"file": doc.get("file"), "file_hash": doc.get("file_hash"), "sheet": item.get("sheet"), "cell": item.get("cell")},
+               "source": {"file": doc.get("file"), "file_hash": doc.get("file_hash"), "sheet": item.get("sheet"), "cell": item.get("cell"),
+                          **({"hidden": True} if item.get("sheet") in (doc.get("hidden_sheets") or ()) else {})},
                "reason": item.get("reason"), "note": None}
         if (item["key"], item["kind"]) in seen:
             continue
@@ -149,7 +150,7 @@ def deck_rows(deck: Dict) -> Dict[str, List[Dict]]:
             continue                    # the two page reads disagree: listed on the deck's tab for confirmation, in no table until chosen
         row = {"key": f["key"], "kind": "deck_figure", "metric": f.get("metric"), "value": f.get("value"), "unit": f.get("unit"),
                "currency": f.get("currency"), "period": f.get("period"), "label": f.get("label"), "basis": None, "actual_plan": f.get("actual_plan"), "row_role": None,
-               "source": {"file": deck.get("file"), "deck_id": deck["deck_id"], "page": f["source"]["page"]}, "reason": f.get("reason"), "note": None}
+               "source": {"file": deck.get("file"), "deck_id": deck["deck_id"], "page": f["source"]["page"], "line": f.get("line")}, "reason": f.get("reason"), "note": None}
         if f["outcome"] == checks.CONFIRMED:
             out["confirmed"].append(row)
         elif f["outcome"] == checks.REJECTED:
@@ -240,6 +241,7 @@ async def build(db, audit_id: str) -> Dict:
             for ln in entry["lines"]:
                 ln["note"] = "; ".join(notes["rows"].get((entry["sheet"], ln["row"]), [])) or None
         files.append({"kind": "sheet", "file": doc.get("file"), "file_hash": doc["file_hash"], "size": (datasets.get(doc["file_hash"]) or {}).get("size"),
+                      "hidden_sheets": doc.get("hidden_sheets") or [],
                       "summary": {"period_columns": doc.get("period_columns"), "rows_mapped": doc.get("rows_mapped"), "last_actual": doc.get("month"), "first_actual": first_actual(effective),
                                   "granularity": next((x.get("granularity") for x in effective.get("sheets") or []), None),
                                   "confirmed": len(rows["confirmed"]), "rejected": len(rows["rejected"]),
@@ -266,7 +268,8 @@ async def build(db, audit_id: str) -> Dict:
                                               "awaiting_confirmation": sum(1 for f in deck["figures"] if f.get("uncertain"))}},
                       "figures": [{"key": f["key"], "metric": f.get("metric"), "value": f.get("value"), "unit": f.get("unit"), "currency": f.get("currency"),
                                    "period": f.get("period"), "label": f.get("label"), "page": f["source"]["page"], "outcome": f["outcome"],
-                                   "id": f.get("id"), "uncertain": bool(f.get("uncertain")), "reading": f.get("reading"), "cell": f.get("cell")}
+                                   "id": f.get("id"), "uncertain": bool(f.get("uncertain")), "reading": f.get("reading"), "cell": f.get("cell"),
+                                   "line": f.get("line")}
                                   for f in deck["figures"]]})
     review = max(stored, key=lambda r: r.get("created_at") or "", default=None)
     status = (review or {}).get("status")

@@ -264,7 +264,8 @@ def _grids(content: bytes, filename: str) -> Tuple[List[Tuple[str, List[List], D
                         if indent and not _blank(cell.value):
                             indents[(r, c)] = int(indent)
                 merged = [(m.min_row, m.min_col, m.max_row, m.max_col) for m in ws.merged_cells.ranges]
-                out.append((ws.title, grid, {"indents": indents, "merged": merged}))
+                state = {"hidden": True} if getattr(ws, "sheet_state", "visible") != "visible" else {}       # hidden, or very hidden
+                out.append((ws.title, grid, {"indents": indents, "merged": merged, **state}))
             return out, False
         xls = pd.ExcelFile(io.BytesIO(content))
         return [(sheet, [[None if _blank(c) else c for c in row]

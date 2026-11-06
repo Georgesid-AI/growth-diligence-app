@@ -849,12 +849,21 @@ class ReviewRef(BaseModel):
         return self
 
 
+class ReviewFix(BaseModel):
+    """The correction a doubt implies, when it implies one: one field of the cited row or figure and the value it should hold. Code checks the value
+    against a closed list and against the item cited; a doubt with no fix is a note."""
+    model_config = {"extra": "forbid"}
+    field: Literal["currency", "role", "metric"]
+    value: str = Field(min_length=1, max_length=40)
+
+
 class ReviewFinding(BaseModel):
     model_config = {"extra": "forbid"}
     what: str = Field(min_length=1, max_length=REVIEW_TEXT_MAX)
     refs: List[ReviewRef] = Field(min_length=1, max_length=20)
     reading: str = Field(min_length=1, max_length=REVIEW_TEXT_MAX)
     confidence: Literal["high", "low"]
+    fix: Optional[ReviewFix] = None
 
 
 class ReviewReply(BaseModel):

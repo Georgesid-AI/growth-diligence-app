@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 from . import cards, checks, consistency, lines as lines_mod, read_reasons, readings
 from .llm import gateway, redaction
 from .llm.schemas import SHEET_READING
-from .structures import reading_input
+from .structures import reading_input, redact
 
 READ_SECONDS = gateway.SHEET_READING_TIMEOUT_SECONDS + 30       # one sheet's call; a workbook read sheet by sheet is given this for each sheet
 
@@ -51,6 +51,20 @@ def _group(items: List[Dict]) -> Dict[str, List[Dict]]:
 def _worst(items: List[Dict]) -> Dict:
     """The item of a key that decides it: the first rejected one, else the first."""
     return next((i for i in items if i["outcome"] == checks.REJECTED), items[0])
+
+
+FORMULA_ERRORS = ("#REF!", "#DIV/0!", "#N/A", "#VALUE!", "#NAME?", "#NUM!", "#NULL!")      # a cell that holds exactly one of these is a formula error
+
+
+def file_facts(sheets: list) -> Dict:
+    """What the workbook itself says, apart from what the model reads: {"hidden_sheets": [names], "formula_errors": [{"sheet", "cell", "error"}]}.
+    A hidden sheet is read like any other and named so; a cell whose whole value is a formula error is counted and listed (sheet order, then row by
+    row). Names, cell positions and the four error codes only, never a cell value."""
+    hidden = [s.sheet for s in sheets if (s.fmt or {}).get("hidden")]
+    errors = [{"sheet": s.sheet, "cell": f"{redact.col_letters(c)}{r}", "error": str(v).strip()}
+              for s in sheets for r, line in enumerate(s.grid or [], 1) for c, v in enumerate(line, 1)
+              if isinstance(v, str) and v.strip() in FORMULA_ERRORS]
+    return {"hidden_sheets": hidden, "formula_errors": errors}
 
 
 async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fiscal_year_end: int = 12, adapter=None, capture: Optional[Dict] = None,
@@ -143,7 +157,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
            "month": best["month"] if best else None,
            "evidence": (f"{best['evidence']} (confirmed on sheet {best['sheet']}, column {best['column']})" if best else None),
            "unread_sheets": first.unread_sheets, "read_reason": read_reasons.sheets_line(first.unread_sheets),
-           "lines": sheet_lines(merged, cells, final["items"]),
+           "lines": sheet_lines(merged, cells, final["items"]), **file_facts(sheets),
            "consistency": same,
            "dims": {name: [sheet.max_row, sheet.max_col] for name, sheet in cells.sheets.items()},
            "rows_mapped": sum(len(s.get("rows") or []) for s in merged.get("sheets") or []),

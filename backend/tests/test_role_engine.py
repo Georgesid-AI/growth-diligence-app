@@ -43,7 +43,7 @@ def file_of(name, sheets, rejected=(), cannot=()):
 def run(files, as_of="2026-06", deck=None, fye=12):
     table = re_.build_table(files)
     cfg = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2027-12-31", "fx": {"EUR": 1.0}, "as_of_month": as_of,
-           "roles": {"table": table, "deck": deck or [], "fye": fye}}
+           "roles": {"table": table, "deck": deck or [], "fye": fye, "flags": re_.file_flags(files)}}
     return ge.compute_all(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), cfg, {})
 
 
@@ -216,7 +216,7 @@ def test_customer_level_and_crm_metrics_still_say_they_need_their_files():
 
 def test_the_engine_output_passes_the_contract_and_carries_the_version():
     r = run(monthly_report() + yearly_pnl())
-    assert r["contract_version"] == metrics.CONTRACT_VERSION == 22
+    assert r["contract_version"] == metrics.CONTRACT_VERSION == 23
     metrics.MetricsPayload.model_validate(r)
     assert metrics.safe_problems(r) == []
 

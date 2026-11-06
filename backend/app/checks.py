@@ -235,6 +235,57 @@ def period_in_form(period: Optional[Dict], like: str) -> Optional[str]:
     return period["end"]
 
 
+_MONTH_NAMES = {name: n for n, names in enumerate((("jan", "january"), ("feb", "february"), ("mar", "march"), ("apr", "april"), ("may",), ("jun", "june"),
+                                                       ("jul", "july"), ("aug", "august"), ("sep", "sept", "september"), ("oct", "october"), ("nov", "november"),
+                                                       ("dec", "december")), 1) for name in names}
+
+
+def _month_word(text: Optional[str]) -> Optional[int]:
+    """The month number of a header that is a month's name alone ("Nov", "November", "Nov."), else None."""
+    return _MONTH_NAMES.get((text or "").strip().rstrip(".").lower())
+
+
+def _year_cell(text: Optional[str], fye: int) -> Optional[int]:
+    """The year a cell states when it is a year and nothing else ("2024", "FY2024", "FY24"), else None."""
+    found = header_period(text, fye)
+    return found["year"] if found and found["grain"] == "year" and found["tag"] is None else None
+
+
+def nearest_year(sheet: "SheetCells", row: int, col: int, fye: int = 12) -> Optional[int]:
+    """The year a month's name stands under: the year cell above the header (a merged title over its months counts), else the nearest year cell to the
+    left in the header row or the rows above it. None when no cell states a year: a month's name alone is no period."""
+    for r in range(row - 1, 0, -1):
+        year = _year_cell(sheet.header(r, col), fye)
+        if year:
+            return year
+    for r in range(row, 0, -1):
+        for c in range(col - 1, 0, -1):
+            year = _year_cell(sheet.get(r, c), fye)
+            if year:
+                return year
+    return None
+
+
+def resolve_header(sheet: "SheetCells", row: int, col: int, fye: int = 12) -> Optional[Dict]:
+    """The period a header cell names, as `header_period` reads it, else (a month's name alone) the month of the nearest year cell."""
+    text = sheet.header(row, col)
+    found = header_period(text, fye)
+    if found or _month_word(text) is None:
+        return found
+    year = nearest_year(sheet, row, col, fye)
+    return sheet_mod.period_of(date(year, _month_word(text), 1), fye) if year else None
+
+
+def same_period(found: Optional[Dict], written: Optional[str], fye: int = 12) -> bool:
+    """Whether the period a header names is the period the reading wrote, whatever the form it was written in: "2024-Q3" and "Q3 2024" are one quarter."""
+    if not found or not written:
+        return False
+    if period_in_form(found, written) == written:
+        return True
+    other = header_period(written, fye)
+    return bool(other) and (other["grain"], other["start"], other["end"]) == (found["grain"], found["start"], found["end"])
+
+
 def describe_header(text: Optional[str], like: str, fye: int) -> str:
     """The header period for a reason: in the reading's own form, or the header's own text when it names no period."""
     shown_period = period_in_form(header_period(text, fye), like)
@@ -312,7 +363,8 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
         return {**base, "outcome": REJECTED, "reason": R_VALUE.format(value=shown(reading), ref=cell_ref, cell=cell_shown(text))}
     if unit not in ("money", "count", "rate"):
         return {**base, "outcome": CANNOT, "reason": C_NO_UNIT}          # the reader states the unit; the metric name does not choose it
-    if not compare(unit, reading, number):
+    dropped_percent = unit == "rate" and "%" in (text or "") and compare(unit, reading, number * 100)        # the reading dropped the % sign: 93 for "93%"
+    if not dropped_percent and not compare(unit, reading, number):
         if _scale_check(reading, number):
             return {**base, "outcome": CANNOT, "reason": C_SCALE.format(ref=cell_ref, cell=cell_shown(text), value=shown(reading))}
         return {**base, "outcome": REJECTED, "reason": R_VALUE.format(value=shown(reading), ref=cell_ref, cell=cell_shown(text))}
@@ -322,7 +374,8 @@ def check_figure(index: int, figure: Dict, cells: Cells, sheet_maps: Dict[str, D
         head_row, head_col = (row, redact.col_number(smap["label_col"])) if down else (smap["header_row"], col)
         head_ref = ref_of(head_row, head_col)
         head_text = sheet.header(head_row, head_col)
-        found = period_in_form(header_period(head_text, fye), period)
+        header = resolve_header(sheet, head_row, head_col, fye)
+        found = period if same_period(header, period, fye) else period_in_form(header, period)
         base["found_period"] = found
         if found != period:
             return {**base, "outcome": REJECTED, "reason": R_PERIOD.format(period=period, ref=head_ref, header=describe_header(head_text, period, fye))}

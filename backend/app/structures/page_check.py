@@ -370,6 +370,9 @@ def figure_check(listed: Dict, cell: Dict, value, value_high, metric: str, comma
             return item, values, True
     if hits:
         return hits[0][0], hits[0][1], True
+    if unit == "%" and value is not None and 0 < abs(value) <= 1:
+        # A percentage printed as "93%" may be read as 0.93: the page shows the written number, so 0.93 is looked for as 93 too.
+        return figure_check(listed, cell, value * 100, None if value_high is None else value_high * 100, metric, comma, unit, unit_other)
     return None, [], False
 
 

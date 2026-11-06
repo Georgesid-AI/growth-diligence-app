@@ -94,10 +94,10 @@ def test_a_card_offers_only_the_actions_it_has_and_refuses_the_rest(flow):
     upload(flow, MONTHLY, monthly())
     review(flow)
     (card,) = reading(flow)["cards"]
-    assert card["kind"] == cards.DISAGREEMENT and card["actions"] == ["use_reader"]
-    assert flow.post(f"/api/audits/{AUDIT}/cards/{card['id']}", json={"action": "use_cell"}).status_code == 400
-    assert flow.post(f"/api/audits/{AUDIT}/cards/{card['id']}", json={"action": "use_reader"}).status_code == 200
-    assert not flow.db[readings.OVERRIDES].docs, "keeping the reader's role overrides nothing"
+    assert card["kind"] == cards.DISAGREEMENT and card["actions"] == [], "a doubt with no implied correction is a note: 'Use the reader' alone is never the only option"
+    for action in ("use_cell", "use_reader", "apply_fix"):
+        assert flow.post(f"/api/audits/{AUDIT}/cards/{card['id']}", json={"action": action}).status_code == 400
+    assert not flow.db[readings.OVERRIDES].docs, "a note overrides nothing"
 
 
 def test_a_masked_value_the_reading_needs_opens_a_card_and_nothing_else_does():

@@ -53,6 +53,7 @@ NAMES = {
     "ga_share": "G&A share of revenue", "sm_expense": "S&M expense", "rnd_expense": "R&D expense", "ga_expense": "G&A expense", "opex_share": "Operating expenses share of revenue", "ebitda_margin": "EBITDA margin",
     "bookings": "Bookings", "cash": "Cash", "headcount": "Headcount", "reconciliation": "Reconciliation",
 }
+SERIES_KEYS = ("series", "plan_series", "subtotal_series", "plan_subtotal_series")        # app/series.py (not imported: it reaches the gateway)
 YEARLY_LABEL = "yearly"
 FORM = {"monthly": "month", "quarterly": "quarter", "yearly": "year"}
 DECK_METRICS = {"revenue": "revenue", "arr": "arr", "mrr": "mrr", "customers": "customers", "headcount": "headcount", "cash": "cash",
@@ -80,11 +81,17 @@ def needs_text(roles) -> str:
 # The table
 # ---------------------------------------------------------------------------
 def build_table(files: List[Dict]) -> List[Dict]:
+    """The role table of the files' records with the hidden duplicates left out (`_records`, `apply_visibility`)."""
+    return apply_visibility(_records(files))[0]
+
+
+def _records(files: List[Dict]) -> List[Dict]:
     """The role table: [{"file", "sheet", "row", "role", "metric", "basis", "actual_plan", "granularity", "segment", "unit", "currency",
     "actual": {period: (value, cell)}, "plan": {...}, "unchecked": bool}] of every row of the files' maps that has a series.
     `files` is [{"file", "file_map" (the effective map with its series), "rejected" (row keys the checks rejected), "cannot" (row keys they
     could not check), "labels" ({"sheet:row": the text of the row's label cell}, read only for the scope of the S&M line)}]. A rejected row is no
-    input. The label never reaches a result: only the closed word of sm_scope does."""
+    input. The label never reaches a result: only the closed word of sm_scope does. A file may carry "hidden_sheets" (the sheets the workbook hides);
+    a record of such a sheet has `hidden` set."""
     table: List[Dict] = []
     for f in files:
         rejected, cannot = set(f.get("rejected") or ()), set(f.get("cannot") or ())
@@ -92,18 +99,107 @@ def build_table(files: List[Dict]) -> List[Dict]:
             for row in smap.get("rows") or []:
                 if f"row:{smap['sheet']}:{row['row']}" in rejected:
                     continue
-                pairs = {key: dict(zip(row[key]["periods"], zip(row[key]["values"], row[key]["refs"]))) for key in ("series", "plan_series")
+                pairs = {key: dict(zip(row[key]["periods"], zip(row[key]["values"], row[key]["refs"]))) for key in SERIES_KEYS
                          if row.get(key)}
                 if not pairs:
                     continue
-                table.append({"file": f.get("file"), "file_hash": f.get("file_hash"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
-                              "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"),
-                              "basis": row.get("basis"), "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
-                              "segment": (row.get("segment") or "").strip() or None, "parent": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
-                              "actual": pairs.get("series", {}), "plan": pairs.get("plan_series", {}),
-                              "unchecked": f"row:{smap['sheet']}:{row['row']}" in cannot,
-                              "uncertain": f"{smap['sheet']}:{row['row']}" in set(f.get("uncertain") or ())})
+                rec = {"file": f.get("file"), "file_hash": f.get("file_hash"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
+                       "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"), "hidden": smap["sheet"] in set(f.get("hidden_sheets") or ()),
+                       "basis": row.get("basis"), "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
+                       "segment": (row.get("segment") or "").strip() or None, "parent": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
+                       "unchecked": f"row:{smap['sheet']}:{row['row']}" in cannot,
+                       "uncertain": f"{smap['sheet']}:{row['row']}" in set(f.get("uncertain") or ())}
+                if pairs.get("series") or pairs.get("plan_series"):
+                    table.append({**rec, "actual": pairs.get("series", {}), "plan": pairs.get("plan_series", {})})
+                # The quarter and year columns of the row are records of their own, at their own granularity (column classes): the quarterly and
+                # yearly metrics pick them like the rows of a quarterly or yearly sheet. `derived` marks them: they are no second row of the sheet.
+                for grain, name in (("yearly", r"\d{4}"), ("quarterly", r"\d{4}-Q[1-4]")):
+                    sub = {k: {p: v for p, v in pairs.get(f"{k}subtotal_series", {}).items() if re.fullmatch(name, p)} for k in ("", "plan_")}
+                    if sub[""] or sub["plan_"]:
+                        table.append({**rec, "granularity": grain, "derived": True, "actual": sub[""], "plan": sub["plan_"]})
     return table
+
+
+HIDDEN = " (hidden)"
+ROLE_NAMES = {"rnd": "R&D", "ga": "G&A", "sales_marketing": "S&M", "cost_of_revenue": "Cost of revenue", "mrr": "MRR", "arr": "ARR", "ebitda": "EBITDA",
+              "opex": "OPEX", "churn_rate": "Churn rate"}
+
+
+def role_name(role: str) -> str:
+    """A role as a person writes it: "R&D", "S&M", "Cost of revenue"."""
+    return ROLE_NAMES.get(role) or role.replace("_", " ").capitalize()
+
+
+def apply_visibility(records: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    """(the table, the records left out). A role of one granularity that is mapped on a visible sheet and on a hidden sheet is read from the visible
+    one: the hidden sheet's records are left out (a cost role is summed over all its rows, so a hidden copy would be counted twice). A role only a
+    hidden sheet carries is read from it, and its citations say so."""
+    visible = {(r["role"], r["granularity"]) for r in records if not r.get("hidden")}
+    kept, left = [], []
+    for r in records:
+        (left if r.get("hidden") and r["role"] != "other" and (r["role"], r["granularity"]) in visible else kept).append(r)
+    return kept, left
+
+
+def hidden_flags(files: List[Dict]) -> List[Dict]:
+    """The mapping flags of the hidden duplicates: "R&D also on data_for_graphs (hidden); the calculation uses PNL", one for each hidden sheet and role."""
+    records = _records(files)
+    kept, left = apply_visibility(records)
+    out: Dict[Tuple, Dict] = {}
+    for rec in left:
+        used = max((r for r in kept if r["role"] == rec["role"] and not r.get("hidden") and r["actual"]),
+                   key=lambda r: (len(r["actual"]), -kept.index(r)), default=None) \
+            or next(r for r in kept if r["role"] == rec["role"] and not r.get("hidden"))
+        flag = out.setdefault((rec["file"], rec["sheet"], rec["role"]), {
+            "role": rec["role"], "file": rec["file"], "sheet": rec["sheet"], "rows": [], "used_row": used["row"], "used_sheet": used["sheet"], "hidden": True,
+            "text": f"{role_name(rec['role'])} also on {rec['sheet']}{HIDDEN}; the calculation uses {used['sheet']}"})
+        if rec["row"] not in flag["rows"]:
+            flag["rows"] = sorted([*flag["rows"], rec["row"]])
+    return list(out.values())
+
+
+FORMULA_ERROR_CELLS = 5         # the cells a formula-error flag names; the rest are counted
+
+
+def formula_error_flags(files: List[Dict]) -> List[Dict]:
+    """One data-integrity flag for each file that holds formula errors (#REF!, #DIV/0!, #N/A, #VALUE!): "file: 1 formula error, CASHFLOW!B4"."""
+    out = []
+    for f in files:
+        errors = f.get("formula_errors") or []
+        if not errors:
+            continue
+        cells = [f"{e['sheet']}!{e['cell']}" for e in errors]
+        more = f" and {len(cells) - FORMULA_ERROR_CELLS} more" if len(cells) > FORMULA_ERROR_CELLS else ""
+        out.append({"kind": "formula_error", "file": f.get("file"), "count": len(errors), "cells": cells[:FORMULA_ERROR_CELLS],
+                    "text": f"{f.get('file')}: {len(errors)} formula error{'s' if len(errors) != 1 else ''}, {', '.join(cells[:FORMULA_ERROR_CELLS])}{more}"})
+    return out
+
+
+def file_flags(files: List[Dict]) -> Dict[str, List[Dict]]:
+    """What the files themselves call for, apart from their rows: {"mapping": the hidden duplicates, "integrity": the formula errors}."""
+    return {"mapping": hidden_flags(files), "integrity": formula_error_flags(files)}
+
+
+def hidden_sheets(table: List[Dict]) -> set:
+    return {(r["file"], r["sheet"]) for r in table if r.get("hidden")}
+
+
+def label_hidden(node, hidden: set) -> None:
+    """Name a hidden sheet in every citation of a result: a block that holds a file and a sheet of `hidden` gets "(hidden)" after the sheet, and a
+    reconciliation source's "Sheet!cells" the same. In place."""
+    if not hidden:
+        return
+    if isinstance(node, dict):
+        sheet, file = node.get("sheet"), node.get("file")
+        if isinstance(sheet, str) and (file, sheet) in hidden:
+            node["sheet"] = sheet + HIDDEN
+            if isinstance(node.get("where"), str) and node["where"].startswith(f"{sheet}!"):
+                node["where"] = sheet + HIDDEN + node["where"][len(sheet):]
+        for value in node.values():
+            label_hidden(value, hidden)
+    elif isinstance(node, (list, tuple)):
+        for value in node:
+            label_hidden(value, hidden)
 
 
 _SM_TOTAL = re.compile(r"sales\s*(?:and|&|/)\s*marketing|\bs\s*&\s*m\b")
@@ -1001,6 +1097,30 @@ def _cite_cells(rec: Dict, cells: List[str], home: Dict) -> List[str]:
     return [f"{rec['sheet']}!{c}" for c in cells]
 
 
+_REF = re.compile(r"([A-Z]{1,3})(\d+)")
+
+
+def _column_number(letters: str) -> int:
+    n = 0
+    for ch in letters:
+        n = n * 26 + ord(ch) - 64
+    return n
+
+
+def _run_ends(cells: List[str]) -> List[str]:
+    """The cells of a row's months as one "first:last" range per contiguous run of columns; a column between two runs (a quarter's subtotal) breaks the
+    run and is never inside a range. A single cell, or a cell that is no plain reference, stays as it is."""
+    runs: List[List[str]] = []
+    for c in cells:
+        m = _REF.fullmatch(c)
+        last = _REF.fullmatch(runs[-1][-1]) if runs else None
+        if m and last and m.group(2) == last.group(2) and _column_number(m.group(1)) == _column_number(last.group(1)) + 1:
+            runs[-1].append(c)
+        else:
+            runs.append([c])
+    return [r[0] if len(r) == 1 else f"{r[0]}:{r[-1]}" for r in runs]
+
+
 def growth_by_year(table, as_of, fye, deck: Optional[List[Dict]] = None) -> List[Dict]:
     """[{"period", "value", "prior", "growth", "source", "deck_note"}] per fiscal year of revenue with a year before it. Each year's value comes from
     the spreadsheet first and cites the cells it is made of: the sum of the twelve months of the monthly revenue row (a year with fewer months is
@@ -1014,7 +1134,7 @@ def growth_by_year(table, as_of, fye, deck: Optional[List[Dict]] = None) -> List
             by_year.setdefault(_fiscal_year(month, fye), []).append((month, value, cell))
         for year, pts in by_year.items():
             if len(pts) == 12:
-                years[str(year)] = {"value": sum(v for _, v, _ in pts), "cells": [f"{pts[0][2]}:{pts[-1][2]}"], "rec": rec}
+                years[str(year)] = {"value": sum(v for _, v, _ in pts), "cells": _run_ends([c for _, _, c in pts]), "rec": rec}
     yearly = pick(table, "revenue", "yearly")
     if yearly is not None:
         for period, (value, cell) in yearly["actual"].items():
@@ -1284,7 +1404,8 @@ def _guarded(metric: str, fn, on_error, fallback):
         return fallback(exc)
 
 
-def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None, waiting_items: Optional[int] = None) -> Dict:
+def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, deck: Optional[List[Dict]] = None, on_error=None, waiting_items: Optional[int] = None,
+            flags: Optional[Dict[str, List[Dict]]] = None) -> Dict:
     """{"role_metrics": block, "arr", "mrr_series", "customers_series", "revenue_series", "yearly"}: the `role_metrics` block of the contract,
     the legacy blocks the map feeds (None where the rows are missing) and the yearly input of compute_yearly_basis."""
     if as_of is None:
@@ -1324,7 +1445,8 @@ def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, dec
     hold_trend(trend, all_rows)
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
                              "growth_by_year": by_year, "pnl_trend": trend,
-                             "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: []),
+                             "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: []) + list((flags or {}).get("mapping") or ()),
+                             "integrity_flags": list((flags or {}).get("integrity") or ()),
                              "awaiting_confirmation": awaiting_confirmation(all_rows, deck or [], waiting_items)},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}

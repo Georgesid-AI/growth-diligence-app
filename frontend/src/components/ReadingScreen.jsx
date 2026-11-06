@@ -7,7 +7,7 @@ import { MONTHS, DEFAULT_FISCAL_YEAR_END, REPORTING_CURRENCIES, SETUP_HELP, SETU
 import { monthName, shortMonth } from "@/lib/periods";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  FIGURE_HOVERS, FIGURE_WIDTHS, HOVERS, OUTCOME_LABELS, UNCERTAIN_LABEL, UNCERTAIN_TITLE, WIDTHS, actualPlanText, candidateText, deckSummary, differsText, lastActualText,
+  FIGURE_HOVERS, FIGURE_WIDTHS, HIDDEN, HOVERS, OUTCOME_LABELS, UNCERTAIN_LABEL, UNCERTAIN_TITLE, WIDTHS, actualPlanText, candidateText, deckSummary, differsText, lastActualText,
   periodLabel, readingsText, sheetSummary, splitEvidence, uncertainEntries, uncertainTitle, valueText, whereText,
 } from "@/lib/readingView";
 import { OPEN_UNCERTAIN, READINGS_CHANGED } from "@/lib/uploadView";
@@ -194,8 +194,10 @@ const Summary = ({ lines }) => lines.map((parts, n) => (
 
 function LinesTable({ lines, file, auditId, sheet }) {
   const heads = Object.keys(HOVERS.lines);
+  const hidden = (file.hidden_sheets || []).includes(sheet);
   return (
     <table className="rows" data-testid="lines-table">
+      {hidden && <caption data-testid="hidden-sheet">{`${sheet}${HIDDEN}`}</caption>}
       <colgroup>{WIDTHS.lines.map((w, i) => <col key={i} style={{ width: `${w}%` }} />)}</colgroup>
       <thead><tr>{heads.map((h) => <th key={h} title={HOVERS.lines[h]}>{h}</th>)}</tr></thead>
       <tbody>
