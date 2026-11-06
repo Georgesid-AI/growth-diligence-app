@@ -705,3 +705,15 @@ def test_the_fallback_needs_a_plan_word_elsewhere_rows_that_end_at_the_last_colu
     own = _map_of("Report")
     own["sheets"][0]["last_actual"] = {"column": "B", "period": "2024-01", "evidence": []}
     assert checks.plan_fallback(own, two("Cost plan", "Cost"), 12)["sheets"][0]["last_actual"]["column"] == "B", "a reading's own last actual stands"
+
+
+def test_the_fallback_last_actual_is_stored_on_the_reading_marked_set_by_code():
+    """George, 2026-11-06 (approval on PR 244): the stored reading, its series and its exports carry the column the checked map uses."""
+    fixture, bare = _bare_budget_reading()
+    _, _, db = run(fixture, bare)
+    stored, = db[readings.READINGS].docs
+    actuals = next(s for s in stored["file_map"]["sheets"] if s["sheet"] == "Actuals")
+    assert actuals["last_actual"]["column"] == "G" and actuals["last_actual"]["period"] == "2024-06"
+    assert "Budget" in actuals["last_actual"]["evidence"][0]["text"] and "set by code" in actuals["last_actual"]["evidence"][0]["text"]
+    budget = next(s for s in stored["file_map"]["sheets"] if s["sheet"] == "Budget")
+    assert budget["last_actual"] is None, "the plan sheet itself is left as read"

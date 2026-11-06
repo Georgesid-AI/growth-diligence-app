@@ -86,7 +86,7 @@
     from the page reads' (`structures`), and a page's 60-second clock starts when its model call is sent.
     Amended 2026-11-06 (George; for approval before merge, rule 32): each per-sheet `sheet_reading` call starts its text with one line, "sheets in this
     file: <name 1>, <name 2>, ...", the file's sheet names after masking and nothing else, so the model can see the other sheets. A sheet whose reading
-    has no last actual column may get one from code (checks.plan_fallback, no model call) when another sheet is a plan and the rows end at the last period column.
+    has no last actual column may get one from code (checks.plan_fallback, no model call; stored with the reading, its evidence marked "set by code") when another sheet is a plan and the rows end at the last period column.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt

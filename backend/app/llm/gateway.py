@@ -2428,7 +2428,7 @@ async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_ra
     reason; the others stand, and a second read leaves out the sheets the first could not read. A re-read asks only the sheets its items are on.
     Any other failure (a provider error, a reply that does not validate, a cap) ends the read as it did for the whole file. Figures citing another
     sheet resolve against the whole file's payload, which is returned."""
-    from .. import series as series_mod        # series imports the checks, which import this module's package
+    from .. import checks as checks_mod, series as series_mod        # series imports the checks, which import this module's package
     adapter = adapter or AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS)
     units = sheet_units(text)
     sheets_line = SHEETS_IN_FILE + ", ".join(sh["name"] for sh in structure_redact.parse_reading_text(text) or [])      # masked names; nothing else
@@ -2466,6 +2466,7 @@ async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_ra
     merged = {"map_version": parts[0]["map_version"], "kind": parts[0]["kind"],
               "sheets": [sh for part in parts for sh in part.get("sheets") or []], "figures": [f for part in parts for f in part.get("figures") or []]}
     if not recheck:
+        merged = checks_mod.plan_fallback(merged, checks_mod.Cells(text), fiscal_year_end)       # a last actual column set by code is stored with the reading
         merged = series_mod.attach(merged, text, fiscal_year_end)           # the row series, written once with the reading (step a of PR 3)
     restored = redaction.restore_deep(merged, mapping)
     unread = redaction.restore_deep(lost, mapping)
