@@ -13,10 +13,10 @@ notice, exit 0, when any is absent:
     DECK_READING_PROMPT   the text of the `deck_reading` prompt (a secret). The deck fixture is read only when both are set, the workflow's own
                           condition for installing the converter; otherwise it is listed as "skipped: deck path unchanged" and is no difference
 
-The cap is one provider call per fixture per run, plus the one retry the gateway makes when the first reply fails the file map's schema:
-each file is read once, with no item re-read, and the first reading that validates is what is compared. The
+The cap is, per sheet and run, the first reading and its consistency read, each with the one retry the gateway makes when a reply fails the file map's schema:
+no item re-read, and the first reading that validates is what is compared (the second read decides only whether a row is uncertain). The
 reading goes through the same gateway as the product (masking, token cap, allow-listed model, prompt from a store), with an in-memory store holding
-the prompt and nothing else: every run starts from an empty store, and a fixture served from storage instead of the model fails the job. A difference, a refusal or a failed read exits 1. Cost: a few cents per run. Prints a table and the reason text of every cannot-check item (fixtures are synthetic).
+the prompt and nothing else: every run starts from an empty store, and a fixture served from storage instead of the model fails the job. A difference (see fixture_verdict: a sheet-level field, or a row both reads give wrongly), a refusal or a failed read exits 1; a row the two reads disagree on is printed as uncertain and does not. Cost: a few cents per run. Prints a table and the reason text of every cannot-check item (fixtures are synthetic).
 """
 import asyncio
 import hashlib
@@ -39,41 +39,48 @@ def notice(text: str) -> None:
 
 class OneCall:
     """The provider adapter, counting. A workbook is read sheet by sheet (George, 2026-11-05), so the cap is per sheet: the first reading of the
-    sheet plus the one schema-validation retry (a fix request carrying the errors, which the gateway sends when the first reply fails the file
-    map's schema). Nothing else is allowed: an item re-read (recheck), a second retry or any third call for a sheet is refused with an error."""
+    sheet and its consistency read (the same request, asked a second time), each with the one schema-validation retry the gateway makes when a
+    reply fails the file map's schema (a fix request carrying the errors). Nothing else is allowed: an item re-read (recheck), a second retry or
+    any third reading of a sheet is refused with an error."""
 
     def __init__(self, adapter):
         self.adapter, self.calls, self.retries, self.tokens_in, self.tokens_out = adapter, 0, 0, 0, 0
-        self.sheets, self.current = {}, None          # the calls and retries made for each sheet; the sheet the last reading was for
+        self.sheets, self.current = {}, None          # per sheet: its readings so far; the sheet the last reading was for
+        self.fixed = False                             # the reading in progress has had its retry
 
     @staticmethod
-    def is_fix(kw) -> bool:
-        try:
-            return "fix" in json.loads(kw["user_payload"])
-        except (KeyError, TypeError, ValueError):
-            return False
-
-    @staticmethod
-    def sheet_of(kw):
+    def payload(kw) -> dict:
         try:
             sent = json.loads(kw["user_payload"])
-            return tuple(re.findall(r"(?m)^sheet \d+: (.*)$", sent.get("text") or ""))
+            return sent if isinstance(sent, dict) else {}
         except (KeyError, TypeError, ValueError):
-            return None
+            return {}
+
+    @classmethod
+    def is_fix(cls, kw) -> bool:
+        return "fix" in cls.payload(kw)
+
+    @classmethod
+    def sheet_of(cls, kw):
+        return tuple(re.findall(r"(?m)^sheet \d+: (.*)$", cls.payload(kw).get("text") or ""))
 
     def complete(self, **kw):
-        fix = self.is_fix(kw)
-        if not fix:
-            self.current = self.sheet_of(kw)
-            if self.current in self.sheets:
-                raise RuntimeError("the cap is one reading and one schema-validation retry per sheet per run")
-            self.sheets[self.current] = {"calls": 0, "retries": 0}
-        elif self.current is None or self.sheets[self.current]["retries"]:
-            raise RuntimeError("the cap is one reading and one schema-validation retry per sheet per run")
-        self.sheets[self.current]["calls"] += 1
-        self.sheets[self.current]["retries"] += fix
+        sent, fix = self.payload(kw), self.is_fix(kw)
+        refusal = "the cap is one reading, one consistency read and one schema-validation retry per sheet per run"
+        if "recheck" in sent:
+            raise RuntimeError(refusal)
+        if fix:
+            if self.current is None or self.fixed:
+                raise RuntimeError(refusal)
+            self.fixed = True
+            self.retries += 1
+        else:
+            sheet = self.sheet_of(kw)
+            if self.sheets.get(sheet, 0) >= 2:
+                raise RuntimeError(refusal)
+            self.sheets[sheet] = self.sheets.get(sheet, 0) + 1
+            self.current, self.fixed = sheet, False
         self.calls += 1
-        self.retries += fix
         reply = self.adapter.complete(**kw)
         self.tokens_in, self.tokens_out = self.tokens_in + reply[1], self.tokens_out + reply[2]
         return reply
@@ -152,6 +159,24 @@ def deck_images_problem() -> str:
     return ""
 
 
+def fixture_verdict(rf, expected, month, first_map, second_map):
+    """(verdict, text) of one fixture. "differs" fails the job: a sheet-level field (the as-of month, a missing sheet, the last actual column,
+    the granularity) differs in either read, or both reads give the same row-level differences from the expected map. "uncertain" does not fail
+    it: the reads disagree on a row (a role, the revenue row or a figure), so the model itself is not sure; the rows are printed. With no second
+    read there is no disagreement to point to, and a difference fails. "none": no difference."""
+    sheet1, rows1 = rf.compare_split(expected, month, first_map)
+    sheet2, rows2 = rf.compare_split(expected, month, second_map) if second_map else ([], rows1)
+    sheet_level = sheet1 + [d for d in sheet2 if d not in sheet1]
+    if sheet_level:
+        return "differs", "; ".join(sheet_level + rows1)
+    if not rows1 and not rows2:
+        return "none", "none"
+    if set(rows1) == set(rows2):
+        return "differs", "; ".join(rows1)
+    both = [f"first read: {d}" for d in rows1 if d not in rows2] + [f"second read: {d}" for d in rows2 if d not in rows1] + [f"both reads: {d}" for d in rows1 if d in rows2]
+    return "uncertain", "uncertain (the reads disagree): " + "; ".join(both)
+
+
 async def read_all(deck_drawable: bool = True) -> int:
     import reading_fixtures as rf
     from app import checks, column_rules as cr, sheet_reader
@@ -159,7 +184,7 @@ async def read_all(deck_drawable: bool = True) -> int:
     from app.llm.schemas import SHEET_READING
     from app.structures import reading_input
     db = empty_store(os.environ["SHEET_READING_PROMPT"], os.environ.get("DECK_READING_PROMPT", ""))
-    failed = 0
+    failed = uncertain = 0
     print(f"{'fixture':26} {'status':10} {'month':8} {'tokens in/out':14} differences")
     for fixture in rf.sheet_fixtures():
         name, path = fixture["name"], fixture["path"]
@@ -181,11 +206,12 @@ async def read_all(deck_drawable: bool = True) -> int:
         # The job's cap allows no item re-read, so a re-read of rejected items is refused by the cap and fails; the first reading stands
         # and the file is reported as read, with the rejected count (a failed re-read never makes a file not read).
         month = doc["month"]
-        diffs = rf.compare(fixture["expected_map"], month, got["file_map"])
-        failed += bool(diffs)
+        verdict, shown = fixture_verdict(rf, fixture["expected_map"], month, got["file_map"], got.get("second_map"))
+        failed += verdict == "differs"
+        uncertain += verdict == "uncertain"
         counts = doc["counts"]
         print(f"{name:26} {'read':10} {month or '-':8} {f'{adapter.tokens_in}/{adapter.tokens_out}':14} "
-              f"{'; '.join(diffs) if diffs else 'none'}  [confirmed {counts['confirmed']}, rejected {counts['rejected']}, cannot check {counts['cannot_check']}]")
+              f"{shown}  [confirmed {counts['confirmed']}, rejected {counts['rejected']}, cannot check {counts['cannot_check']}]")
         result = {"items": doc["items"]}
         for item in result["items"]:
             if item["outcome"] == checks.CANNOT:
@@ -204,7 +230,12 @@ async def read_all(deck_drawable: bool = True) -> int:
         print(f"{'deck_rotated_axis':26} {'skipped':10} {'-':8} {'-':14} skipped: deck path unchanged")
     if deck_due():
         print(DECK_REPORT_ONLY)
-    print(f"{failed} fixture(s) differ from their expected map" if failed else "every fixture agrees with its expected map")
+    if uncertain:
+        print(f"{uncertain} fixture(s) uncertain: the two reads disagree on a row (not counted)")
+    if failed:
+        print(f"{failed} fixture(s) differ from their expected map")
+    else:
+        print("every fixture agrees with its expected map" if not uncertain else "no fixture differs from its expected map (uncertain ones listed above)")
     return 1 if failed else 0
 
 

@@ -84,6 +84,8 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     # The consistency read (docs/design/reading-consistency.md): the same input read a second time, beside the first. A stored second read is
     # reused (a file read before makes at most this one call); a failure of any kind leaves the first reading standing, compared with nothing.
     second, same = await _second_read(db, audit_id, text, file_hash, adapter, fiscal_year_end, stage, first)
+    if capture is not None:
+        capture["second_map"] = second.file_map if second is not None else None       # for the fixture job's verdict; never stored
     cells = checks.Cells(first.payload)
     total = _cited(first.file_map)
     await stage("checking_cells", checked=0, total=total)

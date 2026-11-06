@@ -1,0 +1,7 @@
+2026-11-06 · claude/upbeat-bell-r8x9ro (reading-fixtures job: second read per sheet, uncertain verdict)
+Deleted: the job's one-reading-per-sheet cap, which refused every consistency read (RuntimeError, shown as provider_unreachable with 0 tokens).
+Decided: the job's cap is per sheet a reading and its consistency read, each with the one schema retry, and still no item re-read (a recheck payload is refused by name, since the second read has the same request as the first); the verdict is `fixture_verdict`: a sheet-level difference (as-of month, missing sheet, last actual column, granularity) in either read fails, a row-level difference (role, revenue row, figure) fails only when both reads give the same differences, and a row the reads disagree on prints as uncertain and does not fail; with no second read a difference fails, since there is no disagreement to point to; `compare` is split into `compare_split` so the two kinds are told apart by code, not by the text of the line.
+Slow or unclear: the live job was not run here (no key, and a live run costs money); the stand-in model covers the cap, the uncertain and the failing verdicts, so the first live run is the check of the real replies.
+Root cause and rule: the cap was written for one call per fixture and not moved when the product made two reads per sheet; test_reading_fixtures.py now runs the job's own OneCall through the same two reads the product makes.
+Process change: none.
+Cleanup item added to docs/pr6-cleanup.md: none.

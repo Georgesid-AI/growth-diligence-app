@@ -291,11 +291,12 @@ def test_the_job_reads_every_fixture_once_and_exits_0_when_every_reading_agrees(
     assert runner.main() == 0
     out = capsys.readouterr().out
     calls = {f["name"]: len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS}
-    assert len(router.requests) == sum(calls.values()), "one provider call per sheet of each fixture, no re-read"
+    assert len(router.requests) == 2 * sum(calls.values()), "per sheet of each fixture the reading and its consistency read, no re-read"
+    assert "recheck" not in json.dumps(router.requests)
     assert "every fixture agrees with its expected map" in out and all(f["name"] in out for f in SHEETS)
     assert "recheck" not in json.dumps(router.requests)
     for name, n in calls.items():
-        assert f"{3000 * n}/{400 * n}" in next(ln for ln in out.split("\n") if ln.startswith(name)), "the tokens in/out column sums the fixture's calls"
+        assert f"{6000 * n}/{800 * n}" in next(ln for ln in out.split("\n") if ln.startswith(name)), "the tokens in/out column sums the fixture's calls"
     assert "skipped: deck path unchanged" in out and "differ from" not in out
     assert "Client-01" not in out and "447223" not in out, "no cell text in the job's output"
 
@@ -310,13 +311,14 @@ def test_the_job_exits_1_and_names_the_fixture_whose_reading_differs(monkeypatch
     assert "role bookings, expected revenue" in out and "1 fixture(s) differ" in out
 
 
-def test_a_second_provider_call_for_one_fixture_is_an_error():
+def test_a_third_provider_call_for_one_sheet_is_an_error():
     runner = load_runner()
     wrapped = runner.OneCall(FixtureRouter())
     payload = json.dumps({"type": "sheet_reading", "text": "sheet 1: Monthly report\nA1: x"})
     wrapped.complete(user_payload=payload)
+    wrapped.complete(user_payload=payload)           # the consistency read: the same request, asked a second time
     with pytest.raises(RuntimeError):
-        wrapped.complete(user_payload=payload)
+        wrapped.complete(user_payload=payload)       # a third reading of the sheet
     other = json.dumps({"type": "sheet_reading", "text": "sheet 1: Yearly P&L\nA1: x"})
     with pytest.raises(KeyError):                  # another sheet is its own reading: it reaches the router, which has no such fixture
         wrapped.complete(user_payload=other)
@@ -468,7 +470,7 @@ def test_a_failing_re_read_leaves_the_file_read_with_its_rejected_items_noted_an
     line = next(ln for ln in out.splitlines() if ln.startswith("monthly_report"))
     assert " read " in line and "not_read" not in line and re.search(r"rejected [1-9]", line), line
     sheets_sent = len(gateway.sheet_units(reading_input.reading_text(workbook(next(f for f in SHEETS if f["name"] == "monthly_report")))))
-    assert len(router.requests) == sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS), "the failed re-read made no provider call beyond the cap"
+    assert len(router.requests) == 2 * sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS), "the failed re-read made no provider call beyond the cap"
     assert sheets_sent >= 1
 
 
@@ -563,28 +565,31 @@ def test_a_rate_row_the_reader_gave_no_label_cell_keeps_its_label_and_the_shown_
     assert [ln["row"] for ln in entry["lines"]][:2] == [4, 7], "directly under the revenue line"
 
 
-def test_the_jobs_call_cap_is_the_first_reading_plus_the_one_schema_retry_and_item_rereads_stay_blocked():
+def test_the_jobs_call_cap_is_a_reading_and_its_consistency_read_each_with_the_one_schema_retry_and_item_rereads_stay_blocked():
     runner = load_runner()
     good = json.dumps({"map_version": 1})
     fix = json.dumps({"type": "sheet_reading", "fix": "x", "errors": []})
-    reread = json.dumps({"type": "sheet_reading", "text": "t", "recheck": [{"item": "r3", "reason": "x"}]})
+    reread = json.dumps({"type": "sheet_reading", "text": "sheet 1: A\nA1: 1", "recheck": [{"item": "r3", "reason": "x"}]})
+    first = json.dumps({"type": "sheet_reading", "text": "sheet 1: A\nA1: 1"})
 
     def call(counter, payload):
         return counter.complete(model="m", system="s", user_payload=payload, max_tokens=1, json_schema=None)
 
-    # The first reading and the one schema-validation retry go through, and their tokens add up.
+    # The reading, its one schema-validation retry, the consistency read and its retry go through, and their tokens add up.
     counter = runner.OneCall(t.FakeAdapter(replies=[good]))
-    call(counter, json.dumps({"type": "sheet_reading", "text": "t"}))
-    call(counter, fix)
-    assert counter.calls == 2 and counter.tokens_in == 2 * t.FakeAdapter.input_tokens and counter.tokens_out == 600
-    for refused in (fix, reread, good):                      # a second retry, an item re-read, a third call
-        with pytest.raises(RuntimeError, match="cap is one reading and one schema-validation retry"):
+    for payload in (first, fix, first, fix):
+        call(counter, payload)
+    assert counter.calls == 4 and counter.tokens_in == 4 * t.FakeAdapter.input_tokens and counter.tokens_out == 1200
+    for refused in (fix, reread, first):                      # a second retry, an item re-read, a third reading
+        with pytest.raises(RuntimeError, match="cap is one reading, one consistency read and one schema-validation retry"):
             call(counter, refused)
-    assert counter.calls == 2, "a refused call never reaches the provider"
+    assert counter.calls == 4, "a refused call never reaches the provider"
+    call(counter, first.replace("sheet 1: A", "sheet 1: B"))        # another sheet has its own allowance
+    assert counter.calls == 5
 
-    # A first reading that validates: the item re-read is refused, as before, and so is a retry nobody asked for.
+    # An item re-read is refused even as the second call for its sheet.
     counter = runner.OneCall(t.FakeAdapter(replies=[good]))
-    call(counter, json.dumps({"type": "sheet_reading", "text": "t"}))
+    call(counter, first)
     with pytest.raises(RuntimeError):
         call(counter, reread)
     assert counter.calls == 1
@@ -594,3 +599,51 @@ def test_the_jobs_call_cap_is_the_first_reading_plus_the_one_schema_retry_and_it
     with pytest.raises(RuntimeError):
         call(counter, fix)
     assert counter.calls == 0
+
+
+class Disagreeing(FixtureRouter):
+    """The first reading of each sheet of `fixture` gives a wrong role on the first row; the consistency read gives the expected one."""
+
+    def __init__(self, fixture, **kw):
+        super().__init__(**kw)
+        self.fixture, self.seen = fixture, set()
+
+    def complete(self, **kw):
+        reply = super().complete(**kw)
+        names = tuple(re.findall(r"(?m)^sheet \d+: (.*)$", json.loads(kw["user_payload"])["text"]))
+        if self.by_sheet[names[0]]["name"] == self.fixture and names not in self.seen:
+            self.seen.add(names)
+            file_map = json.loads(reply[0])
+            file_map["sheets"][0]["rows"][0]["role"] = "bookings"
+            return json.dumps(file_map), reply[1], reply[2]
+        return reply
+
+
+def test_a_row_the_two_reads_disagree_on_is_uncertain_prints_and_does_not_fail_the_job(monkeypatch, capsys):
+    runner = load_runner()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", Disagreeing("monthly_report"))
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+    assert runner.main() == 0
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if ln.startswith("monthly_report"))
+    assert "uncertain (the reads disagree)" in line and "first read: " in line and "role bookings, expected revenue" in line
+    assert "1 fixture(s) uncertain" in out and "differ from their expected map" not in out
+
+
+def test_the_verdict_fails_on_a_row_both_reads_get_wrong_or_on_a_sheet_level_field_and_passes_uncertain():
+    runner = load_runner()
+    exp = SHEETS[0]["expected_map"]
+    good = exp["file_map"]
+    wrong = copy.deepcopy(good)
+    wrong["sheets"][0]["rows"][0]["role"] = "bookings"
+    month = exp["as_of_month"]
+    assert runner.fixture_verdict(rf, exp, month, good, good)[0] == "none"
+    assert runner.fixture_verdict(rf, exp, month, wrong, wrong)[0] == "differs", "both reads agree and differ from the expected map"
+    assert runner.fixture_verdict(rf, exp, month, wrong, good)[0] == "uncertain"
+    assert runner.fixture_verdict(rf, exp, month, good, wrong)[0] == "uncertain"
+    assert runner.fixture_verdict(rf, exp, month, wrong, None)[0] == "differs", "no second read, no disagreement to point to"
+    late = copy.deepcopy(good)
+    late["sheets"][0]["granularity"] = "yearly" if good["sheets"][0]["granularity"] != "yearly" else "monthly"
+    assert runner.fixture_verdict(rf, exp, month, late, good)[0] == "differs", "a sheet-level field differs in one read"
+    assert runner.fixture_verdict(rf, exp, "1999-01", good, good)[0] == "differs", "the as-of month is sheet-level"
