@@ -50,8 +50,6 @@ C_SEGMENT_TOTAL = "segment row without its total row"
 R_WEAK_EVIDENCE = "weak evidence only"
 # A plan word in the name or title of another sheet of the file (George, 2026-11-06): with it, a row's end at the sheet's last period column is strong
 # evidence (the actuals sit on a sheet of their own, which ends where they do).
-PLAN_SHEET_WORD = re.compile(r"(?i)(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|(?:re)?forecast(?:s|ed)?|projections?|projected|outlooks?|estimates?|estimated|"
-                             r"pro[\s-]?forma|aop|lrp)(?![^\W\d_])")
 TITLE_ROWS = 3                      # the rows at the top of a sheet that count as its title
 WEAK_EVIDENCE = ("row_ends", "repeated_values", "round_values", "layout")      # kinds that show a pattern, not a plan or an actual label
 C_NO_UNIT = "No unit given; not compared."
@@ -74,9 +72,12 @@ NOTHING = "nothing"
 # and their plain forms; and a year followed by E, F, B or P: FY24E, 2025F, 2024B). This list decides only whether a confirmed title supports the
 # boundary (the word is read from the cell the reader cited, which must hold it: any word passes that test). It verifies the word the reader
 # cited: it never finds a boundary, a column or a title of its own.
-_YEAR_MARK = r"(?<![^\W_])(?:FY\s?\d{2}|(?:19|20)\d{2})[EFBP](?![^\W_])"
-PLAN_WORD_CHECK = re.compile(r"(?i)(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|(?:re)?forecast(?:s|ed)?|fc|estimates?|estimated|projections?|projected|"
-                             r"outlooks?|pro[\s-]?forma)(?![^\W\d_])|" + _YEAR_MARK)
+# The one list of plan words, used by both rules: a title that supports the boundary, and another sheet named or titled for a plan.
+PLAN_WORDS = (r"(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|(?:re)?forecast(?:s|ed)?|fc|estimates?|estimated|projections?|projected|"
+              r"outlooks?|pro[\s-]?forma|aop|lrp)(?![^\W\d_])")
+_YEAR_MARK = r"(?<![^\W_])(?:FY\s?\d{2}|(?:19|20)\d{2})[EFBP](?![^\W_])"      # a year followed by E, F, B or P: a title only, never a sheet's name
+PLAN_WORD = re.compile("(?i)" + PLAN_WORDS)
+PLAN_WORD_CHECK = re.compile("(?i)" + PLAN_WORDS + "|" + _YEAR_MARK)
 _PLACEHOLDER = re.compile("|".join(re.escape(p) for p in redact.PLACEHOLDERS))
 _NUMBER = re.compile(r"^\(?[-+−]?\s*[£$€¥]?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*%?\)?$|^[-+]?\.\d+$|^[-+]?\d+\.?\d*[eE][-+]?\d+$")
 _RANGE = re.compile(r"^([A-Z]{1,3})([1-9]\d*)(?::([A-Z]{1,3})([1-9]\d*))?$")
@@ -566,7 +567,7 @@ def _plan_sheet_elsewhere(name: str, cells: Optional["Cells"]) -> bool:
         if other == name:
             continue
         title = [t for (r, _), t in sheet.cells.items() if r <= TITLE_ROWS and to_number(t) is None]
-        if PLAN_SHEET_WORD.search(other) or any(PLAN_SHEET_WORD.search(t) for t in title):
+        if PLAN_WORD.search(other) or any(PLAN_WORD.search(t) for t in title):
             return True
     return False
 

@@ -160,3 +160,11 @@ def test_the_other_weak_kinds_stay_weak_beside_a_plan_sheet():
     for weak in (piece("repeated_values", cells="H9:M9"), piece("round_values", cells="H4:M4", multiple=10), piece("layout")):
         got = checks.check_map(checks.Cells(text), fmap(sheet_map(evidence=[weak])), 12)
         assert item(got, "last_actual:Report")["reason"] == "weak evidence only"
+
+
+def test_both_rules_read_one_list_of_plan_words():
+    assert checks.PLAN_WORD.pattern in checks.PLAN_WORD_CHECK.pattern
+    for word in ("AOP", "LRP", "FC"):
+        assert supports(word)[0] is True, f"{word} supports a boundary as a title"
+        assert months(two_sheets(other_name=word)) == [("2024-06", "G")], f"{word} names a plan sheet"
+    assert supports("FY24E")[0] is True and not checks.PLAN_WORD.search("FY24E"), "the year mark is a title pattern, not a sheet-name word"
