@@ -228,3 +228,64 @@ def test_the_two_reads_agree_on_the_sub_lines_through_the_upload(flow):
     assert [(r["row"], r["role"], r.get("classified_by")) for r in stored[2:]] == [(6, "sales_marketing", "label"), (7, "ga", "label"), (8, "other", None)]
     lines = doc["lines"][0]["lines"]
     assert [ln["read_as"] for ln in lines if ln["row"] in (6, 7)] == ["sales & marketing, classified by label, part of row 5", "G&A, classified by label, part of row 5"]
+
+
+# ---------------------------------------------------------------------------
+# Tc shape (George, 2026-11-06): no subtotals; eight S&M part rows the model already labelled, one R&D row, one G&A row
+# ---------------------------------------------------------------------------
+def test_rows_the_model_already_gave_a_function_keep_it_whatever_their_label_says():
+    s_and_m = [part(10 + i, "sales_marketing", metric="sm_expense") for i in range(8)]
+    parts = [*s_and_m, part(18, "rnd", metric="rnd_expense"), part(19, "ga", metric="ga_expense")]
+    labels = {**{10 + i: name for i, name in enumerate(["Office rent", "Software", "Legal", "Marketing", "Events", "Sales", "Insurance", "Product"])},
+              18: "Marketing", 19: "Marketing"}
+    got = by_row(checks.classify_by_label(pnl_map(parts), cells_for({**LABELS, **labels})))
+    assert [got[10 + i]["role"] for i in range(8)] == ["sales_marketing"] * 8 and got[18]["role"] == "rnd" and got[19]["role"] == "ga"
+    assert all(got[n].get("classified_by") is None for n in range(10, 20)), "the model's own roles carry no mark"
+
+
+# ---------------------------------------------------------------------------
+# Stored readings: the register applies the rule at read time, no model call; an analyst's Change still wins
+# ---------------------------------------------------------------------------
+import asyncio  # noqa: E402
+
+import test_llm_gateway as t  # noqa: E402
+from app import readings, register  # noqa: E402
+
+SMALL = {1: "P&L", 2: "Revenue", 3: "OPEX", 4: "Marketing", 5: "Office rent", 6: "Sundries"}
+
+
+def stored_db(overrides=()):
+    db = t.FakeDB()
+    rows = [{**part(2, "revenue", None), "metric": "revenue"}, part(3, "opex", None), part(4, "other", 3), part(5, "opex", 3), part(6, "other", 3)]
+    smap = {"sheet": "PNL", "header_row": 1, "label_col": "A", "first_period_col": "B", "last_period_col": "D", "granularity": "yearly", "rows": rows}
+    db[readings.READINGS].docs.append({"key": "k", "file_map": {"map_version": 1, "kind": "sheet", "sheets": [smap], "figures": []}})
+    grid = [[SMALL[r], 1, 2, 3] if r in SMALL else [] for r in range(1, 7)]
+    db["datasets"].docs.append({"audit_id": "a1", "file_hash": "h", "recognition_sheets": [{"name": "PNL", "csv": True, "grid": grid, "indents": [], "merged": []}]})
+    db[readings.OVERRIDES].docs.extend(overrides)
+    return db
+
+
+def effective_roles(db):
+    reading = db[readings.READINGS].docs[0]
+    overrides = asyncio.run(readings.overrides_for(db, "a1", "k"))
+    fmap = asyncio.run(register.effective_map(db, "a1", {"file_hash": "h"}, reading["file_map"], overrides))
+    return {r["row"]: (r["role"], r.get("classified_by")) for r in fmap["sheets"][0]["rows"]}
+
+
+def test_the_register_applies_the_label_rule_to_a_stored_reading_that_has_none():
+    got = effective_roles(stored_db())
+    assert got[4] == ("sales_marketing", "label") and got[5] == ("ga", "label") and got[6] == ("other", None)
+
+
+def test_an_analysts_change_wins_over_the_label_rule_at_register_time():
+    change = {"id": "o1", "reading": "k", "audit_id": "a1", "item": "row:PNL:4", "path": "sheets.0.rows.2.role", "old": "other", "new": "rnd",
+              "who": "analyst", "at": "2026-11-06T10:00:00", "why": "Change"}
+    assert effective_roles(stored_db([change]))[4][0] == "rnd"
+
+
+def test_a_file_without_stored_cells_is_read_as_stored():
+    db = stored_db()
+    db["datasets"].docs.clear()
+    reading = db[readings.READINGS].docs[0]
+    fmap = asyncio.run(register.effective_map(db, "a1", {"file_hash": "h"}, reading["file_map"], []))
+    assert fmap == reading["file_map"]

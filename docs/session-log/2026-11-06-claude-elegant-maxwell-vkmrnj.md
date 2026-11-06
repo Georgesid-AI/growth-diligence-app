@@ -4,4 +4,5 @@ Decided: the rule runs on the file map in code (checks.classify_by_label, one co
 Slow or unclear: the full backend suite takes about 2.5 minutes, past the foreground limit once; CONTRACT_VERSION and the golden file are unchanged because the golden test did not fail (no golden input carries a classified row).
 Root cause and rule: sub-lines under an OPEX total were read as opex/other/none, so S&M, R&D and G&A needed their own rows and the two reads disagreed on them; the rule and its tests (test_label_function_roles.py, each failing when the rule is removed from one of its three call sites) pin the fix.
 Process change: none.
-Cleanup item added to docs/pr6-cleanup.md: stored readings made before the rule are classified at read time only, not in the register's copy.
+Follow-up (approval on #247): the rule is also applied to stored readings at register time (register.effective_map, from the dataset's stored cells, before the overrides so an analyst's Change wins; used by the register, the engine inputs and the reviewer), no model call; the Tc shape is eight S&M part rows, one R&D row and one G&A row the model already labelled, which keep their roles. The reading export and the consistency decision still read the stored map as it is.
+Cleanup item added to docs/pr6-cleanup.md: none.
