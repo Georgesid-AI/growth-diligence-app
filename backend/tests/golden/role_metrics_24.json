@@ -10,6 +10,7 @@
       {
         "deck_note": null,
         "growth": 0.3979999999999999,
+        "label": null,
         "period": "2022",
         "prior": 1000.0,
         "source": {
@@ -27,6 +28,7 @@
       {
         "deck_note": null,
         "growth": 0.3090128755364807,
+        "label": null,
         "period": "2023",
         "prior": 1398.0,
         "source": {
@@ -435,14 +437,17 @@
       "periods": [
         {
           "kind": "actual",
+          "label": null,
           "period": "2021"
         },
         {
           "kind": "actual",
+          "label": null,
           "period": "2022"
         },
         {
           "kind": "actual",
+          "label": null,
           "period": "2023"
         }
       ],
@@ -458,6 +463,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2021",
               "value": 1000.0
             },
@@ -467,6 +473,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2022",
               "value": 1398.0
             },
@@ -476,6 +483,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2023",
               "value": 1830.0
             }
@@ -493,6 +501,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2021",
               "value": 0.6
             },
@@ -503,6 +512,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2022",
               "value": 0.6
             },
@@ -513,6 +523,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2023",
               "value": 0.6
             }
@@ -990,6 +1001,7 @@
       {
         "deck_note": null,
         "growth": 0.5,
+        "label": null,
         "period": "2024",
         "prior": 1000.0,
         "source": {
@@ -1007,6 +1019,7 @@
       {
         "deck_note": null,
         "growth": 0.6000000000000001,
+        "label": null,
         "period": "2025",
         "prior": 1500.0,
         "source": {
@@ -1408,14 +1421,17 @@
       "periods": [
         {
           "kind": "actual",
+          "label": null,
           "period": "2023"
         },
         {
           "kind": "actual",
+          "label": null,
           "period": "2024"
         },
         {
           "kind": "actual",
+          "label": null,
           "period": "2025"
         }
       ],
@@ -1431,6 +1447,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2023",
               "value": 1000.0
             },
@@ -1440,6 +1457,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2024",
               "value": 1500.0
             },
@@ -1449,6 +1467,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2025",
               "value": 2400.0
             }
@@ -1466,6 +1485,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2023",
               "value": 0.7
             },
@@ -1476,6 +1496,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2024",
               "value": 0.7
             },
@@ -1486,6 +1507,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2025",
               "value": 0.75
             }
@@ -1503,6 +1525,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2023",
               "value": 0.4
             },
@@ -1513,6 +1536,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2024",
               "value": 0.3333333333333333
             },
@@ -1523,6 +1547,7 @@
               ],
               "estimate": false,
               "kind": "actual",
+              "label": null,
               "period": "2025",
               "value": 0.375
             }

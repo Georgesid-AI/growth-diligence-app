@@ -258,6 +258,14 @@ def _end_month(period: str, fye: int = 12) -> Optional[pd.Period]:
     return None
 
 
+def year_label(period: str, as_of: pd.Period, fye: int) -> Optional[str]:
+    """"2024 (to Nov)" for the as-of month's own fiscal year while the as-of month is before its year end, else None (the period alone names the year)."""
+    end = _end_month(period, fye)
+    if end is None or end <= as_of or period != str(_fiscal_year(as_of, fye)):
+        return None
+    return f"{period} (to {as_of.strftime('%b')})"
+
+
 def _open_total_year(rec: Optional[Dict], as_of: pd.Period, fye: int) -> Optional[str]:
     """The fiscal year the as-of month falls in, when a TOTAL column of a monthly sheet (a derived yearly record) states it: the year is not over, but
     its total is in the file, so it is the latest year. None for any other row."""
@@ -985,9 +993,10 @@ def pnl_trend(table: List[Dict], as_of: pd.Period, fye: int) -> Optional[Dict]:
     if revenue["actual"] is None and revenue["plan"] is None:
         return None
     years = lambda rec, key: [p for p in (rec[key] if rec else {}) if re.fullmatch(r"\d{4}", p)]          # noqa: E731
-    actual_years = sorted(p for p in years(revenue["actual"], "actual") if (_end_month(p, fye) or as_of + 1) <= as_of)
+    open_year = _open_total_year(revenue["actual"], as_of, fye)         # the as-of year when a TOTAL column states it: "2024 (to Nov)"
+    actual_years = sorted(p for p in years(revenue["actual"], "actual") if (_end_month(p, fye) or as_of + 1) <= as_of or p == open_year)
     plan_years = sorted(p for p in years(revenue["plan"], "plan") if p not in actual_years)
-    periods = [{"period": p, "kind": "actual"} for p in actual_years] + [{"period": p, "kind": "plan"} for p in plan_years]
+    periods = [{"period": p, "label": year_label(p, as_of, fye), "kind": "actual"} for p in actual_years] + [{"period": p, "label": None, "kind": "plan"} for p in plan_years]
     home = revenue["actual"] or revenue["plan"]
     recs: Dict[Tuple[str, str], Optional[Dict]] = {}
 
@@ -1045,7 +1054,7 @@ def pnl_trend(table: List[Dict], as_of: pd.Period, fye: int) -> Optional[Dict]:
         for p in periods:
             found = value_of(metric, p["kind"], p["period"])
             if found is not None:
-                values.append({"period": p["period"], "kind": p["kind"], "value": found[0], "estimate": found[1], "cells": found[2]})
+                values.append({"period": p["period"], "label": p["label"], "kind": p["kind"], "value": found[0], "estimate": found[1], "cells": found[2]})
         rows.append({"metric": metric, "name": name, "unit": unit, "values": values})
     return {"periods": periods, "rows": rows, "file": home["file"], "sheet": home["sheet"]} if periods else None
 
@@ -1195,7 +1204,7 @@ def growth_by_year(table, as_of, fye, deck: Optional[List[Dict]] = None) -> List
         notes = [f"{y} from deck, page {item['deck']['page']}, unverified" for y, item in ((str(int(period) - 1), prev), (period, cur)) if item.get("deck")]
         cells = (_cite_cells(prev["rec"], prev["cells"], home) if prev["rec"] else []) + (_cite_cells(cur["rec"], cur["cells"], home) if cur["rec"] else [])
         rule = "Growth by year = revenue of the fiscal year ÷ revenue of the year before − 1" + (f" ({'; '.join(notes)})" if notes else "")
-        out.append({"period": period, "value": cur["value"], "prior": prev["value"], "growth": cur["value"] / prev["value"] - 1,
+        out.append({"period": period, "label": year_label(period, as_of, fye), "value": cur["value"], "prior": prev["value"], "growth": cur["value"] / prev["value"] - 1,
                     "source": _source(home, cells, rule), "deck_note": "; ".join(notes) or None})
     return out
 

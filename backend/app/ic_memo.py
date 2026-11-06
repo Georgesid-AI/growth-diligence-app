@@ -561,7 +561,7 @@ def role_summary(results: dict, ccy: Optional[str], notes: "Notes") -> List[str]
     if by_year:
         last = by_year[-1]
         unverified = f" ({last['deck_note']})" if last.get("deck_note") else ""
-        lines.append(f"- Growth by year: {last['period']} {fmt.fmt_pct(last['growth'])} on the year before{unverified}"
+        lines.append(f"- Growth by year: {last.get('label') or last['period']} {fmt.fmt_pct(last['growth'])} on the year before{unverified}"
                      f"{notes.source('Growth by year', _role_source({'source': last['source']}))}")
     return [f"As of {rm['as_of_month']}:", *lines] if lines else []
 
@@ -593,12 +593,12 @@ def role_tables(results: dict, ccy: Optional[str]) -> List[Tuple[str, List[str],
                          for m in metrics]))
     if rm.get("growth_by_year"):
         out.append(("Growth by year", ["Year", "Revenue", "Year before", "Growth", "Cells"],
-                    [[y["period"], fmt.fmt_currency(y["value"], ccy), fmt.fmt_currency(y["prior"], ccy), fmt.fmt_pct(y["growth"]),
+                    [[y.get("label") or y["period"], fmt.fmt_currency(y["value"], ccy), fmt.fmt_currency(y["prior"], ccy), fmt.fmt_pct(y["growth"]),
                      _cells_text(y["source"]) + (f" · {y['deck_note']}" if y.get("deck_note") else "")] for y in rm["growth_by_year"]]))
     trend = rm.get("pnl_trend")
     if trend:
         out.append(("Yearly P&L trend", ["Metric", "Year", "Value", "Cells"],
-                    [[r["name"], v["period"] + (" (plan)" if v["kind"] == "plan" else ""),
+                    [[r["name"], (v.get("label") or v["period"]) + (" (plan)" if v["kind"] == "plan" else ""),
                       (fmt.fmt_currency(v["value"], ccy) if r["unit"] == "money" else fmt.fmt_pct(v["value"]))
                       + (plan_lines.ESTIMATE_WORD if v["estimate"] else ""), _trend_cells(trend, v)]
                      for r in trend["rows"] for v in r["values"]]))

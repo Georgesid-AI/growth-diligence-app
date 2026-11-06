@@ -64,7 +64,7 @@ def trend_lines(trend: Optional[Dict], ccy: Optional[str]) -> List[Dict]:
                 template = PLAN_HOLDS
             else:
                 template = PLAN_RISES if p["value"] > a["value"] else PLAN_FALLS
-            text = template.format(metric=_lower(name), a=_shown(unit, a["value"], ccy), year_a=a["period"],
+            text = template.format(metric=_lower(name), a=_shown(unit, a["value"], ccy), year_a=a.get("label") or a["period"],
                                    label=ESTIMATE_WORD if a["estimate"] else "", p=_shown(unit, p["value"], ccy), year_p=p["period"])
             out.append(_line("plan_vs_past", text, [*a["cells"], *p["cells"]], trend))
         stated = [v for v in actual if not v["estimate"]]        # an estimate is not a trend: it is the plan's split on one year's OPEX
@@ -73,11 +73,11 @@ def trend_lines(trend: Optional[Dict], ccy: Optional[str]) -> List[Dict]:
             if _stable(unit, first["value"], last["value"]):
                 low, high = min(v["value"] for v in stated), max(v["value"] for v in stated)
                 text = TREND_MOVED.format(metric=name, low=_shown(unit, low, ccy), high=_shown(unit, high, ccy),
-                                          year_first=first["period"], year_last=last["period"])
+                                          year_first=first["period"], year_last=last.get("label") or last["period"])
             else:
                 template = TREND_ROSE if last["value"] > first["value"] else TREND_FELL
                 text = template.format(metric=name, first=_shown(unit, first["value"], ccy), year_first=first["period"],
-                                       last=_shown(unit, last["value"], ccy), year_last=last["period"])
+                                       last=_shown(unit, last["value"], ccy), year_last=last.get("label") or last["period"])
             out.append(_line("trend", text, [c for v in stated for c in v["cells"]], trend))
     return out
 
@@ -119,7 +119,7 @@ def table(trend: Optional[Dict], ccy: Optional[str]):
     """(header, rows) of the yearly trend: one row per metric, actual years first, then plan years; an estimate carries the suffix ", estimate" (the full label is in the Estimates block and the method text)."""
     if not trend:
         return None
-    header = ["Metric", *[p["period"] + (" (plan)" if p["kind"] == "plan" else "") for p in trend["periods"]]]
+    header = ["Metric", *[(p.get("label") or p["period"]) + (" (plan)" if p["kind"] == "plan" else "") for p in trend["periods"]]]
     rows = []
     for row in trend["rows"]:
         by_period = {v["period"] + v["kind"]: v for v in row["values"]}

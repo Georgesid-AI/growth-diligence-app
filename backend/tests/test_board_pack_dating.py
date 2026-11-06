@@ -167,3 +167,41 @@ def test_a_total_within_one_percent_of_the_months_raises_no_flag():
     r = run(files(fmap), as_of="2024-11")
     assert not [f for f in r["role_metrics"]["mapping_flags"] if "TOTAL column" in f["text"]]
     assert metric(r, "yearly_revenue")["period"] == "2024" and metric(r, "yearly_revenue")["value"] == totals[2024], "the TOTAL column is the latest year"
+
+
+# ---------------------------------------------------------------------------
+# The latest year before its fiscal year end is "YYYY (to Mon)"
+# ---------------------------------------------------------------------------
+def test_the_latest_year_before_its_year_end_is_labelled_to_the_as_of_month_everywhere():
+    from app import ic_memo, plan_lines
+    fmap, _, rev, totals = built()
+    r = run(files(fmap), as_of="2024-11")
+    rm = r["role_metrics"]
+    growth = {g["period"]: g for g in rm["growth_by_year"]}
+    assert growth["2024"]["label"] == "2024 (to Nov)" and growth["2024"]["period"] == "2024"
+    trend = rm["pnl_trend"]
+    assert [p.get("label") or p["period"] for p in trend["periods"]] == ["2023", "2024 (to Nov)"]
+    assert any(v.get("label") == "2024 (to Nov)" for row in trend["rows"] for v in row["values"])
+    tables = dict((t, (h, rows)) for t, h, rows in ic_memo.role_tables(r, "EUR"))
+    assert [row[0] for row in tables["Growth by year"][1]] == ["2023", "2024 (to Nov)"] or [row[0] for row in tables["Growth by year"][1]] == ["2024 (to Nov)"]
+    assert "2024 (to Nov)" in {row[1] for row in tables["Yearly P&L trend"][1]}
+    header, _ = plan_lines.table(trend, "EUR")
+    assert header == ["Metric", "2023", "2024 (to Nov)"]
+    assert any("2024 (to Nov)" in line["text"] for line in plan_lines.lines(r, "EUR"))
+    summary = ic_memo.role_summary(r, "EUR", ic_memo.Notes())
+    assert any("Growth by year: 2024 (to Nov)" in line for line in summary)
+
+
+def test_a_year_that_is_over_has_no_to_month_label():
+    fmap, *_ = built()
+    r = run(files(fmap), as_of="2023-12")
+    assert all(g.get("label") is None for g in r["role_metrics"]["growth_by_year"])
+    assert all(p.get("label") is None for p in (r["role_metrics"]["pnl_trend"] or {"periods": []})["periods"])
+
+
+def test_the_excel_trend_sheet_header_carries_the_to_month_label():
+    from app import yearly_sheets
+    fmap, *_ = built()
+    r = run(files(fmap), as_of="2024-11")
+    trend = yearly_sheets._trend(r)
+    assert trend is not None and "2024 (to Nov)" in trend.header if hasattr(trend, "header") else "2024 (to Nov)" in str(trend)
