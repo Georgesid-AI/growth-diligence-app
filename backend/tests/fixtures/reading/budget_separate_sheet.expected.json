@@ -1,6 +1,6 @@
 {
  "file": "budget_separate_sheet.xlsx",
- "as_of_month": null,
+ "as_of_month": "2024-06",
  "sheets": [
   {
    "sheet": "Actuals",

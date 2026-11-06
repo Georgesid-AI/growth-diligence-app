@@ -103,8 +103,7 @@ def test_the_expected_map_is_a_valid_file_map_and_the_ideal_reading_agrees_with_
     assert rf.compare(exp, exp["as_of_month"], ideal) == []
 
 
-@pytest.mark.parametrize("fixture", [f for f in SHEETS if f["name"] not in ("testco_pnl", "budget_separate_sheet")],
-                         ids=[n for n in IDS if n not in ("testco_pnl", "budget_separate_sheet")])
+@pytest.mark.parametrize("fixture", [f for f in SHEETS if f["name"] != "testco_pnl"], ids=[n for n in IDS if n != "testco_pnl"])
 def test_the_ideal_reading_of_each_workbook_is_confirmed_cell_by_cell_and_gives_the_expected_month(fixture):
     doc, adapter, _ = run(fixture)
     sent_sheets = len(gateway.sheet_units(reading_input.reading_text(workbook(fixture))))
@@ -116,15 +115,6 @@ def test_the_ideal_reading_of_each_workbook_is_confirmed_cell_by_cell_and_gives_
     assert doc["counts"]["confirmed"] >= 5 and doc["rereads"] == []
     stored = readings.effective(adapter.file_map, [])
     assert rf.compare(fixture["expected_map"], doc["month"], stored) == []
-
-
-def test_the_actuals_sheet_of_budget_separate_sheet_has_only_a_row_end_to_show_its_boundary_so_no_month_stands():
-    """Prompt v5 (2026-11-06): a last actual column evidenced by a row's end alone is "weak evidence only". The actuals of this layout sit on a
-    sheet that stops at June, so no cell after the boundary exists to cite: the file gives no as-of month (its expected map says so)."""
-    fixture = next(f for f in SHEETS if f["name"] == "budget_separate_sheet")
-    doc, _, _ = run(fixture)
-    rejected = {i["key"]: i["reason"] for i in doc["items"] if i["outcome"] == checks.REJECTED}
-    assert rejected == {"last_actual:Actuals": "weak evidence only"} and doc["month"] is None == fixture["expected_map"]["as_of_month"]
 
 
 def test_the_variance_columns_of_actual_budget_variance_are_tested_in_every_row_that_names_them():

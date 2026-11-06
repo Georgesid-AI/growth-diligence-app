@@ -97,3 +97,66 @@ def test_a_rejection_for_the_header_keeps_its_own_reason_and_no_evidence_is_not_
     wrong["last_actual"]["period"] = "2024-05"
     assert "weak evidence" not in (item(check(fmap(wrong)), "last_actual:Report")["reason"] or "")
     assert (last([])["outcome"], last([])["reason"]) == (checks.CONFIRMED, None)
+
+
+# ---- 3b. a row's end is strong evidence in one layout (George, 2026-11-06) ---------------------------------------------------------------------------------
+PLAN_SHEETS = ["Budget", "Plan 2025", "Forecast", "Projection", "Outlook", "Estimates", "Pro forma", "Reforecast", "AOP", "LRP", "Q3 reforecast"]
+
+
+def two_sheets(other_name="Budget", other_title=None, end_col="G", last_period="G"):
+    """The report as sheet 'Report' (actuals to G, no column after, no title over H) beside another sheet; the row end cited is row 6 at `end_col`."""
+    report = {(r, c): t for (r, c), t in build().items() if c <= 7 and r != 2}
+    other = [{"row": 1, "col": 1, "text": other_title or "Notes"}, {"row": 2, "col": 1, "text": "Metric"}, {"row": 3, "col": 2, "text": "1"}]
+    text = checks.redact.reading_text([
+        {"name": "Report", "cells": [{"row": r, "col": c, "text": t} for (r, c), t in report.items()]},
+        {"name": other_name, "cells": other}])
+    sheet = sheet_map(evidence=[piece("row_ends", row=6, column=end_col)], last_period_col=last_period)
+    return checks.check_map(checks.Cells(text), {"map_version": 1, "kind": "sheet", "sheets": [sheet], "figures": []}, 12)
+
+
+def verdict_of(got):
+    return item(got, "last_actual:Report"), months(got)
+
+
+@pytest.mark.parametrize("name", PLAN_SHEETS)
+def test_a_row_end_at_the_last_period_column_is_strong_when_another_sheet_is_named_for_a_plan(name):
+    got = two_sheets(other_name=name)
+    assert verdict_of(got) == (item(got, "last_actual:Report"), [("2024-06", "G")]) and item(got, "last_actual:Report")["outcome"] == checks.CONFIRMED
+
+
+@pytest.mark.parametrize("title", ["Budget 2025", "Operating plan", "Outlook", "AOP", "Pro forma P&L"])
+def test_a_plan_word_in_the_title_of_the_other_sheet_is_enough(title):
+    got = two_sheets(other_name="Sheet2", other_title=title)
+    assert months(got) == [("2024-06", "G")]
+
+
+def test_no_plan_word_on_any_other_sheet_leaves_the_row_end_weak():
+    got = two_sheets(other_name="Sheet2", other_title="Notes")
+    assert (item(got, "last_actual:Report")["outcome"], item(got, "last_actual:Report")["reason"]) == (checks.REJECTED, "weak evidence only")
+    assert months(got) == []
+
+
+def test_a_plan_word_on_the_same_sheet_does_not_count_as_another_sheet():
+    report = {(r, c): t for (r, c), t in build().items() if c <= 7}          # row 2 keeps a 'Forecast' title: it is this sheet's own
+    text = checks.redact.reading_text([{"name": "Report", "cells": [{"row": r, "col": c, "text": t} for (r, c), t in report.items()]},
+                                       {"name": "Sheet2", "cells": [{"row": 1, "col": 1, "text": "Notes"}]}])
+    report_cells = checks.Cells(text)
+    report_cells.sheets["Report"].cells[(1, 1)] = "Budget report"
+    got = checks.check_map(report_cells, {"map_version": 1, "kind": "sheet", "figures": [],
+                                          "sheets": [sheet_map(evidence=[piece("row_ends", row=6, column="G")], last_period_col="G")]}, 12)
+    assert item(got, "last_actual:Report")["reason"] == "weak evidence only", "a plan word on the sheet itself is not another sheet's"
+
+
+def test_a_row_end_before_the_last_period_column_stays_weak_even_with_a_plan_sheet():
+    got = two_sheets(other_name="Budget", end_col="G", last_period="M")
+    assert (item(got, "last_actual:Report")["outcome"], item(got, "last_actual:Report")["reason"]) == (checks.REJECTED, "weak evidence only")
+    assert months(got) == []
+
+
+def test_the_other_weak_kinds_stay_weak_beside_a_plan_sheet():
+    text = checks.redact.reading_text([
+        {"name": "Report", "cells": [{"row": r, "col": c, "text": t} for (r, c), t in build().items()]},
+        {"name": "Budget", "cells": [{"row": 1, "col": 1, "text": "x"}]}])
+    for weak in (piece("repeated_values", cells="H9:M9"), piece("round_values", cells="H4:M4", multiple=10), piece("layout")):
+        got = checks.check_map(checks.Cells(text), fmap(sheet_map(evidence=[weak])), 12)
+        assert item(got, "last_actual:Report")["reason"] == "weak evidence only"

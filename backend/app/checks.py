@@ -48,6 +48,11 @@ C_MASKED = "Depends on a name that was masked before reading."
 C_VARIANCE_ROWS = "variance row without its two source rows"
 C_SEGMENT_TOTAL = "segment row without its total row"
 R_WEAK_EVIDENCE = "weak evidence only"
+# A plan word in the name or title of another sheet of the file (George, 2026-11-06): with it, a row's end at the sheet's last period column is strong
+# evidence (the actuals sit on a sheet of their own, which ends where they do).
+PLAN_SHEET_WORD = re.compile(r"(?i)(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|(?:re)?forecast(?:s|ed)?|projections?|projected|outlooks?|estimates?|estimated|"
+                             r"pro[\s-]?forma|aop|lrp)(?![^\W\d_])")
+TITLE_ROWS = 3                      # the rows at the top of a sheet that count as its title
 WEAK_EVIDENCE = ("row_ends", "repeated_values", "round_values", "layout")      # kinds that show a pattern, not a plan or an actual label
 C_NO_UNIT = "No unit given; not compared."
 C_DATE_ONLY = "No value to compare; date only."
@@ -555,7 +560,28 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
     return {**base, "outcome": CANNOT, "reason": C_LAYOUT}
 
 
-def check_last_actual(smap: Dict, sheet: SheetCells, fye: int) -> Tuple[List[Dict], Optional[Dict]]:
+def _plan_sheet_elsewhere(name: str, cells: Optional["Cells"]) -> bool:
+    """Whether a sheet other than `name` has a plan word in its name or in a text cell of its title rows."""
+    for other, sheet in (cells.sheets if cells else {}).items():
+        if other == name:
+            continue
+        title = [t for (r, _), t in sheet.cells.items() if r <= TITLE_ROWS and to_number(t) is None]
+        if PLAN_SHEET_WORD.search(other) or any(PLAN_SHEET_WORD.search(t) for t in title):
+            return True
+    return False
+
+
+def _weak(smap: Dict, piece: Dict, cells: Optional["Cells"]) -> bool:
+    """Whether a piece of evidence for the last actual column shows a pattern only. A row's end is strong when it ends at the sheet's last period
+    column and another sheet of the file is named or titled for a plan; every other row end, and the other pattern kinds, are weak."""
+    if piece["kind"] not in WEAK_EVIDENCE:
+        return False
+    if piece["kind"] == "row_ends":
+        return not (piece.get("column") == smap["last_period_col"] and _plan_sheet_elsewhere(smap["sheet"], cells))
+    return True
+
+
+def check_last_actual(smap: Dict, sheet: SheetCells, fye: int, cells: Optional["Cells"] = None) -> Tuple[List[Dict], Optional[Dict]]:
     """(the items of the last actual column and its evidence, the file's month for this sheet or None).
 
     The column's header is opened and must be the period the reading names; the month stands only if at least one piece of evidence is
@@ -578,7 +604,7 @@ def check_last_actual(smap: Dict, sheet: SheetCells, fye: int) -> Tuple[List[Dic
     else:
         items.append(_item(key, "last_actual", CONFIRMED, None, smap["sheet"], head_ref))
     pieces = [check_evidence(smap, i, p, sheet, col) for i, p in enumerate(la["evidence"])]
-    if pieces and items[0]["outcome"] == CONFIRMED and all(p["evidence_kind"] in WEAK_EVIDENCE for p in pieces):
+    if pieces and items[0]["outcome"] == CONFIRMED and all(_weak(smap, p, cells) for p in la["evidence"]):
         # Nothing but a pattern in the cells (a row's end, repeated or round values, a layout remark): the boundary is not evidenced (prompt v5).
         items[0] = _item(key, "last_actual", REJECTED, R_WEAK_EVIDENCE, smap["sheet"], head_ref)
     items += pieces
@@ -676,7 +702,7 @@ def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
                 by_parent.setdefault(row["parent_row"], []).append(row)
         for parent, children in by_parent.items():
             items.append(check_parts(smap, parent, children, next((r for r in rows if r["row"] == parent), None), sheet))
-        extra, month = check_last_actual(smap, sheet, fye)
+        extra, month = check_last_actual(smap, sheet, fye, cells)
         items += extra
         if month:
             months.append(month)
