@@ -4191,3 +4191,9 @@ def test_the_totals_findings_and_the_cited_formula_errors_sit_in_the_server_only
     from schemas.metrics import IntegrityFlag, RoleMetrics
     assert {"total", "parts_sum", "difference", "pct", "sheet", "row"} <= set(IntegrityFlag.model_fields) and "integrity_flags" in RoleMetrics.model_fields
     assert not {"totals", "totals_mismatch", "parts_sum", "integrity_flags", "formula_error"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
+
+
+def test_the_label_rule_mark_goes_to_no_model_payload():
+    """checks.classify_by_label sets `classified_by` on a map row from the row's label; the reviewer's row fields are a closed list without it."""
+    from app import reviewer
+    assert "classified_by" not in reviewer.ROW_FIELDS

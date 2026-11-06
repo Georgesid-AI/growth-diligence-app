@@ -741,6 +741,81 @@ def plan_fallback(fmap: Dict, cells: "Cells", fye: int = 12) -> Dict:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Function from label (George, 2026-11-06): the cost sub-lines of an OPEX or cost-of-revenue total
+# ---------------------------------------------------------------------------
+FUNCTION_KEYWORDS = {         # one constant list; a keyword is a whole word (or words), case-insensitive, with an optional plural s
+    "sales_marketing": ("sales", "marketing", "business development", "advertising", "commission", "events", "trade show", "conference", "pr", "growth",
+                        "lead gen"),
+    "rnd": ("r&d", "research", "development", "engineering", "product", "software", "dev team", "cto", "data science"),
+    "ga": ("g&a", "general", "admin", "finance", "accounting", "legal", "hr", "human resources", "office", "rent", "insurance", "management", "ceo", "cfo",
+           "it equipment", "bookkeeping"),
+}
+COST_OF_REVENUE_KEYWORDS = ("cloud", "hosting", "support", "infrastructure")      # a part of a cost-of-revenue total that is one keeps the parent's role
+PERSONNEL_KEYWORDS = ("personnel", "payroll", "staff", "salary", "wage", "employee", "contractor")      # a combined line: no function, the split is requested
+FUNCTION_METRICS = {"sales_marketing": "sm_expense", "rnd": "rnd_expense", "ga": "ga_expense", "cost_of_revenue": "cost_of_revenue"}
+LABEL_ROLES = (None, "opex", "other")          # the model's roles the rule may replace
+CLASSIFIED_BY_LABEL, CLASSIFIED_COMBINED = "label", "combined"
+
+
+def _words_in(label: str, words) -> List[Tuple[int, int]]:
+    """The spans of the keywords in a label: whole words only (so "rent" is not in "current"), a plural s allowed."""
+    text = re.sub(r"\s+", " ", (label or "").lower())
+    return [m.span() for w in words for m in re.finditer(rf"(?<![a-z0-9]){re.escape(w)}s?(?![a-z0-9])", text)]
+
+
+def function_of(label: Optional[str]) -> Optional[str]:
+    """The function a label names (sales_marketing, rnd, ga), or None when it names none or more than one. A keyword inside a longer keyword that
+    matched ("development" in "business development") does not count."""
+    spans = {role: _words_in(label or "", words) for role, words in FUNCTION_KEYWORDS.items()}
+    every = [s for found in spans.values() for s in found]
+    kept = {role: [s for s in found if not any(o != s and o[0] <= s[0] and s[1] <= o[1] for o in every)] for role, found in spans.items()}
+    hit = [role for role, found in kept.items() if found]
+    return hit[0] if len(hit) == 1 else None
+
+
+def row_label(smap: Dict, row: Dict, sheet: Optional["SheetCells"]) -> str:
+    """The text of a row's label cell (its own cell, else the sheet's label column on its row)."""
+    pos = parse_ref(row.get("label_cell")) or (parse_ref(f"{smap['label_col']}{row['row']}") if smap.get("label_col") else None)
+    return ((sheet.get(*pos) or "").strip() if sheet is not None and pos else "")
+
+
+def classify_by_label(fmap: Dict, cells: "Cells") -> Dict:
+    """A copy of the file map in which a part row of an OPEX or cost-of-revenue total gets its role from its label. The rule: the row's parent row is
+    mapped opex or cost_of_revenue, the model's role for the row is opex, other or none, and
+      * under an OPEX total: the label names one function (FUNCTION_KEYWORDS) -> that role (sales_marketing, rnd, ga) and its metric; a label on two
+        lists or on none keeps the model's role. A function the sheet already has as a row of its own (a subtotal) is not assigned: its parts are
+        covered by it and a loose line is not counted beside it. A combined personnel line (PERSONNEL_KEYWORDS) with no function is an OPEX line
+        marked `combined`;
+      * under a cost-of-revenue total: a label with a cost-of-revenue word (cloud, hosting, support, infrastructure) -> cost_of_revenue.
+    A row so set carries `classified_by` "label" (the mark of the method text and the mapping page), the combined line "combined". A role the model
+    gave that is not opex, other or none is never replaced. Idempotent; the input is not changed."""
+    out = copy.deepcopy(fmap)
+    for smap in out.get("sheets") or []:
+        rows = smap.get("rows") or []
+        sheet = cells.sheet(smap["sheet"])
+        role_of = {r["row"]: r.get("role") for r in rows}
+        own = {r.get("role") for r in rows if r.get("classified_by") != CLASSIFIED_BY_LABEL}          # functions the sheet has as rows of its own
+        for r in rows:
+            parent = role_of.get(r.get("parent_row"))
+            if parent not in ("opex", "cost_of_revenue") or r.get("role") not in LABEL_ROLES:
+                continue
+            label = row_label(smap, r, sheet)
+            if parent == "cost_of_revenue":
+                role = "cost_of_revenue" if _words_in(label, COST_OF_REVENUE_KEYWORDS) else None
+            else:
+                role = function_of(label)
+                if role in own:
+                    role = None
+                if role is None and r.get("classified_by") != CLASSIFIED_BY_LABEL and _words_in(label, PERSONNEL_KEYWORDS) and not _words_in(
+                        label, [w for words in FUNCTION_KEYWORDS.values() for w in words]):
+                    r["role"], r["metric"], r["classified_by"] = "opex", "opex", CLASSIFIED_COMBINED
+                    continue
+            if role is not None:
+                r["role"], r["metric"], r["classified_by"] = role, FUNCTION_METRICS[role], CLASSIFIED_BY_LABEL
+    return out
+
+
 def _weak(smap: Dict, piece: Dict, cells: Optional["Cells"]) -> bool:
     """Whether a piece of evidence for the last actual column shows a pattern only. A row's end is strong when it ends at the sheet's last period
     column and another sheet of the file is named or titled for a plan; every other row end, and the other pattern kinds, are weak."""

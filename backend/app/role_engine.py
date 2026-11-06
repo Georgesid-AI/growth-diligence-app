@@ -107,7 +107,7 @@ def _records(files: List[Dict]) -> List[Dict]:
                        "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"), "hidden": smap["sheet"] in set(f.get("hidden_sheets") or ()),
                        "basis": row.get("basis"), "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
                        "segment": (row.get("segment") or "").strip() or None, "parent": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
-                       "unchecked": f"row:{smap['sheet']}:{row['row']}" in cannot,
+                       "classified_by": row.get("classified_by"), "unchecked": f"row:{smap['sheet']}:{row['row']}" in cannot,
                        "uncertain": f"{smap['sheet']}:{row['row']}" in set(f.get("uncertain") or ())}
                 if pairs.get("series") or pairs.get("plan_series"):
                     table.append({**rec, "actual": pairs.get("series", {}), "plan": pairs.get("plan_series", {})})
@@ -322,6 +322,7 @@ PLAN_ONLY = "{name} split only in plan years; actual years carry OPEX total only
 SM_PLAN_ONLY = PLAN_ONLY.format(name="S&M")
 TOTAL_TOLERANCE = 0.01          # the total-row guard: a row within 1 % of the sum of the role's other rows is their total
 TOTAL_NOTE = "{n} rows summed to the total row; parts not counted twice"
+CLASSIFIED_NOTE = "{rows} classified by label"          # "rows 25, 26 classified by label" / "row 25 classified by label"
 
 
 def _total(rec: Optional[Dict], key: str = "actual") -> float:
@@ -437,6 +438,9 @@ def sum_role(table: List[Dict], role: str, granularity: Optional[str] = None, ma
         rows = [r for r in rows if (r["file"], r["sheet"], r["parent"]) not in numbers] or rows
     if not many:
         rows = [max(rows, key=lambda r: len(r[key]))]
+    labelled = [r["row"] for r in rows if r.get("classified_by") == "label"]
+    if labelled:        # the rows whose role code gave from their label say so in the method text
+        note = "; ".join(filter(None, [note, CLASSIFIED_NOTE.format(rows=("row " if len(labelled) == 1 else "rows ") + ", ".join(map(str, labelled)))]))
     negate = role in COST_ROLES and costs_negative(table, role, key)
     if len(rows) == 1 and not negate:
         return {**rows[0], "note": note} if note else rows[0]

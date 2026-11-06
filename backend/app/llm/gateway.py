@@ -2465,6 +2465,7 @@ async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_ra
                                  masked=masked_counts, unread_sheets=lost, **base)
     merged = {"map_version": parts[0]["map_version"], "kind": parts[0]["kind"],
               "sheets": [sh for part in parts for sh in part.get("sheets") or []], "figures": [f for part in parts for f in part.get("figures") or []]}
+    merged = checks_mod.classify_by_label(merged, checks_mod.Cells(text))      # the function of a cost sub-line from its label, stored with the reading (every read)
     if not recheck:
         merged = checks_mod.plan_fallback(merged, checks_mod.Cells(text), fiscal_year_end)       # a last actual column set by code is stored with the reading
         merged = series_mod.attach(merged, text, fiscal_year_end)           # the row series, written once with the reading (step a of PR 3)

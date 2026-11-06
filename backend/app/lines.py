@@ -65,8 +65,12 @@ def placement_line_of(rate: Dict, label: str, rows: List[Dict], labels: Dict[int
     return fits[0][1] if len(fits) == 1 or fits[0][0] < fits[1][0] else None
 
 
+CLASSIFIED_BY_LABEL = "classified by label"       # the mark of a row whose role code gave from its label (checks.classify_by_label)
+
+
 def line_of(row: Dict, label: str, **extra) -> Dict:
-    return {"row": row["row"], "label": label, "read_as": role_name(row.get("role")), "basis": basis_name(row.get("basis")),
+    return {"row": row["row"], "label": label,
+            "read_as": role_name(row.get("role")) + (f", {CLASSIFIED_BY_LABEL}" if row.get("classified_by") == "label" else ""), "basis": basis_name(row.get("basis")),
             "actual_plan": actual_plan_name(row), "cells": row.get("cells") or row.get("label_cell"), "indent": 0, "moved": False,
             "role": row.get("role"), "parent_row": row.get("parent_row"), **extra}
 
