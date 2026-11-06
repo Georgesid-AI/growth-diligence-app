@@ -4158,7 +4158,6 @@ def test_the_line_of_a_deck_figure_reaches_no_result_no_review_and_no_log(caplog
 def test_the_sheets_in_this_file_line_of_a_sheet_call_carries_sheet_names_only():
     """George, 2026-11-06: the one line before a sheet's cells holds the file's sheet names, masked like the sheet lines, and nothing else."""
     import test_sheet_by_sheet as sbs
-    from app.llm import gateway
     from app.structures import redact
     sheets = [{"name": "Orchid Test Co Plan", "cells": sbs.cells_of(100) + [{"row": 3, "col": 1, "text": "Acme Retail"}]},
               {"name": "Cash", "cells": sbs.cells_of(200) + [{"row": 3, "col": 1, "text": "Owner: Jane"}]}]
