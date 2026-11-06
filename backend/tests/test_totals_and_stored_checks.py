@@ -11,7 +11,7 @@ sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
 from app import cards, checks, ic_memo, integrity, role_engine  # noqa: E402
-from test_checks import build, cells_of, check, figure, fmap, item, row, sheet_map  # noqa: E402
+from test_checks import build, cells_of, check, figure, fmap, row, sheet_map  # noqa: E402
 from test_percent_and_period_forms import sheet_with, verdict  # noqa: E402
 from test_role_engine import MONTHS, file_of, run, sheet  # noqa: E402
 from test_role_engine import row as engine_row  # noqa: E402
