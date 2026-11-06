@@ -15,7 +15,7 @@ import json
 import re
 from typing import Dict, List, Optional
 
-from . import readings
+from . import lines as lines_mod, readings
 
 UNCERTAIN = "Reading uncertain – confirm"
 PICKS = ("first", "second")
@@ -27,8 +27,13 @@ SHEET_FIELDS = ("granularity", "header_row", "last_actual")      # last_actual c
 ROW_FIELDS = ("role", "metric", "series", "plan_series", "parent_row", "unit", "currency", "basis")
 
 
+def _scenario(row: Dict) -> Optional[str]:
+    return lines_mod.scenario_of(row.get("segment"))
+
+
 def _segment_flag(row: Dict) -> bool:
-    return bool((row.get("segment") or "").strip())
+    """A product or region split; a scenario ("scenario: Best case") is not one."""
+    return bool((row.get("segment") or "").strip()) and _scenario(row) is None
 
 
 SERIES_FIELDS = ("series", "plan_series")
@@ -97,7 +102,7 @@ def row_view(row: Optional[Dict]) -> Optional[Dict]:
         return None
     return {"role": row.get("role"), "metric": row.get("metric"), "basis": row.get("basis"), "cells": row.get("cells"),
             "unit": row.get("unit"), "currency": row.get("currency"),
-            "segment": _segment_flag(row), "parent_row": row.get("parent_row"),
+            "segment": _segment_flag(row), "scenario": _scenario(row), "parent_row": row.get("parent_row"),
             "periods": len((row.get("series") or {}).get("periods") or []) + len((row.get("plan_series") or {}).get("periods") or [])}
 
 

@@ -47,6 +47,11 @@ C_MASKED = "Depends on a name that was masked before reading."
 # --- Two more "nothing to compare against" cases (review of PR 205, F2): the arithmetic input the reading did not give. ---
 C_VARIANCE_ROWS = "variance row without its two source rows"
 C_SEGMENT_TOTAL = "segment row without its total row"
+R_WEAK_EVIDENCE = "weak evidence only"
+# A plan word in the name or title of another sheet of the file (George, 2026-11-06): with it, a row's end at the sheet's last period column is strong
+# evidence (the actuals sit on a sheet of their own, which ends where they do).
+TITLE_ROWS = 3                      # the rows at the top of a sheet that count as its title
+WEAK_EVIDENCE = ("row_ends", "repeated_values", "round_values", "layout")      # kinds that show a pattern, not a plan or an actual label
 C_NO_UNIT = "No unit given; not compared."
 C_DATE_ONLY = "No value to compare; date only."
 # --- Wording for rejections the note does not list (for the owner's approval; same discipline: a template, formatted from code). ---
@@ -63,9 +68,16 @@ R_NUMBER = "Reading says a number; cell {ref} holds {cell}."
 R_ACTUAL_PLAN = "Figure marked {marked}; column {column} is {found} for this row."
 NOTHING = "nothing"
 
-# The plan words a `label_contains` piece of evidence may cite (budget, plan, forecast, FC, estimate, projection and their plain forms). It
-# verifies the word the reader cited: it never finds a boundary, a column or a title of its own.
-PLAN_WORD_CHECK = re.compile(r"(?i)(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|forecast(?:s|ed)?|fc|estimates?|estimated|projections?|projected)(?![^\W\d_])")
+# The plan words a `label_contains` piece of evidence may cite (budget, plan, forecast, reforecast, FC, estimate, projection, outlook, pro forma
+# and their plain forms; and a year followed by E, F, B or P: FY24E, 2025F, 2024B). This list decides only whether a confirmed title supports the
+# boundary (the word is read from the cell the reader cited, which must hold it: any word passes that test). It verifies the word the reader
+# cited: it never finds a boundary, a column or a title of its own.
+# The one list of plan words, used by both rules: a title that supports the boundary, and another sheet named or titled for a plan.
+PLAN_WORDS = (r"(?<![^\W\d_])(?:budget(?:ed|s)?|plan(?:ned|s)?|(?:re)?forecast(?:s|ed)?|fc|estimates?|estimated|projections?|projected|"
+              r"outlooks?|pro[\s-]?forma|aop|lrp)(?![^\W\d_])")
+_YEAR_MARK = r"(?<![^\W_])(?:FY\s?\d{2}|(?:19|20)\d{2})[EFBP](?![^\W_])"      # a year followed by E, F, B or P: a title only, never a sheet's name
+PLAN_WORD = re.compile("(?i)" + PLAN_WORDS)
+PLAN_WORD_CHECK = re.compile("(?i)" + PLAN_WORDS + "|" + _YEAR_MARK)
 _PLACEHOLDER = re.compile("|".join(re.escape(p) for p in redact.PLACEHOLDERS))
 _NUMBER = re.compile(r"^\(?[-+−]?\s*[£$€¥]?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*%?\)?$|^[-+]?\.\d+$|^[-+]?\d+\.?\d*[eE][-+]?\d+$")
 _RANGE = re.compile(r"^([A-Z]{1,3})([1-9]\d*)(?::([A-Z]{1,3})([1-9]\d*))?$")
@@ -549,7 +561,28 @@ def check_evidence(smap: Dict, index: int, piece: Dict, sheet: SheetCells, bound
     return {**base, "outcome": CANNOT, "reason": C_LAYOUT}
 
 
-def check_last_actual(smap: Dict, sheet: SheetCells, fye: int) -> Tuple[List[Dict], Optional[Dict]]:
+def _plan_sheet_elsewhere(name: str, cells: Optional["Cells"]) -> bool:
+    """Whether a sheet other than `name` has a plan word in its name or in a text cell of its title rows."""
+    for other, sheet in (cells.sheets if cells else {}).items():
+        if other == name:
+            continue
+        title = [t for (r, _), t in sheet.cells.items() if r <= TITLE_ROWS and to_number(t) is None]
+        if PLAN_WORD.search(other) or any(PLAN_WORD.search(t) for t in title):
+            return True
+    return False
+
+
+def _weak(smap: Dict, piece: Dict, cells: Optional["Cells"]) -> bool:
+    """Whether a piece of evidence for the last actual column shows a pattern only. A row's end is strong when it ends at the sheet's last period
+    column and another sheet of the file is named or titled for a plan; every other row end, and the other pattern kinds, are weak."""
+    if piece["kind"] not in WEAK_EVIDENCE:
+        return False
+    if piece["kind"] == "row_ends":
+        return not (piece.get("column") == smap["last_period_col"] and _plan_sheet_elsewhere(smap["sheet"], cells))
+    return True
+
+
+def check_last_actual(smap: Dict, sheet: SheetCells, fye: int, cells: Optional["Cells"] = None) -> Tuple[List[Dict], Optional[Dict]]:
     """(the items of the last actual column and its evidence, the file's month for this sheet or None).
 
     The column's header is opened and must be the period the reading names; the month stands only if at least one piece of evidence is
@@ -572,6 +605,9 @@ def check_last_actual(smap: Dict, sheet: SheetCells, fye: int) -> Tuple[List[Dic
     else:
         items.append(_item(key, "last_actual", CONFIRMED, None, smap["sheet"], head_ref))
     pieces = [check_evidence(smap, i, p, sheet, col) for i, p in enumerate(la["evidence"])]
+    if pieces and items[0]["outcome"] == CONFIRMED and all(_weak(smap, p, cells) for p in la["evidence"]):
+        # Nothing but a pattern in the cells (a row's end, repeated or round values, a layout remark): the boundary is not evidenced (prompt v5).
+        items[0] = _item(key, "last_actual", REJECTED, R_WEAK_EVIDENCE, smap["sheet"], head_ref)
     items += pieces
     standing = [p for p in pieces if p["outcome"] == CONFIRMED and p["supports"]]
     if items[0]["outcome"] != CONFIRMED or not standing or not parsed or not parsed.get("end"):
@@ -667,7 +703,7 @@ def check_map(cells: Cells, fmap: Dict, fye: int = 12) -> Dict:
                 by_parent.setdefault(row["parent_row"], []).append(row)
         for parent, children in by_parent.items():
             items.append(check_parts(smap, parent, children, next((r for r in rows if r["row"] == parent), None), sheet))
-        extra, month = check_last_actual(smap, sheet, fye)
+        extra, month = check_last_actual(smap, sheet, fye, cells)
         items += extra
         if month:
             months.append(month)

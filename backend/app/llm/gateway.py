@@ -1540,6 +1540,10 @@ SHEET_READING_TOO_LARGE = ("This file is too large to read in full (the limit is
 SHEET_READING_CUT = ("The reading of this file was cut off because the file has too many rows to map in one read. "
                      "Remove the sheets that are not needed or split the file, then upload it again.")
 SHEET_READING_LOCK_ROUNDS = 5
+# A sheet reading goes sheet by sheet (George, 2026-11-05): a sheet whose reply is cut, or whose cells are over the input cap, is lost alone; the
+# stored reading names it with the reason. The sheet reads hold a lock of their own, so a page read never waits behind one.
+SHEET_CUT_REASON = "output cap: sheet too large to read in one reply"
+SHEET_INPUT_CAP_REASON = "input cap: sheet too large to read"
 # A reply that FileMap does not validate, after the one retry (George, 2026-10-30: no strict output schema for the file map; the schema goes
 # as text and the code validates). The strip's and the log's reason; the two raw replies are kept on the reading record (readings.put_failed).
 SHEET_PROMPT_MISSING_TEXT = "the sheet_reading prompt is not in the prompt store"
@@ -1548,6 +1552,7 @@ SHEET_READING_NOT_MATCHED = "reading did not match the map schema"
 STRUCTURE_PROMPT = "structure_reading"        # the deck structures of the rules read (DECK_PIPELINE=rules, Add from deck)
 PAGE_CLAIMS_PROMPT = "deck_reading"       # the page reader's prompt in the store (docs/specs/prompt-store.md); the repo holds a stub
 STRUCTURE_STEP = guards.STRUCTURE_STEP
+SHEET_LOCK_STEP = STRUCTURE_STEP + ":sheet_reading"     # the advisory lock of a sheet read: page reads (STRUCTURE_STEP) never queue behind it
 PIPELINES = ("rules", "ai")                 # the DECK_PIPELINE switch
 DEFAULT_PIPELINE = "ai"                     # since 2026-10-22 (docs/design/ai-reads-rules-check.md, built): the model reads every page
 
@@ -1640,6 +1645,7 @@ _inflight_tokens: Dict[str, int] = {}
 PAGE_LOCK_ROUNDS = 60               # the lock waits of a page read: reads queue for it one after another
 INFLIGHT_POLL_SECONDS = 0.05
 NOT_READ = "Not read by AI"
+NOT_SENT = "not_sent"       # a page read that never got its call: the audit's structure lock was not free in time (the reason word on the page entry)
 # George, 2026-10-23 (review of PR 164, M6): the page reader found no deck_reading prompt in the store; shown on the deck, and Run audit reads it again.
 PROMPT_MISSING_TEXT = "AI reading not run – deck_reading prompt missing in prompt store"
 TOO_LARGE = "Too large for AI reading"
@@ -2052,6 +2058,7 @@ async def read_structure(
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
     fiscal_year_end: int = 12, reread_of: Optional[Any] = None, on_stage=None, second_read: bool = False, token_cap: Optional[int] = None,
+    on_sent=None, _unit: bool = False,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2096,6 +2103,15 @@ async def read_structure(
     is served with no call, so a file or page read before only makes the one new call; a failed second read stores nothing and never touches the
     first. Both reads log their tokens per call (`read_no` 1 and 2) and, for a sheet, the file's hash.
 
+    A sheet reading goes sheet by sheet (George, 2026-11-05): one call for each sheet that holds figures, each with its own input and output caps,
+    and the maps are merged into one reading, stored once. A reply cut at the output limit (or a sheet over the input cap) loses that sheet only;
+    the result lists it in `unread_sheets` with its reason and the other sheets stand. Second reads and re-reads follow the same split (a second
+    read leaves out the sheets the first could not read; a re-read asks the sheets its items are on). `_unit` is the gateway's own: one such call.
+
+    `on_sent()` is called just before the provider call is made, once the call has its place (the lock, the caps): the page reader starts its
+    60-second clock there, so the time a page waits to be sent is not counted against it. A call that never gets that far (the lock was never
+    free) is "not_read" with the reason NOT_SENT.
+
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
     stands. The output is not Verified here: the caller joins each label to Python's item and
     verifies it.
@@ -2118,7 +2134,7 @@ async def read_structure(
             # The target, and every company name under a company-name header the map does not hold: each gets the next Client-NN.
             mapping = await redaction.add_customers(db, audit_id, [n for n in [context.get("company_name"), *learned] if n])
         text, masked_counts = structure_redact.mask_pages(text, context.get("company_name"), mapping)
-    if structure_type == SHEET_READING and isinstance(text, str):
+    if structure_type == SHEET_READING and isinstance(text, str) and not _unit:
         # The same, for a spreadsheet: a text cell under a company-name header the map does not hold is added to it (the next Client-NN),
         # then the cells are masked, the target's own name included. A figure is never rewritten.
         if not file_hash:
@@ -2185,7 +2201,7 @@ async def read_structure(
     recheck_id = content_hash(cache.canonical_json(recheck)) if recheck else None
     recheck_items = [r["item"] for r in recheck or []]
 
-    if structure_type == SHEET_READING:
+    if structure_type == SHEET_READING and not _unit:
         # Stored once, keyed on the file and the versions (section 9): the reading of this file is looked up before anything is counted
         # or sent. A hit makes no provider call, whichever audit of the account asked first; another account reads the file again. A second reading of rejected items is stored beside it.
         if second_read:
@@ -2200,11 +2216,12 @@ async def read_structure(
             logger.info("sheet reading stored: run_id=%s step=%s hash=%s", audit_id, STRUCTURE_STEP, digest)
             stored_map = kept["output"] if recheck and not second_read else kept["file_map"]
             return _structure_result("read", structure_type, cache_hit=True, masked=masked_counts, payload=text, reading_key=reading_key,
-                                     file_map=_mask_map(stored_map, context.get("company_name"), mapping), **base)
+                                     file_map=_mask_map(stored_map, context.get("company_name"), mapping),
+                                     unread_sheets=_mask_map(kept.get("unread_sheets") or [], context.get("company_name"), mapping), **base)
         if reread_of and not recheck:
             # Pinned to a stored reading that is not there: nothing is read in full here, whatever the prompt or the model now is.
             return _structure_result("not_read", structure_type, SHEET_READING_NOT_STORED, **base)
-    elif use_cache:
+    elif use_cache and structure_type != SHEET_READING:
         hit = await cache.get_structure(db, audit_id, key)
         if hit:
             await log_call(db, read_no=read_no, run_id=audit_id, file_hash=file_hash if structure_type == SHEET_READING else None, step=STRUCTURE_STEP, prompt_version=prompt.version,
@@ -2214,6 +2231,12 @@ async def read_structure(
             return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
                                      masked=masked_counts, **_reading(hit["output"]), **base)
 
+    if structure_type == SHEET_READING and not _unit:
+        return await _read_by_sheet(
+            db, audit_id, text, file_hash=file_hash, adapter=adapter, sleep=sleep, on_rate_limit=on_rate_limit, fiscal_year_end=fiscal_year_end,
+            reread_of=reread_of, recheck=recheck, second_read=second_read, reading_key=reading_key, account=account, prompt=prompt,
+            system=system, model=model, prompt_hash=prompt_hash, recheck_id=recheck_id, recheck_items=recheck_items, masked_counts=masked_counts,
+            base=base, company_name=context.get("company_name"), mapping=mapping)
     # A sheet reading carries the file map's schema as text, with the ask for plain JSON (schemas.file_map_schema; no strict output schema).
     ask = {"answer": schemas.FILE_MAP_ANSWER, "schema": schemas.file_map_schema()} if structure_type == SHEET_READING else {}
     user_payload = cache.canonical_json({"type": structure_type, "text": text, **({"recheck": recheck} if recheck else {}), **ask})
@@ -2253,16 +2276,17 @@ async def read_structure(
 
     parallel = structure_type == PAGE_CLAIMS
     lock_rounds = PAGE_LOCK_ROUNDS if parallel else SHEET_READING_LOCK_ROUNDS if structure_type == SHEET_READING else 1
-    token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
+    lock_step = SHEET_LOCK_STEP if structure_type == SHEET_READING else STRUCTURE_STEP
+    token = await guards.acquire(db, audit_id, lock_step)
     # One structure call per audit at a time: wait for the one in flight, then take the lock. The page reads of a deck queue for it
     # one after another, each holding it for its checks only, so they wait as many rounds as there are reads beside it.
     rounds = 0
     while token is None and rounds < lock_rounds:
         rounds += 1
-        await guards.wait_for_inflight(db, audit_id, STRUCTURE_STEP)
-        token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
+        await guards.wait_for_inflight(db, audit_id, lock_step)
+        token = await guards.acquire(db, audit_id, lock_step)
     if token is None:
-        return _structure_result("not_read", structure_type, NOT_READ, **base)
+        return _structure_result("not_read", structure_type, NOT_SENT if parallel else NOT_READ, **base)
     billed = (0, 0)
     reserved = 0
     try:
@@ -2285,7 +2309,7 @@ async def read_structure(
             if parallel:
                 reserved = counted + max_tokens
                 _inflight_tokens[audit_id] = _inflight_tokens.get(audit_id, 0) + reserved
-                await guards.release(db, audit_id, STRUCTURE_STEP, token)       # the provider call runs outside the lock
+                await guards.release(db, audit_id, lock_step, token)       # the provider call runs outside the lock
                 token = None
         except guards.GuardRefusal as refusal:
             refusal.input_tokens = counted          # what the refused call would have sent, kept on the row and on the log line
@@ -2296,6 +2320,8 @@ async def read_structure(
             stopped = refusal.reason in ("structure_token_cap_reached", "file_token_cap_reached")
             return _structure_result("stopped" if stopped else "not_read", structure_type,
                                      refusal.detail if stopped else NOT_READ, **base)
+        if on_sent is not None:
+            on_sent()
         try:
             parsed, in_tok, out_tok, sent_calls = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep,
                                                                         max_tokens, on_rate_limit, model=model, system=system, images=images)
@@ -2353,23 +2379,7 @@ async def read_structure(
         if structure_type == PAGE_CLAIMS:
             output = redaction.restore_deep(output, mapping)         # display un-masks on the server: the tokens go back to the names
         stored = output
-        if structure_type == SHEET_READING:
-            # Written once beside the file's hash (section 9), names restored: the token map goes with the audit, a reading may outlive it.
-            if not recheck:
-                from .. import series as series_mod        # series imports the checks, which import this module's package
-                output = series_mod.attach(output, text, fiscal_year_end)       # the row series, written once with the reading (step a of PR 3)
-            restored = redaction.restore_deep(output, mapping)
-            if second_read:
-                await readings.put_second(db, reading=reading_key, prompt_version=prompt.version, model=model, file_map=restored,
-                                          input_tokens=in_tok, output_tokens=out_tok, cost=cost)
-            elif recheck:
-                await readings.put_reread(db, reading=reading_key, items=recheck_items, reason=recheck_id, prompt_version=prompt.version, model=model,
-                                          output=restored, input_tokens=in_tok, output_tokens=out_tok, cost=cost)
-            else:
-                await readings.put(db, account=account, file_hash=file_hash, prompt_version=prompt.version, prompt_hash=prompt_hash, model=model, reading=restored, prompt_text=system,
-                                   input_tokens=in_tok, output_tokens=out_tok, cost=cost)
-                await readings.use(db, audit_id, reading_key)
-        else:
+        if structure_type != SHEET_READING:          # a sheet's reading is stored by _read_by_sheet, merged, once
             await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=f"{structure_type}_second" if second_read else structure_type,
                                    model_type=model_type, output=stored, prompt_version=prompt.version,
                                    input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page, pages=pages, model=model)
@@ -2392,7 +2402,83 @@ async def read_structure(
         if reserved:
             _inflight_tokens[audit_id] = max(0, _inflight_tokens.get(audit_id, 0) - reserved)
         if token is not None:
-            await guards.release(db, audit_id, STRUCTURE_STEP, token)
+            await guards.release(db, audit_id, lock_step, token)
+
+
+def sheet_units(text: str) -> List[Tuple[str, str]]:
+    """[(sheet name, reading text of that sheet alone)] of a masked reading text: the sheets that hold a figure, in file order. A workbook with
+    no figure in any sheet is one unit, the whole text, as before. Each unit is a reading text of its own ("sheet 1: name" and its cells)."""
+    sheets = structure_redact.parse_reading_text(text) or []
+    going = [sh for sh in sheets if any(structure_redact.reading_figure(c["text"]) for c in sh["cells"])] or sheets
+    return [(sh["name"], structure_redact.reading_text([sh])) for sh in going]
+
+
+def _item_on_sheet(item: str, name: str) -> bool:
+    return re.search(rf"(?:^|:){re.escape(name)}(?::|$)", item) is not None
+
+
+async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_rate_limit, fiscal_year_end, reread_of, recheck, second_read,
+                         reading_key, account, prompt, system, model, prompt_hash, recheck_id, recheck_items, masked_counts, base,
+                         company_name, mapping) -> StructureRead:
+    """The sheet reading of one workbook, sheet by sheet (George, 2026-11-05). One call for each sheet that holds a figure, one after another,
+    each with its own input and output caps; the maps are merged into one reading, stored once (the reading, its second read or its re-read).
+    A sheet whose reply is cut at the output limit, or whose cells are over the input cap, is lost alone and named in `unread_sheets` with its
+    reason; the others stand, and a second read leaves out the sheets the first could not read. A re-read asks only the sheets its items are on.
+    Any other failure (a provider error, a reply that does not validate, a cap) ends the read as it did for the whole file. Figures citing another
+    sheet resolve against the whole file's payload, which is returned."""
+    from .. import series as series_mod        # series imports the checks, which import this module's package
+    adapter = adapter or AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS)
+    units = sheet_units(text)
+    if second_read:
+        stored = await db[readings.READINGS].find_one({"key": reading_key}, {"_id": 0, "unread_sheets": 1}) or {}
+        lost_before = {_mask_map(u["sheet"], company_name, mapping) for u in stored.get("unread_sheets") or []}
+        units = [u for u in units if u[0] not in lost_before] or units
+    asked = {name: [r for r in recheck or [] if _item_on_sheet(r["item"], name)] for name, _ in units}
+    if recheck:
+        loose = [r for r in recheck if not any(r in found for found in asked.values())]       # an item that names no sheet (a figure with no cell)
+        units = [u for u in units if asked[u[0]] or loose]
+        asked = {name: asked[name] + loose for name, _ in units}
+    parts, lost = [], []
+    tokens = [0, 0, 0.0]
+    for name, unit_text in units:
+        one = await read_structure(db, audit_id, unit_text, SHEET_READING, file_hash=file_hash, adapter=adapter, sleep=sleep,
+                                   on_rate_limit=on_rate_limit, recheck=asked.get(name) or None, fiscal_year_end=fiscal_year_end,
+                                   reread_of=reread_of, second_read=second_read, _unit=True)
+        tokens = [tokens[0] + one.input_tokens, tokens[1] + one.output_tokens, tokens[2] + one.estimated_cost_usd]
+        if one.status == "read" and one.file_map is not None:
+            parts.append(one.file_map)
+        elif one.status == "truncated":
+            lost.append({"sheet": name, "reason": SHEET_CUT_REASON})
+        elif one.status == "too_large":
+            lost.append({"sheet": name, "reason": SHEET_INPUT_CAP_REASON})
+        else:
+            one.input_tokens, one.output_tokens, one.estimated_cost_usd = tokens[0], tokens[1], round(tokens[2], 6)
+            return one
+    if not parts:
+        every_input = bool(lost) and all(u["reason"] == SHEET_INPUT_CAP_REASON for u in lost)
+        status, reason = ("too_large", SHEET_READING_TOO_LARGE.format(limit=formatting.fmt_count(SHEET_READING_INPUT_CAP))) if every_input \
+            else ("truncated", SHEET_READING_CUT) if lost else ("not_read", NOT_READ)
+        return _structure_result(status, SHEET_READING, reason, input_tokens=tokens[0], output_tokens=tokens[1], estimated_cost_usd=round(tokens[2], 6),
+                                 masked=masked_counts, unread_sheets=lost, **base)
+    merged = {"map_version": parts[0]["map_version"], "kind": parts[0]["kind"],
+              "sheets": [sh for part in parts for sh in part.get("sheets") or []], "figures": [f for part in parts for f in part.get("figures") or []]}
+    if not recheck:
+        merged = series_mod.attach(merged, text, fiscal_year_end)           # the row series, written once with the reading (step a of PR 3)
+    restored = redaction.restore_deep(merged, mapping)
+    unread = redaction.restore_deep(lost, mapping)
+    cost = round(tokens[2], 6)
+    if second_read:
+        await readings.put_second(db, reading=reading_key, prompt_version=prompt.version, model=model, file_map=restored,
+                                  input_tokens=tokens[0], output_tokens=tokens[1], cost=cost, unread_sheets=unread)
+    elif recheck:
+        await readings.put_reread(db, reading=reading_key, items=recheck_items, reason=recheck_id, prompt_version=prompt.version, model=model,
+                                  output=restored, input_tokens=tokens[0], output_tokens=tokens[1], cost=cost, unread_sheets=unread)
+    else:
+        await readings.put(db, account=account, file_hash=file_hash, prompt_version=prompt.version, prompt_hash=prompt_hash, model=model, reading=restored,
+                           prompt_text=system, input_tokens=tokens[0], output_tokens=tokens[1], cost=cost, unread_sheets=unread)
+        await readings.use(db, audit_id, reading_key)
+    return _structure_result("read", SHEET_READING, **_reading(merged), input_tokens=tokens[0], output_tokens=tokens[1], estimated_cost_usd=cost,
+                             masked=masked_counts, payload=text, reading_key=reading_key, unread_sheets=lost, **base)
 
 
 REVIEWER_INPUT_CAP = 60_000      # tokens of the masked review input, by the provider's token counter: above it the review is refused, nothing is cut

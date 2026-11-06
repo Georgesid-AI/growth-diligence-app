@@ -93,8 +93,9 @@ export function sheetLine(v, now, shared = null) {
   }
   const time = v.read_elapsed != null ? fmtElapsed(v.read_elapsed) : "";
   // A read that ended with no mapped row is not processed, whatever the reader returned (rows_mapped is absent on a file read before it was kept).
-  if (v.read_state === "failed" || (v.read_state === "done" && v.rows_mapped === 0)) return { tag: NOT_PROCESSED, tone: "bad", time, sub: shared ? null : NOT_READ_LINE };
-  return { tag: PROCESSED, tone: "done", time: v.read_elapsed != null ? fmtElapsed(v.read_elapsed) : "", sub: null };
+  if (v.read_state === "failed" || (v.read_state === "done" && v.rows_mapped === 0)) return { tag: NOT_PROCESSED, tone: "bad", time, sub: shared ? null : v.read_reason || NOT_READ_LINE };
+  // A file read in part (a sheet lost to the output limit) is processed and says which sheet was lost (George, 2026-11-05).
+  return { tag: PROCESSED, tone: "done", time: v.read_elapsed != null ? fmtElapsed(v.read_elapsed) : "", sub: v.read_reason || null };
 }
 
 const unit = (n, one, many) => `${fmtCount(n)} ${n === 1 ? one : many}`;
@@ -117,7 +118,7 @@ export function deckLine(d, now, shared = null) {
   }
   const time = d.read_elapsed != null ? fmtElapsed(d.read_elapsed) : "";
   if (d.ai_status === "read") return { tag: PROCESSED, tone: "done", time, summary: deckSummary(d) };
-  return { tag: NOT_PROCESSED, tone: "bad", time, summary: shared ? null : deckSummaryLine(d) };
+  return { tag: NOT_PROCESSED, tone: "bad", time, summary: shared ? null : d.read_reason || deckSummaryLine(d) };
 }
 
 export const READ_FAILED = "Failed – no file could be read";

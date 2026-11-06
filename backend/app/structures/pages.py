@@ -118,13 +118,31 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
     def lower():
         state["limit"] = min(state["limit"], PARALLEL_AFTER_RATE_LIMIT)
 
-    async def read_one(batch, numbers, second=False):
+    async def read_one(batch, numbers, second=False, on_sent=None):
         images = [await image_for(n) for n in numbers] if image_for else None
         if images is not None and any(i is None for i in images):
             images = None
         return await gateway.read_structure(
             db, audit_id, batch_text(batch), PAGE_CLAIMS, deck_id=deck_id, pages=numbers, adapter=adapter, sleep=sleep,
-            use_cache=use_cache, on_rate_limit=lower, images=images, second_read=second, token_cap=token_cap)
+            use_cache=use_cache, on_rate_limit=lower, images=images, second_read=second, token_cap=token_cap, on_sent=on_sent)
+
+    async def clocked(batch, numbers, second=False):
+        """(result, whether the call was sent, seconds from the queue to the end). The page's clock (page_timeout) starts when its model call is
+        sent, not when it is queued (George, 2026-11-05): the wait for the audit's lock, for the token cap and for the page image are not counted.
+        Raises asyncio.TimeoutError when a sent call does not answer in time. A page that never got a call comes back "not_sent"."""
+        loop = asyncio.get_running_loop()
+        queued, sent = loop.time(), asyncio.Event()
+        task = asyncio.ensure_future(read_one(batch, numbers, second=second, on_sent=sent.set))
+        waiting = asyncio.ensure_future(sent.wait())
+        try:
+            await asyncio.wait({task, waiting}, return_when=asyncio.FIRST_COMPLETED)
+            result = task.result() if task.done() else await asyncio.wait_for(task, page_timeout)       # a timeout cancels the task
+        except BaseException:
+            task.cancel()
+            raise
+        finally:
+            waiting.cancel()
+        return result, sent.is_set(), loop.time() - queued
 
     async def finished(grids_of, result, again=None, capped=False):
         if on_page:
@@ -137,10 +155,13 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
         if state["stopped"] is not None:
             return await finished(grids_of, gateway._structure_result("stopped", PAGE_CLAIMS, state["stopped"]))
         try:
-            result = await asyncio.wait_for(read_one(batch, numbers), page_timeout)
+            result, sent, waited = await clocked(batch, numbers)
         except asyncio.TimeoutError:
             logger.warning("page not read: run_id=%s deck_id=%s pages=%s reason=timeout", audit_id, deck_id, numbers)
-            return await finished(grids_of, gateway._structure_result("not_read", PAGE_CLAIMS, "timeout"))
+            return await finished(grids_of, gateway._structure_result("not_read", PAGE_CLAIMS, "timeout", seconds=page_timeout))
+        if not sent and result.status == "not_read" and result.reason == gateway.NOT_SENT:
+            result.seconds = waited
+            logger.warning("page not read: run_id=%s deck_id=%s pages=%s reason=not_sent waited=%ds", audit_id, deck_id, numbers, int(waited))
         if result.status in ("too_large", "truncated") and len(batch) > 1:
             half = len(batch) // 2
             return [r for part in (batch[:half], batch[half:]) for r in await one(part)]
@@ -149,7 +170,7 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], image_f
         again, capped = None, False
         if seconds is not None and result.status == "read":
             try:
-                again = await asyncio.wait_for(read_one(batch, numbers, second=True), page_timeout)
+                again, _, _ = await clocked(batch, numbers, second=True)
             except Exception as exc:        # a timeout or an error: the first read stands, the page is compared with nothing
                 logger.warning("page second read not completed: run_id=%s deck_id=%s pages=%s reason=%s", audit_id, deck_id, numbers, type(exc).__name__)
             else:
@@ -648,6 +669,8 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         async with lock:
             numbers = [page_grids_mod.page_number(g) for g in batch]
             entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
+            if result.seconds is not None and result.reason in ("timeout", gateway.NOT_SENT):
+                entry["seconds"] = int(round(result.seconds))       # a timeout's clock, or what a page that was not sent waited
             if result.status == "stopped" or capped:
                 entry["capped"] = True
                 cap_stop.update({"used": await guards.structure_tokens_used(db, audit_id), "cap": token_cap})
@@ -700,7 +723,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                                    deck_id, provider.get("status") or "-", provider.get("type") or "-", shown.get(tuple(entry["pages"]), "-"))
                     continue
                 logger.warning("page %d not read: run_id=%s deck_id=%s status=%s reason=%s", n, audit_id, deck_id, entry["status"],
-                               entry["reason"] if entry["reason"] in ("timeout", "stopped") else "-")
+                               entry["reason"] if entry["reason"] in ("timeout", "stopped", gateway.NOT_SENT) else "-")
     missing = any(r["reason"] == gateway.PROMPT_MISSING_TEXT for r in reads)
     blocked = any(r["status"] == "blocked" for r in reads)
     overall = STOPPED if stopped_message else READ if any(r["status"] == "read" for r in kept + reads) else BLOCKED if blocked else \

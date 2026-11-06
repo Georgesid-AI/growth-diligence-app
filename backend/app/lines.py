@@ -118,3 +118,13 @@ def build(sheet_map: Dict, labels: Dict[int, str]) -> List[Dict]:
             seen.add(row["row"])
             out.append(line_of(row, labels.get(row["row"], ""), indent=1))
     return out
+
+
+_SCENARIO = re.compile(r"(?i)^\s*scenario:\s*(\S.*)$")
+
+
+def scenario_of(segment: Optional[str]) -> Optional[str]:
+    """The scenario a row's segment names ("scenario: Best case" gives "Best case"), or None. Such a row is a scenario of the line, not one of its
+    products or regions: never summed with the segments, shown by its name (prompt v5, 2026-11-06)."""
+    found = _SCENARIO.match(segment or "")
+    return found.group(1).strip() if found else None

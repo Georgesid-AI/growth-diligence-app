@@ -4058,7 +4058,27 @@ def test_a_second_sheet_read_record_holds_the_file_map_and_counts_only():
     from app import readings
     assert readings.SECOND_READS in readings.COLLECTIONS
     doc = asyncio_run(readings.put_second(_FakeDbForSecond(), reading="k", prompt_version="v", model="m", file_map={"sheets": []}, input_tokens=5, output_tokens=2, cost=0.1))
-    assert set(doc) == {"reading", "prompt_version", "model", "file_map", "input_tokens", "output_tokens", "estimated_cost_usd", "created_at"}
+    assert set(doc) == {"reading", "prompt_version", "model", "file_map", "input_tokens", "output_tokens", "estimated_cost_usd", "unread_sheets", "created_at"}
+    assert doc["unread_sheets"] == []
+
+
+def test_a_reading_read_sheet_by_sheet_stores_a_lost_sheet_as_its_name_and_a_closed_reason_only():
+    """George, 2026-11-05: a sheet lost to the output limit is kept on the reading as {"sheet", "reason"}, the reason one of two closed sentences."""
+    from app.llm import gateway
+    from app import read_reasons
+    assert {gateway.SHEET_CUT_REASON, gateway.SHEET_INPUT_CAP_REASON} == {"output cap: sheet too large to read in one reply", "input cap: sheet too large to read"}
+    line = read_reasons.sheets_line([{"sheet": "Big", "reason": gateway.SHEET_CUT_REASON}])
+    assert line == "Reply cut at the output limit – read sheet by sheet failed on sheet Big"
+
+
+def test_the_weak_evidence_reason_and_the_scenario_name_are_closed_words_and_names_from_the_file_map_only():
+    """Prompt v5 (2026-11-06): the new reason string is fixed text with no cell value; the scenario shown on the mapping page is the part of the
+    reading's own segment after "scenario: ", and the segment flag stays a boolean."""
+    from app import checks, consistency, lines
+    assert checks.R_WEAK_EVIDENCE == "weak evidence only" and "{" not in checks.R_WEAK_EVIDENCE
+    view = consistency.row_view({"role": "revenue", "segment": "scenario: Best case"})
+    assert view["scenario"] == "Best case" and view["segment"] is False
+    assert lines.scenario_of("Product A") is None and lines.scenario_of("scenario:") is None
 
 
 def asyncio_run(coro):

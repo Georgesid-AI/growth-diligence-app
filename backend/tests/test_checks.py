@@ -69,7 +69,9 @@ def figure(value=ACTUAL[2], cell="D4", period="2024-03", **over):
 
 
 def sheet_map(evidence=None, rows=None, last_actual=True, **over):
-    ev = evidence if evidence is not None else [piece("row_ends", row=6, column="G", text="Customers stops at G")]
+    # A last actual column needs more than a pattern in the cells (prompt v5, 2026-11-06): the default also carries the plan-word title over the next column.
+    ev = evidence if evidence is not None else [piece("row_ends", row=6, column="G", text="Customers stops at G"),
+                                                piece("label_contains", cell="H2", word="Forecast", text="Forecast title")]
     base = {"sheet": "Report", "header_row": HEADER, "label_col": "A", "first_period_col": "B", "last_period_col": "M", "granularity": "monthly",
             "currency": "EUR", "currency_cell": "A1",
             "last_actual": {"column": "G", "period": "2024-06", "evidence": ev} if last_actual else None, "rows": rows if rows is not None else [row()]}
@@ -263,7 +265,8 @@ def test_a_confirmed_row_end_at_the_boundary_column_makes_the_month():
 def test_one_row_that_keeps_going_is_rejected_and_the_month_stands_on_the_rest():
     """Test 2: the Customers row stops at G, the Churn row claimed to stop at G does not."""
     grid = build({(11, 1): "Churn", **{(11, c): "1" for c in range(2, 11)}})          # churn runs B..J
-    ev = [piece("row_ends", row=6, column="G", text="Customers stops at G"), piece("row_ends", row=11, column="G", text="Churn stops at G")]
+    ev = [piece("row_ends", row=6, column="G", text="Customers stops at G"), piece("row_ends", row=11, column="G", text="Churn stops at G"),
+          piece("label_contains", cell="H2", word="Forecast", text="Forecast title")]
     got = check(fmap(sheet_map(evidence=ev)), grid)
     assert item(got, "evidence:Report:0")["outcome"] == checks.CONFIRMED
     rejected = item(got, "evidence:Report:1")
@@ -281,9 +284,9 @@ def test_with_all_the_evidence_rejected_or_unchecked_there_is_no_month():
 
 
 def test_evidence_that_is_true_but_points_at_another_column_does_not_make_the_month():
-    got = check(fmap(sheet_map(evidence=[piece("row_ends", row=6, column="G")], last_actual=True)), build())
+    got = check(fmap(sheet_map(evidence=[piece("row_ends", row=6, column="G"), piece("label_contains", cell="H2", word="Forecast", text="Forecast title")], last_actual=True)), build())
     assert months(got) == [("2024-06", "G")]
-    off = fmap(sheet_map(evidence=[piece("row_ends", row=6, column="G")]))
+    off = fmap(sheet_map(evidence=[piece("row_ends", row=6, column="G"), piece("label_contains", cell="H2", word="Forecast", text="Forecast title")]))
     off["sheets"][0]["last_actual"].update(column="F", period="2024-05")
     wrong = check(off)
     assert item(wrong, "evidence:Report:0")["outcome"] == checks.CONFIRMED and item(wrong, "evidence:Report:0")["supports"] is False
@@ -416,7 +419,7 @@ def test_a_rejected_piece_of_evidence_is_asked_about_as_the_sheets_last_actual_c
     got = check(fmap(sheet_map(evidence=[piece("row_ends", row=7, column="G")])))
     assert checks.reread_keys(got["items"]) == ["last_actual:Report"]
     first = fmap(sheet_map(evidence=[piece("row_ends", row=7, column="G")]))
-    second = fmap(sheet_map(evidence=[piece("row_ends", row=6, column="G")]))
+    second = fmap(sheet_map(evidence=[piece("row_ends", row=6, column="G"), piece("label_contains", cell="H2", word="Forecast", text="Forecast title")]))
     merged = checks.merge_reread(first, second, ["last_actual:Report"])
     assert months(check(merged)) == [("2024-06", "G")]
 
@@ -468,7 +471,9 @@ def test_evidence_starting_at_column_h_supports_a_boundary_at_g_only(letter, per
     got = _boundary_at(letter, period, evidence)
     confirmed_here = item(got, "evidence:Report:0")
     assert confirmed_here["outcome"] == checks.CONFIRMED, "the fact is true wherever the boundary is claimed"
-    if letter == "G":
+    if letter == "G" and evidence["kind"] in checks.WEAK_EVIDENCE:
+        assert confirmed_here["supports"] is True and months(got) == [], "a pattern alone is weak evidence only (prompt v5)"
+    elif letter == "G":
         assert confirmed_here["supports"] is True and months(got) == [("2024-06", "G")]
     else:
         assert confirmed_here["supports"] is False and months(got) == [], "one or three columns early: the month is not confirmed on it"

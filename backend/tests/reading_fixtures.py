@@ -4,7 +4,7 @@ scripts/run_reading_fixtures.py (the job that reads each fixture once with the r
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Tuple, Dict, List
 
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
@@ -75,7 +75,15 @@ def _close(a: float, b: float) -> bool:
 def compare(exp: Dict, month, file_map: Dict) -> List[str]:
     """The differences between a reading (its confirmed as-of month and its file map) and the expected map; [] when they agree. The free
     text of the reading is not compared. Rows are found by their sheet row number, the revenue row by its role."""
+    sheet_level, row_level = compare_split(exp, month, file_map)
+    return sheet_level + row_level
+
+
+def compare_split(exp: Dict, month, file_map: Dict) -> Tuple[List[str], List[str]]:
+    """(sheet-level differences, row-level differences) of compare(): the as-of month, a missing sheet, the last actual column and the
+    granularity are sheet-level; a row's role, the revenue row and a figure are row-level."""
     out: List[str] = []
+    rows: List[str] = []
     want = exp.get("as_of_month")
     if exp.get("as_of_source") == "rules":
         if month not in (None, want):
@@ -96,19 +104,19 @@ def compare(exp: Dict, month, file_map: Dict) -> List[str]:
         if want_sheet.get("revenue_row"):
             revenue = [r["row"] for r in got.get("rows") or [] if r.get("role") == "revenue"]
             if want_sheet["revenue_row"] not in revenue:
-                out.append(f"{want_sheet['sheet']}: revenue row {revenue}, expected {want_sheet['revenue_row']}")
+                rows.append(f"{want_sheet['sheet']}: revenue row {revenue}, expected {want_sheet['revenue_row']}")
     for want_role in exp.get("roles") or []:
         got = sheets.get(want_role["sheet"])
         role = next((r.get("role") for r in (got or {}).get("rows") or [] if r["row"] == want_role["row"]), None)
         if role != want_role["role"]:
-            out.append(f"{want_role['sheet']} row {want_role['row']}: role {role}, expected {want_role['role']}")
+            rows.append(f"{want_role['sheet']} row {want_role['row']}: role {role}, expected {want_role['role']}")
     for want_fig in exp.get("figures") or []:        # a required subset: figures returned beyond these are no difference
         found = [f for f in file_map.get("figures") or []
                  if (f.get("source") or {}).get("cell") == want_fig["cell"] and (f.get("source") or {}).get("sheet") == want_fig["sheet"]
                  and f.get("metric") == want_fig["metric"]]
         if not found:
-            out.append(f"figure {want_fig['metric']} at {want_fig['sheet']}!{want_fig['cell']} missing")
+            rows.append(f"figure {want_fig['metric']} at {want_fig['sheet']}!{want_fig['cell']} missing")
         elif not any(f.get("value") is not None and _close(f["value"], want_fig["value"]) and f.get("period") == want_fig["period"] for f in found):
-            out.append(f"figure {want_fig['metric']} at {want_fig['cell']}: {found[0].get('value')} / {found[0].get('period')}, "
+            rows.append(f"figure {want_fig['metric']} at {want_fig['cell']}: {found[0].get('value')} / {found[0].get('period')}, "
                        f"expected {want_fig['value']} / {want_fig['period']}")
-    return out
+    return out, rows
