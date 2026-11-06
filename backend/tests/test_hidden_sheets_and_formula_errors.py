@@ -59,6 +59,12 @@ def test_formula_errors_are_counted_per_file_with_their_cells():
         ("PNL", "C3", "#DIV/0!"), ("PNL", "D3", "#N/A"), ("data_for_graphs", "B2", "#VALUE!"), ("CASHFLOW", "B2", "#REF!")]
 
 
+def test_name_num_and_null_errors_are_formula_errors_too():
+    errors = {("PNL", "C3"): "#NAME?", ("PNL", "D3"): "#NUM!", ("CASHFLOW", "B2"): "#NULL!"}
+    facts = sheet_reader.file_facts(cr.read_workbook(workbook(errors=errors), "pack.xlsx"))
+    assert [(e["sheet"], e["cell"], e["error"]) for e in facts["formula_errors"]] == [("PNL", "C3", "#NAME?"), ("PNL", "D3", "#NUM!"), ("CASHFLOW", "B2", "#NULL!")]
+
+
 def test_a_text_cell_that_only_mentions_an_error_is_no_formula_error():
     facts = sheet_reader.file_facts(cr.read_workbook(workbook(errors={("PNL", "A5"): "Check #REF! in the model", ("PNL", "A6"): "#1 customer"}), "pack.xlsx"))
     assert facts["formula_errors"] == []

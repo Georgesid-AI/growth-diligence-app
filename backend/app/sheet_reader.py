@@ -53,7 +53,7 @@ def _worst(items: List[Dict]) -> Dict:
     return next((i for i in items if i["outcome"] == checks.REJECTED), items[0])
 
 
-FORMULA_ERRORS = ("#REF!", "#DIV/0!", "#N/A", "#VALUE!")      # a cell that holds exactly one of these is a formula error
+FORMULA_ERRORS = ("#REF!", "#DIV/0!", "#N/A", "#VALUE!", "#NAME?", "#NUM!", "#NULL!")      # a cell that holds exactly one of these is a formula error
 
 
 def file_facts(sheets: list) -> Dict:
