@@ -15,10 +15,7 @@
         "source": {
           "cells": [
             "B4",
-            "E4:G4",
-            "I4:K4",
-            "M4:O4",
-            "Q4:S4"
+            "C4"
           ],
           "file": "board",
           "row": 4,
@@ -34,14 +31,8 @@
         "prior": 1398.0,
         "source": {
           "cells": [
-            "E4:G4",
-            "I4:K4",
-            "M4:O4",
-            "Q4:S4",
-            "U4:W4",
-            "Y4:AA4",
-            "AC4:AE4",
-            "AG4:AI4"
+            "C4",
+            "D4"
           ],
           "file": "board",
           "row": 4,
@@ -52,20 +43,7 @@
       }
     ],
     "integrity_flags": [],
-    "mapping_flags": [
-      {
-        "file": "board",
-        "role": "revenue",
-        "rows": [
-          4,
-          4,
-          4
-        ],
-        "sheet": "Report",
-        "text": "three rows mapped as revenue (rows 4, 4, 4); the calculation uses row 4",
-        "used_row": 4
-      }
-    ],
+    "mapping_flags": [],
     "metrics": [
       {
         "basis": null,

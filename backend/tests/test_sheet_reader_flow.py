@@ -237,7 +237,7 @@ def test_compute_reads_the_stored_map_and_series_by_role_and_needs_no_confirmati
     by_name = {m["metric"]: m for m in results["role_metrics"]["metrics"]}
     assert by_name["customers"]["reason"] == "needs a customers row" and by_name["monthly_churn"]["reason"] == "needs a churn_rate row"
     assert by_name["ending_arr"]["reason"] == "needs an arr row or an mrr row"
-    assert results["contract_version"] == 23
+    assert results["contract_version"] == 24
     assert flow.get(f"/api/audits/{AUDIT}/results").status_code == 200
 
 

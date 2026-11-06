@@ -38,13 +38,14 @@ def _boundary(smap: Dict, row: Dict) -> Optional[int]:
     return redact.col_number(col) if col else None
 
 
-def row_series(smap: Dict, row: Dict, sheet: "checks.SheetCells", fye: int = 12) -> Dict[str, Dict[str, List]]:
+def row_series(smap: Dict, row: Dict, sheet: "checks.SheetCells", fye: int = 12, dated: Optional[Dict] = None) -> Dict[str, Dict[str, List]]:
     """{"series": {...}, "plan_series": {...}, "subtotal_series": {...}, "plan_subtotal_series": {...}} for one row (a key with no cell is left out),
     or {} when the row has no range or is a variance-columns row.
 
     Every period column is classified from its header as a month, a quarter ("Q1 2024") or a year ("TOTAL 2021", "FY 2021", "2021"; a datetime
     header is a month). The series holds the columns of the sheet's own grain only; the columns of a coarser grain are subtotals and go to the
-    subtotal series, each period in its own form ("2024-Q1", "2021"), so that a quarter or a year never lands on a month's key."""
+    subtotal series, each period in its own form ("2024-Q1", "2021"), so that a quarter or a year never lands on a month's key. `dated` is the
+    year-less month headers of the sheet with the period their block gives them; a month with no such period is in no series."""
     rng = checks.parse_range(row.get("cells"))
     if rng is None or row.get("variance_columns"):
         return {}
@@ -59,7 +60,7 @@ def row_series(smap: Dict, row: Dict, sheet: "checks.SheetCells", fye: int = 12)
         if value is None:
             continue
         head = sheet.get(r, label_col) if down else sheet.header(smap["header_row"], c)
-        found = checks.header_period(head, fye)
+        found = checks.header_period(head, fye) or (dated or {}).get(c)       # a year-less month ("December"): the year of its block (checks.dated_headers)
         grain = (found or {}).get("grain")
         if grain not in ORDER or ORDER[grain] < own:
             continue                # no period, a half or year to date, or a column finer than the sheet's grain: no part of the series
@@ -89,10 +90,16 @@ def attach(file_map: Dict, payload_text: str, fye: int = 12) -> Dict:
         sheet = cells.sheet(smap["sheet"])
         if sheet is None:
             continue
+        smap.pop("undated", None)
+        dated = {}
+        if not any(r.get("by_column") for r in smap.get("rows") or []):
+            dated, undated = checks.dated_headers(sheet, smap["header_row"], 1, max(sheet.max_col, 1), fye)
+            if undated:
+                smap["undated"] = [{"cell": checks.ref_of(smap["header_row"], c), "text": text} for c, text in undated]
         for row in smap.get("rows") or []:
             for key in SERIES_KEYS:
                 row.pop(key, None)
-            row.update(row_series(smap, row, sheet, fye))
+            row.update(row_series(smap, row, sheet, fye, dated))
     return out
 
 
@@ -100,6 +107,7 @@ def strip(file_map: Dict) -> Dict:
     """The map without its series (what the reader's schema describes)."""
     out = copy.deepcopy(file_map)
     for smap in out.get("sheets") or []:
+        smap.pop("undated", None)
         for row in smap.get("rows") or []:
             for key in SERIES_KEYS:
                 row.pop(key, None)

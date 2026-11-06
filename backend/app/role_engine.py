@@ -175,9 +175,30 @@ def formula_error_flags(files: List[Dict]) -> List[Dict]:
     return out
 
 
+UNDATED_CELLS = 5               # the headers an undated flag names; the rest are counted
+
+
+def undated_flags(files: List[Dict]) -> List[Dict]:
+    """One mapping flag for each sheet with month headers that name no year and that no block or title dates (checks.dated_headers): "Report: 2 month
+    headers undated, left out of every series: G3 (February), H3 (March)". The months are in no series."""
+    out = []
+    for f in files:
+        for smap in (f.get("file_map") or {}).get("sheets") or []:
+            items = smap.get("undated") or []
+            if not items:
+                continue
+            shown = ", ".join(f"{i['cell']} ({i['text']})" for i in items[:UNDATED_CELLS])
+            more = f" and {len(items) - UNDATED_CELLS} more" if len(items) > UNDATED_CELLS else ""
+            out.append({"role": "periods", "file": f.get("file"), "sheet": smap["sheet"], "rows": [smap["header_row"]], "used_row": smap["header_row"],
+                        "undated": [i["cell"] for i in items],
+                        "text": f"{smap['sheet']}: {len(items)} month header{'s' if len(items) != 1 else ''} undated, left out of every series: {shown}{more}"})
+    return out
+
+
 def file_flags(files: List[Dict]) -> Dict[str, List[Dict]]:
-    """What the files themselves call for, apart from their rows: {"mapping": the hidden duplicates, "integrity": the formula errors}."""
-    return {"mapping": hidden_flags(files), "integrity": formula_error_flags(files)}
+    """What the files themselves call for, apart from their rows: {"mapping": the hidden duplicates and the undated month headers, "integrity": the
+    formula errors}."""
+    return {"mapping": hidden_flags(files) + undated_flags(files), "integrity": formula_error_flags(files)}
 
 
 def hidden_sheets(table: List[Dict]) -> set:
@@ -235,6 +256,16 @@ def _end_month(period: str, fye: int = 12) -> Optional[pd.Period]:
     except Exception:
         return None
     return None
+
+
+def _open_total_year(rec: Optional[Dict], as_of: pd.Period, fye: int) -> Optional[str]:
+    """The fiscal year the as-of month falls in, when a TOTAL column of a monthly sheet (a derived yearly record) states it: the year is not over, but
+    its total is in the file, so it is the latest year. None for any other row."""
+    if rec is None or not rec.get("derived"):
+        return None
+    period = str(_fiscal_year(as_of, fye))
+    end = _end_month(period, fye)
+    return period if period in rec["actual"] and end is not None and end > as_of else None
 
 
 def _months(rec: Dict, key: str = "actual", as_of: Optional[pd.Period] = None, fye: int = 12) -> List[Tuple[pd.Period, float, str]]:
@@ -689,10 +720,11 @@ def yearly_input(table, as_of, fye) -> Optional[Dict]:
     if rev is None:
         return None
     fields = _year_fields(table, fye)
+    open_year = _open_total_year(rev, as_of, fye)
     actual = []
     for period in sorted(fields):
         end = _end_month(period, fye)
-        if end is None or end > as_of or "revenue" not in fields[period]:
+        if end is None or (end > as_of and period != open_year) or "revenue" not in fields[period]:
             continue
         start = end - 11
         actual.append({"period": period, "year": int(period), "start": str(start), "end": str(end), "fields": fields[period]})
@@ -1123,24 +1155,31 @@ def _run_ends(cells: List[str]) -> List[str]:
 
 def growth_by_year(table, as_of, fye, deck: Optional[List[Dict]] = None) -> List[Dict]:
     """[{"period", "value", "prior", "growth", "source", "deck_note"}] per fiscal year of revenue with a year before it. Each year's value comes from
-    the spreadsheet first and cites the cells it is made of: the sum of the twelve months of the monthly revenue row (a year with fewer months is
-    not a year; a cumulative or last-12-months row is not a flow), else the yearly P&L row's own cell, never another row. A year no spreadsheet
+    the spreadsheet first and cites the cells it is made of: the TOTAL column of the monthly sheet (the as-of year counts when its TOTAL states it),
+    else the sum of the twelve months of the monthly revenue row (a year with fewer months is not a year; a cumulative or last-12-months row is
+    not a flow), else the yearly P&L row's own cell, never another row. A year no spreadsheet
     gives is taken from the deck figure of that year, if there is one, and says "from deck, page N, unverified". Actual only, to the as-of month."""
     years: Dict[str, Dict] = {}
+    yearly = pick(table, "revenue", "yearly")
+
+    def from_yearly(open_year: Optional[str] = None) -> None:
+        for period, (value, cell) in yearly["actual"].items():
+            end = _end_month(period, fye)
+            if re.fullmatch(r"\d{4}", period) and end is not None and (end <= as_of or period == open_year) and period not in years:
+                years[period] = {"value": value, "cells": [cell], "rec": yearly}
+    totals = yearly is not None and yearly.get("derived")           # the TOTAL columns of the monthly sheet itself: they state the year before its months do
+    if totals:
+        from_yearly(_open_total_year(yearly, as_of, fye))
     rec = pick(table, "revenue", "monthly")
     if rec is not None and rec["basis"] not in (CUMULATIVE, "last_12_months"):
         by_year: Dict[int, List] = {}
         for month, value, cell in _months(rec, "actual", as_of, fye):
             by_year.setdefault(_fiscal_year(month, fye), []).append((month, value, cell))
         for year, pts in by_year.items():
-            if len(pts) == 12:
+            if len(pts) == 12 and str(year) not in years:           # the months of a year only when no total column states it
                 years[str(year)] = {"value": sum(v for _, v, _ in pts), "cells": _run_ends([c for _, _, c in pts]), "rec": rec}
-    yearly = pick(table, "revenue", "yearly")
-    if yearly is not None:
-        for period, (value, cell) in yearly["actual"].items():
-            end = _end_month(period, fye)
-            if re.fullmatch(r"\d{4}", period) and end is not None and end <= as_of and period not in years:
-                years[period] = {"value": value, "cells": [cell], "rec": yearly}
+    if yearly is not None and not totals:
+        from_yearly()
     chosen, _ = _one_deck_figure_per_year(deck or [], as_of, fye)
     for fig in chosen:
         if fig["metric"] == "revenue" and re.fullmatch(r"\d{4}", fig["period"]) and fig["period"] not in years:
@@ -1310,13 +1349,44 @@ def mapping_flags(table: List[Dict]) -> List[Dict]:
         if role in COST_ROLES or role in ("forecast", "other"):         # "other" is no role a calculation reads: two such rows are no ambiguity (second pass, A7)
             continue
         for (file, sheet_), rows in _total_rows(table, role).items():
-            if len(rows) < 2:
+            numbers = sorted({r["row"] for r in rows})       # a row is one row however many records it has (monthly, quarterly, yearly) or reads
+            if len(numbers) < 2:
                 continue
             used = _best(rows, table)
-            numbers = sorted(r["row"] for r in rows)
             count = {2: "two", 3: "three", 4: "four"}.get(len(numbers), str(len(numbers)))
             out.append({"role": role, "file": file, "sheet": sheet_, "rows": numbers, "used_row": used["row"],
                         "text": f"{count} rows mapped as {role} (rows {', '.join(str(n) for n in numbers)}); the calculation uses row {used['row']}"})
+    return out
+
+
+TOTAL_TOLERANCE = 0.01          # the TOTAL column of the latest year against the sum of its months: a difference above 1 % is flagged
+
+
+def total_flags(table: List[Dict], as_of: pd.Period, fye: int, currency: Optional[str] = None) -> List[Dict]:
+    """Mapping flags for the latest year of a monthly sheet that has a TOTAL column: the calculation uses the TOTAL; the months to the as-of month are
+    added up and compared with it, and a difference above 1 % is flagged with both cells ("Revenue 2024: the TOTAL column (C4) says 1 000, the months
+    D4:N4 add up to 900; they differ by 10.0 %; the calculation uses the TOTAL"). The sum of months is the figure only when the sheet has no total."""
+    out = []
+    for (file, sheet_), rows in _total_rows(table, "revenue").items():
+        monthly = [r for r in rows if r["granularity"] == "monthly" and not r.get("derived") and r["basis"] not in (CUMULATIVE, "last_12_months")]
+        totals = [r for r in rows if r.get("derived") and r["granularity"] == "yearly"]
+        if not monthly or not totals:
+            continue
+        month_rec, total_rec = _best(monthly, table), _best(totals, table)
+        open_year = _open_total_year(total_rec, as_of, fye)
+        latest = max((p for p in total_rec["actual"] if re.fullmatch(r"\d{4}", p) and ((_end_month(p, fye) or as_of) <= as_of or p == open_year)), default=None)
+        if latest is None:
+            continue
+        pts = [(v, c) for m, v, c in _months(month_rec, "actual", as_of, fye) if _fiscal_year(m, fye) == int(latest)]
+        total, tcell = total_rec["actual"][latest]
+        added = sum(v for v, _ in pts)
+        ref = max(abs(total), abs(added))
+        if not pts or not ref or abs(total - added) / ref <= TOTAL_TOLERANCE:
+            continue
+        ccy = total_rec["currency"] or currency
+        out.append({"role": "revenue", "file": file, "sheet": sheet_, "rows": sorted({total_rec["row"], month_rec["row"]}), "used_row": total_rec["row"],
+                    "text": f"revenue {latest}: the TOTAL column ({tcell}) says {fmt.fmt_currency(total, ccy)}, the months {ranges([c for _, c in pts])} "
+                            f"add up to {fmt.fmt_currency(added, ccy)}; they differ by {fmt.fmt_pct(abs(total - added) / ref)}; the calculation uses the TOTAL"})
     return out
 
 
@@ -1445,7 +1515,7 @@ def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, dec
     hold_trend(trend, all_rows)
     return {"role_metrics": {"as_of_month": str(as_of), "metrics": metrics, "plan_to_date": plan_block, "reconciliation": reconciliation,
                              "growth_by_year": by_year, "pnl_trend": trend,
-                             "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table), on_error, lambda e: []) + list((flags or {}).get("mapping") or ()),
+                             "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table) + total_flags(table, as_of, fye), on_error, lambda e: []) + list((flags or {}).get("mapping") or ()),
                              "integrity_flags": list((flags or {}).get("integrity") or ()),
                              "awaiting_confirmation": awaiting_confirmation(all_rows, deck or [], waiting_items)},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
