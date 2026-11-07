@@ -220,7 +220,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 26 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 27 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -560,7 +560,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 26 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 27 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"
@@ -1015,3 +1015,11 @@ def test_a_role_reconciliation_status_is_one_of_the_four_words():
         RoleReconciliation.model_validate({**base, "status": "maybe"})
     year = {"period": "2025", "value": 1.0, "prior": 1.0, "growth": 0.0, "source": {"row": 4, "cells": ["B4"], "rule": "r"}}
     assert GrowthYear.model_validate(year).deck_note is None
+
+
+def test_contract_27_adds_two_integrity_kinds_and_the_structure_checks_block():
+    """Structure-aware reading (docs/specs/structure-extraction.md section 6): two kinds of `integrity_flags` and `role_metrics.structure_checks`."""
+    kinds = set(metrics.IntegrityFlag.model_fields["kind"].annotation.__args__)
+    assert {"hardcoded_in_formula_row", "total_omits_cells"} <= kinds
+    assert {"files", "files_with_formulas"} <= set(metrics.StructureChecks.model_fields)
+    assert metrics.RoleMetrics.model_fields["structure_checks"].default is None, "results stored before do not carry it"

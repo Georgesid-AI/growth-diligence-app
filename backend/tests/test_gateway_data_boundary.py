@@ -4207,3 +4207,17 @@ def test_the_sheet_type_rule_adds_nothing_to_a_model_payload():
     assert not {"note", "sheet_type"} & set(reviewer.ROW_FIELDS)
     assert "double_counted" in IntegrityFlag.model_fields
     assert not {"sheet_type", "double_counted", "note"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}
+
+
+def test_the_structure_facts_block_is_references_and_numbers_only_and_the_facts_never_reach_a_log_or_a_step_slice():
+    """Structure-aware reading (rule 16, 17, 32): the block a sheet call starts with holds cell and row references, row and column numbers and the
+    fixed words of workbook_facts; no label, no value, no sheet name, no formula. The facts, the findings and `structure_checks` are in no step slice."""
+    import re
+    from app.structures import workbook_facts as wf
+    from test_structure_extraction import facts_of
+    block = wf.facts_block(facts_of(), "P&L")
+    fixed = re.compile(r"^(?:STRUCTURE FACTS \(read from the file, not inferred\):|nothing to report|truncated|no formulas in file|"
+                       r"(?:merged header spans|total rows|subtotal columns|hidden rows|hidden columns|cells stored as text): [A-Za-z0-9 ,:=\-]+)$")
+    assert all(fixed.match(line) for line in block.split("\n")), block
+    assert not {"structure", "structure_findings", "structure_checks", "hardcoded_in_formula_row", "total_omits_cells", "formulas"} & {
+        *gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}

@@ -19,12 +19,13 @@ import test_llm_gateway as t  # noqa: E402
 from app import checks, readings, sheet_reader  # noqa: E402
 from app import column_rules as cr  # noqa: E402
 from app.llm import gateway  # noqa: E402
-from app.structures import reading_input, redact  # noqa: E402
+from app.structures import reading_input, redact, workbook_facts  # noqa: E402
 from schemas.metrics import FileMap  # noqa: E402
 
 MODEL = "claude-sonnet-5-5"
 SHEETS = rf.sheet_fixtures()
 IDS = [f["name"] for f in SHEETS]
+VARIANTS = ["monthly_report_merged_year", "monthly_report_quarters", "monthly_report_dates"]      # perturbed layouts of monthly_report (structure-extraction.md)
 
 
 def workbook(fixture):
@@ -52,12 +53,24 @@ class Ideal(t.FakeAdapter):
         return json.dumps(mine), 3000, 400
 
 
+def cells_part(text):
+    """The reading text of a sheet call without the lines before its "sheet 1:" line (the sheets in the file and the structure facts)."""
+    lines = text.split("\n")
+    return "\n".join(lines[next(i for i, ln in enumerate(lines) if ln.startswith("sheet 1:")):])
+
+
+def structure_of(fixture):
+    """The facts the upload extracts from an .xlsx fixture (a CSV has none)."""
+    return workbook_facts.extract(fixture["path"].read_bytes()) if fixture["path"].suffix == ".xlsx" else None
+
+
 def run(fixture, file_map=None):
     """The whole pipeline on one fixture with a scripted model: (the stored outcome, the adapter, the db)."""
     db = t.FakeDB()
     db["audits"].docs.append({"id": "fx", "company_name": rf.COMPANY, "structure_reading_consent": True})
     adapter = Ideal(file_map or fixture["expected_map"]["file_map"])
-    doc = asyncio.run(sheet_reader.read_file(db, {"id": "fx"}, workbook(fixture), "f" * 64, fixture["path"].name, 12, adapter=adapter))
+    doc = asyncio.run(sheet_reader.read_file(db, {"id": "fx"}, workbook(fixture), "f" * 64, fixture["path"].name, 12, adapter=adapter,
+                                             structure=structure_of(fixture)))
     return doc, adapter, db
 
 
@@ -69,11 +82,11 @@ def reader_env(monkeypatch):
 def test_the_set_is_the_six_layouts_of_the_design_note():
     names = [e["name"] for e in rf.manifest()]
     assert names == ["monthly_report", "yearly_pnl", "actual_budget_variance", "budget_separate_sheet", "deck_rotated_axis", "testco_pnl",
-                     "testco_revenue"]
+                     "testco_revenue", *VARIANTS]
     for entry in rf.manifest():
         assert rf.path_of(entry).exists(), entry
         assert (rf.FIXTURES / entry["expected"]).exists()
-    assert [f["name"] for f in SHEETS] == ["monthly_report", "yearly_pnl", "actual_budget_variance", "budget_separate_sheet", "testco_pnl"]
+    assert [f["name"] for f in SHEETS] == ["monthly_report", "yearly_pnl", "actual_budget_variance", "budget_separate_sheet", "testco_pnl", *VARIANTS]
 
 
 def test_no_fixture_carries_a_real_company_a_person_an_address_or_a_phone_number():
@@ -129,7 +142,7 @@ def test_the_variance_columns_of_actual_budget_variance_are_tested_in_every_row_
 def test_every_non_empty_cell_of_every_sheet_is_sent_none_sampled_none_cut(fixture):
     _, adapter, _ = run(fixture)
     sent = "\n".join(json.loads(p)["text"] for p in adapter.payloads)
-    parsed = [sh for p in adapter.payloads for sh in redact.parse_reading_text(json.loads(p)["text"].split("\n", 1)[1])]      # the first line names the file's sheets
+    parsed = [sh for p in adapter.payloads for sh in redact.parse_reading_text(cells_part(json.loads(p)["text"]))]      # the first line names the file's sheets
     expected_cells = {s.sheet: sum(1 for c in reading_input.sheet_cells(s)) for s in workbook(fixture)}
     assert {s["name"]: len(s["cells"]) for s in parsed} == expected_cells
     assert rf.COMPANY not in sent and "Client-01" in sent, "the target's name is a token"
@@ -876,3 +889,60 @@ def test_the_fallback_last_actual_is_stored_on_the_reading_marked_set_by_code():
     assert "Budget" in actuals["last_actual"]["evidence"][0]["text"] and "set by code" in actuals["last_actual"]["evidence"][0]["text"]
     budget = next(s for s in stored["file_map"]["sheets"] if s["sheet"] == "Budget")
     assert budget["last_actual"] is None, "the plan sheet itself is left as read"
+
+
+# ---------------------------------------------------------------------------
+# Perturbed variants of the monthly report (docs/specs/structure-extraction.md section 7): the file states more, the expected reading is the same
+# ---------------------------------------------------------------------------
+def _facts_of(exp):
+    """The expected facts without cell letters: what a column insertion cannot change."""
+    return {"as_of": exp["as_of_month"], "sheets": [(s["sheet"], s["granularity"], s["revenue_row"]) for s in exp["sheets"]],
+            "roles": [(r["sheet"], r["row"], r["role"]) for r in exp["roles"]],
+            "figures": [(f["metric"], f["value"], f["period"]) for f in exp["figures"]]}
+
+
+def test_each_variant_expects_what_the_monthly_report_expects():
+    base = rf.expected("monthly_report")
+    for name in VARIANTS:
+        assert _facts_of(rf.expected(name)) == _facts_of(base), name
+    for name in ("monthly_report_merged_year", "monthly_report_dates"):
+        assert rf.expected(name) | {"file": base["file"]} == base, "no layout cell moves: the expected map is the same"
+
+
+def test_only_one_variant_is_read_by_the_live_job():
+    live = [e["name"] for e in rf.manifest() if e["name"] in VARIANTS and e.get("live", True)]
+    assert live == ["monthly_report_merged_year"]
+    assert [f["name"] for f in rf.live_fixtures()].count("monthly_report_merged_year") == 1
+    assert not {"monthly_report_quarters", "monthly_report_dates"} & {f["name"] for f in rf.live_fixtures()}
+
+
+def _variant(name):
+    return next(f for f in SHEETS if f["name"] == name)
+
+
+def test_merged_year_over_year_less_months_gives_the_same_reading_and_the_months_are_dated_from_the_merged_year():
+    fixture = _variant("monthly_report_merged_year")
+    doc, adapter, _ = run(fixture)
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "B2: 2024 (B2:M2)" in sent and "B3: Jan" in sent and "G3: Jun" in sent, "months with no year under a merged year"
+    assert doc["month"] == "2024-06" and not [i for i in doc["items"] if i["outcome"] == checks.REJECTED]
+    assert workbook_facts.sheet_facts(structure_of(fixture), "Monthly report")["merged"] == ["B2:M2"]
+
+
+def test_quarter_subtotal_columns_between_the_months_are_sums_and_the_months_are_still_read():
+    fixture = _variant("monthly_report_quarters")
+    facts = structure_of(fixture)
+    sub = workbook_facts.sheet_facts(facts, "Monthly report")["subtotal_cols"]
+    assert [s["col"] for s in sub] == ["E", "I", "M", "Q"] and all(len(s["parts"]) == 3 for s in sub)
+    doc, adapter, _ = run(fixture)
+    assert "subtotal columns: E = B-D, I = F-H, M = J-L, Q = N-P" in json.loads(adapter.payloads[0])["text"]
+    assert doc["month"] == "2024-06" and not [i for i in doc["items"] if i["outcome"] == checks.REJECTED]
+
+
+def test_date_typed_headers_are_iso_periods_and_the_hardcoded_cell_of_the_formula_row_is_found():
+    fixture = _variant("monthly_report_dates")
+    doc, adapter, _ = run(fixture)
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "B3: 2024-01" in sent and "M3: 2024-12" in sent and "00:00:00" not in sent
+    assert doc["structure_findings"]["hardcoded"] == [{"sheet": "Monthly report", "cell": "K5", "hidden": False}]
+    assert doc["month"] == "2024-06" and not [i for i in doc["items"] if i["outcome"] == checks.REJECTED]
