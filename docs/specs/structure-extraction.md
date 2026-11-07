@@ -71,7 +71,7 @@ Every cell in a hidden row or column is listed with `hidden: true`; an output ce
 | 7 | Hardcoded cell in a formula row | an uploaded workbook has formulas | Green: none; Amber: 1 or more flagged rows. No Red yet |
 | 8 | Total formula omits cells | an uploaded workbook has formulas | Green: none; Amber: 1 or more flagged SUM cells. No Red yet |
 Not applicable (reason "No formulas in the uploaded workbooks") when no workbook has a formula; out of the denominator, no data request.
-Finding: "{n} hardcoded cell(s) in formula rows" / "{n} cell(s) skipped by a total formula" ({n} counts flagged rows, and flagged SUM cells); Source: the first cells as "Sheet!F7". Neither
+Finding: "{n} formula row(s) with hardcoded cells" / "{n} total formula(s) that omit cells" ({n} counts flagged rows, and flagged SUM cells; singular "1 formula row with hardcoded cells", "1 total formula that omits cells"); Source: the first cells as "Sheet!F7", the cells of each row or the SUM cell and its range in the evidence. Neither
 appears under Worth flagging in the memo until a Red threshold is agreed. The cells are `role_metrics.integrity_flags` of kind `hardcoded_in_formula_row` and
 `total_omits_cells`; `role_metrics.structure_checks` ({files, files_with_formulas}) says whether the test ran. A hidden cell is marked and
 a visible cell wins when a hidden and a visible cell state different relations.

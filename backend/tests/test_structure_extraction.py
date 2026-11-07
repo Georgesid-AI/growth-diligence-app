@@ -467,3 +467,18 @@ def test_a_compact_pl_with_gross_profit_above_opex_is_no_omission_and_a_walk_sto
     found = wf.findings(book(fill))["omitted"]
     assert [o["cell"] for o in found] == ["B15", "C15"], "two flagged SUM cells, each skipping the two constants above its range"
     assert all(o["skipped"] == [o["cell"][0] + "11", o["cell"][0] + "12"] for o in found)
+
+
+def test_the_finding_strings_say_what_is_counted_rows_and_total_formulas():
+    findings = {}
+    for hard, omit in ((1, 1), (3, 2), (0, 0)):
+        _, assessed = assess_flags(flag_files(hard, omit))
+        findings[(hard, omit)] = {r["check"]: r["finding"] for r in assessed["results"]}
+    assert findings[(1, 1)][integrity.HARDCODED] == "1 formula row with hardcoded cells"
+    assert findings[(1, 1)][integrity.OMITS] == "1 total formula that omits cells"
+    assert findings[(3, 2)][integrity.HARDCODED] == "3 formula rows with hardcoded cells"
+    assert findings[(3, 2)][integrity.OMITS] == "2 total formulas that omit cells"
+    flags, _ = assess_flags(flag_files(hard=2, omit=1))
+    texts = {f["kind"]: f["text"] for f in flags["integrity"]}
+    assert "2 formula rows with hardcoded cells" in texts["hardcoded_in_formula_row"] and "Plan!D4" in texts["hardcoded_in_formula_row"]
+    assert "1 total formula that omits cells" in texts["total_omits_cells"] and "Plan!B20 sums B4:B5" in texts["total_omits_cells"]

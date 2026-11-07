@@ -62,9 +62,9 @@ def _structure(results: dict, check: str) -> Optional[dict]:
     result = GREEN if n == 0 else AMBER
     plural = "s" if n != 1 else ""
     if check == HARDCODED:
-        finding = f"{n} hardcoded cell{plural} in formula rows" if n else "No hardcoded cell in a formula row"
+        finding = f"{n} formula row{plural} with hardcoded cells" if n else "No hardcoded cell in a formula row"
     else:
-        finding = f"{n} cell{plural} skipped by a total formula" if n else "No total formula skips a numeric cell"
+        finding = f"{n} total formula{plural} that omit{'' if n != 1 else 's'} cells" if n else "No total formula skips a numeric cell"
     source = "; ".join(f"{f['file']}: {', '.join(f['cells'][:3])}" for f in flags) or f"{rm['structure_checks']['files_with_formulas']} workbook(s) with formulas"
     return {"result": result, "finding": finding, "source": source}
 
