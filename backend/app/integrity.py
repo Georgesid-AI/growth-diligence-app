@@ -42,7 +42,7 @@ CLUSTERING_MIN_DEALS = 20           # crm-dedup-clustering.md section 2: fewer w
 CLUSTERING_FEW = f"Fewer than {CLUSTERING_MIN_DEALS} won deals ({{n}})"     # the reason of that row (George, 17 Oct 2026)
 CLUSTERING_AMBER_PCT, CLUSTERING_RED_PCT = 20, 35      # Green below 20%, Amber 20% to 35%, Red above 35% (whole percents)
 CLUSTERING_FINDING = "{share}% of {n} won deals closed in the last 10 days of a quarter (chance: 11%)"
-MIN_COMPLETED = 4                   # section 2: fewer completed applicable checks is insufficient coverage
+MIN_COMPLETED = 5                   # section 2: fewer completed applicable checks is insufficient coverage
 INSUFFICIENT = "Insufficient assessment coverage ({x} of {y})"
 INSUFFICIENT_NOTE = ("Insufficient assessment coverage is not a finding about the company: {n} of the {y} applicable checks could not "
                      "be completed.")

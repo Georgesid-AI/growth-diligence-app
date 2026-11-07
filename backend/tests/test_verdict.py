@@ -550,8 +550,7 @@ def test_the_ratings_and_judgment_a_stored_audit_holds_stay_stored_and_are_not_r
                                          "judgment": {"reasons": "old reasons", "unresolved_questions": "old questions"}}
     body = _verdict(client)
     reliability = body["ratings"]["data_reliability"]
-    assert (reliability["rating"], reliability["line"]) == ("Weak", "Weak (Material concerns; 4 of 5 checks)"), "from the integrity conclusion"
-    assert reliability["rule"] == "Weak: at least one check Red, 4 of 5 completed"
+    assert reliability["rating"] is None and reliability["line"].startswith("not r"), "4 of 5 checks is below the minimum of 5: not rated, whatever was stored"
     assert "old reasons" not in str(body), "the computed rating and lists show"
     assert _inputs(client, {"note": "kept"}).status_code == 200
     assert db["audits"].docs[0]["ic_inputs"]["judgment"]["reasons"] == "old reasons", "stored fields are untouched"
