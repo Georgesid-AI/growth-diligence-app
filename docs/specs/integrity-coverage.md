@@ -26,8 +26,8 @@ Block B, "Assessment coverage": one row per check of the method, `Check | Status
 | 4 | Smoothness | built by smoothness.md (15 Oct 2026): 13 consecutive months of revenue in the stored series | Amber below 0.5 points of month-on-month growth deviation, else Green (smoothness.md §1) |
 | 5 | Benford on transactions | never: not applicable by design | – |
 | 6 | Deck-vs-deck figures | at least one deck is parsed | Green: no figure of the audit's decks (claims not rejected) differs from another figure of the same type, label and stated period (deck-parser.md §2 inconsistency rule, read across all the audit's decks); Amber: any. Finding: the count and the first pair's pages. Source: deck file · page |
-| 7 | Hardcoded cell in a formula row | an uploaded workbook has formulas (structure-extraction.md section 4) | Green: none; Amber: 1-2 cells; Red: 3 or more. Finding: "{n} hardcoded cells in formula rows". Source: sheet and cells, "(hidden)" after a cell in a hidden row or column. Red is also under Worth flagging. Not applicable ("No formulas in the uploaded workbooks") when no workbook has a formula: out of the denominator, no data request |
-| 8 | Total formula omits cells | an uploaded workbook has formulas | as row 7; finding "{n} cells skipped by a total formula" |
+| 7 | Hardcoded cell in a formula row | an uploaded workbook has formulas (structure-extraction.md section 4) | Green: none; Amber: 1 or more flagged rows ({n} counts rows); no Red yet. Finding: "{n} hardcoded cells in formula rows". Source: sheet and cells, "(hidden)" after a cell in a hidden row or column. Not under Worth flagging. Not applicable ("No formulas in the uploaded workbooks") when no workbook has a formula: out of the denominator, no data request |
+| 8 | Total formula omits cells | an uploaded workbook has formulas | as row 7, counting flagged SUM cells; finding "{n} cells skipped by a total formula" |
 
 Status values, with the reason the row prints:
 | Status | Meaning | Reason (word for word) |

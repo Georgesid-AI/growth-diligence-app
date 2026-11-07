@@ -22,17 +22,25 @@ is read from the grid. `text_numbers` lists the refs of text cells that read as 
 Per formula cell, `formulas[ref] = [formula_without_equals, [refs]]`: the formula string and the cells it references (a range stays a range,
 `$` removed, a reference to another sheet is listed as "Sheet!B5" and takes part in no relation). `has_formulas` is true when any sheet has one.
 From formulas that are `SUM(...)`, `SUBTOTAL(9|109, ...)` or a `+` chain of single cells:
-- `totals`: `[{"row", "parts": [rows], "cells": n}]`, a row whose formula cells are, in at least half of them, a sum of cells of the same column
-  and the same set of rows (a range is expanded);
+- `totals`: `[{"row", "parts": [rows], "cells": n}]`, a row where two or more formula cells (and at least half of its sum cells) are a sum of cells of
+  the same column and the same set of rows (a range is expanded). A sum over a single cell (`=SUM($B$5:B5)`, the first cell of a YTD row) states no
+  relation;
 - `subtotal_cols`: `[{"col", "parts": [letters]}]`, the same for a column and cells of one row (a quarter or year column over its months).
-When two rows claim one part, the visible row wins, then the first in the sheet (hidden rows and columns are read, as hidden sheets are).
+When two rows claim one part, the visible row wins, then the first in the sheet (hidden rows and columns are read, as hidden sheets are). A total any
+of whose parts another total has claimed is left out whole: no relation is stored for it, not the remainder.
+Facts are matched to a sheet by its position in the workbook (`Sheet.workbook_index`, `sheets[i]`), never by name. The export and change paths
+use the reader's own parent rows (the stored reading), not the formula parents, which only the checks and the engine apply.
 
-Integrity findings (per sheet, `hardcoded`, `omitted`; counted in section 4):
-- `hardcoded`: a row with at least 2 formula cells and more formula cells than numeric constants lists each constant cell. A constant in the
-  row's first numeric cell is exempt when the row's formulas reference cells of their own row (a roll-forward seed).
-- `omitted`: a SUM over one row or one column range, in a cell below (or right of) the range. A numeric cell directly next to the range, or
-  between its end and the total, that is not itself a total, a date or a year-like header number, is skipped by the range. Each is listed
-  with the SUM cell and its range.
+Integrity findings (per sheet, `hardcoded`, `omitted`; counted in section 4). The thresholds of both are provisional pending tests on real packs, and
+neither feeds Worth flagging yet:
+- `hardcoded`: in a row's period columns (when the sheet shows period headers; else all numeric cells), a leading contiguous run of constants is
+  pasted actuals and exempt (this includes a roll-forward or opening-balance seed, whichever row its formulas read). A row with at least 2 formula
+  cells and more formula cells than the numeric constants after that run lists those constants: one finding per **row**, with the first flagged cell
+  and all of them.
+- `omitted`: a SUM over a range of two or more cells in one row or one column, in a cell below (or right of) the range, in a period column and not in a
+  percent-formatted row. A numeric cell between the range and the total, or a numeric **constant** directly beyond the range's first cell, that is not
+  itself a total, a date, a year-like header number or a percent, is skipped by the range; the walk beyond the range stops at any formula cell, a
+  blank, a text or a total. One finding per SUM cell, with its range and the cells skipped.
 Every cell in a hidden row or column is listed with `hidden: true`; an output cell shows "(hidden)" after its ref.
 
 ## 2. What the model receives (both reads and a re-read; one call per sheet, as today)
@@ -60,11 +68,11 @@ Every cell in a hidden row or column is listed with `hidden: true`; an output ce
 ## 4. Two integrity tests (integrity-coverage.md rows 7 and 8; counted in "Completed x of y applicable checks")
 | # | Check | Completed when | Result |
 |---|---|---|---|
-| 7 | Hardcoded cell in a formula row | an uploaded workbook has formulas | Green: none; Amber: 1-2 cells; Red: 3 or more cells |
-| 8 | Total formula omits cells | an uploaded workbook has formulas | Green: none; Amber: 1-2 cells; Red: 3 or more cells |
+| 7 | Hardcoded cell in a formula row | an uploaded workbook has formulas | Green: none; Amber: 1 or more flagged rows. No Red yet |
+| 8 | Total formula omits cells | an uploaded workbook has formulas | Green: none; Amber: 1 or more flagged SUM cells. No Red yet |
 Not applicable (reason "No formulas in the uploaded workbooks") when no workbook has a formula; out of the denominator, no data request.
-Finding: "{n} hardcoded cell(s) in formula rows" / "{n} cell(s) skipped by a total formula"; Source: the first cells as "Sheet!F7". Red also
-appears under Worth flagging in the memo. The cells are `role_metrics.integrity_flags` of kind `hardcoded_in_formula_row` and
+Finding: "{n} hardcoded cell(s) in formula rows" / "{n} cell(s) skipped by a total formula" ({n} counts flagged rows, and flagged SUM cells); Source: the first cells as "Sheet!F7". Neither
+appears under Worth flagging in the memo until a Red threshold is agreed. The cells are `role_metrics.integrity_flags` of kind `hardcoded_in_formula_row` and
 `total_omits_cells`; `role_metrics.structure_checks` ({files, files_with_formulas}) says whether the test ran. A hidden cell is marked and
 a visible cell wins when a hidden and a visible cell state different relations.
 

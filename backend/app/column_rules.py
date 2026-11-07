@@ -229,6 +229,7 @@ class Sheet:
     # each cell {(row, col): n} and the merged spans [(row1, col1, row2, col2)], 1-based. A statement reads them (section 26).
     grid: Optional[List[List]] = None
     fmt: Optional[Dict] = None
+    workbook_index: Optional[int] = None       # the position of the sheet among all the workbook's worksheets (empty ones included); the structure facts are matched by it
 
 
 class SheetError(Exception):
@@ -527,7 +528,11 @@ def read_workbook(content: bytes, filename: str) -> List[Sheet]:
     """Every sheet of a file that holds anything, in workbook order (a CSV is one sheet). Raises SheetError
     when none does."""
     grids, is_csv = _grids(content, filename)
-    sheets = [s for name, grid, fmt in grids if (s := _read_grid(grid, name, is_csv, fmt))]
+    sheets = []
+    for i, (name, grid, fmt) in enumerate(grids):
+        if s := _read_grid(grid, name, is_csv, fmt):
+            s.workbook_index = i
+            sheets.append(s)
     if not sheets:
         raise SheetError("empty")
     return sheets

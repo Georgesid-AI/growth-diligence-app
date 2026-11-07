@@ -938,13 +938,13 @@ def test_merged_year_over_year_less_months_gives_the_same_reading_and_the_months
     sent = json.loads(adapter.payloads[0])["text"]
     assert "B2: 2024 (B2:M2)" in sent and "B3: Jan" in sent and "G3: Jun" in sent, "months with no year under a merged year"
     assert doc["month"] == "2024-06" and not [i for i in doc["items"] if i["outcome"] == checks.REJECTED]
-    assert workbook_facts.sheet_facts(structure_of(fixture), "Monthly report")["merged"] == ["B2:M2"]
+    assert workbook_facts.sheet_facts(structure_of(fixture), 0)["merged"] == ["B2:M2"]
 
 
 def test_quarter_subtotal_columns_between_the_months_are_sums_and_the_months_are_still_read():
     fixture = _variant("monthly_report_quarters")
     facts = structure_of(fixture)
-    sub = workbook_facts.sheet_facts(facts, "Monthly report")["subtotal_cols"]
+    sub = workbook_facts.sheet_facts(facts, 0)["subtotal_cols"]
     assert [s["col"] for s in sub] == ["E", "I", "M", "Q"] and all(len(s["parts"]) == 3 for s in sub)
     doc, adapter, _ = run(fixture)
     sent = json.loads(adapter.payloads[0])["text"].split("\n")
@@ -958,5 +958,5 @@ def test_date_typed_headers_are_iso_periods_and_the_hardcoded_cell_of_the_formul
     doc, adapter, _ = run(fixture)
     sent = json.loads(adapter.payloads[0])["text"]
     assert "B3: 2024-01" in sent and "M3: 2024-12" in sent and "00:00:00" not in sent
-    assert doc["structure_findings"]["hardcoded"] == [{"sheet": "Monthly report", "cell": "K5", "hidden": False}]
+    assert doc["structure_findings"]["hardcoded"] == [{"sheet": "Monthly report", "row": 5, "cell": "K5", "cells": ["K5"], "hidden": False}]
     assert doc["month"] == "2024-06" and not [i for i in doc["items"] if i["outcome"] == checks.REJECTED]

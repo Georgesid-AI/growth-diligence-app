@@ -22,6 +22,7 @@ PERIOD_ROW_MIN = 3                      # a row of this many date cells is a per
 TEXT_REFS_SHOWN = 30
 HEADER_ROWS = 12                        # a merged span in these rows is a header span
 FORMULA_ROW_MIN = 2                     # a row needs this many formula cells before a constant among them is a finding
+RELATION_MIN_CELLS = 2                  # a total row or subtotal column is accepted only when this many formula cells state the same parts
 
 _CELL = re.compile(r"^\$?([A-Z]{1,3})\$?([1-9]\d*)$")
 _REF_TOKEN = re.compile(r"(?<![A-Za-z0-9_.])((?:'[^']+'|[A-Za-z_][\w.]*)!)?\$?([A-Z]{1,3})\$?([1-9]\d*)(?::\$?([A-Z]{1,3})\$?([1-9]\d*))?(?![A-Za-z0-9_(])")
@@ -209,8 +210,10 @@ def _sheet(ws, cached) -> Dict:
 
 
 def _relations(sheet: Dict, formulas: Dict) -> Tuple[List[Dict], List[Dict]]:
-    """(total rows with their part rows, subtotal columns with their part columns) from the sheet's sum formulas. A row (column) is a total when at
-    least half of its vertical (horizontal) sum cells name the same parts. When two rows claim one part, the visible row wins, then the first."""
+    """(total rows with their part rows, subtotal columns with their part columns) from the sheet's sum formulas. A row (column) is a total only when
+    two or more of its formula cells state the same parts (RELATION_MIN_CELLS) and those make at least half of its sum cells; a sum over a single cell
+    (=SUM($B$5:B5), the first cell of a YTD row) states no relation. When two rows claim one part, the visible row wins, then the first; a total any of
+    whose parts is already claimed is left out whole, not cut down to the remainder."""
     vertical: Dict[int, List[Tuple[int, ...]]] = {}
     horizontal: Dict[int, List[Tuple[int, ...]]] = {}
     for ref, (f, _) in formulas.items():
@@ -219,58 +222,88 @@ def _relations(sheet: Dict, formulas: Dict) -> Tuple[List[Dict], List[Dict]]:
             continue
         r, c = _split(ref)
         rows, cols = _one_line(rects, col=c), _one_line(rects, row=r)
-        if rows and r not in rows:
+        if rows and len(rows) >= 2 and r not in rows:
             vertical.setdefault(r, []).append(tuple(rows))
-        elif cols and c not in cols:
+        elif cols and len(cols) >= 2 and c not in cols:
             horizontal.setdefault(c, []).append(tuple(cols))
+
+    def accepted(stated: List[Tuple[int, ...]]) -> Optional[Tuple[int, ...]]:
+        parts, k = Counter(stated).most_common(1)[0]
+        return parts if k >= RELATION_MIN_CELLS and k * 2 >= len(stated) else None
+
     hidden_rows = set(sheet["hidden_rows"])
-    claimed: Dict[int, int] = {}
+    claimed: set = set()
     totals = []
     for r in sorted(vertical, key=lambda r: (r in hidden_rows, r)):
-        parts, k = Counter(vertical[r]).most_common(1)[0]
-        if k * 2 < len(vertical[r]):
-            continue
-        parts = [p for p in parts if p not in claimed]
-        if parts:
-            claimed.update({p: r for p in parts})
-            totals.append({"row": r, "parts": parts, "cells": k})
+        parts = accepted(vertical[r])
+        if parts and not claimed.intersection(parts):
+            claimed.update(parts)
+            totals.append({"row": r, "parts": list(parts), "cells": Counter(vertical[r])[parts]})
     hidden_cols = {col_number(c) for c in sheet["hidden_cols"]}
-    claimed_c: Dict[int, int] = {}
+    claimed_c: set = set()
     subtotals = []
     for c in sorted(horizontal, key=lambda c: (c in hidden_cols, c)):
-        parts, k = Counter(horizontal[c]).most_common(1)[0]
-        if k * 2 < len(horizontal[c]):
-            continue
-        parts = [p for p in parts if p not in claimed_c]
-        if parts:
-            claimed_c.update({p: c for p in parts})
+        parts = accepted(horizontal[c])
+        if parts and not claimed_c.intersection(parts):
+            claimed_c.update(parts)
             subtotals.append({"col": col_letters(c), "parts": [col_letters(p) for p in parts]})
     return sorted(totals, key=lambda t: t["row"]), sorted(subtotals, key=lambda t: col_number(t["col"]))
 
 
+def _period_columns(sheet: Dict, numeric: Dict, years: set) -> set:
+    """The columns that head a period: a date cell or a year-like number in a row of PERIOD_ROW_MIN or more of them, and the subtotal columns. Empty when
+    the sheet shows none (then no column is exempt)."""
+    by_row: Dict[int, List[int]] = {}
+    for (r, c) in years:
+        by_row.setdefault(r, []).append(c)
+    for ref, kind in sheet["cells"].items():
+        if kind.startswith("date/"):
+            r, c = _split(ref)
+            by_row.setdefault(r, []).append(c)
+    cols = {c for cs in by_row.values() if len(set(cs)) >= PERIOD_ROW_MIN for c in cs}
+    return cols | {col_number(t["col"]) for t in sheet["subtotal_cols"]} if cols else set()
+
+
+def _percent_rows(sheet: Dict, numeric: Dict) -> set:
+    """The rows in which at least half of the numeric cells are percent-formatted."""
+    count: Counter = Counter(r for (r, _c) in numeric)
+    pct: Counter = Counter(_split(ref)[0] for ref, kind in sheet["cells"].items() if kind.endswith("/percent") and _split(ref) in numeric)
+    return {r for r, n in pct.items() if n * 2 >= count[r]}
+
+
+# The two checks below are heuristics; their Green/Amber boundaries are provisional pending testing on real packs, and neither feeds Worth flagging yet.
 def _findings(sheet: Dict, numeric: Dict, formulas: Dict, years: set) -> Tuple[List[Dict], List[Dict]]:
     hidden_rows, hidden_cols = set(sheet["hidden_rows"]), {col_number(c) for c in sheet["hidden_cols"]}
     hid = lambda r, c: r in hidden_rows or c in hidden_cols      # noqa: E731
+    period = _period_columns(sheet, numeric, years)
+    in_period = lambda c: not period or c in period              # noqa: E731
     by_row: Dict[int, List[int]] = {}
     for (r, c) in numeric:
-        by_row.setdefault(r, []).append(c)
+        if in_period(c):
+            by_row.setdefault(r, []).append(c)
     hardcoded = []
     for r, cols in sorted(by_row.items()):
         cols.sort()
         f = [c for c in cols if numeric[(r, c)] == "formula"]
-        k = [c for c in cols if numeric[(r, c)] == "const"]
+        lead = 0                                       # a leading contiguous run of constants is pasted actuals, whatever the formulas after it read
+        while lead < len(cols) and numeric[(r, cols[lead])] == "const" and (lead == 0 or cols[lead] == cols[lead - 1] + 1):
+            lead += 1
+        k = [c for c in cols[lead:] if numeric[(r, c)] == "const"]
         if len(f) < FORMULA_ROW_MIN or not k or len(f) <= len(k):
             continue
-        own = any(_split(x.split("!")[-1].split(":")[0])[0] == r for c in f for x in formulas[ref_of(r, c)][1] if "!" not in x)
-        if own and numeric[(r, cols[0])] == "const":          # a roll-forward row: its first cell is the seed
-            k = k[1:]
-        hardcoded += [{"cell": ref_of(r, c), "hidden": hid(r, c)} for c in k]
+        hardcoded.append({"row": r, "cell": ref_of(r, k[0]), "cells": [ref_of(r, c) for c in k], "hidden": any(hid(r, c) for c in k)})
     totals = {t["row"] for t in sheet["totals"]}
     subs = {col_number(t["col"]) for t in sheet["subtotal_cols"]}
+    pct_rows = _percent_rows(sheet, numeric)
     omitted = []
 
-    def skipped(r, c) -> bool:          # a numeric constant or plain formula cell that is not a total, a date or a year-like header number
-        return (r, c) in numeric and r not in totals and c not in subs and (r, c) not in years and not _is_date(sheet, r, c)
+    def constant(r, c) -> bool:          # a numeric constant that is not a total, a date, a year-like header or a percent, in a period column
+        return numeric.get((r, c)) == "const" and r not in totals and c not in subs and (r, c) not in years and not _is_date(sheet, r, c) \
+            and r not in pct_rows and in_period(c)
+
+    def between(r, c) -> bool:          # a numeric cell (constant or formula) lying between the end of the range and the total
+        return (r, c) in numeric and r not in totals and c not in subs and (r, c) not in years and not _is_date(sheet, r, c) \
+            and r not in pct_rows and in_period(c)
 
     for ref, (f, _) in sorted(formulas.items(), key=lambda kv: _split(kv[0])):
         rects = _rects(f)
@@ -278,21 +311,23 @@ def _findings(sheet: Dict, numeric: Dict, formulas: Dict, years: set) -> Tuple[L
             continue
         r, c = _split(ref)
         r1, c1, r2, c2 = rects[0]
+        if (r1, c1) == (r2, c2) or r in pct_rows or not in_period(c):
+            continue
         gone: List[Tuple[int, int]] = []
         if c1 == c2 == c and r2 < r:
-            gone = [(x, c) for x in range(r2 + 1, r) if skipped(x, c)]
+            gone = [(x, c) for x in range(r2 + 1, r) if between(x, c)]
             x = r1 - 1
-            while x >= 1 and skipped(x, c):
+            while x >= 1 and constant(x, c):          # the walk stops at a formula, a blank, a text or a total
                 gone.append((x, c))
                 x -= 1
         elif r1 == r2 == r and c2 < c:
-            gone = [(r, x) for x in range(c2 + 1, c) if skipped(r, x)]
+            gone = [(r, x) for x in range(c2 + 1, c) if between(r, x)]
             x = c1 - 1
-            while x >= 1 and skipped(r, x):
+            while x >= 1 and constant(r, x):
                 gone.append((r, x))
                 x -= 1
         if gone:
-            omitted.append({"cell": ref, "range": f"{ref_of(r1, c1)}:{ref_of(r2, c2)}" if (r1, c1) != (r2, c2) else ref_of(r1, c1),
+            omitted.append({"cell": ref, "range": f"{ref_of(r1, c1)}:{ref_of(r2, c2)}",
                             "skipped": [ref_of(*p) for p in sorted(gone)], "hidden": any(hid(*p) for p in gone),
                             "hidden_cells": [ref_of(*p) for p in sorted(gone) if hid(*p)]})
     return hardcoded, omitted
@@ -305,13 +340,16 @@ def _is_date(sheet: Dict, r: int, c: int) -> bool:
 # ---------------------------------------------------------------------------
 # Reading the facts
 # ---------------------------------------------------------------------------
-def sheet_facts(facts: Optional[Dict], name: str) -> Optional[Dict]:
-    return next((s for s in (facts or {}).get("sheets") or [] if s["name"] == name), None)
+def sheet_facts(facts: Optional[Dict], index: Optional[int]) -> Optional[Dict]:
+    """The facts of the sheet at this position of the workbook (file order, as `extract` lists them). By position, never by name: a masked or repeated
+    name matches nothing here."""
+    sheets = (facts or {}).get("sheets") or []
+    return sheets[index] if isinstance(index, int) and 0 <= index < len(sheets) else None
 
 
-def cell_kinds(facts: Optional[Dict], name: str) -> Dict[str, str]:
-    """{ref: "type/class"} of the listed cells of a sheet (see the spec for the default); {} without facts."""
-    return (sheet_facts(facts, name) or {}).get("cells") or {}
+def cell_kinds(facts: Optional[Dict], index: Optional[int]) -> Dict[str, str]:
+    """{ref: "type/class"} of the listed cells of the sheet at `index` (see the spec for the default); {} without facts."""
+    return (sheet_facts(facts, index) or {}).get("cells") or {}
 
 
 def parent_relations(facts: Optional[Dict]) -> Dict[str, Dict[int, List[int]]]:
@@ -320,8 +358,8 @@ def parent_relations(facts: Optional[Dict]) -> Dict[str, Dict[int, List[int]]]:
 
 
 def findings(facts: Optional[Dict]) -> Dict:
-    """The integrity findings of the file: {"ran": a workbook with formulas was read, "hardcoded": [{"sheet", "cell", "hidden"}],
-    "omitted": [{"sheet", "cell", "range", "skipped", "hidden"}]}. A cell in a hidden row or column is marked; the output carries refs only."""
+    """The integrity findings of the file: {"ran": a workbook with formulas was read, "hardcoded": [{"sheet", "row", "cell", "cells", "hidden"}] (one per
+    row: its first flagged cell and all of them), "omitted": [{"sheet", "cell", "range", "skipped", "hidden"}] (one per SUM cell)}. A cell in a hidden row or column is marked; the output carries refs only."""
     out = {"ran": bool((facts or {}).get("has_formulas")), "hardcoded": [], "omitted": []}
     for s in (facts or {}).get("sheets") or []:
         out["hardcoded"] += [{"sheet": s["name"], **h} for h in s.get("hardcoded") or []]
@@ -362,9 +400,9 @@ def _runs(numbers: List[int], fmt) -> str:
     return ", ".join(out)
 
 
-def facts_block(facts: Optional[Dict], name: str) -> Optional[str]:
-    """The STRUCTURE FACTS block of one sheet, or None when the file has no facts (a CSV). References and numbers only: no label, no value, no sheet name."""
-    s = sheet_facts(facts, name)
+def facts_block(facts: Optional[Dict], index: Optional[int]) -> Optional[str]:
+    """The STRUCTURE FACTS block of the sheet at `index`, or None when the file has no facts (a CSV). References and numbers only: no label, no value, no sheet name."""
+    s = sheet_facts(facts, index)
     if s is None:
         return None
     must = []

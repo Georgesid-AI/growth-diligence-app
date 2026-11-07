@@ -232,18 +232,17 @@ def structure_flags(files: List[Dict]) -> List[Dict]:
     out = []
     for f in files:
         found = f.get("structure_findings") or {}
-        hard = [_cell_ref(h["sheet"], h["cell"], h.get("hidden")) for h in found.get("hardcoded") or []]
+        hard = [_cell_ref(h["sheet"], h["cell"], h.get("hidden")) for h in found.get("hardcoded") or []]          # one per flagged row: its first flagged cell
         if hard:
             more = f" and {len(hard) - STRUCTURE_FLAG_CELLS} more" if len(hard) > STRUCTURE_FLAG_CELLS else ""
             out.append({"kind": HARDCODED_KIND, "file": f.get("file"), "count": len(hard), "cells": hard[:STRUCTURE_FLAG_CELLS],
-                        "text": f"{f.get('file')}: {len(hard)} hardcoded cell{'s' if len(hard) != 1 else ''} in formula rows, {', '.join(hard[:STRUCTURE_FLAG_CELLS])}{more}"})
-        skipped = [(o, _cell_ref(o["sheet"], c, c in (o.get("hidden_cells") or ()))) for o in found.get("omitted") or [] for c in o["skipped"]]
-        if skipped:
-            cells = [ref for _, ref in skipped]
-            sums = "; ".join(f"{o['sheet']}!{o['cell']} sums {o['range']} and skips {', '.join(o['skipped'])}" for o in found["omitted"])
-            more = f" and {len(cells) - STRUCTURE_FLAG_CELLS} more" if len(cells) > STRUCTURE_FLAG_CELLS else ""
-            out.append({"kind": OMITS_KIND, "file": f.get("file"), "count": len(cells), "cells": cells[:STRUCTURE_FLAG_CELLS],
-                        "text": f"{f.get('file')}: {len(cells)} cell{'s' if len(cells) != 1 else ''} skipped by a total formula: {sums}{more}"})
+                        "text": f"{f.get('file')}: {len(hard)} hardcoded row{'s' if len(hard) != 1 else ''} in formula rows, {', '.join(hard[:STRUCTURE_FLAG_CELLS])}{more}"})
+        sums = [_cell_ref(o["sheet"], o["cell"], bool(o.get("hidden"))) for o in found.get("omitted") or []]          # one per flagged SUM cell
+        if sums:
+            detail = "; ".join(f"{o['sheet']}!{o['cell']} sums {o['range']} and skips {', '.join(o['skipped'])}" for o in found["omitted"])
+            more = f" and {len(sums) - STRUCTURE_FLAG_CELLS} more" if len(sums) > STRUCTURE_FLAG_CELLS else ""
+            out.append({"kind": OMITS_KIND, "file": f.get("file"), "count": len(sums), "cells": sums[:STRUCTURE_FLAG_CELLS],
+                        "text": f"{f.get('file')}: {len(sums)} total formula{'s' if len(sums) != 1 else ''} skipping numeric cells: {detail}{more}"})
     return out
 
 

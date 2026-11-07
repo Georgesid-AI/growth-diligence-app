@@ -23,7 +23,6 @@ HARDCODED, OMITS = "Hardcoded cell in a formula row", "Total formula omits cells
 CHECKS = (RECONCILIATION, GAPS, CLUSTERING, SMOOTHNESS, BENFORD, DECKS, HARDCODED, OMITS)
 STRUCTURE_KINDS = {HARDCODED: "hardcoded_in_formula_row", OMITS: "total_omits_cells"}          # the role_metrics.integrity_flags kinds of the two checks
 NO_FORMULAS = "No formulas in the uploaded workbooks"        # the reason both are Not applicable: nothing to test, no data request
-STRUCTURE_AMBER_MAX = 2                    # 1 to 2 cells Amber, 3 or more Red
 # Section 1: the reason each status prints, word for word. A Blocked reason is a data request.
 REASONS = {
     RECONCILIATION: "P&L with a revenue line, overlapping the revenue file's months",
@@ -53,13 +52,14 @@ SAME_SOURCE = "Not applicable – same source"      # the P&L is the only revenu
 
 
 def _structure(results: dict, check: str) -> Optional[dict]:
-    """The result of one formula test: Green none, Amber 1 to 2 cells, Red 3 or more; None when no uploaded workbook had a formula to test."""
+    """The result of one formula test: Green none, Amber 1 or more flagged rows (hardcoded) or SUM cells (omits); no Red yet (thresholds are provisional pending
+    real-pack testing); None when no uploaded workbook had a formula to test."""
     rm = results.get("role_metrics") or {}
     if not (rm.get("structure_checks") or {}).get("files_with_formulas"):
         return None
     flags = [f for f in rm.get("integrity_flags") or () if f["kind"] == STRUCTURE_KINDS[check]]
     n = sum(f["count"] for f in flags)
-    result = GREEN if n == 0 else AMBER if n <= STRUCTURE_AMBER_MAX else RED
+    result = GREEN if n == 0 else AMBER
     plural = "s" if n != 1 else ""
     if check == HARDCODED:
         finding = f"{n} hardcoded cell{plural} in formula rows" if n else "No hardcoded cell in a formula row"

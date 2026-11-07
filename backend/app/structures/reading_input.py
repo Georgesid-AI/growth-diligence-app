@@ -37,7 +37,7 @@ def sheet_cells(sheet, structure: Optional[Dict] = None) -> List[Dict]:
     """{"row", "col", "text"} of every non-empty cell of the sheet's grid (1-based; row 1 and column 1 are A1), with the span of a merged cell
     (`row_span`, `col_span`) on the cell that holds the text. With the file's structure facts (docs/specs/structure-extraction.md section 2) a
     date cell of a period row is written as an ISO period ("2023-12") and a percent-formatted number as its stored fraction and " (fmt %)"."""
-    kinds = workbook_facts.cell_kinds(structure, sheet.sheet)
+    kinds = workbook_facts.cell_kinds(structure, sheet.workbook_index)
     period_rows = workbook_facts.period_rows(kinds) if kinds else set()
     spans = {(r1, c1): (r2 - r1 + 1, c2 - c1 + 1) for r1, c1, r2, c2 in ((sheet.fmt or {}).get("merged") or [])}
     out = []
@@ -80,4 +80,4 @@ def facts_blocks(sheets, structure: Optional[Dict]) -> Optional[List[str]]:
     """The STRUCTURE FACTS block of each sheet the reading text holds, in its order ("sheet 1", "sheet 2" ...), or None for a file with no facts (a CSV)."""
     if not structure or not structure.get("sheets"):
         return None
-    return [workbook_facts.facts_block(structure, s.sheet) or "" for s in recognised_sheets(sheets) if sheet_cells(s, structure)]
+    return [workbook_facts.facts_block(structure, s.workbook_index) or "" for s in recognised_sheets(sheets) if sheet_cells(s, structure)]

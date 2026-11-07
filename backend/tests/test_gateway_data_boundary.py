@@ -4215,7 +4215,7 @@ def test_the_structure_facts_block_is_references_and_numbers_only_and_the_facts_
     import re
     from app.structures import workbook_facts as wf
     from test_structure_extraction import facts_of
-    block = wf.facts_block(facts_of(), "P&L")
+    block = wf.facts_block(facts_of(), 0)
     fixed = re.compile(r"^(?:STRUCTURE FACTS \(read from the file, not inferred\):|nothing to report|truncated|no formulas in file|"
                        r"(?:merged header spans|total rows|subtotal columns|hidden rows|hidden columns|cells stored as text): [A-Za-z0-9 ,:=\-]+)$")
     assert all(fixed.match(line) for line in block.split("\n")), block

@@ -178,12 +178,13 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
 
 
 def _masked_structure(structure: Optional[Dict], sheets: list, payload: str) -> Optional[Dict]:
-    """The structure facts with each sheet named as the masked payload names it (the sheets of the payload are those of the reading text, in order)."""
+    """The structure facts of the sheets the payload holds, each named as the masked payload names it. The sheets of the payload are those of the reading
+    text, in order; each is matched to its facts by its position in the workbook, never by name (a masked or repeated name would match the wrong sheet)."""
     if not structure:
         return None
-    real = [s.sheet for s in reading_input.recognised_sheets(sheets) if reading_input.sheet_cells(s, structure)]
-    rename = dict(zip(real, checks.Cells(payload).sheets))
-    return {**structure, "sheets": [{**s, "name": rename.get(s["name"], s["name"])} for s in structure.get("sheets") or []]}
+    index = [s.workbook_index for s in reading_input.recognised_sheets(sheets) if reading_input.sheet_cells(s, structure)]
+    rename = dict(zip(index, checks.Cells(payload).sheets))
+    return {**structure, "sheets": [{**s, "name": rename[i]} for i, s in enumerate(structure.get("sheets") or []) if i in rename]}
 
 
 async def _second_read(db, audit_id: str, text: str, file_hash: str, adapter, fiscal_year_end: int, stage, first, blocks=None) -> tuple:
