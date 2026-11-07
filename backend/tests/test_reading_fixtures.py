@@ -19,12 +19,13 @@ import test_llm_gateway as t  # noqa: E402
 from app import checks, readings, sheet_reader  # noqa: E402
 from app import column_rules as cr  # noqa: E402
 from app.llm import gateway  # noqa: E402
-from app.structures import reading_input, redact  # noqa: E402
+from app.structures import reading_input, redact, workbook_facts  # noqa: E402
 from schemas.metrics import FileMap  # noqa: E402
 
 MODEL = "claude-sonnet-5-5"
 SHEETS = rf.sheet_fixtures()
 IDS = [f["name"] for f in SHEETS]
+VARIANTS = ["monthly_report_merged_year", "monthly_report_quarters", "monthly_report_dates"]      # perturbed layouts of monthly_report (structure-extraction.md)
 
 
 def workbook(fixture):
@@ -52,12 +53,24 @@ class Ideal(t.FakeAdapter):
         return json.dumps(mine), 3000, 400
 
 
+def cells_part(text):
+    """The reading text of a sheet call without the lines before its "sheet 1:" line (the sheets in the file and the structure facts)."""
+    lines = text.split("\n")
+    return "\n".join(lines[next(i for i, ln in enumerate(lines) if ln.startswith("sheet 1:")):])
+
+
+def structure_of(fixture):
+    """The facts the upload extracts from an .xlsx fixture (a CSV has none)."""
+    return workbook_facts.extract(fixture["path"].read_bytes()) if fixture["path"].suffix == ".xlsx" else None
+
+
 def run(fixture, file_map=None):
     """The whole pipeline on one fixture with a scripted model: (the stored outcome, the adapter, the db)."""
     db = t.FakeDB()
     db["audits"].docs.append({"id": "fx", "company_name": rf.COMPANY, "structure_reading_consent": True})
     adapter = Ideal(file_map or fixture["expected_map"]["file_map"])
-    doc = asyncio.run(sheet_reader.read_file(db, {"id": "fx"}, workbook(fixture), "f" * 64, fixture["path"].name, 12, adapter=adapter))
+    doc = asyncio.run(sheet_reader.read_file(db, {"id": "fx"}, workbook(fixture), "f" * 64, fixture["path"].name, 12, adapter=adapter,
+                                             structure=structure_of(fixture)))
     return doc, adapter, db
 
 
@@ -69,11 +82,11 @@ def reader_env(monkeypatch):
 def test_the_set_is_the_six_layouts_of_the_design_note():
     names = [e["name"] for e in rf.manifest()]
     assert names == ["monthly_report", "yearly_pnl", "actual_budget_variance", "budget_separate_sheet", "deck_rotated_axis", "testco_pnl",
-                     "testco_revenue"]
+                     "testco_revenue", *VARIANTS]
     for entry in rf.manifest():
         assert rf.path_of(entry).exists(), entry
         assert (rf.FIXTURES / entry["expected"]).exists()
-    assert [f["name"] for f in SHEETS] == ["monthly_report", "yearly_pnl", "actual_budget_variance", "budget_separate_sheet", "testco_pnl"]
+    assert [f["name"] for f in SHEETS] == ["monthly_report", "yearly_pnl", "actual_budget_variance", "budget_separate_sheet", "testco_pnl", *VARIANTS]
 
 
 def test_no_fixture_carries_a_real_company_a_person_an_address_or_a_phone_number():
@@ -86,7 +99,7 @@ def test_no_fixture_carries_a_real_company_a_person_an_address_or_a_phone_number
         from pptx import Presentation
         for slide in Presentation(str(rf.FIXTURES / f"{name}.pptx")).slides:
             texts += [s.text_frame.text for s in slide.shapes if s.has_text_frame]
-    blob = "\n".join(texts)
+    blob = " | ".join(texts)          # cells are separate: "Jan" and "Feb" in neighbouring header cells are no first name and surname
     assert redact.personal_items(blob) == [] and not re.search(r"(?i)\b(?:ltd|gmbh|inc|corp|llc|s\.a\.|ag|bv|plc)\b", blob)
     assert not redact._FIRST_NAME.search(blob), "no first name followed by a surname"
     named = {m for m in re.findall(r"[A-Z][a-z]+ Co\b", blob)}
@@ -129,7 +142,7 @@ def test_the_variance_columns_of_actual_budget_variance_are_tested_in_every_row_
 def test_every_non_empty_cell_of_every_sheet_is_sent_none_sampled_none_cut(fixture):
     _, adapter, _ = run(fixture)
     sent = "\n".join(json.loads(p)["text"] for p in adapter.payloads)
-    parsed = [sh for p in adapter.payloads for sh in redact.parse_reading_text(json.loads(p)["text"].split("\n", 1)[1])]      # the first line names the file's sheets
+    parsed = [sh for p in adapter.payloads for sh in redact.parse_reading_text(cells_part(json.loads(p)["text"]))]      # the first line names the file's sheets
     expected_cells = {s.sheet: sum(1 for c in reading_input.sheet_cells(s)) for s in workbook(fixture)}
     assert {s["name"]: len(s["cells"]) for s in parsed} == expected_cells
     assert rf.COMPANY not in sent and "Client-01" in sent, "the target's name is a token"
@@ -151,7 +164,7 @@ def test_a_reading_that_moves_the_boundary_one_period_is_rejected_by_the_checks_
     sheet = next(s for s in bad["sheets"] if s.get("last_actual"))
     la = sheet["last_actual"]
     from app.structures.redact import col_letters, col_number
-    la["column"] = col_letters(col_number(la["column"]) + (3 if fixture["name"] == "actual_budget_variance" else 1))     # a whole month in the triples
+    la["column"] = col_letters(col_number(la["column"]) + {"actual_budget_variance": 3, "monthly_report_quarters": 2}.get(fixture["name"], 1))     # a whole month in the triples; past the quarter column
     doc, _, _ = run(fixture, bad)
     assert doc["month"] != fixture["expected_map"]["as_of_month"] or doc["month"] is None
     assert rf.compare(fixture["expected_map"], doc["month"], bad), "the comparison names the difference"
@@ -252,11 +265,22 @@ class FixtureRouter:
     def __init__(self, differ=None, boundary=None):
         self.boundary = boundary
         self.by_sheet = {}
-        for f in SHEETS:
+        for f in rf.live_fixtures():          # the job reads the live fixtures only
             for sh in f["expected_map"]["file_map"]["sheets"]:
-                assert sh["sheet"] not in self.by_sheet, f"sheet name {sh['sheet']!r} is in two fixtures: the router could not tell them apart"
-                self.by_sheet[sh["sheet"]] = f
+                self.by_sheet.setdefault(sh["sheet"], []).append(f)
         self.differ, self.requests = differ, []
+
+    def fixture_of(self, name, text):
+        """The fixture a call is for: by its sheet name, and where two live fixtures share one (a layout and its perturbed variant) by the cells of the call."""
+        found = self.by_sheet[name]
+        if len(found) == 1:
+            return found[0]
+        sent = {ln for ln in text.split("\n") if re.match(r"^[A-Z]{1,3}\d+: ", ln) and rf.COMPANY not in ln and "Client-" not in ln}
+        for f in found:
+            theirs = {ln for ln in (reading_input.reading_text(workbook(f), structure_of(f)) or "").split("\n") if rf.COMPANY not in ln}
+            if sent and sent <= theirs:
+                return f
+        return found[0]          # a call that is no fixture's text (a test's own payload): the first of them
 
     def __call__(self, *a, **k):
         return self
@@ -268,7 +292,7 @@ class FixtureRouter:
         sent = json.loads(kw["user_payload"])
         self.requests.append(sent)
         names = re.findall(r"(?m)^sheet \d+: (.*)$", sent["text"])
-        fixture = self.by_sheet[names[0]]
+        fixture = self.fixture_of(names[0], sent["text"])
         file_map = copy.deepcopy(fixture["expected_map"]["file_map"])
         if self.differ and fixture["name"] == self.differ:
             file_map["sheets"][0]["rows"][0]["role"] = "bookings"
@@ -290,10 +314,10 @@ def test_the_job_reads_every_fixture_once_and_exits_0_when_every_reading_agrees(
         monkeypatch.setenv(name, value)
     assert runner.main() == 0
     out = capsys.readouterr().out
-    calls = {f["name"]: len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS}
+    calls = {f["name"]: len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in rf.live_fixtures()}
     assert len(router.requests) == 2 * sum(calls.values()), "per sheet of each fixture the reading and its consistency read, no re-read"
     assert "recheck" not in json.dumps(router.requests)
-    assert "every fixture agrees with its expected map" in out and all(f["name"] in out for f in SHEETS)
+    assert "every fixture agrees with its expected map" in out and all(f["name"] in out for f in rf.live_fixtures())
     assert "recheck" not in json.dumps(router.requests)
     for name, n in calls.items():
         assert f"{6000 * n}/{800 * n}" in next(ln for ln in out.split("\n") if ln.startswith(name)), "the tokens in/out column sums the fixture's calls"
@@ -364,7 +388,7 @@ def test_two_reads_of_every_sheet_of_every_fixture_never_raise_when_the_provider
     _job_env(monkeypatch)
     assert runner.main() == 0
     out = capsys.readouterr().out
-    sheets = sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS)
+    sheets = sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in rf.live_fixtures())
     assert router.ok == 2 * sheets and router.failed == router.ok, "two replies per sheet, each after one retried failure"
     assert "provider_unreachable" not in out and "RuntimeError" not in out and "not_read" not in out
     assert all(ln.split()[1] == "read" for ln in out.splitlines() if ln.split() and ln.split()[0] in IDS)
@@ -446,7 +470,7 @@ def test_the_job_starts_from_an_empty_store_and_fails_with_a_clear_line_when_a_f
         monkeypatch.setenv(name, value)
     assert runner.main() == 1
     out = capsys.readouterr().out
-    assert out.count("served from storage, not read by the model") == len(SHEETS) and "fixture(s) differ" in out
+    assert out.count("served from storage, not read by the model") == len(rf.live_fixtures()) and "fixture(s) differ" in out
 
 
 # ---------------------------------------------------------------------------
@@ -556,7 +580,7 @@ def test_a_failing_re_read_leaves_the_file_read_with_its_rejected_items_noted_an
     line = next(ln for ln in out.splitlines() if ln.startswith("monthly_report"))
     assert " read " in line and "not_read" not in line and re.search(r"rejected [1-9]", line), line
     sheets_sent = len(gateway.sheet_units(reading_input.reading_text(workbook(next(f for f in SHEETS if f["name"] == "monthly_report")))))
-    assert len(router.requests) == 2 * sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS), "the failed re-read made no provider call beyond the cap"
+    assert len(router.requests) == 2 * sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in rf.live_fixtures()), "the failed re-read made no provider call beyond the cap"
     assert sheets_sent >= 1
 
 
@@ -587,7 +611,7 @@ def test_one_progress_line_is_printed_per_model_call_with_fixture_sheet_read_and
     assert len(lines) == len(router.requests), "one line per reply"
     for ln in lines:
         assert re.fullmatch(r"progress [a-z_]+ \| .+ \| read [12]/2 \| call \d+\.\ds, job \d+\.\ds", ln), ln
-    assert {ln.split(" | ")[0].split()[1] for ln in lines} == set(IDS)
+    assert {ln.split(" | ")[0].split()[1] for ln in lines} == {f["name"] for f in rf.live_fixtures()}
     assert sum(" | read 2/2 | " in ln for ln in lines) == len(lines) // 2
 
 
@@ -611,7 +635,7 @@ def test_fixtures_are_read_in_parallel_and_the_table_keeps_the_manifest_order(mo
     assert runner.main() == 0
     assert peak[0] > 1, "more than one fixture was in a provider call at the same time"
     names = [ln.split()[0] for ln in capsys.readouterr().out.splitlines() if ln.split() and ln.split()[0] in IDS and " read " in ln]
-    assert names == IDS
+    assert names == [f["name"] for f in rf.live_fixtures()]
     monkeypatch.setenv("READING_FIXTURES_PARALLEL", "1")
     peak[0] = 0
     assert runner.main() == 0 and peak[0] == 1
@@ -753,8 +777,9 @@ class Disagreeing(FixtureRouter):
 
     def complete(self, **kw):
         reply = super().complete(**kw)
-        names = tuple(re.findall(r"(?m)^sheet \d+: (.*)$", json.loads(kw["user_payload"])["text"]))
-        if self.by_sheet[names[0]]["name"] == self.fixture and names not in self.seen:
+        text = json.loads(kw["user_payload"])["text"]
+        names = tuple(re.findall(r"(?m)^sheet \d+: (.*)$", text))
+        if self.fixture_of(names[0], text)["name"] == self.fixture and names not in self.seen:
             self.seen.add(names)
             file_map = json.loads(reply[0])
             file_map["sheets"][0]["rows"][0]["role"] = "bookings"
@@ -876,3 +901,62 @@ def test_the_fallback_last_actual_is_stored_on_the_reading_marked_set_by_code():
     assert "Budget" in actuals["last_actual"]["evidence"][0]["text"] and "set by code" in actuals["last_actual"]["evidence"][0]["text"]
     budget = next(s for s in stored["file_map"]["sheets"] if s["sheet"] == "Budget")
     assert budget["last_actual"] is None, "the plan sheet itself is left as read"
+
+
+# ---------------------------------------------------------------------------
+# Perturbed variants of the monthly report (docs/specs/structure-extraction.md section 7): the file states more, the expected reading is the same
+# ---------------------------------------------------------------------------
+def _facts_of(exp):
+    """The expected facts without cell letters: what a column insertion cannot change."""
+    return {"as_of": exp["as_of_month"], "sheets": [(s["sheet"], s["granularity"], s["revenue_row"]) for s in exp["sheets"]],
+            "roles": [(r["sheet"], r["row"], r["role"]) for r in exp["roles"]],
+            "figures": [(f["metric"], f["value"], f["period"]) for f in exp["figures"]]}
+
+
+def test_each_variant_expects_what_the_monthly_report_expects():
+    base = rf.expected("monthly_report")
+    for name in VARIANTS:
+        assert _facts_of(rf.expected(name)) == _facts_of(base), name
+    for name in ("monthly_report_merged_year", "monthly_report_dates"):
+        assert rf.expected(name) | {"file": base["file"]} == base, "no layout cell moves: the expected map is the same"
+
+
+def test_only_one_variant_is_read_by_the_live_job():
+    live = [e["name"] for e in rf.manifest() if e["name"] in VARIANTS and e.get("live", True)]
+    assert live == ["monthly_report_merged_year"]
+    assert [f["name"] for f in rf.live_fixtures()].count("monthly_report_merged_year") == 1
+    assert not {"monthly_report_quarters", "monthly_report_dates"} & {f["name"] for f in rf.live_fixtures()}
+
+
+def _variant(name):
+    return next(f for f in SHEETS if f["name"] == name)
+
+
+def test_merged_year_over_year_less_months_gives_the_same_reading_and_the_months_are_dated_from_the_merged_year():
+    fixture = _variant("monthly_report_merged_year")
+    doc, adapter, _ = run(fixture)
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "B2: 2024 (B2:M2)" in sent and "B3: Jan" in sent and "G3: Jun" in sent, "months with no year under a merged year"
+    assert doc["month"] == "2024-06" and not [i for i in doc["items"] if i["outcome"] == checks.REJECTED]
+    assert workbook_facts.sheet_facts(structure_of(fixture), 0)["merged"] == ["B2:M2"]
+
+
+def test_quarter_subtotal_columns_between_the_months_are_sums_and_the_months_are_still_read():
+    fixture = _variant("monthly_report_quarters")
+    facts = structure_of(fixture)
+    sub = workbook_facts.sheet_facts(facts, 0)["subtotal_cols"]
+    assert [s["col"] for s in sub] == ["E", "I", "M", "Q"] and all(len(s["parts"]) == 3 for s in sub)
+    doc, adapter, _ = run(fixture)
+    sent = json.loads(adapter.payloads[0])["text"].split("\n")
+    assert [ln for ln in sent if ln.startswith("subtotal columns")] == ["subtotal columns: E = B-D", "subtotal columns: I = F-H", "subtotal columns: M = J-L",
+                                                                         "subtotal columns: Q = N-P"]
+    assert doc["month"] == "2024-06" and not [i for i in doc["items"] if i["outcome"] == checks.REJECTED]
+
+
+def test_date_typed_headers_are_iso_periods_and_the_hardcoded_cell_of_the_formula_row_is_found():
+    fixture = _variant("monthly_report_dates")
+    doc, adapter, _ = run(fixture)
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "B3: 2024-01" in sent and "M3: 2024-12" in sent and "00:00:00" not in sent
+    assert doc["structure_findings"]["hardcoded"] == [{"sheet": "Monthly report", "row": 5, "cell": "K5", "cells": ["K5"], "hidden": False}]
+    assert doc["month"] == "2024-06" and not [i for i in doc["items"] if i["outcome"] == checks.REJECTED]

@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 from . import cards, checks, consistency, lines as lines_mod, read_reasons, readings
 from .llm import gateway, redaction
 from .llm.schemas import SHEET_READING
-from .structures import reading_input, redact
+from .structures import reading_input, redact, workbook_facts
 
 READ_SECONDS = gateway.SHEET_READING_TIMEOUT_SECONDS + 30       # one sheet's call; a workbook read sheet by sheet is given this for each sheet
 
@@ -68,7 +68,7 @@ def file_facts(sheets: list) -> Dict:
 
 
 async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fiscal_year_end: int = 12, adapter=None, capture: Optional[Dict] = None,
-                    on_stage=None) -> Dict:
+                    on_stage=None, structure: Optional[Dict] = None) -> Dict:
     """Read, check and re-read one workbook for one audit. Returns the stored outcome:
 
         {"status": "read", "file", "file_hash", "reading_key", "prompt_version", "model", "cache_hit", "masked": {...}, "counts": {...},
@@ -82,14 +82,15 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     once the pass is done, `matched`. It carries names and counts only."""
     audit_id = audit["id"]
     stage = on_stage or _no_stage
-    text = reading_input.reading_text(sheets)
+    text = reading_input.reading_text(sheets, structure)           # `structure`: the facts read from the file (workbook_facts.extract), None for a CSV
+    blocks = reading_input.facts_blocks(sheets, structure)
     if text is None:
         return {"status": "none", "reason": "No sheet with period columns to read."}
     await stage("removing_personal_data")
     allowed = read_seconds(text)
     try:
         first = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter,
-                                                           fiscal_year_end=fiscal_year_end, on_stage=stage), allowed)
+                                                           fiscal_year_end=fiscal_year_end, on_stage=stage, facts_blocks=blocks), allowed)
     except asyncio.TimeoutError:
         return {"status": "not_read", "reason": gateway.NOT_READ, "read_reason": read_reasons.timeout_line(allowed)}
     if first.status != "read" or not first.file_map:
@@ -97,13 +98,15 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
                 "unread_sheets": first.unread_sheets, "read_reason": read_reasons.sheets_line(first.unread_sheets)}
     # The consistency read (docs/design/reading-consistency.md): the same input read a second time, beside the first. A stored second read is
     # reused (a file read before makes at most this one call); a failure of any kind leaves the first reading standing, compared with nothing.
-    second, same = await _second_read(db, audit_id, text, file_hash, adapter, fiscal_year_end, stage, first)
+    second, same = await _second_read(db, audit_id, text, file_hash, adapter, fiscal_year_end, stage, first, blocks)
     if capture is not None:
         capture["second_map"] = second.file_map if second is not None else None       # for the fixture job's verdict; never stored
     cells = checks.Cells(first.payload)
     total = _cited(first.file_map)
     await stage("checking_cells", checked=0, total=total)
+    facts = _masked_structure(structure, sheets, first.payload)         # the file's sum formulas decide the parent rows (structure-extraction.md section 3)
     base = checks.plan_fallback(checks.classify_by_label(first.file_map, cells), cells, fiscal_year_end)      # a sheet read with no last actual column gets one from code, where the file shows a plan
+    base, parent_notes = checks.apply_formula_parents(base, facts)
     before = checks.check_map(cells, base, fiscal_year_end)
     await stage("checking_cells", checked=total, total=total, matched=before["counts"].get(checks.CONFIRMED, 0), items=len(before["items"]))
     final, rereads, merged = before, [], base
@@ -116,7 +119,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
         try:
             second = await asyncio.wait_for(
                 gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=ask,
-                                       reread_of=first.reading_key, on_stage=stage), read_seconds(text))
+                                       reread_of=first.reading_key, on_stage=stage, facts_blocks=blocks), read_seconds(text))
             if second.status != "read" or second.file_map is None:
                 failure = second.reason or second.status
         except asyncio.TimeoutError:
@@ -125,6 +128,8 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
             failure = type(exc).__name__ if not str(exc) else str(exc)
         if failure is None:
             merged = checks.plan_fallback(checks.classify_by_label(checks.merge_reread(base, second.file_map, keys), cells), cells, fiscal_year_end)
+            merged, again = checks.apply_formula_parents(merged, facts)
+            parent_notes += [n for n in again if n not in parent_notes]
             final = checks.check_map(cells, merged, fiscal_year_end)
             await stage("checking_cells", checked=total, total=total, matched=final["counts"].get(checks.CONFIRMED, 0), items=len(final["items"]))
             after = _group(final["items"])
@@ -159,6 +164,7 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
            "evidence": (f"{best['evidence']} (confirmed on sheet {best['sheet']}, column {best['column']})" if best else None),
            "unread_sheets": first.unread_sheets, "read_reason": read_reasons.sheets_line(first.unread_sheets),
            "lines": sheet_lines(merged, cells, final["items"]), **file_facts(sheets),
+           "structure_findings": workbook_facts.findings(structure), "parent_rows_from_formula": parent_notes,
            "consistency": same,
            "dims": {name: [sheet.max_row, sheet.max_col] for name, sheet in cells.sheets.items()},
            "rows_mapped": sum(len(s.get("rows") or []) for s in merged.get("sheets") or []),
@@ -171,7 +177,17 @@ async def read_file(db, audit: dict, sheets: list, file_hash: str, file: str, fi
     return doc
 
 
-async def _second_read(db, audit_id: str, text: str, file_hash: str, adapter, fiscal_year_end: int, stage, first) -> tuple:
+def _masked_structure(structure: Optional[Dict], sheets: list, payload: str) -> Optional[Dict]:
+    """The structure facts of the sheets the payload holds, each named as the masked payload names it. The sheets of the payload are those of the reading
+    text, in order; each is matched to its facts by its position in the workbook, never by name (a masked or repeated name would match the wrong sheet)."""
+    if not structure:
+        return None
+    index = [s.workbook_index for s in reading_input.recognised_sheets(sheets) if reading_input.sheet_cells(s, structure)]
+    rename = dict(zip(index, checks.Cells(payload).sheets))
+    return {**structure, "sheets": [{**s, "name": rename[i]} for i, s in enumerate(structure.get("sheets") or []) if i in rename]}
+
+
+async def _second_read(db, audit_id: str, text: str, file_hash: str, adapter, fiscal_year_end: int, stage, first, blocks=None) -> tuple:
     """(the second read or None, the consistency record): {"status": "compared" | "not_compared", "reason", "items", "reads"}. The tokens of both
     reads are logged per file (llm_calls, `read_no`) and counted here by number only."""
     reads = {"first": {"input_tokens": first.input_tokens, "output_tokens": first.output_tokens, "cache_hit": bool(first.cache_hit)}}
@@ -179,7 +195,7 @@ async def _second_read(db, audit_id: str, text: str, file_hash: str, adapter, fi
     second = None
     try:
         second = await asyncio.wait_for(gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter,
-                                                              fiscal_year_end=fiscal_year_end, on_stage=stage, second_read=True), read_seconds(text))
+                                                              fiscal_year_end=fiscal_year_end, on_stage=stage, second_read=True, facts_blocks=blocks), read_seconds(text))
         if second.status != "read" or second.file_map is None:
             failure = second.reason or second.status
     except asyncio.TimeoutError:

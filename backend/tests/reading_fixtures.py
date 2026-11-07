@@ -40,6 +40,12 @@ def sheet_fixtures() -> List[Dict]:
     return out
 
 
+def live_fixtures() -> List[Dict]:
+    """The sheet fixtures the live job reads with the real model: those not marked `"live": false` in the manifest (of the perturbed variants of the
+    monthly report only one is live; the others run offline)."""
+    return [f for f in sheet_fixtures() if f.get("live", True)]
+
+
 def deck_fixtures() -> List[Dict]:
     """The fixtures the page reader reads: the decks of the manifest, each with its expected figures (PR 3, item 4 of the build plan)."""
     return [{**entry, "expected_map": expected(entry["name"]), "path": path_of(entry)} for entry in manifest()

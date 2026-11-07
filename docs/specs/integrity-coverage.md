@@ -17,7 +17,7 @@ Dashboard section "Data integrity", above the data-integrity narrative. API: `GE
 Block A, "Results of completed checks": one row per check that ran, `Check | Result | Finding | Source`; Result is Green,
 Amber or Red. A check that did not run never appears here.
 
-Block B, "Assessment coverage": one row per check of the method, `Check | Status | Reason`, always these six, in this order:
+Block B, "Assessment coverage": one row per check of the method, `Check | Status | Reason`, always these eight, in this order (rows 7 and 8: structure-extraction.md section 4, amended 2026-11-07):
 | # | Check | Completed when | Result |
 |---|---|---|---|
 | 1 | Revenue reconciliation | the engine's `revenue_reconciliation` is available (a P&L with a revenue line and a month in common with the revenue file) | Green: the window and every month within tolerance; Amber: the window within tolerance, a month beyond it; Red: the window beyond tolerance (the hard blocker of CLAUDE.md rule 21). Finding: "Revenue file and P&L differ by {x}% over {first}–{last}". Source: the block's citation |
@@ -26,6 +26,8 @@ Block B, "Assessment coverage": one row per check of the method, `Check | Status
 | 4 | Smoothness | built by smoothness.md (15 Oct 2026): 13 consecutive months of revenue in the stored series | Amber below 0.5 points of month-on-month growth deviation, else Green (smoothness.md §1) |
 | 5 | Benford on transactions | never: not applicable by design | – |
 | 6 | Deck-vs-deck figures | at least one deck is parsed | Green: no figure of the audit's decks (claims not rejected) differs from another figure of the same type, label and stated period (deck-parser.md §2 inconsistency rule, read across all the audit's decks); Amber: any. Finding: the count and the first pair's pages. Source: deck file · page |
+| 7 | Hardcoded cell in a formula row | an uploaded workbook has formulas (structure-extraction.md section 4) | Green: none; Amber: 1 or more flagged rows ({n} counts rows); no Red yet. Finding: "{n} formula rows with hardcoded cells". Source: sheet and the first flagged cell of each row (all its flagged cells are listed in the evidence), "(hidden)" after a cell in a hidden row or column. Not under Worth flagging. Not applicable ("No formulas in the uploaded workbooks") when no workbook has a formula: out of the denominator, no data request |
+| 8 | Total formula omits cells | an uploaded workbook has formulas | as row 7, counting flagged SUM cells; finding "{n} total formulas that omit cells"; source: the SUM cell and its range, with the skipped cells in the evidence |
 
 Status values, with the reason the row prints:
 | Status | Meaning | Reason (word for word) |
@@ -40,7 +42,7 @@ then "Blocked: {names}" when any is blocked.
 
 ## 2. Overall conclusion
 Values: Reliable · Needs clarification · Material concerns · Insufficient assessment coverage.
-1. Fewer than 4 applicable checks completed, or revenue reconciliation not among the completed: "Insufficient assessment
+1. Fewer completed checks than ceil(2/3 × applicable) (5 applicable need 4, 6 need 4, 7 need 5, 8 need 6; George, 2026-11-07), or revenue reconciliation not among the completed: "Insufficient assessment
    coverage ({x} of {y})". It is not a negative company finding; the memo says so in one sentence: "Insufficient assessment
    coverage is not a finding about the company: {y−x} of the {y} applicable checks could not be completed."
 2. Otherwise: Material concerns when any completed check is Red; Reliable when every completed check is Green; Needs
@@ -85,7 +87,7 @@ are no longer printed there. On the Dashboard the data-integrity narrative no lo
 
 ## 8. Consequences to know
 - Benford is Not applicable. With smoothness (smoothness.md) and quarter-end clustering (crm-dedup-clustering.md) built, all 5
-  applicable checks can complete; an audit reads "Insufficient assessment coverage (x of 5)" while fewer than 4 complete or the
+  applicable checks can complete; an audit reads "Insufficient assessment coverage (x of 5)" while fewer than ceil(2/3 × applicable) complete or the
   reconciliation is not among them. Below 20 won deals clustering is Not applicable too (crm-dedup-clustering.md §6): 4 checks are
   applicable and a conclusion needs all four, as it needed the same four before.
 

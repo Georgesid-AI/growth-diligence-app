@@ -21,7 +21,7 @@ import re
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from .structures import redact
+from .structures import redact, workbook_facts
 from . import periods as sheet_mod
 
 CONFIRMED, REJECTED, CANNOT = "confirmed", "rejected", "cannot_check"
@@ -138,6 +138,8 @@ def to_number(text: Optional[str]) -> Optional[float]:
     """A cell's text as a number, or None: plain decimals, thousands commas, a currency symbol, a minus or brackets, a percent (as a
     fraction)."""
     t = (text or "").strip()
+    if t.endswith(workbook_facts.PERCENT_MARKER):          # a percent-formatted cell, sent as its stored fraction: the fraction is the value
+        return to_number(t[:-len(workbook_facts.PERCENT_MARKER)])
     if not t or not _NUMBER.match(t):
         return None
     negative = t.startswith("(") or t[:1] in "-−"
@@ -713,6 +715,34 @@ _FORM_OF = {"monthly": "2000-01", "quarterly": "2000-Q1", "yearly": "2000"}
 R_BY_CODE = "Every mapped row on {sheet} ends at column {column}, and sheet {plan} is the plan: last actual column set by code."
 
 
+def apply_formula_parents(fmap: Dict, structure: Optional[Dict]) -> Tuple[Dict, List[Dict]]:
+    """(the map with the parent rows the file's sum formulas state, [{"sheet", "row"} of each row whose parent changed]) (docs/specs/structure-extraction.md
+    section 3). Where a sheet has a total row with a SUM formula, its mapped part rows take that row as `parent_row` and a mapped row that points at the total
+    without being one of its parts loses the link; the reading's own parent_row stays in the stored reading, this is a copy. A sheet with no formula total is
+    left as it is. No card: the notes are Diagnostics lines (parent_note)."""
+    relations = workbook_facts.parent_relations(structure)
+    if not relations:
+        return fmap, []
+    out, notes = copy.deepcopy(fmap), []
+    for smap in out.get("sheets") or []:
+        totals = relations.get(smap["sheet"])
+        if not totals:
+            continue
+        part_of = {p: t for t, parts in totals.items() for p in parts}
+        for row in smap.get("rows") or []:
+            old = row.get("parent_row")
+            new = part_of.get(row["row"], None if old in totals else old)
+            if new != old:
+                row["parent_row"] = new
+                notes.append({"sheet": smap["sheet"], "row": row["row"]})
+    return out, notes
+
+
+def parent_note(note: Dict) -> str:
+    """The Diagnostics line of one row whose parent the formula set: "parent rows set from formula (P&L, row 4)"."""
+    return f"parent rows set from formula ({note['sheet']}, row {note['row']})"
+
+
 def plan_fallback(fmap: Dict, cells: "Cells", fye: int = 12) -> Dict:
     """A copy of the file map in which a sheet whose reading has no last actual column gets one from code (George, 2026-11-06). The rule: another
     sheet of the file has a plan word (PLAN_WORDS) in its name or its first three rows, this sheet has none, and every mapped row of this sheet
@@ -875,7 +905,7 @@ def check_last_actual(smap: Dict, sheet: SheetCells, fye: int, cells: Optional["
     items: List[Dict] = []
     past = _outside(sheet, smap["header_row"], col)
     head_text = sheet.header(smap["header_row"], col)
-    parsed = header_period(head_text, fye)
+    parsed = resolve_header(sheet, smap["header_row"], col, fye)           # a year-less month ("Jun") is dated by its year title
     if past:
         items.append(_item(key, "last_actual", REJECTED, past, smap["sheet"], head_ref))
     elif period_in_form(parsed, la["period"]) != la["period"]:
@@ -946,7 +976,7 @@ def check_periods(smap: Dict, sheet: SheetCells, fye: int) -> Dict:
         if past:
             return _item(key, "periods", REJECTED, past, smap["sheet"], ref)
         text = sheet.header(smap["header_row"], col)
-        if header_period(text, fye) is None:
+        if resolve_header(sheet, smap["header_row"], col, fye) is None:         # a year-less month ("Jan") is dated by its year title, as a figure's header is
             return _item(key, "periods", REJECTED, R_PERIOD.format(period=smap["granularity"], ref=ref, header=cell_shown(text)), smap["sheet"], ref)
     return _item(key, "periods", CONFIRMED, None, smap["sheet"])
 

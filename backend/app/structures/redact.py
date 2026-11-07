@@ -926,6 +926,8 @@ def reading_figure(text: str) -> bool:
     """True when a cell's text is a figure, a date or a flag: written as a number, an amount, a year or a date. It is never rewritten, and
     never learned as a name. Decided from the text alone, so the sender and the gateway agree."""
     text = (text or "").strip()
+    if text.endswith(" (fmt %)"):          # a percent-formatted cell: the stored fraction and workbook_facts.PERCENT_MARKER
+        text = text[:-len(" (fmt %)")].strip()
     return bool(_PLAIN_NUMBER.match(text) or _TRUE_FALSE.match(text) or is_figure(text) or _is_amount_or_date(text))
 
 

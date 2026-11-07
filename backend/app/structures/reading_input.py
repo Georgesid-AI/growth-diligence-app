@@ -10,7 +10,7 @@ import re
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
-from . import redact
+from . import redact, workbook_facts
 
 
 def cell_text(value) -> str:
@@ -33,14 +33,23 @@ def cell_text(value) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
-def sheet_cells(sheet) -> List[Dict]:
+def sheet_cells(sheet, structure: Optional[Dict] = None) -> List[Dict]:
     """{"row", "col", "text"} of every non-empty cell of the sheet's grid (1-based; row 1 and column 1 are A1), with the span of a merged cell
-    (`row_span`, `col_span`) on the cell that holds the text."""
+    (`row_span`, `col_span`) on the cell that holds the text. With the file's structure facts (docs/specs/structure-extraction.md section 2) a
+    date cell of a period row is written as an ISO period ("2023-12") and a percent-formatted number as its stored fraction and " (fmt %)"."""
+    kinds = workbook_facts.cell_kinds(structure, sheet.workbook_index)
+    period_rows = workbook_facts.period_rows(kinds) if kinds else set()
     spans = {(r1, c1): (r2 - r1 + 1, c2 - c1 + 1) for r1, c1, r2, c2 in ((sheet.fmt or {}).get("merged") or [])}
     out = []
     for r, line in enumerate(sheet.grid or [], 1):
         for c, value in enumerate(line, 1):
             text = cell_text(value)
+            if text and kinds:
+                kind = kinds.get(redact.cell_ref(r, c))
+                if kind and kind.startswith("date/") and r in period_rows:
+                    text = workbook_facts.period_text(value, kind) or text
+                elif kind == "number/percent" and isinstance(value, (int, float)) and not isinstance(value, bool):
+                    text += workbook_facts.PERCENT_MARKER
             if text:
                 cell = {"row": r, "col": c, "text": text}
                 rows, cols = spans.get((r, c), (1, 1))
@@ -57,11 +66,18 @@ def recognised_sheets(sheets) -> List:
     return [s for s in sheets if s.grid]
 
 
-def reading_text(sheets) -> Optional[str]:
+def reading_text(sheets, structure: Optional[Dict] = None) -> Optional[str]:
     """The unmasked reading text of a workbook's sheets, or None when none holds a cell."""
     parts = []
     for sheet in recognised_sheets(sheets):
-        cells = sheet_cells(sheet)
+        cells = sheet_cells(sheet, structure)
         if cells:
             parts.append({"name": sheet.sheet, "cells": cells})
     return redact.reading_text(parts) if parts else None
+
+
+def facts_blocks(sheets, structure: Optional[Dict]) -> Optional[List[str]]:
+    """The STRUCTURE FACTS block of each sheet the reading text holds, in its order ("sheet 1", "sheet 2" ...), or None for a file with no facts (a CSV)."""
+    if not structure or not structure.get("sheets"):
+        return None
+    return [workbook_facts.facts_block(structure, s.workbook_index) or "" for s in recognised_sheets(sheets) if sheet_cells(s, structure)]

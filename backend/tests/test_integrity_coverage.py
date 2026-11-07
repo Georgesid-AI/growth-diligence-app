@@ -14,7 +14,7 @@ from test_claim_register_api import AUDIT  # noqa: E402
 from test_ic_memo import inputs  # noqa: E402
 
 CHECKS = ["Revenue reconciliation", "Gaps in customer data", "Quarter-end clustering", "Smoothness", "Benford on transactions",
-          "Deck-vs-deck figures"]
+          "Deck-vs-deck figures", "Hardcoded cell in a formula row", "Total formula omits cells"]
 
 
 def _integrity():
@@ -73,7 +73,8 @@ def test_the_testco_run_completes_five_of_five_and_reads_material_concerns_from_
     assert [r["check"] for r in assessed["coverage"]] == CHECKS
     assert statuses == {"Revenue reconciliation": ig.COMPLETED, "Gaps in customer data": ig.COMPLETED,
                         "Quarter-end clustering": ig.COMPLETED, "Smoothness": ig.COMPLETED,
-                        "Benford on transactions": ig.NOT_APPLICABLE, "Deck-vs-deck figures": ig.COMPLETED}
+                        "Benford on transactions": ig.NOT_APPLICABLE, "Deck-vs-deck figures": ig.COMPLETED,
+                        "Hardcoded cell in a formula row": ig.NOT_APPLICABLE, "Total formula omits cells": ig.NOT_APPLICABLE}      # structure-extraction.md: no formula in the results
     rec = next(r for r in assessed["results"] if r["check"] == "Revenue reconciliation")
     assert rec["result"] == "Red", "TestCo's window is beyond tolerance: the hard blocker"
     assert (assessed["conclusion"], assessed["completed_text"]) == ("Material concerns", "Completed 5 of 5 applicable checks")
@@ -299,3 +300,12 @@ def test_a_check_with_no_rows_to_test_is_not_applicable_and_never_green():
     assert (gaps["status"], gaps["result"]) == ("Not applicable", None) and gaps["reason"]
     assert "Gaps in customer data" not in {r["check"] for r in out["results"]}, "never in the results, so never Green"
     assert "Gaps in customer data" not in out["blocked"] and not any("Gaps in customer data" in d for d in out["data_requests"])
+
+
+def test_the_minimum_of_completed_checks_is_two_thirds_of_the_applicable_ones_rounded_up():
+    ig = _integrity()
+    assert [ig.min_completed(n) for n in (5, 6, 7, 8)] == [4, 4, 5, 6]
+    rows = lambda done: [{"check": ig.RECONCILIATION if i == 0 else f"c{i}", "status": ig.COMPLETED if i < done else ig.BLOCKED, "result": "Green"}  # noqa: E731
+                         for i in range(8)]
+    assert ig.overall(rows(6))["code"] == "reliable", "8 applicable, 6 completed"
+    assert ig.overall(rows(5))["code"] == "insufficient" and ig.overall(rows(5))["conclusion"] == "Insufficient assessment coverage (5 of 8)"

@@ -556,7 +556,11 @@
       ],
       "sheet": "Report"
     },
-    "reconciliation": []
+    "reconciliation": [],
+    "structure_checks": {
+      "files": 1,
+      "files_with_formulas": 0
+    }
   },
   "monthly": {
     "as_of_month": "2026-06",
@@ -988,7 +992,11 @@
     ],
     "plan_to_date": null,
     "pnl_trend": null,
-    "reconciliation": []
+    "reconciliation": [],
+    "structure_checks": {
+      "files": 1,
+      "files_with_formulas": 0
+    }
   },
   "yearly": {
     "as_of_month": "2026-06",
@@ -1574,6 +1582,10 @@
       ],
       "sheet": "P&L"
     },
-    "reconciliation": []
+    "reconciliation": [],
+    "structure_checks": {
+      "files": 1,
+      "files_with_formulas": 0
+    }
   }
 }

@@ -204,6 +204,12 @@ async def _dataset_sheets(db, audit_id: str, file_hash: str):
     return rec.unpack_sheets((ds or {}).get("recognition_sheets") or []) if ds else []
 
 
+async def _dataset_structure(db, audit_id: str, file_hash: str) -> Optional[Dict]:
+    """The structure facts the upload stored on the dataset (None for a CSV or a file stored before them)."""
+    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": file_hash}, {"_id": 0, "structure": 1})
+    return (ds or {}).get("structure")
+
+
 def _paths(reading: Dict, key: str) -> Optional[Tuple[str, Dict]]:
     """(the path of the item's entry in the stored reading, the entry) for an item key, or None."""
     fmap = reading["file_map"]
@@ -233,7 +239,9 @@ async def reread_file(db, audit: Dict, f: Dict, asks: List[Dict], adapter, compa
     audit_id, file_hash, reading = audit["id"], f["file_hash"], f["reading"]
     fye = int(audit.get("fiscal_year_end") or 12)
     sheets = await _dataset_sheets(db, audit_id, file_hash)
-    text = reading_input.reading_text(sheets)
+    structure = await _dataset_structure(db, audit_id, file_hash)
+    text = reading_input.reading_text(sheets, structure)
+    blocks = reading_input.facts_blocks(sheets, structure)
     result: Dict[str, Dict] = {a["item"]: {"result": UNREAD, "reason": REASON_NO_CELLS} for a in asks}
 
     def unread(why: Optional[str]) -> Dict[str, Dict]:
@@ -245,11 +253,11 @@ async def reread_file(db, audit: Dict, f: Dict, asks: List[Dict], adapter, compa
     masked = [{"item": a["item"], "reason": redact.mask_text(a["reason"], company, mapping)} for a in asks]
     # Pinned to the stored reading (its prompt version and model): a prompt or a model changed since is no reason for a new full reading.
     first = await gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, fiscal_year_end=fye,
-                                         reread_of=reading)
+                                         reread_of=reading, facts_blocks=blocks)
     if first.status != "read" or not first.file_map:
         return unread(first.reason)
     second = await gateway.read_structure(db, audit_id, text, SHEET_READING, file_hash=file_hash, adapter=adapter, recheck=masked,
-                                          fiscal_year_end=fye, reread_of=reading)
+                                          fiscal_year_end=fye, reread_of=reading, facts_blocks=blocks)
     if second.status != "read" or second.file_map is None:
         return unread(second.reason)
     cells = checks.Cells(first.payload)

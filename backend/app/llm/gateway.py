@@ -2059,7 +2059,8 @@ async def read_structure(
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
     on_rate_limit=None, images: Optional[List[bytes]] = None, file_hash: Optional[str] = None, recheck: Optional[List[dict]] = None,
     fiscal_year_end: int = 12, reread_of: Optional[Any] = None, on_stage=None, second_read: bool = False, token_cap: Optional[int] = None,
-    on_sent=None, _unit: bool = False, _sheets_line: Optional[str] = None,
+    on_sent=None, facts_blocks: Optional[List[str]] = None, _unit: bool = False, _sheets_line: Optional[str] = None,
+    _facts_block: Optional[str] = None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -2237,10 +2238,14 @@ async def read_structure(
             db, audit_id, text, file_hash=file_hash, adapter=adapter, sleep=sleep, on_rate_limit=on_rate_limit, fiscal_year_end=fiscal_year_end,
             reread_of=reread_of, recheck=recheck, second_read=second_read, reading_key=reading_key, account=account, prompt=prompt,
             system=system, model=model, prompt_hash=prompt_hash, recheck_id=recheck_id, recheck_items=recheck_items, masked_counts=masked_counts,
-            base=base, company_name=context.get("company_name"), mapping=mapping)
+            base=base, company_name=context.get("company_name"), mapping=mapping, facts_blocks=facts_blocks)
     # A sheet reading carries the file map's schema as text, with the ask for plain JSON (schemas.file_map_schema; no strict output schema).
     ask = {"answer": schemas.FILE_MAP_ANSWER, "schema": schemas.file_map_schema()} if structure_type == SHEET_READING else {}
     sent_text = f"{_sheets_line}\n{text}" if _sheets_line else text          # a sheet call: the line naming the file's sheets comes before its own cells
+    if _facts_block:
+        # The sheet's STRUCTURE FACTS (workbook_facts.facts_block): references and numbers the extraction read from the file, between the sheets line and the cells.
+        # Not cells: outside the sheet's input cap, inside the call's cost and the audit's token cap, which count the whole call.
+        sent_text = f"{_sheets_line}\n{_facts_block}\n{text}" if _sheets_line else f"{_facts_block}\n{text}"
     user_payload = cache.canonical_json({"type": structure_type, "text": sent_text, **({"recheck": recheck} if recheck else {}), **ask})
     image_tokens = 0
     adapter = adapter or (AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS) if structure_type == SHEET_READING else AnthropicAdapter())
@@ -2421,7 +2426,7 @@ def _item_on_sheet(item: str, name: str) -> bool:
 
 async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_rate_limit, fiscal_year_end, reread_of, recheck, second_read,
                          reading_key, account, prompt, system, model, prompt_hash, recheck_id, recheck_items, masked_counts, base,
-                         company_name, mapping) -> StructureRead:
+                         company_name, mapping, facts_blocks=None) -> StructureRead:
     """The sheet reading of one workbook, sheet by sheet (George, 2026-11-05). One call for each sheet that holds a figure, one after another,
     each with its own input and output caps; the maps are merged into one reading, stored once (the reading, its second read or its re-read).
     A sheet whose reply is cut at the output limit, or whose cells are over the input cap, is lost alone and named in `unread_sheets` with its
@@ -2431,6 +2436,8 @@ async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_ra
     from .. import checks as checks_mod, series as series_mod        # series imports the checks, which import this module's package
     adapter = adapter or AnthropicAdapter(timeout=SHEET_READING_TIMEOUT_SECONDS)
     units = sheet_units(text)
+    order = [sh["name"] for sh in structure_redact.parse_reading_text(text) or []]       # the sheets of the reading text, masked names, in file order
+    blocks = {name: (facts_blocks[i] or None) for i, name in enumerate(order) if facts_blocks and i < len(facts_blocks)}
     sheets_line = SHEETS_IN_FILE + ", ".join(sh["name"] for sh in structure_redact.parse_reading_text(text) or [])      # masked names; nothing else
     if second_read:
         stored = await db[readings.READINGS].find_one({"key": reading_key}, {"_id": 0, "unread_sheets": 1}) or {}
@@ -2446,7 +2453,8 @@ async def _read_by_sheet(db, audit_id, text, *, file_hash, adapter, sleep, on_ra
     for name, unit_text in units:
         one = await read_structure(db, audit_id, unit_text, SHEET_READING, file_hash=file_hash, adapter=adapter, sleep=sleep,
                                    on_rate_limit=on_rate_limit, recheck=asked.get(name) or None, fiscal_year_end=fiscal_year_end,
-                                   reread_of=reread_of, second_read=second_read, _unit=True, _sheets_line=sheets_line)
+                                   reread_of=reread_of, second_read=second_read, _unit=True, _sheets_line=sheets_line,
+                                   _facts_block=blocks.get(name))
         tokens = [tokens[0] + one.input_tokens, tokens[1] + one.output_tokens, tokens[2] + one.estimated_cost_usd]
         if one.status == "read" and one.file_map is not None:
             parts.append(one.file_map)

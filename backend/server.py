@@ -26,6 +26,7 @@ from app import as_of as as_of_mod
 from app import readings as readings_mod
 from app import read_reasons
 from app import sheet_reader
+from app.structures import workbook_facts
 from app.logfmt import configure_logging
 from app import reading_export
 from app import reviewer
@@ -815,16 +816,26 @@ async def _ingest(audit_id: str, upload: UploadFile, background: BackgroundTasks
            "sheets": len(sheets), "row_count": sum(len(s.frame) for s in sheets), "uploaded_at": usage_mod.now(),
            "recognition_sheets": rec.pack_sheets(sheets)}
     _check_dataset_size(doc)               # a file over the limit is refused with the message, never a raw error
+    # What the workbook states about its own structure (docs/specs/structure-extraction.md), read once before any reading and kept on the file's record. It is
+    # extra: a file that fits only without it is stored without it and read as before (rule 20).
+    structure = await run_in_threadpool(workbook_facts.extract, content) if ext == "xlsx" else None
+    if structure:
+        try:
+            _check_dataset_size({**doc, "structure": structure})
+            doc["structure"] = structure
+        except HTTPException:
+            structure = None
+            logger.warning("upload: run_id=%s structure facts left out: file near the size limit", audit_id)
     await db.datasets.insert_one(doc)
     await _usage_update(audit_id, lambda u: usage_mod.record_upload(u, FILE_DTYPE))
     await allowance_mod.record_for_audit(db, audit_id, files=1)
-    await _queue_workbook_read(a, audit_id, sheets, digest, filename, background)
+    await _queue_workbook_read(a, audit_id, sheets, digest, filename, background, structure)
     logger.info("upload: run_id=%s sheets=%d", audit_id, len(sheets))
-    stored = await db.datasets.find_one({"audit_id": audit_id, "file_hash": digest}, {"_id": 0, "rows": 0, "recognition_sheets": 0})
+    stored = await db.datasets.find_one({"audit_id": audit_id, "file_hash": digest}, {"_id": 0, "rows": 0, "recognition_sheets": 0, "structure": 0})
     return {**_file_view(stored or doc), "status": "ok"}
 
 
-async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filename: str) -> None:
+async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filename: str, structure: Optional[dict] = None) -> None:
     """The sheet reader for one stored file (read-check-review.md section 3): read, check, re-read once, store the outcome, then refresh the
     audit's as-of month. After the upload's response, so a long map never holds the request. A failure of any kind leaves the upload as it
     is (rule 20) and is logged by code only."""
@@ -832,7 +843,8 @@ async def _read_workbook_safely(audit_id: str, sheets: list, digest: str, filena
         a = await db.audits.find_one({"id": audit_id})
         if not a:
             return
-        doc = await sheet_reader.read_file(db, a, sheets, digest, filename, _fiscal_year_end(a), on_stage=_stage_writer(audit_id, digest))
+        doc = await sheet_reader.read_file(db, a, sheets, digest, filename, _fiscal_year_end(a), on_stage=_stage_writer(audit_id, digest),
+                                           structure=structure)
         status = doc.get("status", "not_read")
         await _finish_read(audit_id, digest, status == "read", rows_mapped=doc.get("rows_mapped", 0) if status == "read" else 0,
                            error=(doc.get("provider") or {}).get("plain"), reason=doc.get("read_reason"))
@@ -870,7 +882,7 @@ async def _finish_read(audit_id: str, digest: str, ok: bool, rows_mapped: int = 
 
 
 async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str, filename: str,
-                               background: Optional[BackgroundTasks]) -> None:
+                               background: Optional[BackgroundTasks], structure: Optional[dict] = None) -> None:
     """Queue the sheet reader for a file just stored, with the audit's consent."""
     if a.get("structure_reading_consent") is not True:
         return
@@ -879,9 +891,9 @@ async def _queue_workbook_read(a: dict, audit_id: str, sheets: list, digest: str
                                  {"$set": {"read_state": "reading", "read_stage": "removing_personal_data", "read_started_at": usage_mod.now()},
                                   "$unset": {"read_finished_at": "", "read_checking_at": "", "read_checked": "", "read_total": "", "read_matched": "", "read_items": ""}})
     if background is None:
-        await _read_workbook_safely(audit_id, sheets, digest, filename)
+        await _read_workbook_safely(audit_id, sheets, digest, filename, structure)
     else:
-        background.add_task(_read_workbook_safely, audit_id, sheets, digest, filename)
+        background.add_task(_read_workbook_safely, audit_id, sheets, digest, filename, structure)
 
 
 async def _queue_stored_reads(audit_id: str, background: BackgroundTasks) -> None:
@@ -890,7 +902,7 @@ async def _queue_stored_reads(audit_id: str, background: BackgroundTasks) -> Non
     for ds in await db.datasets.find({"audit_id": audit_id}).to_list(50):
         sheets = rec.unpack_sheets(ds.get("recognition_sheets") or [])
         if sheets and ds.get("file_hash") and a:
-            await _queue_workbook_read(a, audit_id, sheets, ds["file_hash"], ds.get("file") or "", background)
+            await _queue_workbook_read(a, audit_id, sheets, ds["file_hash"], ds.get("file") or "", background, ds.get("structure"))
 
 
 FILE_DTYPE = "file"       # every stored spreadsheet is one file: its type is the reader's map, not a choice
@@ -970,7 +982,7 @@ async def reread_dataset(audit_id: str, file_hash: str, background: BackgroundTa
         raise HTTPException(400, "The stored file holds no sheet to read")
     if a.get("structure_reading_consent") is not True:
         raise HTTPException(400, "Tick the consent to read this file")
-    await _queue_workbook_read(a, audit_id, sheets, file_hash, ds.get("file") or "", background)
+    await _queue_workbook_read(a, audit_id, sheets, file_hash, ds.get("file") or "", background, ds.get("structure"))
     return {"status": "queued", "file_hash": file_hash}
 
 
@@ -2752,6 +2764,7 @@ async def _role_inputs(audit_id: str, audit: dict) -> dict:
                       "cannot": [i["key"] for i in items if i["outcome"] == checks_mod.CANNOT],
                       "uncertain": consistency_mod.held_rows(file_map, waiting),
                       "hidden_sheets": check.get("hidden_sheets") or [], "formula_errors": checks_mod.formula_errors_of(fresh),
+                      "structure_findings": check.get("structure_findings"),
                       "totals": fresh["totals"]})
     deck = [{**{k: v for k, v in f.items() if k != "line"}, "file": d["file"], "page": f["source"]["page"]}      # the line of text is for the screen only
             for d in await deck_figures.checked(db, audit_id) for f in d["figures"] if f["outcome"] != checks_mod.REJECTED]

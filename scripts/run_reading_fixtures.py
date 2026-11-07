@@ -233,6 +233,7 @@ async def read_fixture(db, rf, fixture, started, gate) -> dict:
     Nothing is printed here but the progress line of each model call, so fixtures read side by side do not mix their table lines."""
     from app import column_rules as cr, sheet_reader
     from app.llm import gateway
+    from app.structures import workbook_facts
     name, path = fixture["name"], fixture["path"]
     audit = f"fx-{name}"
     async with gate:
@@ -241,7 +242,7 @@ async def read_fixture(db, rf, fixture, started, gate) -> dict:
         adapter = OneCall(gateway.AnthropicAdapter(timeout=gateway.SHEET_READING_TIMEOUT_SECONDS), label=name, started=started)
         got = {}
         doc = await sheet_reader.read_file(db, {"id": audit}, sheets, hashlib.sha256(path.read_bytes()).hexdigest(), path.name, 12, adapter=adapter,
-                                           capture=got)
+                                           capture=got, structure=workbook_facts.extract(path.read_bytes()) if path.suffix == ".xlsx" else None)
     if doc["status"] != "read":
         return {"verdict": "failed", "lines": [f"{name:26} {doc['status']:10} {'-':8} {'-':14} {doc.get('reason')}"]}
     if doc["cache_hit"]:
@@ -262,7 +263,7 @@ async def read_all(deck_drawable: bool = True) -> int:
     started = time.monotonic()
     gate = asyncio.Semaphore(max(1, int(os.environ.get("READING_FIXTURES_PARALLEL") or PARALLEL)))
     print(f"{'fixture':26} {'status':10} {'month':8} {'tokens in/out':14} differences", flush=True)
-    results = await asyncio.gather(*[read_fixture(db, rf, fixture, started, gate) for fixture in rf.sheet_fixtures()])
+    results = await asyncio.gather(*[read_fixture(db, rf, fixture, started, gate) for fixture in rf.live_fixtures()])
     failed = sum(r["verdict"] in ("failed", "differs") for r in results)
     uncertain = sum(r["verdict"] == "uncertain" for r in results)
     for result in results:           # in the manifest's order, whatever order the reads finished in

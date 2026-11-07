@@ -4,6 +4,8 @@ New cleanup items go in this file, not in session logs (CLAUDE.md rule 33). One 
 
 ## Open
 
+- [ ] Structure facts exist only for files uploaded after structure-aware reading (the uploaded bytes are not kept): an older file is read without the facts block and without the two formula tests until it is uploaded again; decide whether to keep the bytes or re-upload (structure-extraction PR, 2026-11-07).
+- [ ] The quarter-subtotal fixture's expected map moves the monthly report's columns (E, I, M, Q); the live job reads the merged-year variant only, so the model has not yet read a file with SUM subtotal columns (structure-extraction PR, 2026-11-07).
 - [ ] Raising the structure token cap needs the env STRUCTURE_TOKEN_CAP and a restart; an owner-page setting would let the owner raise it for one audit after a cap stop (combined fixes, 2026-11-05).
 - [ ] Golden test: cover the legacy engine blocks (arr, yearly_basis) the map feeds, and a monthly file with an EBITDA row (cleanup PR 6 added the rule, the golden fixtures do not exercise it).
 - [ ] Deck-claim timeout: the results stage polls 24 times at 5 s; the engine stage never answers "running" today, so its timeout message is untested end to end (cleanup PR 6 added the text).
@@ -121,3 +123,6 @@ Moved on 2026-11-04 from session logs, dated by the first log that held the line
 - [ ] the results stage answers "running" for a deck "reading" whose process died until the claims stage is retried after STALE_READING_SECONDS; let the results stage queue a stale reading too, or shorten the wait to the stage's own timeout. (session log: 2026-11-05-claude-bold-turing-ohinoi)
 - [ ] the `sheet_reading` prompt of the store should say what the first line "sheets in this file: ..." is (names of the other sheets, context only, never read as cells); upload it on the owner page. (session log: 2026-11-06-claude-zen-cray-3xpa1l)
 - [ ] the gateway retries only on network errors and 429/5xx; an error the app raises itself (a RuntimeError from a cap) fails at once, with no retry and no backoff, instead of being classed retryable and ending as provider_unreachable. (session log: 2026-11-07-claude-kind-mendel-hklpyr)
+- [ ] Diagnostics-note display question: the "parent rows set from formula" notes (`parent_rows_from_formula`) are stored per file; decide whether and where the analyst sees them (George, rule 19.3). (PR 250 follow-up, 2026-11-07)
+- [ ] Red thresholds of "Hardcoded cell in a formula row" and "Total formula omits cells" (and whether either feeds Worth flagging): propose from the counts on real packs; both are Green/Amber only for now. (PR 250 follow-up, 2026-11-07)
+- [ ] A plug inside a formula (`=SUM(B4:B9)+1250`, `=B4*1.1+500`) is not seen by either structure check: the hardcoded test reads constants in cells only. Known miss, add when a real pack shows it. (PR 250 follow-up, 2026-11-07)
