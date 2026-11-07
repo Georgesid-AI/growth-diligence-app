@@ -87,7 +87,7 @@
     Amended 2026-11-06 (George; for approval before merge, rule 32): each per-sheet `sheet_reading` call starts its text with one line, "sheets in this
     file: <name 1>, <name 2>, ...", the file's sheet names after masking and nothing else, so the model can see the other sheets. A sheet whose reading
     has no last actual column may get one from code (checks.plan_fallback, no model call; stored with the reading, its evidence marked "set by code") when another sheet is a plan and the rows end at the last period column.
-    Amended 2026-11-07 (George; for approval before merge, rule 32; docs/specs/structure-extraction.md): each per-sheet `sheet_reading` call (first read, second read
+    Amended 2026-11-07 (George; approved by George, rule 32, 2026-11-07: workbook structure extraction at upload, the STRUCTURE FACTS block on per-sheet calls, formula-defined parent/part relations; docs/specs/structure-extraction.md): each per-sheet `sheet_reading` call (first read, second read
     and re-read) starts, after the "sheets in this file" line, with a block "STRUCTURE FACTS (read from the file, not inferred):" of plain lines read by Python from the
     .xlsx (hidden rows and columns, merged header spans, total rows with their part rows, subtotal columns with their part columns, cells stored as text, or "no formulas
     in file"): row numbers, column letters and cell references only, never a label, a value, a name or a formula; at most 60 lines a sheet. A date-typed header cell of a
