@@ -48,6 +48,7 @@ permissions:
 jobs:
   reading:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       SHEET_READING_PROMPT: ${{ secrets.SHEET_READING_PROMPT }}
@@ -78,6 +79,6 @@ jobs:
       # The deck fixture is a pptx: its pages are drawn for the page reader through LibreOffice (app/decks/render.py).
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-impress
         if: env.ANTHROPIC_API_KEY != '' && env.DECK_FIXTURE == '1'
-      # One provider call per fixture, no re-read: the cap of section 10. Skips itself, exit 0, when the prompt or the model is not set.
+      # Per sheet, a reading and its consistency read, no item re-read: the cap of section 10. Fixtures are read in parallel (READING_FIXTURES_PARALLEL, default 4) and each model call prints a progress line. Skips itself, exit 0, when the prompt or the model is not set.
       - run: python scripts/run_reading_fixtures.py
         if: env.ANTHROPIC_API_KEY != ''

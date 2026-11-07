@@ -1,0 +1,7 @@
+2026-11-07 · claude/kind-mendel-hklpyr (reading-fixtures job: second-read failures, rejected pieces, verdict, workflow, lint rule)
+Deleted: nothing; the old attempt-counting in the job's call cap and the sheet-level treatment of the last actual column.
+Decided: the cap counts replies, not attempts (a gateway retry of a 429/5xx/dropped connection was taking the consistency read's slot, and the cap's RuntimeError is classed retryable by the gateway, so it ended as provider_unreachable with 0/0 tokens); failed attempts have their own cap of 8 per sheet; the last actual column is judged like a row (fails only when both reads agree), a missing second read is uncertain, a month difference is judged with the boundary when a read's boundary is wrong; rejected and cannot-check pieces print fixture, sheet, kind, cell and reason; fixtures run 4 at a time (READING_FIXTURES_PARALLEL), one progress line per reply; job timeout 45 minutes; rule 34 puts `ruff check backend/` before every push.
+Slow or unclear: the live job needs the repository secrets, so the table is the CI run's on this PR, not a local one; the full backend suite takes about 2 minutes.
+Root cause and rule: a test double that counts attempts instead of replies breaks as soon as the code under it retries; the new two-reads-per-sheet test fails the stand-in on every first attempt and fails on the old cap.
+Process change: none.
+Cleanup item added to docs/pr6-cleanup.md: the gateway classes any unclassified exception (a plain RuntimeError) as retryable and sleeps through its backoff before failing.

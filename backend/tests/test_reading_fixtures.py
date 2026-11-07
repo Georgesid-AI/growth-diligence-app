@@ -324,6 +324,91 @@ def test_a_third_provider_call_for_one_sheet_is_an_error():
         wrapped.complete(user_payload=other)
 
 
+class APIConnectionError(Exception):
+    """Named as the SDK's connection error, which the gateway treats as retryable."""
+
+
+class Flaky(FixtureRouter):
+    """The provider failing the first attempt of every reply of every sheet with a connection error, as an overloaded API does: the gateway
+    retries it (backoff, MAX_PROVIDER_RETRIES). Per sheet, so fixtures read side by side do not change one another's luck."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.failed_since_reply, self.failed, self.ok = {}, 0, 0
+
+    def complete(self, **kw):
+        names = tuple(re.findall(r"(?m)^sheet \d+: (.*)$", json.loads(kw["user_payload"])["text"]))
+        if not self.failed_since_reply.get(names):
+            self.failed_since_reply[names] = True
+            self.failed += 1
+            raise APIConnectionError("Connection error.")
+        self.failed_since_reply[names] = False
+        self.ok += 1
+        return super().complete(**kw)
+
+
+def _job_env(monkeypatch):
+    for name, value in (("ANTHROPIC_API_KEY", "k"), ("SHEET_READING_PROMPT", "TEST ONLY prompt"), ("SHEET_READER_MODEL", MODEL)):
+        monkeypatch.setenv(name, value)
+
+    async def instant(_seconds):
+        return None
+    monkeypatch.setattr(asyncio, "sleep", instant)          # the gateway's retry backoff
+
+
+def test_two_reads_of_every_sheet_of_every_fixture_never_raise_when_the_provider_fails_transiently(monkeypatch, capsys):
+    """A failed attempt the gateway retries is no reading: the cap counts the replies it gets, so the consistency read is never refused."""
+    runner = load_runner()
+    router = Flaky()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    _job_env(monkeypatch)
+    assert runner.main() == 0
+    out = capsys.readouterr().out
+    sheets = sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS)
+    assert router.ok == 2 * sheets and router.failed == router.ok, "two replies per sheet, each after one retried failure"
+    assert "provider_unreachable" not in out and "RuntimeError" not in out and "not_read" not in out
+    assert all(ln.split()[1] == "read" for ln in out.splitlines() if ln.split() and ln.split()[0] in IDS)
+
+
+def test_a_failed_attempt_is_no_reading_but_failures_are_capped():
+    runner = load_runner()
+    sheet = json.dumps({"type": "sheet_reading", "text": "sheet 1: Monthly report\nA1: x"})
+
+    class Down:
+        def complete(self, **kw):
+            raise APIConnectionError("down")
+    counter = runner.OneCall(Down())
+    for _ in range(runner.OneCall.MAX_FAILED_ATTEMPTS):
+        with pytest.raises(APIConnectionError):
+            counter.complete(user_payload=sheet)
+    with pytest.raises(RuntimeError, match="failed attempts"):
+        counter.complete(user_payload=sheet)
+
+
+def test_a_retried_schema_fix_is_still_the_one_allowed_retry():
+    runner = load_runner()
+    first = json.dumps({"type": "sheet_reading", "text": "sheet 1: A\nA1: 1"})
+    fix = json.dumps({"type": "sheet_reading", "fix": "x", "errors": []})
+
+    class Once(t.FakeAdapter):
+        def __init__(self):
+            super().__init__(replies=[json.dumps({"map_version": 1})])
+            self.n = 0
+
+        def complete(self, **kw):
+            self.n += 1
+            if self.n == 2:
+                raise APIConnectionError("blip")           # the fix request's first attempt
+            return super().complete(model="m", system="s", max_tokens=1, json_schema=None, **kw)
+    counter = runner.OneCall(Once())
+    counter.complete(user_payload=first)
+    with pytest.raises(APIConnectionError):
+        counter.complete(user_payload=fix)
+    counter.complete(user_payload=fix)                     # the gateway's retry of it
+    with pytest.raises(RuntimeError):
+        counter.complete(user_payload=fix)                 # a second fix is refused
+
+
 def test_the_workflow_runs_only_on_the_reading_path_and_skips_without_the_key():
     import yaml
     flow = yaml.safe_load((ROOT / ".github" / "workflows" / "reading-fixtures.yml").read_text(encoding="utf-8"))
@@ -339,6 +424,7 @@ def test_the_workflow_runs_only_on_the_reading_path_and_skips_without_the_key():
     assert skip["if"] == "env.ANTHROPIC_API_KEY == ''" and "::notice" in skip["run"]
     assert all(step.get("if", "").startswith("env.ANTHROPIC_API_KEY != ''") for step in job["steps"][1:]), "nothing else runs without the key"
     assert any("scripts/run_reading_fixtures.py" in step.get("run", "") for step in job["steps"])
+    assert job["timeout-minutes"] == 45, "a hung provider call must not hold the runner for the 6-hour default"
     tests_flow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     assert "ANTHROPIC_API_KEY" not in tests_flow, "the general checks stay free of secrets"
 
@@ -472,6 +558,63 @@ def test_a_failing_re_read_leaves_the_file_read_with_its_rejected_items_noted_an
     sheets_sent = len(gateway.sheet_units(reading_input.reading_text(workbook(next(f for f in SHEETS if f["name"] == "monthly_report")))))
     assert len(router.requests) == 2 * sum(len(gateway.sheet_units(reading_input.reading_text(workbook(f)))) for f in SHEETS), "the failed re-read made no provider call beyond the cap"
     assert sheets_sent >= 1
+
+
+def test_every_rejected_piece_is_printed_with_its_fixture_sheet_kind_cell_and_reason_like_a_cannot_check_one(monkeypatch, capsys):
+    runner = load_runner()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", FixtureRouter(boundary="monthly_report"))
+    _job_env(monkeypatch)
+    assert runner.main() == 1, "both reads put the boundary one column late: they agree, so the job fails"
+    out = capsys.readouterr().out
+    pieces = [ln for ln in out.splitlines() if ln.startswith("    rejected monthly_report | ")]
+    assert pieces, out
+    for ln in pieces:
+        assert re.fullmatch(r"    rejected monthly_report \| sheet [^|]+ \| [a-z_ ]+ \| cell [^|]+ \| [^|]+?: .+", ln), ln
+    item = {"outcome": "cannot_check", "key": "k", "kind": "row", "sheet": "S", "cell": "B2", "reason": "why"}
+    assert runner.piece_lines("fx", [item]) == ["    cannot check fx | sheet S | row | cell B2 | k: why"]
+    evidence = {"outcome": "rejected", "key": "e", "kind": "evidence", "evidence_kind": "layout", "sheet": "S", "cell": None, "reason": "no"}
+    assert runner.piece_lines("fx", [evidence]) == ["    rejected fx | sheet S | layout | cell - | e: no"]
+    assert runner.piece_lines("fx", [{**item, "outcome": "confirmed"}]) == []
+
+
+def test_one_progress_line_is_printed_per_model_call_with_fixture_sheet_read_and_elapsed_time(monkeypatch, capsys):
+    runner = load_runner()
+    router = FixtureRouter()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", router)
+    _job_env(monkeypatch)
+    assert runner.main() == 0
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("progress ")]
+    assert len(lines) == len(router.requests), "one line per reply"
+    for ln in lines:
+        assert re.fullmatch(r"progress [a-z_]+ \| .+ \| read [12]/2 \| call \d+\.\ds, job \d+\.\ds", ln), ln
+    assert {ln.split(" | ")[0].split()[1] for ln in lines} == set(IDS)
+    assert sum(" | read 2/2 | " in ln for ln in lines) == len(lines) // 2
+
+
+def test_fixtures_are_read_in_parallel_and_the_table_keeps_the_manifest_order(monkeypatch, capsys):
+    runner = load_runner()
+    live, peak, lock = [0], [0], __import__("threading").Lock()
+
+    class Slow(FixtureRouter):
+        def complete(self, **kw):
+            with lock:
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+            __import__("time").sleep(0.05)
+            try:
+                return super().complete(**kw)
+            finally:
+                with lock:
+                    live[0] -= 1
+    monkeypatch.setattr(gateway, "AnthropicAdapter", Slow())
+    _job_env(monkeypatch)
+    assert runner.main() == 0
+    assert peak[0] > 1, "more than one fixture was in a provider call at the same time"
+    names = [ln.split()[0] for ln in capsys.readouterr().out.splitlines() if ln.split() and ln.split()[0] in IDS and " read " in ln]
+    assert names == IDS
+    monkeypatch.setenv("READING_FIXTURES_PARALLEL", "1")
+    peak[0] = 0
+    assert runner.main() == 0 and peak[0] == 1
 
 
 def test_a_re_read_that_fails_never_marks_the_reading_not_read_and_notes_each_rejected_item():
@@ -642,11 +785,27 @@ def test_the_verdict_fails_on_a_row_both_reads_get_wrong_or_on_a_sheet_level_fie
     assert runner.fixture_verdict(rf, exp, month, wrong, wrong)[0] == "differs", "both reads agree and differ from the expected map"
     assert runner.fixture_verdict(rf, exp, month, wrong, good)[0] == "uncertain"
     assert runner.fixture_verdict(rf, exp, month, good, wrong)[0] == "uncertain"
-    assert runner.fixture_verdict(rf, exp, month, wrong, None)[0] == "differs", "no second read, no disagreement to point to"
+    assert runner.fixture_verdict(rf, exp, month, wrong, None)[0] == "uncertain", "one read is missing: nothing confirms the difference"
+    assert runner.fixture_verdict(rf, exp, month, good, None)[0] == "none"
     late = copy.deepcopy(good)
     late["sheets"][0]["granularity"] = "yearly" if good["sheets"][0]["granularity"] != "yearly" else "monthly"
     assert runner.fixture_verdict(rf, exp, month, late, good)[0] == "differs", "a sheet-level field differs in one read"
     assert runner.fixture_verdict(rf, exp, "1999-01", good, good)[0] == "differs", "the as-of month is sheet-level"
+
+    # The last actual column is judged like a row: it fails the job only when both reads give it wrongly.
+    sheet = next(sh for sh in good["sheets"] if sh.get("last_actual"))
+    moved = copy.deepcopy(good)
+    shifted = next(sh for sh in moved["sheets"] if sh["sheet"] == sheet["sheet"])
+    from app.structures.redact import col_letters, col_number
+    shifted["last_actual"]["column"] = col_letters(col_number(sheet["last_actual"]["column"]) + 1)
+    other_month = "1999-01"
+    assert runner.fixture_verdict(rf, exp, other_month, moved, moved)[0] == "differs", "both reads put the boundary in the same wrong column"
+    for pair in ((moved, good), (good, moved)):
+        verdict, text = runner.fixture_verdict(rf, exp, month, *pair)
+        assert verdict == "uncertain" and "last actual column" in text, "the reads disagree on the boundary"
+    assert runner.fixture_verdict(rf, exp, month, moved, None)[0] == "uncertain", "the second read is missing"
+    assert runner.fixture_verdict(rf, exp, other_month, moved, good)[0] == "uncertain", "the month follows the boundary: judged with it"
+    assert runner.fixture_verdict(rf, exp, other_month, good, good)[0] == "differs", "a month no boundary explains is sheet-level"
 
 
 def _bare_budget_reading():
