@@ -75,14 +75,16 @@ def _close(a: float, b: float) -> bool:
 def compare(exp: Dict, month, file_map: Dict) -> List[str]:
     """The differences between a reading (its confirmed as-of month and its file map) and the expected map; [] when they agree. The free
     text of the reading is not compared. Rows are found by their sheet row number, the revenue row by its role."""
-    sheet_level, row_level = compare_split(exp, month, file_map)
-    return sheet_level + row_level
+    sheet_level, boundary, row_level = compare_split(exp, month, file_map)
+    return sheet_level + boundary + row_level
 
 
-def compare_split(exp: Dict, month, file_map: Dict) -> Tuple[List[str], List[str]]:
-    """(sheet-level differences, row-level differences) of compare(): the as-of month, a missing sheet, the last actual column and the
-    granularity are sheet-level; a row's role, the revenue row and a figure are row-level."""
+def compare_split(exp: Dict, month, file_map: Dict) -> Tuple[List[str], List[str], List[str]]:
+    """(sheet-level, last-actual-column, row-level differences) of compare(): the as-of month, a missing sheet and the granularity are
+    sheet-level; the last actual column is its own class, judged like a row (the job fails on it only when both reads give it wrongly); a row's
+    role, the revenue row and a figure are row-level."""
     out: List[str] = []
+    boundary: List[str] = []
     rows: List[str] = []
     want = exp.get("as_of_month")
     if exp.get("as_of_source") == "rules":
@@ -98,7 +100,7 @@ def compare_split(exp: Dict, month, file_map: Dict) -> Tuple[List[str], List[str
             continue
         last = (got.get("last_actual") or {}).get("column")
         if last != want_sheet["last_actual_column"]:
-            out.append(f"{want_sheet['sheet']}: last actual column {last}, expected {want_sheet['last_actual_column']}")
+            boundary.append(f"{want_sheet['sheet']}: last actual column {last}, expected {want_sheet['last_actual_column']}")
         if got.get("granularity") != want_sheet["granularity"]:
             out.append(f"{want_sheet['sheet']}: granularity {got.get('granularity')}, expected {want_sheet['granularity']}")
         if want_sheet.get("revenue_row"):
@@ -119,4 +121,4 @@ def compare_split(exp: Dict, month, file_map: Dict) -> Tuple[List[str], List[str
         elif not any(f.get("value") is not None and _close(f["value"], want_fig["value"]) and f.get("period") == want_fig["period"] for f in found):
             rows.append(f"figure {want_fig['metric']} at {want_fig['cell']}: {found[0].get('value')} / {found[0].get('period')}, "
                        f"expected {want_fig['value']} / {want_fig['period']}")
-    return out, rows
+    return out, boundary, rows
