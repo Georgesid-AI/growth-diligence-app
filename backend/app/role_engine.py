@@ -13,7 +13,7 @@ Code never reads and never decides what a row means: it picks the row by the rea
 granularity a metric needs, and does arithmetic on the cells the series holds. A row whose check was rejected is not an input.
 """
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
@@ -218,10 +218,46 @@ def totals_flags(files: List[Dict]) -> List[Dict]:
     return out
 
 
-def file_flags(files: List[Dict]) -> Dict[str, List[Dict]]:
+STRUCTURE_FLAG_CELLS = 5         # the cells a structure flag names; the rest are counted
+HARDCODED_KIND, OMITS_KIND = "hardcoded_in_formula_row", "total_omits_cells"
+
+
+def _cell_ref(sheet: str, cell: str, hidden: bool) -> str:
+    return f"{sheet}!{cell}" + (" (hidden)" if hidden else "")
+
+
+def structure_flags(files: List[Dict]) -> List[Dict]:
+    """The two integrity tests of the file's formulas (docs/specs/structure-extraction.md section 4): one flag per file and kind, with the sheet and cell
+    of every finding ("Plan!D5"; a cell in a hidden row or column reads "(hidden)"). The findings are the file's check outcome's `structure_findings`."""
+    out = []
+    for f in files:
+        found = f.get("structure_findings") or {}
+        hard = [_cell_ref(h["sheet"], h["cell"], h.get("hidden")) for h in found.get("hardcoded") or []]
+        if hard:
+            more = f" and {len(hard) - STRUCTURE_FLAG_CELLS} more" if len(hard) > STRUCTURE_FLAG_CELLS else ""
+            out.append({"kind": HARDCODED_KIND, "file": f.get("file"), "count": len(hard), "cells": hard[:STRUCTURE_FLAG_CELLS],
+                        "text": f"{f.get('file')}: {len(hard)} hardcoded cell{'s' if len(hard) != 1 else ''} in formula rows, {', '.join(hard[:STRUCTURE_FLAG_CELLS])}{more}"})
+        skipped = [(o, _cell_ref(o["sheet"], c, c in (o.get("hidden_cells") or ()))) for o in found.get("omitted") or [] for c in o["skipped"]]
+        if skipped:
+            cells = [ref for _, ref in skipped]
+            sums = "; ".join(f"{o['sheet']}!{o['cell']} sums {o['range']} and skips {', '.join(o['skipped'])}" for o in found["omitted"])
+            more = f" and {len(cells) - STRUCTURE_FLAG_CELLS} more" if len(cells) > STRUCTURE_FLAG_CELLS else ""
+            out.append({"kind": OMITS_KIND, "file": f.get("file"), "count": len(cells), "cells": cells[:STRUCTURE_FLAG_CELLS],
+                        "text": f"{f.get('file')}: {len(cells)} cell{'s' if len(cells) != 1 else ''} skipped by a total formula: {sums}{more}"})
+    return out
+
+
+def structure_checks(files: List[Dict]) -> Dict[str, int]:
+    """{"files": every file read, "files_with_formulas": those whose workbook holds a formula}: whether the two tests ran (a CSV or a values-only file
+    gives them nothing to test)."""
+    return {"files": len(files), "files_with_formulas": sum(1 for f in files if (f.get("structure_findings") or {}).get("ran"))}
+
+
+def file_flags(files: List[Dict]) -> Dict[str, Any]:
     """What the files themselves call for, apart from their rows: {"mapping": the hidden duplicates and the undated month headers, "integrity": the
-    formula errors, then the totals that do not add up}."""
-    return {"mapping": hidden_flags(files) + undated_flags(files), "integrity": formula_error_flags(files) + totals_flags(files)}
+    formula errors, the totals that do not add up, then the two structure tests' findings, "structure": which files had formulas to test}."""
+    return {"mapping": hidden_flags(files) + undated_flags(files),
+            "integrity": formula_error_flags(files) + totals_flags(files) + structure_flags(files), "structure": structure_checks(files)}
 
 
 def hidden_sheets(table: List[Dict]) -> set:
@@ -1560,6 +1596,7 @@ def compute(all_rows: List[Dict], as_of: Optional[pd.Period], fye: int = 12, dec
                              "growth_by_year": by_year, "pnl_trend": trend,
                              "mapping_flags": _guarded("mapping_flags", lambda: mapping_flags(table) + total_flags(table, as_of, fye), on_error, lambda e: []) + list((flags or {}).get("mapping") or ()),
                              "integrity_flags": list((flags or {}).get("integrity") or ()),
+                             "structure_checks": (flags or {}).get("structure"),
                              "awaiting_confirmation": awaiting_confirmation(all_rows, deck or [], waiting_items)},
             "arr": arr_block, "mrr_series": mrr_block, "customers_series": cust_block,
             "revenue_series": _guarded("ending_arr", lambda: revenue_series(table, as_of, fye), on_error, lambda e: None), "yearly": yearly}

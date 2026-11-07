@@ -17,7 +17,7 @@ Dashboard section "Data integrity", above the data-integrity narrative. API: `GE
 Block A, "Results of completed checks": one row per check that ran, `Check | Result | Finding | Source`; Result is Green,
 Amber or Red. A check that did not run never appears here.
 
-Block B, "Assessment coverage": one row per check of the method, `Check | Status | Reason`, always these six, in this order:
+Block B, "Assessment coverage": one row per check of the method, `Check | Status | Reason`, always these eight, in this order (rows 7 and 8: structure-extraction.md section 4, amended 2026-11-07):
 | # | Check | Completed when | Result |
 |---|---|---|---|
 | 1 | Revenue reconciliation | the engine's `revenue_reconciliation` is available (a P&L with a revenue line and a month in common with the revenue file) | Green: the window and every month within tolerance; Amber: the window within tolerance, a month beyond it; Red: the window beyond tolerance (the hard blocker of CLAUDE.md rule 21). Finding: "Revenue file and P&L differ by {x}% over {first}–{last}". Source: the block's citation |
@@ -26,6 +26,8 @@ Block B, "Assessment coverage": one row per check of the method, `Check | Status
 | 4 | Smoothness | built by smoothness.md (15 Oct 2026): 13 consecutive months of revenue in the stored series | Amber below 0.5 points of month-on-month growth deviation, else Green (smoothness.md §1) |
 | 5 | Benford on transactions | never: not applicable by design | – |
 | 6 | Deck-vs-deck figures | at least one deck is parsed | Green: no figure of the audit's decks (claims not rejected) differs from another figure of the same type, label and stated period (deck-parser.md §2 inconsistency rule, read across all the audit's decks); Amber: any. Finding: the count and the first pair's pages. Source: deck file · page |
+| 7 | Hardcoded cell in a formula row | an uploaded workbook has formulas (structure-extraction.md section 4) | Green: none; Amber: 1-2 cells; Red: 3 or more. Finding: "{n} hardcoded cells in formula rows". Source: sheet and cells, "(hidden)" after a cell in a hidden row or column. Red is also under Worth flagging. Not applicable ("No formulas in the uploaded workbooks") when no workbook has a formula: out of the denominator, no data request |
+| 8 | Total formula omits cells | an uploaded workbook has formulas | as row 7; finding "{n} cells skipped by a total formula" |
 
 Status values, with the reason the row prints:
 | Status | Meaning | Reason (word for word) |

@@ -25,6 +25,8 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from .structures import workbook_facts
+
 READINGS = "readings"
 USES = "reading_uses"
 REREADS = "reading_rereads"
@@ -54,8 +56,9 @@ def prompt_hash(text: str) -> str:
 
 
 def reading_key(account: Optional[str], file_hash: str, prompt_hash: str, model: str) -> str:
-    """The identity of a reading: the account, the file's bytes, the hash of the prompt text, the model version."""
-    return _digest("reading", account or "", file_hash, prompt_hash, model)
+    """The identity of a reading: the account, the file's bytes, the hash of the prompt text, the model version and the version of the structure extraction
+    (docs/specs/structure-extraction.md: a bump of it reads every stored file once more)."""
+    return _digest("reading", account or "", file_hash, prompt_hash, model, f"structure{workbook_facts.STRUCTURE_EXTRACTION_VERSION}")
 
 
 NOT_READ = "not_read"       # the status of a failed record (put_failed): kept for diagnosis, never served, replaced by the next reading

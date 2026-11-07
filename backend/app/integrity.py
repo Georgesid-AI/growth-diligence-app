@@ -19,7 +19,11 @@ GREEN, AMBER, RED = "Green", "Amber", "Red"
 RECONCILIATION, GAPS, CLUSTERING, SMOOTHNESS, BENFORD, DECKS = (
     "Revenue reconciliation", "Gaps in customer data", "Quarter-end clustering", "Smoothness", "Benford on transactions",
     "Deck-vs-deck figures")
-CHECKS = (RECONCILIATION, GAPS, CLUSTERING, SMOOTHNESS, BENFORD, DECKS)
+HARDCODED, OMITS = "Hardcoded cell in a formula row", "Total formula omits cells"        # structure-extraction.md section 4
+CHECKS = (RECONCILIATION, GAPS, CLUSTERING, SMOOTHNESS, BENFORD, DECKS, HARDCODED, OMITS)
+STRUCTURE_KINDS = {HARDCODED: "hardcoded_in_formula_row", OMITS: "total_omits_cells"}          # the role_metrics.integrity_flags kinds of the two checks
+NO_FORMULAS = "No formulas in the uploaded workbooks"        # the reason both are Not applicable: nothing to test, no data request
+STRUCTURE_AMBER_MAX = 2                    # 1 to 2 cells Amber, 3 or more Red
 # Section 1: the reason each status prints, word for word. A Blocked reason is a data request.
 REASONS = {
     RECONCILIATION: "P&L with a revenue line, overlapping the revenue file's months",
@@ -28,6 +32,8 @@ REASONS = {
     SMOOTHNESS: "Revenue file with at least 13 consecutive months of revenue",
     BENFORD: "No transaction-level file: the app ingests revenue by customer and month, not transactions.",
     DECKS: "At least one board deck",
+    HARDCODED: NO_FORMULAS,
+    OMITS: NO_FORMULAS,
 }
 SMOOTHNESS_MONTHS = 13              # smoothness.md section 1: 12 month-on-month changes need 13 consecutive months
 SMOOTHNESS_LABEL = "provisional threshold, 3 synthetic series"    # shown beside the result, on screen and in the memo (George, 15 Oct 2026)
@@ -44,6 +50,23 @@ CONCLUSIONS = {"reliable": "Reliable", "needs_clarification": "Needs clarificati
 COMPLETED_TEXT = "Completed {x} of {y} applicable checks"
 NO_CUSTOMER_ROWS = "No customer-level rows to test"
 SAME_SOURCE = "Not applicable – same source"      # the P&L is the only revenue source: the reconciliation would compare it with itself
+
+
+def _structure(results: dict, check: str) -> Optional[dict]:
+    """The result of one formula test: Green none, Amber 1 to 2 cells, Red 3 or more; None when no uploaded workbook had a formula to test."""
+    rm = results.get("role_metrics") or {}
+    if not (rm.get("structure_checks") or {}).get("files_with_formulas"):
+        return None
+    flags = [f for f in rm.get("integrity_flags") or () if f["kind"] == STRUCTURE_KINDS[check]]
+    n = sum(f["count"] for f in flags)
+    result = GREEN if n == 0 else AMBER if n <= STRUCTURE_AMBER_MAX else RED
+    plural = "s" if n != 1 else ""
+    if check == HARDCODED:
+        finding = f"{n} hardcoded cell{plural} in formula rows" if n else "No hardcoded cell in a formula row"
+    else:
+        finding = f"{n} cell{plural} skipped by a total formula" if n else "No total formula skips a numeric cell"
+    source = "; ".join(f"{f['file']}: {', '.join(f['cells'][:3])}" for f in flags) or f"{rm['structure_checks']['files_with_formulas']} workbook(s) with formulas"
+    return {"result": result, "finding": finding, "source": source}
 
 
 def _cite(source: Optional[dict]) -> str:
@@ -207,7 +230,7 @@ def statement_findings(results: dict) -> List[dict]:
     # A file that holds formula errors (#REF!, #DIV/0!, #N/A, #VALUE!): one finding for the file, with the cells (role_metrics.integrity_flags)
     return found + [{"kind": f["kind"], "line": TOTALS_LINE if f["kind"] == "totals_mismatch" else f.get("file"), "period": None, "text": f["text"],
                      "source": ", ".join(f["cells"])}
-                    for f in (results.get("role_metrics") or {}).get("integrity_flags") or ()]
+                    for f in (results.get("role_metrics") or {}).get("integrity_flags") or () if f["kind"] not in STRUCTURE_KINDS.values()]      # the two formula tests have rows of their own
 
 
 def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fiscal_year_end: int = 12) -> dict:
@@ -216,7 +239,7 @@ def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fis
     results = results or {}
     deals = clustering(results, fiscal_year_end)
     ran = {RECONCILIATION: _reconciliation(results), GAPS: _gaps(results), CLUSTERING: _clustering(deals), SMOOTHNESS: _smoothness(results),
-           DECKS: _decks(candidates) if deck_count else None}
+           DECKS: _decks(candidates) if deck_count else None, HARDCODED: _structure(results, HARDCODED), OMITS: _structure(results, OMITS)}
     # Below CLUSTERING_MIN_DEALS won deals the clustering check is Not applicable: no data request, out of the denominator.
     few = deals is not None and deals["result"] is None
     same = (results.get("revenue_reconciliation") or {}).get("status") == "not_applicable"
@@ -228,7 +251,7 @@ def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fis
                **({RECONCILIATION: SAME_SOURCE} if same else {}), **({GAPS: NO_CUSTOMER_ROWS} if no_rows[GAPS] else {})}
     coverage = []
     for check in CHECKS:
-        status = (NOT_APPLICABLE if check == BENFORD or (check == CLUSTERING and few) or (check == RECONCILIATION and same) or no_rows.get(check)
+        status = (NOT_APPLICABLE if check == BENFORD or (check in STRUCTURE_KINDS and not ran[check]) or (check == CLUSTERING and few) or (check == RECONCILIATION and same) or no_rows.get(check)
                   else COMPLETED if ran[check] else BLOCKED)
         coverage.append({"check": check, "status": status, "reason": None if status == COMPLETED else reasons[check],
                          "result": ran[check]["result"] if status == COMPLETED else None})

@@ -218,11 +218,12 @@ async def effective_map(db, audit_id: str, doc: Dict, stored_map: Dict, override
     wins. A file with no stored cells is returned as stored with its overrides."""
     from . import stored_sheets as rec
     from .structures import reading_input
-    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": doc.get("file_hash")}, {"_id": 0, "recognition_sheets": 1})
+    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": doc.get("file_hash")}, {"_id": 0, "recognition_sheets": 1, "structure": 1})
     sheets = rec.unpack_sheets((ds or {}).get("recognition_sheets") or [])
-    text = reading_input.reading_text(sheets) if sheets else None
+    text = reading_input.reading_text(sheets, (ds or {}).get("structure")) if sheets else None
     cells = checks.Cells(text) if text is not None else None
     base = checks.classify_by_label(checks.retype_by_sheet(stored_map, cells), cells) if cells is not None else stored_map
+    base, _ = checks.apply_formula_parents(base, (ds or {}).get("structure"))       # the file's sum formulas set the parent rows; the stored reading is kept
     return readings.effective(base, overrides)
 
 
@@ -235,11 +236,11 @@ async def refreshed(db, audit_id: str, doc: Dict, effective: Dict, fye: int = 12
         return plain
     from . import stored_sheets as rec
     from .structures import reading_input
-    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": doc.get("file_hash")}, {"_id": 0, "recognition_sheets": 1})
+    ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": doc.get("file_hash")}, {"_id": 0, "recognition_sheets": 1, "structure": 1})
     sheets = rec.unpack_sheets((ds or {}).get("recognition_sheets") or [])
     if not sheets:
         return plain
-    text = reading_input.reading_text(sheets)
+    text = reading_input.reading_text(sheets, (ds or {}).get("structure"))
     if text is None:
         return plain
     return {**doc, **checks.recheck_stored(doc, effective, checks.Cells(text), fye, skip)}

@@ -33,5 +33,22 @@
   "name": "testco_revenue",
   "expected": "testco_revenue.expected.json",
   "file": "sample_data/revenue.csv"
+ },
+ {
+  "name": "monthly_report_merged_year",
+  "expected": "monthly_report_merged_year.expected.json",
+  "file": "monthly_report_merged_year.xlsx"
+ },
+ {
+  "name": "monthly_report_quarters",
+  "expected": "monthly_report_quarters.expected.json",
+  "file": "monthly_report_quarters.xlsx",
+  "live": false
+ },
+ {
+  "name": "monthly_report_dates",
+  "expected": "monthly_report_dates.expected.json",
+  "file": "monthly_report_dates.xlsx",
+  "live": false
  }
 ]

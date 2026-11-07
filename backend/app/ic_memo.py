@@ -647,7 +647,7 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
             for f in (results.get("role_metrics") or {}).get("mapping_flags") or ()]
     out += [f"{f['text']}{notes.add('data integrity, ' + ('totals, ' if f['kind'] == 'totals_mismatch' else 'formula errors, ') + str(f.get('file')))}"
             for f in (results.get("role_metrics") or {}).get("integrity_flags") or ()
-            if f["kind"] != "totals_mismatch" or (f["pct"] > integrity_mod.TOTALS_WORTH_FLAGGING and not f.get("double_counted"))]      # a total off by 5 % or less, or one whose parts are counted twice, is in the integrity table only
+            if f["kind"] not in integrity_mod.STRUCTURE_KINDS.values() and (f["kind"] != "totals_mismatch" or (f["pct"] > integrity_mod.TOTALS_WORTH_FLAGGING and not f.get("double_counted")))]      # a total off by 5 % or less, or one whose parts are counted twice, is in the integrity table only
     reconciled = [r for r in recon if r["status"] in ("differs", "agrees_rounded")]
     out += [f"Revenue {r['period']} agrees (rounded) across the sources{notes.source('Revenue reconciliation')}"
             for r in recon if r["status"] == "agrees_rounded"]
@@ -658,7 +658,8 @@ def role_flags(results: dict, integrity: Optional[dict], ccy: Optional[str], not
     covered = {integrity_mod.RECONCILIATION: bool(reconciled), integrity_mod.GAPS: any(a["key"] in GAP_FLAGS for a in anomalies)}
     out += [f"{c['check']} ({c['result']}): {c['finding']}{notes.add('data integrity check, ' + c['check'])}"
             for c in (integrity or {}).get("results") or ()
-            if c.get("result") in (integrity_mod.RED, integrity_mod.AMBER) and not covered.get(c["check"])]
+            if c.get("result") in (integrity_mod.RED, integrity_mod.AMBER) and not covered.get(c["check"])
+            and (c["check"] not in integrity_mod.STRUCTURE_KINDS or c["result"] == integrity_mod.RED)]      # the two formula tests: Red only
     return out
 
 

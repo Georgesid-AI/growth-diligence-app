@@ -4,6 +4,8 @@ New cleanup items go in this file, not in session logs (CLAUDE.md rule 33). One 
 
 ## Open
 
+- [ ] Structure facts exist only for files uploaded after structure-aware reading (the uploaded bytes are not kept): an older file is read without the facts block and without the two formula tests until it is uploaded again; decide whether to keep the bytes or re-upload (structure-extraction PR, 2026-11-07).
+- [ ] The quarter-subtotal fixture's expected map moves the monthly report's columns (E, I, M, Q); the live job reads the merged-year variant only, so the model has not yet read a file with SUM subtotal columns (structure-extraction PR, 2026-11-07).
 - [ ] Raising the structure token cap needs the env STRUCTURE_TOKEN_CAP and a restart; an owner-page setting would let the owner raise it for one audit after a cap stop (combined fixes, 2026-11-05).
 - [ ] Golden test: cover the legacy engine blocks (arr, yearly_basis) the map feeds, and a monthly file with an EBITDA row (cleanup PR 6 added the rule, the golden fixtures do not exercise it).
 - [ ] Deck-claim timeout: the results stage polls 24 times at 5 s; the engine stage never answers "running" today, so its timeout message is untested end to end (cleanup PR 6 added the text).

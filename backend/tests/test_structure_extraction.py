@@ -2,7 +2,6 @@
 
 Extraction, the facts block, the date and percent rendering, the formula parents, the cache key and the two integrity tests."""
 import copy
-import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -292,8 +291,8 @@ def test_a_sum_that_skips_a_numeric_cell_next_to_its_range_is_an_omission():
             ws[f"{col}20"] = v
         ws["E20"] = "=SUM(C20:D20)"                        # B20 is left of the range
     omitted = wf.findings(book(fill))["omitted"]
-    assert omitted == [{"sheet": "Plan", "cell": "B7", "range": "B4:B5", "skipped": ["B6"], "hidden": False},
-                       {"sheet": "Plan", "cell": "E20", "range": "C20:D20", "skipped": ["B20"], "hidden": False}]
+    assert omitted == [{"sheet": "Plan", "cell": "B7", "range": "B4:B5", "skipped": ["B6"], "hidden": False, "hidden_cells": []},
+                       {"sheet": "Plan", "cell": "E20", "range": "C20:D20", "skipped": ["B20"], "hidden": False, "hidden_cells": []}]
 
 
 def test_a_sum_over_its_own_section_a_header_year_and_a_hidden_skip():
@@ -310,7 +309,7 @@ def test_a_sum_over_its_own_section_a_header_year_and_a_hidden_skip():
         ws["B14"] = "=SUM(B11:B12)"
         ws.row_dimensions[13].hidden = True
     found = wf.findings(book(fill))["omitted"]
-    assert found == [{"sheet": "Plan", "cell": "B14", "range": "B11:B12", "skipped": ["B13"], "hidden": True}]
+    assert found == [{"sheet": "Plan", "cell": "B14", "range": "B11:B12", "skipped": ["B13"], "hidden": True, "hidden_cells": ["B13"]}]
 
 
 # --- 7. the two integrity tests: the table ---
@@ -364,7 +363,7 @@ def test_with_no_formula_in_any_workbook_both_checks_are_not_applicable_and_out_
 
 def test_a_completed_check_counts_toward_the_x_of_y():
     _, assessed = assess_flags(flag_files(1, 0))
-    assert assessed["completed"] == 2 and assessed["applicable"] == 8
+    assert assessed["completed"] == 2 and assessed["applicable"] == 7
 
 
 def test_only_a_red_result_of_the_two_checks_is_under_worth_flagging():

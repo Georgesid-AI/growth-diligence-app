@@ -15,7 +15,7 @@ facts are `None`). A file openpyxl cannot parse gives `{"version": 1, "has_formu
 Per sheet (`sheets[]`, file order): `name`; `hidden` (the sheet is hidden); `hidden_rows` (row numbers); `hidden_cols` (letters); `merged`
 (ranges, "B2:M2"); `row_outline` and `col_outline` (only levels above 0); `indents` ({"A5": 2}, the cell indent level).
 
-Per cell with a value, `cells[ref] = "<type>/<class>"`. Type: number, text, date, bool, error. Class: date, percent, currency, integer,
+Per cell with a value, `cells[ref] = "<type>/<class>"`. Type: number, text, date, bool, error. Class: date ("month" when the format has no day, mmm-yy), percent, currency, integer,
 general, text. To keep the record small only a cell that is **not** `number/general`, `number/integer` or `text/general` is listed; an unlisted cell
 is read from the grid. `text_numbers` lists the refs of text cells that read as a plain number (a year-like or period-like header is not one).
 
@@ -42,7 +42,7 @@ Every cell in a hidden row or column is listed with `hidden: true`; an output ce
   `to_number` (checks) and `reading_figure` (masker) read the marker, so a figure is never rewritten and never learned as a name.
 - A block starts the sheet's text, after the "sheets in this file" line:
   `STRUCTURE FACTS (read from the file, not inferred):` then plain lines: `no formulas in file` (values-only workbook); `hidden rows: 12, 14-16`;
-  `hidden columns: C`; `merged header spans: B2:M2`; `total rows: row 10 = rows 5-9`; `subtotal columns: E = B-D`; `cells stored as text: B7, C7`.
+  `hidden columns: C`; `merged header spans: B2:M2`; `total rows: row 10 = rows 5-9`; `subtotal columns: E = B-D` (one line for each total row and each subtotal column); `cells stored as text: B7, C7`.
   Row and cell references and numbers only: no label, no value, no sheet name. At most 60 lines per sheet; over that, total rows and merged
   spans are kept, the rest dropped, and the last line is `truncated`.
 - The block is outside the sheet's 40,000-token cell cap (it is not cells, like the "sheets in this file" line) and inside the call's cost,

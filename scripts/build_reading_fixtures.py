@@ -246,6 +246,123 @@ def deck_rotated_axis():
     return out
 
 
+# --- 7. three perturbed variants of the monthly report (docs/specs/structure-extraction.md section 7): the file states what the reader used to guess ---
+ACTUAL = [412000, 418500, 425250, 431100, 440200, 447223.43]
+PLAN = [410000, 415000, 420000, 430000, 438000, 445000, 452000, 459000, 466000, 473000, 480000, 487000]
+CUSTOMERS = [120, 123, 127, 131, 134, 138]
+REVENUE = ACTUAL + PLAN[6:]
+
+
+def _write_book(wb, name, cached=None):
+    """Save a workbook; a formula carries the cached value Excel would have stored (openpyxl writes none), so the reader's grid holds the figure."""
+    import re
+    from io import BytesIO
+    from zipfile import ZIP_DEFLATED, ZipFile
+    buf = BytesIO()
+    wb.save(buf)
+    out = BytesIO()
+    with ZipFile(BytesIO(buf.getvalue())) as zin, ZipFile(out, "w", ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                text = data.decode("utf-8")
+                for ref, value in (cached or {}).items():
+                    text = re.sub(rf'(<c r="{ref}"[^>]*>)(<f>.*?</f>)<v></v>', lambda m: f"{m.group(1)}{m.group(2)}<v>{value}</v>", text)
+                data = text.encode("utf-8")
+            zout.writestr(item, data)
+    (OUT / f"{name}.xlsx").write_bytes(out.getvalue())
+
+
+def _base_sheet(wb):
+    ws = wb.active
+    ws.title = "Monthly report"
+    ws["A1"] = f"{COMPANY} monthly report (EUR)"
+    ws["A3"] = "Metric"
+    for r, label in ((4, "Revenue"), (5, "Revenue plan"), (6, "Customers"), (7, "Cumulative revenue forecast")):
+        ws.cell(r, 1, label)
+    return ws
+
+
+def monthly_report_merged_year():
+    """Months with no year (Jan ... Dec) under one merged year cell: every cell is where it was in monthly_report, so the expected map is the same."""
+    wb = Workbook()
+    ws = _base_sheet(wb)
+    ws["B2"] = "2024"
+    ws.merge_cells("B2:M2")
+    cumulative = [sum(REVENUE[:i + 1]) for i in range(12)]
+    for i, m in enumerate(MONTHS):
+        ws.cell(3, 2 + i, m)
+        ws.cell(4, 2 + i, REVENUE[i])
+        ws.cell(5, 2 + i, PLAN[i])
+        ws.cell(7, 2 + i, cumulative[i])
+    for i, c in enumerate(CUSTOMERS):
+        ws.cell(6, 2 + i, c)
+    _write_book(wb, "monthly_report_merged_year")
+    return {**monthly_report(), "file": "monthly_report_merged_year.xlsx"}
+
+
+def monthly_report_dates():
+    """Date-typed month headers (month-end dates shown as mmm-yy) and a plan row of formulas with one constant among them (K5): the same cells."""
+    import calendar
+    wb = Workbook()
+    ws = _base_sheet(wb)
+    cumulative = [sum(REVENUE[:i + 1]) for i in range(12)]
+    cached = {}
+    for i in range(12):
+        head = ws.cell(3, 2 + i, datetime(2024, i + 1, calendar.monthrange(2024, i + 1)[1]))
+        head.number_format = "mmm-yy"
+        ws.cell(4, 2 + i, REVENUE[i])
+        if 2 + i == 11:                      # K5: typed over the formula
+            ws.cell(5, 2 + i, PLAN[i])
+        else:
+            ws.cell(5, 2 + i, f"={PLAN[i]}*1")
+            cached[f"{chr(66 + i)}5"] = PLAN[i]
+        ws.cell(7, 2 + i, cumulative[i])
+    for i, c in enumerate(CUSTOMERS):
+        ws.cell(6, 2 + i, c)
+    _write_book(wb, "monthly_report_dates", cached)
+    return {**monthly_report(), "file": "monthly_report_dates.xlsx"}
+
+
+def monthly_report_quarters():
+    """Quarter subtotal columns (E, I, M, Q) as SUM formulas between the months. Columns move, so the expected map is the monthly report's with its
+    columns moved: the same as-of month, roles, rows and figures."""
+    col = lambda i: 2 + i + i // 3                  # noqa: E731  the column of month i (0-based); a subtotal follows every third month
+    L = lambda n: chr(64 + n)                       # noqa: E731
+    wb = Workbook()
+    ws = _base_sheet(wb)
+    cumulative = [sum(REVENUE[:i + 1]) for i in range(12)]
+    cached = {}
+    for i, m in enumerate(MONTHS):
+        ws.cell(3, col(i), f"{m}-24")
+        ws.cell(4, col(i), REVENUE[i])
+        ws.cell(5, col(i), PLAN[i])
+        ws.cell(7, col(i), cumulative[i])
+    for i, c in enumerate(CUSTOMERS):
+        ws.cell(6, col(i), c)
+    for q in range(4):
+        sub = 5 + 4 * q
+        ws.cell(3, sub, f"Q{q + 1}-24")
+        for r, values in ((4, REVENUE), (5, PLAN)):
+            ws.cell(r, sub, f"=SUM({L(sub - 3)}{r}:{L(sub - 1)}{r})")
+            cached[f"{L(sub)}{r}"] = round(sum(values[3 * q:3 * q + 3]), 2)
+    _write_book(wb, "monthly_report_quarters", cached)
+    last = {"column": "H", "period": "2024-06", "evidence": [
+        ev("row_ends", "The Customers row stops at June", row=6, column="H"),
+        ev("equals_range", "From July the Revenue row equals the plan row", cells="J4:Q4", other_cells="J5:Q5")]}
+    rows = [row_map(4, "revenue", "revenue", "B4:Q4", actual_plan="mixed", boundary_col="H"),
+            row_map(5, "forecast", "revenue", "B5:Q5", actual_plan="plan"),
+            row_map(6, "customers", "customers", "B6:H6", unit="count"),
+            row_map(7, "forecast", "revenue", "B7:Q7", basis="cumulative_to_date", actual_plan="mixed", boundary_col="H")]
+    name = "Monthly report"
+    figures = [figure("revenue", ACTUAL[-1], name, "H4", "2024-06"), figure("customers", CUSTOMERS[-1], name, "H6", "2024-06", unit="count")]
+    fmap = {"map_version": 1, "kind": "sheet", "sheets": [sheet_map(name, 3, "B", "Q", "monthly", rows, last)], "figures": figures}
+    return expected("monthly_report_quarters.xlsx", "2024-06",
+                    [{"sheet": name, "last_actual_column": "H", "revenue_row": 4, "granularity": "monthly"}],
+                    [{"sheet": name, "row": 4, "role": "revenue"}, {"sheet": name, "row": 5, "role": "forecast"},
+                     {"sheet": name, "row": 6, "role": "customers"}, {"sheet": name, "row": 7, "role": "forecast"}], figures, fmap)
+
+
 def write(name, doc):
     (OUT / f"{name}.expected.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -254,7 +371,9 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     built = {"monthly_report": monthly_report(), "yearly_pnl": yearly_pnl(), "actual_budget_variance": actual_budget_variance(),
              "budget_separate_sheet": budget_separate_sheet(), "deck_rotated_axis": deck_rotated_axis()}
-    for name, doc in built.items():
+    variants = {"monthly_report_merged_year": monthly_report_merged_year(), "monthly_report_quarters": monthly_report_quarters(),
+                "monthly_report_dates": monthly_report_dates()}
+    for name, doc in {**built, **variants}.items():
         write(name, doc)
     cols = [row_map(c, role, metric, f"{L}2:{L}15", label_cell=f"{L}1", basis="monthly", by_column=True,
                     evidence=f"{role}: the column headed as in the first row, one figure per month")
@@ -273,8 +392,9 @@ def main():
                "note": "One row per invoice: a records layout is not a recognised sheet, so it is not sent (reading_input.recognised_sheets)."}
     write("testco_pnl", pnl)
     write("testco_revenue", revenue)
-    manifest = [{"name": n, "expected": f"{n}.expected.json", "file": d["file"]}
-                for n, d in {**built, "testco_pnl": pnl, "testco_revenue": revenue}.items()]
+    live_variant = "monthly_report_merged_year"         # of the three variants only this one is read by the live job (the others run offline)
+    manifest = [{"name": n, "expected": f"{n}.expected.json", "file": d["file"], **({"live": False} if n in variants and n != live_variant else {})}
+                for n, d in {**built, "testco_pnl": pnl, "testco_revenue": revenue, **variants}.items()]
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {len(manifest)} fixtures to {OUT}")
 
