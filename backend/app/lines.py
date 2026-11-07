@@ -70,7 +70,7 @@ CLASSIFIED_BY_LABEL = "classified by label"       # the mark of a row whose role
 
 def line_of(row: Dict, label: str, **extra) -> Dict:
     return {"row": row["row"], "label": label,
-            "read_as": role_name(row.get("role")) + (f", {CLASSIFIED_BY_LABEL}" if row.get("classified_by") == "label" else ""), "basis": basis_name(row.get("basis")),
+            "read_as": role_name(row.get("role")) + (f", {CLASSIFIED_BY_LABEL}" if row.get("classified_by") == "label" else ""), "note": row.get("note"), "basis": basis_name(row.get("basis")),
             "actual_plan": actual_plan_name(row), "cells": row.get("cells") or row.get("label_cell"), "indent": 0, "moved": False,
             "role": row.get("role"), "parent_row": row.get("parent_row"), **extra}
 

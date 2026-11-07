@@ -4197,3 +4197,13 @@ def test_the_label_rule_mark_goes_to_no_model_payload():
     """checks.classify_by_label sets `classified_by` on a map row from the row's label; the reviewer's row fields are a closed list without it."""
     from app import reviewer
     assert "classified_by" not in reviewer.ROW_FIELDS
+
+
+def test_the_sheet_type_rule_adds_nothing_to_a_model_payload():
+    """checks.retype_by_sheet sets `sheet_type` on a sheet map and `note` on a row, and `double_counted` joins the integrity flag; all are code's own marks,
+    in no reviewer row field and in no outbound field or top-level key (contract 26)."""
+    from app import reviewer
+    from schemas.metrics import IntegrityFlag
+    assert not {"note", "sheet_type"} & set(reviewer.ROW_FIELDS)
+    assert "double_counted" in IntegrityFlag.model_fields
+    assert not {"sheet_type", "double_counted", "note"} & {*gateway.OUTBOUND_TOP_LEVEL, *gateway.OUTBOUND_FIELDS}

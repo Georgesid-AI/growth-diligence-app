@@ -213,7 +213,7 @@ async def _not_read_reason(db, audit_id: str) -> str:
 
 
 async def effective_map(db, audit_id: str, doc: Dict, stored_map: Dict, overrides: List[Dict]) -> Dict:
-    """The effective map of a stored reading by today's label rule (checks.classify_by_label), from the cells the dataset keeps: no model call and
+    """The effective map of a stored reading by today's sheet-type and label rules (checks.retype_by_sheet, checks.classify_by_label), from the cells the dataset keeps: no model call and
     nothing is written. The rule is applied to the stored map first and the overrides after it, so an analyst's Change or a reviewer's correction
     wins. A file with no stored cells is returned as stored with its overrides."""
     from . import stored_sheets as rec
@@ -221,7 +221,8 @@ async def effective_map(db, audit_id: str, doc: Dict, stored_map: Dict, override
     ds = await db.datasets.find_one({"audit_id": audit_id, "file_hash": doc.get("file_hash")}, {"_id": 0, "recognition_sheets": 1})
     sheets = rec.unpack_sheets((ds or {}).get("recognition_sheets") or [])
     text = reading_input.reading_text(sheets) if sheets else None
-    base = checks.classify_by_label(stored_map, checks.Cells(text)) if text is not None else stored_map
+    cells = checks.Cells(text) if text is not None else None
+    base = checks.classify_by_label(checks.retype_by_sheet(stored_map, cells), cells) if cells is not None else stored_map
     return readings.effective(base, overrides)
 
 
@@ -275,7 +276,7 @@ async def build(db, audit_id: str) -> Dict:
         shown = _effective_lines(doc, effective)
         for entry in shown:
             for ln in entry["lines"]:
-                ln["note"] = "; ".join(notes["rows"].get((entry["sheet"], ln["row"]), [])) or None
+                ln["note"] = "; ".join([x for x in [ln.get("note"), *notes["rows"].get((entry["sheet"], ln["row"]), [])] if x]) or None
         files.append({"kind": "sheet", "file": doc.get("file"), "file_hash": doc["file_hash"], "size": (datasets.get(doc["file_hash"]) or {}).get("size"),
                       "hidden_sheets": doc.get("hidden_sheets") or [],
                       "summary": {"period_columns": doc.get("period_columns"), "rows_mapped": doc.get("rows_mapped"), "last_actual": doc.get("month"), "first_actual": first_actual(effective),

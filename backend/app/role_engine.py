@@ -58,6 +58,7 @@ YEARLY_LABEL = "yearly"
 FORM = {"monthly": "month", "quarterly": "quarter", "yearly": "year"}
 DECK_METRICS = {"revenue": "revenue", "arr": "arr", "mrr": "mrr", "customers": "customers", "headcount": "headcount", "cash": "cash",
                 "ebitda": "ebitda"}      # a role's name in the deck reader's closed metric list
+CASH_SHEET_TYPES = ("cashflow", "balance")        # checks.CASH_SHEETS (checks is not imported here)
 AWAITS = "awaits confirmation"       # the reason of a metric whose only rows are held out because the two reads disagree on them
 RECONCILE_TOLERANCE = 0.005         # money within 0.5 %, as the cell checks (app/checks.py); a count exact
 CUMULATIVE = "cumulative_to_date"
@@ -104,6 +105,7 @@ def _records(files: List[Dict]) -> List[Dict]:
                 if not pairs:
                     continue
                 rec = {"file": f.get("file"), "file_hash": f.get("file_hash"), "sheet": smap["sheet"], "row": row["row"], "role": row["role"], "metric": row.get("metric"),
+                       "sheet_type": smap.get("sheet_type"),
                        "label": (f.get("labels") or {}).get(f"{smap['sheet']}:{row['row']}"), "hidden": smap["sheet"] in set(f.get("hidden_sheets") or ()),
                        "basis": row.get("basis"), "actual_plan": row.get("actual_plan"), "granularity": smap.get("granularity"),
                        "segment": (row.get("segment") or "").strip() or None, "parent": row.get("parent_row"), "unit": row.get("unit"), "currency": row.get("currency") or smap.get("currency"),
@@ -196,6 +198,8 @@ def undated_flags(files: List[Dict]) -> List[Dict]:
 
 
 TOTALS_HINT = "a part row may be unmapped or the total hard-coded"
+DOUBLE_TOLERANCE = 0.05          # parts that sum to twice the total within this share of the double: two breakdowns of one total
+DOUBLE_COUNTED = "parts counted twice — the sheet has two breakdowns of this total; the calculation uses the total"
 
 
 def totals_flags(files: List[Dict]) -> List[Dict]:
@@ -204,9 +208,12 @@ def totals_flags(files: List[Dict]) -> List[Dict]:
     out = []
     for f in files:
         for t in f.get("totals") or []:
+            twice = bool(t["total"]) and abs(t["parts_sum"] - 2 * t["total"]) <= DOUBLE_TOLERANCE * 2 * t["total"]
             out.append({"kind": "totals_mismatch", "file": f.get("file"), "count": 1, "cells": [f"{t['sheet']}!{t['cell']}"], "sheet": t["sheet"],
                         "row": t["row"], "total": t["total"], "parts_sum": t["parts_sum"], "difference": t["difference"], "pct": t["pct"],
-                        "text": f"{t['sheet']} row {t['row']}: total {fmt.fmt_currency(t['total'])} vs parts {fmt.fmt_currency(t['parts_sum'])}, "
+                        "double_counted": twice,
+                        "text": f"{t['sheet']} row {t['row']}: {DOUBLE_COUNTED}" if twice else
+                                f"{t['sheet']} row {t['row']}: total {fmt.fmt_currency(t['total'])} vs parts {fmt.fmt_currency(t['parts_sum'])}, "
                                 f"{fmt.fmt_pct(t['pct'])} — {TOTALS_HINT}"})
     return out
 
@@ -1079,6 +1086,9 @@ def pnl_trend(table: List[Dict], as_of: pd.Period, fye: int) -> Optional[Dict]:
     return {"periods": periods, "rows": rows, "file": home["file"], "sheet": home["sheet"]} if periods else None
 
 def stock(metric: str, role: str, unit: str, table, as_of, fye) -> Dict:
+    if role == "cash":
+        # a cash balance is read from a cash-flow or balance-sheet sheet before any other (sheet type from the sheet's name or title)
+        table = [r for r in table if r.get("sheet_type") in CASH_SHEET_TYPES] or table
     rec = pick(table, role, "monthly") or pick(table, role)
     if rec is None:
         return _missing(metric)
@@ -1429,7 +1439,11 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
     def add(metric, period, kind, file, where, value, basis, ccy, precision=0.0):
         seen.setdefault((metric, period), []).append({"kind": kind, "file": file, "where": where, "value": value, "basis": basis, "currency": ccy,
                                                       "precision": precision or 0.0})
-    for rows in _total_rows(table, "revenue").values():
+    taken: set = set()
+    for (file_, _sheet), rows in sorted(_total_rows(table, "revenue").items(), key=lambda kv: (kv[1][0].get("sheet_type") != "pnl", table.index(kv[1][0]))):
+        if (file_, "revenue") in taken:
+            continue                    # a source is a file: a second sheet of the same file is no second source
+        taken.add((file_, "revenue"))
         rec = _best(rows, table)
         for period, (value, cell) in rec["actual"].items():
             end = _end_month(period, fye)
@@ -1454,8 +1468,8 @@ def reconcile(table: List[Dict], deck: List[Dict], as_of: pd.Period, fye: int, c
         add(role, period, "deck", fig.get("file"), f"page {fig['page']}", fig["value"], basis, fig.get("currency"), fig.get("precision"))
     out = []
     for (metric, period), items in sorted(seen.items()):
-        if len(items) < 2 or len({(i["kind"], str(i["file"]), i["where"].rsplit("!", 1)[0]) for i in items}) < 2:
-            continue
+        if len(items) < 2 or len({(i["kind"], str(i["file"]), i["where"] if i["kind"] == "deck" else "") for i in items}) < 2:
+            continue                    # the sources are different files or deck pages, never two sheets of one file
         if len({i["basis"] for i in items}) > 1:
             continue                    # a month and a year, a flow and a cumulative figure, are not the same figure
         ccys = {i["currency"] for i in items if i["currency"]}
