@@ -1,7 +1,7 @@
 """Data integrity, results and assessment coverage (docs/specs/integrity-coverage.md; plan of 15 Oct 2026, section 2 and 7.1).
 
 Block A lists the checks that ran with their result; Block B lists all six checks of the method with their status; the overall
-conclusion is Python's, by a fixed rule, and needs at least 5 applicable checks completed with the revenue reconciliation among
+conclusion is Python's, by a fixed rule, and needs at least 4 applicable checks completed with the revenue reconciliation among
 them. Python only, no network, no model.
 """
 import pytest
@@ -104,7 +104,7 @@ def test_the_endpoint_returns_both_blocks_and_the_conclusion(register_api):
     assert r.status_code == 200, r.text
     body = r.json()
     assert [row["check"] for row in body["coverage"]] == CHECKS
-    assert body["conclusion"] == "Insufficient assessment coverage (4 of 5)", "no deck: 4 of 5 completed is below the minimum of 5"
+    assert body["conclusion"] == "Material concerns", "no deck: 4 of 5 completed, TestCo's reconciliation is Red"
     assert body["completed_text"] == "Completed 4 of 5 applicable checks"
     assert client.get("/api/audits/nope/integrity").status_code == 404
 
@@ -181,7 +181,7 @@ def test_with_no_deck_the_deck_check_is_blocked_and_requested():
     row = next(r for r in out["coverage"] if r["check"] == "Deck-vs-deck figures")
     assert (row["status"], row["reason"]) == (ig.BLOCKED, "At least one board deck")
     assert out["blocked"] == ["Deck-vs-deck figures"] and out["data_requests"] == ["Deck-vs-deck figures: At least one board deck"]
-    assert out["code"] == "insufficient" and out["memo_sentence"].endswith("1 of the 5 applicable checks could not be completed."), "4 of 5: below the minimum of 5"
+    assert out["memo_sentence"] is None, "4 of 5 completed with the reconciliation: a conclusion"
     no_crm = ig.assess(engine_results(("revenue", "pnl")), deck_count=0, candidates=[])
     assert no_crm["blocked"] == ["Quarter-end clustering", "Deck-vs-deck figures"]
     assert no_crm["memo_sentence"] == ("Insufficient assessment coverage is not a finding about the company: 2 of the 5 applicable "
@@ -300,3 +300,12 @@ def test_a_check_with_no_rows_to_test_is_not_applicable_and_never_green():
     assert (gaps["status"], gaps["result"]) == ("Not applicable", None) and gaps["reason"]
     assert "Gaps in customer data" not in {r["check"] for r in out["results"]}, "never in the results, so never Green"
     assert "Gaps in customer data" not in out["blocked"] and not any("Gaps in customer data" in d for d in out["data_requests"])
+
+
+def test_the_minimum_of_completed_checks_is_two_thirds_of_the_applicable_ones_rounded_up():
+    ig = _integrity()
+    assert [ig.min_completed(n) for n in (5, 6, 7, 8)] == [4, 4, 5, 6]
+    rows = lambda done: [{"check": ig.RECONCILIATION if i == 0 else f"c{i}", "status": ig.COMPLETED if i < done else ig.BLOCKED, "result": "Green"}  # noqa: E731
+                         for i in range(8)]
+    assert ig.overall(rows(6))["code"] == "reliable", "8 applicable, 6 completed"
+    assert ig.overall(rows(5))["code"] == "insufficient" and ig.overall(rows(5))["conclusion"] == "Insufficient assessment coverage (5 of 8)"

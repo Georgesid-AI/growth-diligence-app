@@ -42,7 +42,7 @@ CLUSTERING_MIN_DEALS = 20           # crm-dedup-clustering.md section 2: fewer w
 CLUSTERING_FEW = f"Fewer than {CLUSTERING_MIN_DEALS} won deals ({{n}})"     # the reason of that row (George, 17 Oct 2026)
 CLUSTERING_AMBER_PCT, CLUSTERING_RED_PCT = 20, 35      # Green below 20%, Amber 20% to 35%, Red above 35% (whole percents)
 CLUSTERING_FINDING = "{share}% of {n} won deals closed in the last 10 days of a quarter (chance: 11%)"
-MIN_COMPLETED = 5                   # section 2: fewer completed applicable checks is insufficient coverage
+MIN_SHARE = (2, 3)                  # section 2: fewer completed checks than this share of the applicable checks (rounded up) is insufficient coverage
 INSUFFICIENT = "Insufficient assessment coverage ({x} of {y})"
 INSUFFICIENT_NOTE = ("Insufficient assessment coverage is not a finding about the company: {n} of the {y} applicable checks could not "
                      "be completed.")
@@ -202,12 +202,17 @@ def _decks(candidates: List[dict]) -> dict:
                                         f"first: {where}", "source": where}
 
 
+def min_completed(applicable: int) -> int:
+    """Completed checks the conclusion needs: ceil(2/3 x applicable): 5 applicable need 4, 6 need 4, 7 need 5, 8 need 6."""
+    return -(-MIN_SHARE[0] * applicable // MIN_SHARE[1])
+
+
 def overall(rows: List[dict]) -> dict:
     """Section 2: the conclusion over the coverage rows ({check, status, result}). The denominator is the applicable checks."""
     applicable = [r for r in rows if r["status"] != NOT_APPLICABLE]
     done = [r for r in applicable if r["status"] == COMPLETED]
     x, y = len(done), len(applicable)
-    if x < MIN_COMPLETED or not any(r["check"] == RECONCILIATION for r in done):
+    if x < min_completed(y) or not any(r["check"] == RECONCILIATION for r in done):
         code = "insufficient"
         conclusion = INSUFFICIENT.format(x=x, y=y)
     else:

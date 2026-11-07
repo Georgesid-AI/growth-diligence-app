@@ -42,7 +42,7 @@ then "Blocked: {names}" when any is blocked.
 
 ## 2. Overall conclusion
 Values: Reliable · Needs clarification · Material concerns · Insufficient assessment coverage.
-1. Fewer than 5 applicable checks completed (raised from 4, George, 2026-11-07), or revenue reconciliation not among the completed: "Insufficient assessment
+1. Fewer completed checks than ceil(2/3 × applicable) (5 applicable need 4, 6 need 4, 7 need 5, 8 need 6; George, 2026-11-07), or revenue reconciliation not among the completed: "Insufficient assessment
    coverage ({x} of {y})". It is not a negative company finding; the memo says so in one sentence: "Insufficient assessment
    coverage is not a finding about the company: {y−x} of the {y} applicable checks could not be completed."
 2. Otherwise: Material concerns when any completed check is Red; Reliable when every completed check is Green; Needs
@@ -87,7 +87,7 @@ are no longer printed there. On the Dashboard the data-integrity narrative no lo
 
 ## 8. Consequences to know
 - Benford is Not applicable. With smoothness (smoothness.md) and quarter-end clustering (crm-dedup-clustering.md) built, all 5
-  applicable checks can complete; an audit reads "Insufficient assessment coverage (x of 5)" while fewer than 5 complete or the
+  applicable checks can complete; an audit reads "Insufficient assessment coverage (x of 5)" while fewer than ceil(2/3 × applicable) complete or the
   reconciliation is not among them. Below 20 won deals clustering is Not applicable too (crm-dedup-clustering.md §6): 4 checks are
   applicable and a conclusion needs all four, as it needed the same four before.
 
