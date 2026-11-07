@@ -71,9 +71,9 @@ def test_a_text_cell_that_only_mentions_an_error_is_no_formula_error():
 
 
 def test_the_flag_names_the_file_the_count_and_the_cells():
-    flags = role_engine.formula_error_flags([{"file": "[BOARD] GV Financial Report.xlsx", "formula_errors": [{"sheet": "CASHFLOW", "cell": "B4", "error": "#REF!"}]},
+    flags = role_engine.formula_error_flags([{"file": "[BOARD] Sample Co Financial Report.xlsx", "formula_errors": [{"sheet": "CASHFLOW", "cell": "B4", "error": "#REF!"}]},
                                              {"file": "clean.xlsx", "formula_errors": []}])
-    assert [f["text"] for f in flags] == ["[BOARD] GV Financial Report.xlsx: 1 formula error, CASHFLOW!B4"]
+    assert [f["text"] for f in flags] == ["[BOARD] Sample Co Financial Report.xlsx: 1 formula error, CASHFLOW!B4"]
     many = role_engine.formula_error_flags([{"file": "f.xlsx", "formula_errors": [{"sheet": "S", "cell": f"A{n}", "error": "#N/A"} for n in range(1, 9)]}])[0]
     assert many["text"] == "f.xlsx: 8 formula errors, S!A1, S!A2, S!A3, S!A4, S!A5 and 3 more" and many["count"] == 8
 

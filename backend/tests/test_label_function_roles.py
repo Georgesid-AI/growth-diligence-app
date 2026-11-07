@@ -19,7 +19,7 @@ from app.structures import redact  # noqa: E402
 from test_role_engine import file_of, metric, run, series, sheet  # noqa: E402
 from test_memo_cleanup_4f import YEARS  # noqa: E402
 
-LABELS = {                                           # the GV PNL shape: a revenue line, a cost-of-revenue total, an OPEX total and its lines
+LABELS = {                                           # the sample P&L shape: a revenue line, a cost-of-revenue total, an OPEX total and its lines
     4: "Revenue", 5: "COST OF REVENUE",
     6: "Cloud hosting", 7: "Customer support", 8: "Third-party licences",
     20: "OPERATING EXPENSES (OPEX)",
